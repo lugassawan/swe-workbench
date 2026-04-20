@@ -1,0 +1,72 @@
+# Contributing
+
+## Setup
+
+After cloning, run the setup script once:
+
+```sh
+./setup.sh
+```
+
+This sets `core.hooksPath` to `.githooks/`, activating the two local git hooks described below.
+
+## Branch naming
+
+The `pre-commit` hook blocks direct commits to `main` and `master`. Always work on a feature branch:
+
+```sh
+git checkout -b feat/<topic>
+```
+
+## Commit message format
+
+The `commit-msg` hook enforces a `[type] Subject` prefix on every commit:
+
+```
+[feat] Add Python language skill
+[fix] Resolve trigger keyword collision in DDD skill
+[docs] Clarify F.I.R.S.T. principle in TDD skill
+```
+
+Allowed types: `feat`, `fix`, `refactor`, `test`, `ci`, `docs`, `perf`, `chore`, `polish`, `breaking`.
+
+Merge commits and reverts are exempt. The same pattern is validated by CI (see `.github/workflows/pr.yml`).
+
+## Pull requests
+
+Use the PR template (`.github/PULL_REQUEST_TEMPLATE.md`). It requires:
+
+- A summary of what changed and why.
+- A test plan with checkboxes.
+- An issue reference: `Closes #<number>`, `Fixes #<number>`, or `Resolves #<number>`. For ad-hoc changes without an issue, put a standalone `N/A` line (with an optional reason) — `Closes N/A` and `Closes #N/A` are malformed and will fail CI.
+- PR title must match the same `[type] Subject` format as commit messages.
+
+## CI mirror
+
+`.github/workflows/pr.yml` runs the same commit-format and issue-reference checks on every PR. Skipping local setup does not skip CI — it just shifts the failure to after you push.
+
+## Testing locally
+
+```sh
+cd swe-workbench
+/plugin marketplace add $(pwd)
+/plugin install swe-workbench
+```
+
+Then try:
+
+```
+/swe-workbench:design "Should I use microservices for a 3-engineer team?"
+/swe-workbench:review
+```
+
+If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` — the description is the trigger surface.
+
+## `.githooks/` vs `hooks/hooks.json`
+
+These two directories share the same depth but serve different runtimes:
+
+| Path | Purpose |
+|---|---|
+| `.githooks/` | Git hooks (`commit-msg`, `pre-commit`) — invoked by git. |
+| `hooks/hooks.json` | Claude Code plugin runtime hooks — invoked by the Claude Code plugin system. |
