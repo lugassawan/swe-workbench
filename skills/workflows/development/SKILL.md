@@ -81,7 +81,14 @@ Choose execution strategy:
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
 - **No plan / ad-hoc** → implement directly with `superpowers:test-driven-development` per unit
 
-Commit logically grouped changes as you go — infrastructure, core logic, tests, and wiring as separate commits. Never bundle unrelated changes.
+Commit logically grouped changes as you go. Never bundle unrelated changes.
+
+| Commit type | Contains |
+|---|---|
+| Infrastructure | Config, dependencies, build changes |
+| Core logic | Main feature/fix implementation |
+| Tests | Test files and test utilities |
+| Wiring | Integration, routing, CLI registration |
 
 ---
 

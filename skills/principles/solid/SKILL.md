@@ -37,6 +37,8 @@ Five heuristics for OO design. Guidelines, not laws.
 - **Bad:** `OrderService` instantiates `StripeClient` directly.
 - **Misapplied:** an interface for every class "just in case". Invert only for a real seam — testability, multiple implementations, architectural boundary.
 
+**Every cross-boundary dependency MUST be an abstraction — no exceptions.** If Component A depends on Component B in a different architectural layer, A defines the interface in its own layer and B implements it. Same-layer dependencies may be direct.
+
 ## When SOLID hurts
 - Tiny codebases where indirection costs more than it saves.
 - Scripts and one-off jobs.
