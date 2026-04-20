@@ -1,0 +1,30 @@
+#!/bin/sh
+# Commit-msg hook: enforce [type] prefix convention.
+
+SUBJECT=$(head -1 "$1")
+
+# Allow merge commits and reverts
+case "$SUBJECT" in
+    Merge*|Revert*) exit 0 ;;
+esac
+
+# Keep in sync with .github/workflows/pr.yml
+PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+'
+
+if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+    echo ""
+    echo "ERROR: Invalid commit message:"
+    echo "  $SUBJECT"
+    echo ""
+    echo "Expected format:"
+    echo "  [type] Description"
+    echo ""
+    echo "Allowed types:"
+    echo "  feat, fix, refactor, test, ci, docs, perf, chore, polish, breaking"
+    echo ""
+    echo "Examples:"
+    echo "  [feat] Add worktree sync command"
+    echo "  [fix] Resolve branch detection on Windows"
+    echo "  [ci] Add coverage gate to CI pipeline"
+    exit 1
+fi

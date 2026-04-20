@@ -1,0 +1,61 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+    branches: [main]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Keep in sync with .githooks/commit-msg
+          PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+'
+          if ! echo "$PR_TITLE" | grep -qE "$PATTERN"; then
+            echo "::error::PR title must match format: [type] Description (e.g. [feat] Add new feature)"
+            echo ""
+            echo "Allowed types: feat, fix, refactor, test, ci, docs, perf, chore, polish, breaking"
+            exit 1
+          fi
+
+      - name: Validate PR description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          TRIMMED=$(echo "$PR_BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          if [ -z "$TRIMMED" ]; then
+            echo "::error::PR description must not be empty"
+            exit 1
+          fi
+
+      - name: Validate issue reference
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Allow ad-hoc PRs that explicitly opt out with "N/A" on its own line.
+          # Accepts: "N/A", "N/A - reason", "N/A — reason" (bare N/A and with reason are both valid).
+          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
+            echo "Issue reference opted out with N/A — skipping check"
+            exit 0
+          fi
+
+          # Require a GitHub closing keyword (case-insensitive).
+          # "Closes N/A" or "Closes #N/A" will NOT match the N/A check above (not a standalone line)
+          # and will NOT match this check — so they correctly fail CI.
+          if ! echo "$PR_BODY" | grep -iqE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+'; then
+            echo "::error::PR body must reference an issue with a closing keyword"
+            echo ""
+            echo "Add one of these to your PR description:"
+            echo "  Closes #123"
+            echo "  Fixes #123"
+            echo "  Resolves #123"
+            echo ""
+            echo "For ad-hoc changes without an issue, add a standalone 'N/A' line."
+            echo ""
+            echo "See: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue"
+            exit 1
+          fi
