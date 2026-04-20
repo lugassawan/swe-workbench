@@ -49,3 +49,31 @@ If a use case imports the ORM, the rule is broken.
 
 ## Decision aid
 Ask: "If we swapped the database / web framework / message bus, which files change?" Only the adapters should.
+
+## Common Excuses — and Why They're Wrong
+
+| Excuse | Reality |
+|--------|---------|
+| "Everything in one package is simpler" | Simpler to write, harder to maintain. When DB logic changes, domain tests break — that's the coupling tax. |
+| "Separate directories is over-engineering" | Directories are free. The cognitive load of finding where logic lives in a flat structure is not. |
+| "The framework requires this structure" | Frameworks constrain the outermost layer. Inner layers owe the framework nothing. Adapt at the boundary. |
+| "I'll refactor when it gets bigger" | You won't. Refactoring a coupled codebase is 10× harder than building with boundaries from the start. |
+| "This is just a prototype" | If it might ship, apply the dependency rule now. Retrofitting layers onto a flat codebase is the most expensive refactor. |
+
+## Red Flags — Stop and Reassess
+
+- Domain type importing `database/sql`, `net/http`, or any external service SDK
+- Business logic function that takes a database connection as a parameter
+- Free function implementing business logic that should be entity behavior
+- "This is just CRUD" used to skip layer separation when business rules exist
+- Repositories returning ORM objects instead of domain types
+- Use cases importing HTTP request/response types
+
+## If You Catch Yourself Thinking…
+
+| Thought | What to Do Instead |
+|---------|--------------------|
+| "I'll put it all in one package for now" | Run the layer assignment test on each type — separate by result. |
+| "Interfaces are overkill here" | Does the dependency cross a layer? Yes → interface. No negotiation. |
+| "Let me import the store directly, it's faster" | Faster to write, impossible to test in isolation. Define the interface. |
+| "This is too small for Clean Architecture" | Apply proportionally. A directory per layer costs nothing. Skip only for true scripts/prototypes. |

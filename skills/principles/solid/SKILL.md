@@ -43,3 +43,30 @@ Five heuristics for OO design. Guidelines, not laws.
 - Algorithms where the shape of the computation matters more than the shape of the objects.
 
 SOLID is about making change cheap. If nothing is changing, it costs complexity for no return.
+
+## Common Excuses — and Why They're Wrong
+
+| Excuse | Reality |
+|--------|---------|
+| "Codebase is too small for interfaces" | Size doesn't change dependency direction. A 50-line module with `*SqliteStore` still can't be tested without a database. |
+| "Adding fields to the existing struct is zero-friction" | Zero friction now, high coupling forever. SRP violation compounds with every new feature bolted onto the god struct. |
+| "YAGNI — we don't need this abstraction yet" | If the dependency crosses a layer boundary, you need it NOW. Tests are a present requirement, not speculation. |
+| "Splitting would require changing too many files" | The number of files changed is not a quality metric. Refactor cost grows over time — pay it early. |
+
+## Red Flags — Stop and Reassess
+
+- One struct with methods spanning persistence, business rules, AND external communication
+- Concrete type for any dependency that crosses a layer boundary (e.g., `*SqliteStore` as a field type)
+- Interface with 10+ methods when most callers use 2
+- Subtype that panics or returns error for methods the base type declares it can handle
+- Test file that requires a real database or network connection for domain logic
+
+## If You Catch Yourself Thinking…
+
+| Thought | What to Do Instead |
+|---------|--------------------|
+| "This struct just needs one more method" | Check SRP — does this add a second reason to change? |
+| "Interfaces are overkill here" | Does the dependency cross a layer? Yes → interface. No negotiation. |
+| "The entity is just data, logic goes elsewhere" | Anemic domain. Move behavior onto the entity. |
+| "Let me import the store directly, it's faster" | Faster to write, impossible to test in isolation. Define the interface. |
+| "YAGNI — we might never need another implementation" | DIP isn't about multiple implementations. It's about testability and decoupling. |

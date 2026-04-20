@@ -30,7 +30,6 @@ cd swe-workbench
 |---|---|
 | `/swe-workbench:review` | Review the current git diff — correctness, security, design, test gaps. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
-| `/swe-workbench:tdd <feature>` | Run a strict red-green-refactor loop. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 
 ## Subagents
@@ -52,6 +51,7 @@ cd swe-workbench
 | `solid` | "SOLID", "single responsibility", "open-closed", "Liskov", "interface segregation", "dependency inversion". |
 | `tdd` | "TDD", "test-driven", "red green refactor", "unit test", "test first". |
 | `design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
+| `clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
 
 ### Languages — auto-load by file type
 
@@ -61,9 +61,19 @@ cd swe-workbench
 | `rust` | `.rs` files, `Cargo.toml`, keywords: Rust, cargo, ownership, borrow checker, trait, lifetime. |
 | `typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
 
+### Workflows — auto-load during implementation
+
+| Skill | Triggers | Delegation model |
+|---|---|---|
+| `development` | "implement this", "build this", "fix this bug", "execute plan", "orchestrate these issues". | Wraps the 5-phase lifecycle (Branch → Implement → Verify → Review → Deliver) around `superpowers:{using-git-worktrees, executing-plans, subagent-driven-development, test-driven-development, verification-before-completion, requesting-code-review, finishing-a-development-branch}`. Phase 4 dispatches both `superpowers:code-reviewer` (plan alignment) and the local `reviewer` subagent (diff correctness/security/design). Mode A plan template and Mode C orchestration live in companion files. |
+
+This skill is an orchestrator — it coordinates other skills rather than restating their content.
+
 ## Philosophy
 
 Skills are intentionally small — each under 150 lines. A sharp, well-triggered skill teaches Claude the right thing at the right moment. A giant skill burns context on material the current task does not need. If a skill grows past 150 lines, split it.
+
+Orchestrator skills that compose many sub-skills (see Workflows) may exceed 150 lines. When they do, extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
 
 ## Extending
 
@@ -103,6 +113,17 @@ After cloning, run the setup script once:
 This sets `core.hooksPath` to activate the project git hooks. The hooks enforce `[type] Subject` commit format and block accidental commits to `main`. CI (`.github/workflows/pr.yml`) runs the same checks on every pull request, so if you skip the local setup you'll just discover issues in CI instead.
 
 Note: `.githooks/` (git hooks) is unrelated to `hooks/hooks.json` (Claude Code plugin runtime hooks) — same directory depth, different purpose.
+
+## Dependencies
+
+`swe-workbench` composes with other Claude Code plugins at runtime:
+
+| Plugin | Source | Used for | Required? |
+|---|---|---|---|
+| `superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | Process skills invoked by `development` (`using-git-worktrees`, `executing-plans`, `subagent-driven-development`, `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `finishing-a-development-branch`, `dispatching-parallel-agents`). | Required for the `development` skill to function end-to-end. |
+| `claude-plugins-official` | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Official Anthropic plugin collection — install if you need any of its bundled tools. | Optional. |
+
+Install them via `/plugin marketplace add …` + `/plugin install …` before using the `development` skill.
 
 ## License
 

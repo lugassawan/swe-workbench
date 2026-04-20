@@ -53,3 +53,13 @@ Stateless domain logic that does not belong on a single entity (e.g., a transfer
 - Business rules hidden inside controllers or stored procedures.
 - Experts and developers using different words for the same thing.
 - Transactions spanning unrelated data.
+
+## Pattern Selection Quick Reference
+
+| Complexity | Domain patterns | Repository pattern | Example |
+|------------|----------------|-------------------|---------|
+| **No business rules** | Plain DTOs | Direct data access | Settings CRUD, preferences |
+| **Simple rules** | Entities with methods, value objects | Interface in domain layer | Price alerts with threshold logic |
+| **Complex invariants** | Aggregates, domain events, specifications | Interface + unit of work | Portfolio rebalancing with multi-asset constraints |
+
+**Light DDD is the floor when business rules exist**: entity behavior + repository interfaces + value objects for constrained types are non-negotiable even for "simple" cases.
