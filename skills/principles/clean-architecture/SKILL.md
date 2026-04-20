@@ -47,6 +47,17 @@ If a use case imports the ORM, the rule is broken.
 - Presenters holding business rules.
 - `utils` packages imported by the domain.
 
+## Layer import rules
+
+| Layer | Can import | Must NOT import |
+|-------|-----------|----------------|
+| Domain | Standard library only | Application, Infrastructure, Framework |
+| Application | Domain | Infrastructure, Framework |
+| Infrastructure | Domain, Application | Framework (except its own SDK) |
+| Framework/UI | All layers | — |
+
+Layers don't require separate modules. A directory per layer suffices: `domain/`, `app/` (or `usecase/`), `infra/`, `ui/`.
+
 ## Decision aid
 Ask: "If we swapped the database / web framework / message bus, which files change?" Only the adapters should.
 

@@ -54,6 +54,11 @@ Stateless domain logic that does not belong on a single entity (e.g., a transfer
 - Experts and developers using different words for the same thing.
 - Transactions spanning unrelated data.
 
+## Signs you specifically need Full DDD
+- Multiple entities must change atomically (→ aggregates + unit of work).
+- Business events trigger cascading actions across the domain (→ domain events).
+- Different teams own different parts of the domain (→ bounded contexts + context map).
+
 ## Pattern Selection Quick Reference
 
 | Complexity | Domain patterns | Repository pattern | Example |
