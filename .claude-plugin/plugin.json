@@ -1,0 +1,25 @@
+{
+  "name": "swe-workbench",
+  "version": "0.1.0",
+  "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns), language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
+  "author": {
+    "name": "Lugas Septiawan",
+    "email": "lugassawan@gmail.com",
+    "url": "https://github.com/lugassawan"
+  },
+  "homepage": "https://github.com/lugassawan/swe-workbench",
+  "repository": "https://github.com/lugassawan/swe-workbench",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "software-engineering",
+    "clean-architecture",
+    "ddd",
+    "tdd",
+    "solid",
+    "golang",
+    "rust",
+    "typescript"
+  ]
+}
