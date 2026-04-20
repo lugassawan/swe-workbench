@@ -92,6 +92,18 @@ Then try:
 
 If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` — the description is the trigger surface.
 
+## Contributing
+
+After cloning, enable the project git hooks once:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hooks enforce `[type] Subject` commit format and block accidental commits to `main`. CI (`.github/workflows/pr.yml`) runs the same checks on every pull request, so if you skip the local setup you'll just discover issues in CI instead.
+
+Note: `.githooks/` (git hooks) is unrelated to `hooks/hooks.json` (Claude Code plugin runtime hooks) — same directory depth, different purpose.
+
 ## License
 
 MIT.

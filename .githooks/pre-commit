@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-commit hook: prevent direct commits to protected branches.
+
+_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ "$_branch" = "main" ] || [ "$_branch" = "master" ]; then
+    echo "ERROR: Direct commits to '$_branch' are not allowed."
+    echo "       Create a feature branch first:  git checkout -b feat/<topic>"
+    exit 1
+fi
