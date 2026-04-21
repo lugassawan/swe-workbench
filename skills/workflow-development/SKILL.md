@@ -16,7 +16,7 @@ Single source of truth for how development work flows. Three modes:
 ## When This Skill Activates
 
 - **Mode A:** Writing or finalizing an implementation plan (before `ExitPlanMode`)
-- **Mode B:** User says "implement this", "build this", "fix this" — any branch → code → deliver flow
+- **Mode B:** User says "implement this", "build this" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
 - **Mode C:** User says "orchestrate these issues", "run in parallel", multi-issue campaigns with >3 issues
 
 ## Sub-Skill Integration Map
