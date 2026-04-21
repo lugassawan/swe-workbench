@@ -1,6 +1,6 @@
 ---
 name: principle-solid
-description: SOLID principles — single responsibility, open-closed, Liskov substitution, interface segregation, dependency inversion. Auto-load when designing classes, refactoring, reviewing object-oriented code, or discussing coupling, cohesion, or abstractions.
+description: SOLID principles — SRP, OCP, LSP, ISP, DIP (single responsibility, open-closed, Liskov substitution, interface segregation, dependency inversion). Auto-load when designing classes, refactoring, reviewing object-oriented code, or discussing coupling, cohesion, abstractions, or any SOLID violation.
 ---
 
 # SOLID

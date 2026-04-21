@@ -1,6 +1,6 @@
 ---
 name: principle-ddd
-description: Domain-Driven Design — bounded contexts, aggregates, entities, value objects, ubiquitous language, and domain events. Auto-load when modeling a complex domain, splitting services, designing aggregates, or aligning code with business language.
+description: Domain-Driven Design (DDD) — bounded contexts, aggregates, entities, value objects, ubiquitous language, domain events, context map, anti-corruption layer, and repository pattern. Auto-load when modeling a complex domain, splitting services, deciding service boundaries, microservice splits, designing aggregates, or aligning code with business language.
 ---
 
 # Domain-Driven Design
