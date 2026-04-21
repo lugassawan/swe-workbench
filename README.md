@@ -26,10 +26,11 @@ cd swe-workbench
 
 ## What's inside
 
-- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor` — see [docs/catalog.md](docs/catalog.md).
-- **Subagents** — `reviewer`, `senior-engineer`, `refactorer` — see [docs/catalog.md](docs/catalog.md).
+- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor`, `/swe-workbench:debug` — see [docs/catalog.md](docs/catalog.md).
+- **Subagents** — `reviewer`, `senior-engineer`, `refactorer`, `debugger` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code — auto-load by trigger keyword.
 - **Languages** — Go, Rust, TypeScript — auto-load by file extension.
+- **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.
 - **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle.
 
 Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide and philosophy → [docs/extending.md](docs/extending.md). Runtime dependencies → [docs/dependencies.md](docs/dependencies.md).
