@@ -9,7 +9,7 @@
     {
       "name": "swe-workbench",
       "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns), language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./",
       "author": {
         "name": "Lugas Septiawan",
