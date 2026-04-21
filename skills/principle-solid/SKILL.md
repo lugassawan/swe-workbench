@@ -1,5 +1,5 @@
 ---
-name: solid
+name: principle-solid
 description: SOLID principles — single responsibility, open-closed, Liskov substitution, interface segregation, dependency inversion. Auto-load when designing classes, refactoring, reviewing object-oriented code, or discussing coupling, cohesion, or abstractions.
 ---
 

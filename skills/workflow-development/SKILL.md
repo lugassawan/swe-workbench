@@ -1,5 +1,5 @@
 ---
-name: development
+name: workflow-development
 description: Use when implementing features, fixing bugs, or executing plans — defines the full development lifecycle (Branch → Implement → Verify → Review → Deliver) and embeds workflow steps into plans
 ---
 

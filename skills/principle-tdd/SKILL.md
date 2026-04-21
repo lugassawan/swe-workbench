@@ -1,5 +1,5 @@
 ---
-name: tdd
+name: principle-tdd
 description: Test-Driven Development — red, green, refactor; writing tests first; making tests fast and isolated. Auto-load when implementing a feature, fixing a bug with tests, discussing test strategy, or reviewing test quality.
 ---
 

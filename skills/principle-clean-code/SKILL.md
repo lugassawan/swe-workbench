@@ -1,5 +1,5 @@
 ---
-name: clean-code
+name: principle-clean-code
 description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction level, error handling. Auto-load when writing functions, naming variables, reviewing code clarity, discussing comments, or debating whether to abstract.
 ---
 

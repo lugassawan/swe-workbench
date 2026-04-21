@@ -1,5 +1,5 @@
 ---
-name: go
+name: language-go
 description: Go idioms, error handling, concurrency, and standard library usage. Auto-load when working with .go files, go.mod, go.sum, or when the user mentions Go, Golang, goroutines, channels, interfaces, context, or error wrapping.
 ---
 

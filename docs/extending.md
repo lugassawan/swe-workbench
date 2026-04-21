@@ -4,8 +4,8 @@
 
 To add a new language skill (say, Python):
 
-1. Copy `skills/languages/go/` to `skills/languages/python/`.
-2. Rewrite `SKILL.md` frontmatter: `name: python`, and a keyword-rich `description` listing `.py` files, `pyproject.toml`, and common Python terms.
+1. Copy `skills/language-go/` to `skills/language-python/`.
+2. Rewrite `SKILL.md` frontmatter: `name: language-python`, and a keyword-rich `description` listing `.py` files, `pyproject.toml`, and common Python terms.
 3. Replace the body with the idioms that matter: error handling, typing, packaging, async, testing.
 4. Keep it under 150 lines.
 5. Commit; users who reinstall the plugin will pick it up.

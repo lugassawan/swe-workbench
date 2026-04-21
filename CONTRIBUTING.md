@@ -62,6 +62,8 @@ Then try:
 
 If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` — the description is the trigger surface.
 
+**Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
+
 ## `.githooks/` vs `hooks/hooks.json`
 
 These two directories share the same depth but serve different runtimes:
