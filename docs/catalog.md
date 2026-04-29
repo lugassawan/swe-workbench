@@ -8,6 +8,7 @@
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
+| `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
 
 ## Subagents
 
@@ -17,6 +18,7 @@
 | `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
+| `test-writer` | Authoring tests for an existing function, module, or change set. |
 
 ## Skills
 
