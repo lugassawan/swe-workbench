@@ -1,6 +1,6 @@
 {
   "name": "swe-workbench",
-  "description": "Senior-engineer toolkit for Claude Code — principled design, language expertise, and pragmatic workflows",
+  "description": "Senior-engineer toolkit for Claude Code — principled design, security review, language expertise, and pragmatic workflows",
   "owner": {
     "name": "Lugas Septiawan",
     "email": "lugassawan@gmail.com"
@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "swe-workbench",
-      "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns), language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
+      "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
       "version": "0.1.2",
       "source": "./",
       "author": {
