@@ -9,6 +9,7 @@
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
 | `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
+| `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `workflow-development` lifecycle. |
 
 ## Subagents
 
