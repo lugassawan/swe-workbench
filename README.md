@@ -37,7 +37,11 @@ Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide an
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR, run the plugin validator locally:
+
+```sh
+bash scripts/validate.sh
+```
 
 ## License
 

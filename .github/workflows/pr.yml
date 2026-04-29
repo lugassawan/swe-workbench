@@ -59,3 +59,10 @@ jobs:
             echo "See: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue"
             exit 1
           fi
+
+  validate-plugin-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate plugin files
+        run: bash scripts/validate.sh

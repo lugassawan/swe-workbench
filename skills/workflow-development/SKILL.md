@@ -1,6 +1,7 @@
 ---
 name: workflow-development
 description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Auto-load when writing an implementation plan, creating a plan, finalizing a plan before ExitPlanMode, starting a feature branch, opening a PR, shipping a change, asking about branch naming or commit format, handing off work, or beginning any structured development task.
+orchestrator: true
 ---
 
 # Development Workflow
