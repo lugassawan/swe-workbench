@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Pre-push hook: validate plugin files before pushing to remote.
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+bash "$REPO_ROOT/scripts/validate.sh"

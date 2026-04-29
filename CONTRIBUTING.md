@@ -103,5 +103,5 @@ These two directories share the same depth but serve different runtimes:
 
 | Path | Purpose |
 |---|---|
-| `.githooks/` | Git hooks (`commit-msg`, `pre-commit`) — invoked by git. |
+| `.githooks/` | Git hooks (`commit-msg`, `pre-commit`, `pre-push`) — invoked by git. |
 | `hooks/hooks.json` | Claude Code plugin runtime hooks — invoked by the Claude Code plugin system. |
