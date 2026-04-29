@@ -27,7 +27,7 @@ assignees: ''
 
 ## Plugin version
 
-<!-- From .claude-plugin/plugin.json — current release is 0.1.2 -->
+<!-- From .claude-plugin/plugin.json -->
 
 ## Reproduction steps
 
