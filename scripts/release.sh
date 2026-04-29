@@ -106,15 +106,10 @@ echo "PR created: ${PR_URL}"
 PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
 
 # ──────────────────────────────────────────────
-# Auto-merge
+# Wait for CI checks, then merge explicitly
 # ──────────────────────────────────────────────
 
-gh pr merge --auto --squash --delete-branch "$PR_URL"
-echo "Auto-merge enabled. Waiting for CI and merge..."
-
-# ──────────────────────────────────────────────
-# Wait for merge (max 20 min, heartbeat every 60s)
-# ──────────────────────────────────────────────
+echo "Waiting for CI checks on PR #${PR_NUM}..."
 
 TIMEOUT=1200
 ELAPSED=0
@@ -122,31 +117,41 @@ HEARTBEAT=60
 LAST_HEARTBEAT=0
 
 while true; do
-  STATE=$(gh pr view "$PR_NUM" --json state -q '.state')
-  if [[ "$STATE" == "MERGED" ]]; then
+  if [[ $ELAPSED -ge $TIMEOUT ]]; then
+    echo "Error: timed out waiting for CI on PR #${PR_NUM} after $((TIMEOUT / 60)) minutes." >&2
+    echo "Check status at: ${PR_URL}" >&2
+    echo "Once CI passes, manually merge and tag with:" >&2
+    echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+    echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+    exit 1
+  fi
+
+  # Count checks still running
+  PENDING=$(gh pr checks "$PR_NUM" --json state \
+    --jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length' 2>/dev/null || echo "0")
+
+  if [[ "$PENDING" -eq 0 ]]; then
+    # All checks finished — look for failures
+    FAILED=$(gh pr checks "$PR_NUM" --json conclusion \
+      --jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length' 2>/dev/null || echo "0")
+
+    if [[ "$FAILED" -gt 0 ]]; then
+      echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
+      echo "Fix the failures at: ${PR_URL}" >&2
+      echo "Once CI passes, manually merge and tag with:" >&2
+      echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+      echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+      exit 1
+    fi
+
+    echo "All CI checks passed. Merging PR #${PR_NUM}..."
+    gh pr merge --squash --delete-branch "$PR_NUM"
     echo "PR #${PR_NUM} merged."
     break
   fi
 
-  # Check for failed/closed state
-  if [[ "$STATE" == "CLOSED" ]]; then
-    echo "Error: PR #${PR_NUM} was closed without merging." >&2
-    echo "Check CI failures at: ${PR_URL}" >&2
-    echo "Once resolved, manually tag with:" >&2
-    echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
-    exit 1
-  fi
-
-  if [[ $ELAPSED -ge $TIMEOUT ]]; then
-    echo "Error: timed out waiting for PR #${PR_NUM} to merge after $((TIMEOUT / 60)) minutes." >&2
-    echo "Check status at: ${PR_URL}" >&2
-    echo "Once merged, manually tag with:" >&2
-    echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
-    exit 1
-  fi
-
   if [[ $((ELAPSED - LAST_HEARTBEAT)) -ge $HEARTBEAT ]]; then
-    echo "[$(date '+%H:%M:%S')] Still waiting... (${ELAPSED}s elapsed, state=${STATE})"
+    echo "[$(date '+%H:%M:%S')] CI still running... (${ELAPSED}s elapsed, ${PENDING} check(s) pending)"
     LAST_HEARTBEAT=$ELAPSED
   fi
 
@@ -172,6 +177,9 @@ fi
 
 git tag -a "$TAG" -m "Release ${TAG}"
 git push origin "$TAG"
+
+# Clean up local release branch (remote already deleted by --delete-branch)
+git branch -d "$BRANCH" 2>/dev/null || true
 
 echo ""
 echo "Done!"
