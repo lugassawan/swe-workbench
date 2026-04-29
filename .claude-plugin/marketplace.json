@@ -3,7 +3,7 @@
   "description": "Senior-engineer toolkit for Claude Code — principled design, security review, language expertise, and pragmatic workflows",
   "owner": {
     "name": "Lugas Septiawan",
-    "email": "lugassawan@gmail.com"
+    "email": "11341007+lugassawan@users.noreply.github.com"
   },
   "plugins": [
     {
@@ -13,7 +13,7 @@
       "source": "./",
       "author": {
         "name": "Lugas Septiawan",
-        "email": "lugassawan@gmail.com"
+        "email": "11341007+lugassawan@users.noreply.github.com"
       }
     }
   ]
