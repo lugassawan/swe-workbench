@@ -5,6 +5,7 @@
 | Command | Purpose |
 |---|---|
 | `/swe-workbench:review` | Review the current git diff — correctness, security, design, test gaps. |
+| `/swe-workbench:security-review` | Audit the current git diff for security vulnerabilities — OWASP Top 10, secrets, insecure APIs. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
@@ -16,6 +17,7 @@
 | Agent | When to invoke |
 |---|---|
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
+| `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
 | `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
