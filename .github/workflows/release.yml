@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON well-formedness
+        run: |
+          jq empty .claude-plugin/plugin.json
+          jq empty .claude-plugin/marketplace.json
+
+      - name: Verify tag matches manifest versions
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PLUGIN_VER=$(jq -r .version .claude-plugin/plugin.json)
+          MKT_VER=$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)
+          if [ "$TAG" != "$PLUGIN_VER" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (=$TAG) does not match plugin.json version ($PLUGIN_VER)"
+            exit 1
+          fi
+          if [ "$TAG" != "$MKT_VER" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (=$TAG) does not match marketplace.json version ($MKT_VER)"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

@@ -64,6 +64,16 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` â€
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` â€” exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
+## Cutting a release
+
+Run the release script from a clean `main`:
+
+```sh
+./scripts/release.sh patch   # or minor / major
+```
+
+It bumps both manifests, opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+
 ## `.githooks/` vs `hooks/hooks.json`
 
 These two directories share the same depth but serve different runtimes:
