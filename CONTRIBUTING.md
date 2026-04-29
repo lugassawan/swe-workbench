@@ -5,7 +5,7 @@
 After cloning, run the setup script once:
 
 ```sh
-./setup.sh
+./scripts/setup.sh
 ```
 
 This sets `core.hooksPath` to `.githooks/`, activating the two local git hooks described below.
