@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup & installation help
+    url: https://github.com/lugassawan/swe-workbench#install
+    about: Read the README's Install section for prerequisites and the one-line install command before opening an issue.
