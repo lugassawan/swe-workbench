@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Auto-load when writing an implementation plan, creating a plan, finalizing a plan before ExitPlanMode, starting a feature branch, opening a PR, shipping a change, asking about branch naming or commit format, handing off work, or beginning any structured development task.
+description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, and /swe-workbench:test when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
 orchestrator: true
 ---
 
@@ -131,6 +131,8 @@ Invoke `superpowers:finishing-a-development-branch`.
 
 ## Plan-Time Behavior (Mode A)
 
+**Gate:** Before rendering the Workflow section, confirm the plan introduces file edits (fix / make / implement). If the plan is a pure design recommendation or analysis with no codebase changes, return without modifying the plan.
+
 When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute detected commands before saving.
 
 ## Implementation-Time Behavior (Mode B)
@@ -158,7 +160,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | Run only tests (skip format/lint) | Run all three, in order |
 | Single giant commit | Group by logical change |
 | Guess at branch/commit conventions | Detect from `git branch -a` and `git log` first |
-| Plan without Workflow section | Always add the Workflow section (Mode A) |
+| Plan that introduces file edits without Workflow section | Always add the Workflow section (Mode A) — skip only for pure design / analysis output |
 | Jump straight to coding | Always start at Phase 1 |
 | Ignore PR template, use generic format | Check for PR template first; fill every section |
 
@@ -179,4 +181,4 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | "I'll just commit everything together" | Split into logical commits |
 | "Phase 2 sub-skill did everything" | Verify it provided evidence for Phases 3-4 |
 | "This is a small fix, no need for the full lifecycle" | Small fixes still need verify + review |
-| "The plan doesn't need a Workflow section" | It always does. Add one (Mode A). |
+| "The plan doesn't need a Workflow section" | If the plan introduces file edits, it does. Add one (Mode A). Skip only for pure design / analysis output. |
