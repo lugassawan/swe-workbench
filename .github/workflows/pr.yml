@@ -14,15 +14,16 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           # Keep in sync with .githooks/commit-msg
-          PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+'
+          PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\]:? .+'
           if ! echo "$PR_TITLE" | grep -qE "$PATTERN"; then
-            echo "::error::PR title must match format: [type] Description (e.g. [feat] Add new feature)"
+            echo "::error::PR title must match format: [type] Description or [type]: Description (e.g. [feat] Add new feature or [chore]: Bump dep)"
             echo ""
             echo "Allowed types: feat, fix, refactor, test, ci, docs, perf, chore, polish, breaking"
             exit 1
           fi
 
       - name: Validate PR description
+        # Intentionally runs for dependabot[bot] too — Dependabot bodies always contain release notes.
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -33,6 +34,8 @@ jobs:
           fi
 
       - name: Validate issue reference
+        # Dependabot cannot inject closing keywords; dependency bumps have no linked issue.
+        if: github.actor != 'dependabot[bot]'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
