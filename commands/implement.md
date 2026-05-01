@@ -26,7 +26,7 @@ Run `superpowers:verification-before-completion` before claiming any phase done.
 Invoke `superpowers:requesting-code-review`, which delegates to the `reviewer` subagent. Do not advance to Phase 5 until review passes clean or all raised issues are resolved.
 
 **Phase 5 — Deliver**
-Invoke `superpowers:finishing-a-development-branch` to open the PR.
+Use the PR template path recorded in Project Detection: pass it to `gh pr create --body-file <path>` and substitute the `Closes #` placeholder before invoking. Do not fall through to the heredoc in `templates/plan-workflow-section.md` unless no template was found. Then invoke `superpowers:finishing-a-development-branch` to complete the delivery.
 
 Absolute rules:
 - If the ticket lacks acceptance criteria, stop and ask the user — do not invent scope.

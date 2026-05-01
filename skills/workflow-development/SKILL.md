@@ -59,7 +59,7 @@ Also check CLAUDE.md for project-specific conventions.
 | `Cargo.toml` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff format` or `black .` | `ruff check` | `pytest` |
 
-**PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants). If it exists, **use it and fill every section**.
+**PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
 ## The 5 Phases
 
@@ -125,7 +125,7 @@ Act on feedback:
 
 Invoke `superpowers:finishing-a-development-branch`.
 
-**PR template rule:** if a template was detected in Project Detection, use it and fill every section. Skipping sections signals incomplete work to reviewers.
+**PR template rule:** if a template was detected in Project Detection, use `gh pr create --body-file <detected-path>` — fill every section and substitute the `Closes #` placeholder before invoking. Do **not** fall through to a heredoc body when a template exists. Only use the heredoc fallback if no template was found.
 
 ---
 
