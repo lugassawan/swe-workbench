@@ -1,4 +1,4 @@
-name: languages-java
+name: language-java
 description: Java best practices including JVM patterns, Spring usage, concurrency, and modern language features.
 triggers:
   - .java
