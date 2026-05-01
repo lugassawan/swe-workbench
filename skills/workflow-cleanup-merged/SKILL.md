@@ -1,6 +1,6 @@
 ---
 name: workflow-cleanup-merged
-description: Use after a PR has been merged on GitHub to remove the local worktree, delete the local branch, and delete the remote branch — safely, with squash-merge support.
+description: Use after a PR has been merged on GitHub to remove the local worktree, delete the local branch, delete the remote branch, and fast-forward local main — safely, with squash-merge support.
 ---
 
 # Workflow: Cleanup Merged Branch
@@ -99,7 +99,17 @@ git push origin --delete <headRefName>
 
 Treat HTTP 404 or "remote ref does not exist" as success — GitHub's `auto-delete-head-branches` repo setting commonly removes the remote branch immediately on merge. If the error is anything else, report it.
 
-### Step 8 — Report
+### Step 8 — Sync Local Main (Best-Effort)
+
+After all artifact deletions succeed, fast-forward local `main` to match `origin/main`:
+```
+git checkout main
+git pull --ff-only origin main
+```
+
+The explicit `git checkout main` is safe because Step 6 guarantees the feature branch is already deleted. **Best-effort:** if either command fails (dirty working tree, divergence, network error), capture the error and warn in Step 9's report — do not abort, as artifact deletions already succeeded. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+
+### Step 9 — Report
 
 Print a clear summary of which artifacts were removed and which were already gone:
 
@@ -108,6 +118,7 @@ Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
   ✓ Local branch deleted: <branch>  (or: already gone)
   ✓ Remote branch deleted: <branch> (or: already gone)
+  ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
 
 ## Failure Mode Table
@@ -121,6 +132,9 @@ Cleanup complete for PR #<number> (<headRefName>):
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report the error verbatim. |
 | No matching worktree found | `git worktree list --porcelain` has no entry | Skip Steps 4–5. Proceed to Step 6 (local branch deletion). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
+| `git checkout main` fails (dirty working tree) | Non-zero exit | Warn in Step 9 report. Do not abort — deletions already succeeded. |
+| `git pull --ff-only` fails (local main has diverged) | Non-fast-forward error | Warn in Step 9 report. Do not abort. Tell user to reconcile main manually. |
+| Network error during sync | Network-related stderr | Warn in Step 9 report. Do not abort. |
 | PR number not derivable from current branch | `gh pr view` fails on current branch | Ask the user for the PR number explicitly. |
 
 ## Common Mistakes
@@ -133,3 +147,4 @@ Cleanup complete for PR #<number> (<headRefName>):
 | Run cleanup from inside the worktree being deleted | Always `cd` to the main repo root first (Step 4, Check 3). |
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
+| Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit on divergence, violating the skill's "does not alter commit history" promise. |
