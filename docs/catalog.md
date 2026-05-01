@@ -11,6 +11,7 @@
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
 | `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
 | `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `workflow-development` lifecycle. |
+| `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
 
 ## Subagents
 
@@ -54,6 +55,7 @@
 | Skill | Triggers | Delegation model |
 |---|---|---|
 | `workflow-development` | "implement this", "build this", "fix this bug", "execute plan", "orchestrate these issues". | Wraps the 5-phase lifecycle (Branch → Implement → Verify → Review → Deliver) around `superpowers:{using-git-worktrees, executing-plans, subagent-driven-development, test-driven-development, verification-before-completion, requesting-code-review, finishing-a-development-branch}`. Phase 4 dispatches both `superpowers:code-reviewer` (plan alignment) and the local `reviewer` subagent (diff correctness/security/design). Mode A plan template and Mode C orchestration live in companion files. |
+| `workflow-cleanup-merged` | "clean up merged branch", "remove worktree", "delete branch after merge", after a PR is merged. | Verifies merge via `gh pr view` (squash-merge safe), runs safety checks (dirty/unpushed/cwd-inside), removes the worktree, deletes the local branch with `git branch -D`, and deletes the remote branch. Invoked by `/swe-workbench:cleanup-merged` and by Mode C orchestration Step 7. |
 
 This skill is an orchestrator — it coordinates other skills rather than restating their content.
 
