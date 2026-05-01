@@ -1,10 +1,12 @@
 ---
 name: language-python
-description: Python idioms, error handling, typing, async, and packaging. Auto-load when working with .py/.pyi, pyproject.toml, requirements.txt, setup.py, or mentions of Python, pytest, mypy, asyncio, dataclass, type hints, pydantic.
+description: Python idioms, error handling, typing, async, and packaging. Auto-load when working with .py files, .pyi files, pyproject.toml, requirements.txt, setup.py, or mentions of Python, pytest, mypy, asyncio, dataclass, type hints, pydantic.
 ---
+
 # Python
 
 ## Errors are values
+
 - Raise specific exceptions; never `except:`.
 - Chain errors: `raise NewError(...) from exc`.
 - Inspect via `isinstance`, not message strings.
@@ -20,17 +22,18 @@ except httpx.TimeoutException as exc:
 
 with suppress(FileNotFoundError):
     cache_path.unlink()
-```
+Typing (PEP 484/604)
+Prefer X | Y (3.10+); Optional[X] only for legacy.
 
-## Typing (PEP 484/604)
+TypedDict for structured dicts (no runtime cost).
 
-* Prefer `X | Y` (3.10+); `Optional[X]` only for legacy.
-* `TypedDict` for structured dicts (no runtime cost).
-* `Protocol` for duck typing (better than ABCs in libs).
-* `Final` for constants; `cast` sparingly.
+Protocol for duck typing (better than ABCs in libs).
 
-```python
-def load(src: str | Path) -> dict[str, int]: ...
+Final for constants; cast sparingly.
+
+python
+def load(src: str | Path) -> dict[str, int]:
+    pass  # stub
 
 class Config(TypedDict):
     host: str
@@ -40,43 +43,44 @@ class Closeable(Protocol):
     def close(self) -> None: ...
 
 MAX_RETRIES: Final = 3
-```
-## Dataclasses vs Pydantic vs TypedDict
+Dataclasses vs Pydantic vs TypedDict
+Need	Use
+Plain data	@dataclass
+Validation/API	pydantic.BaseModel
+Typed dict	TypedDict
+Immutable	@dataclass(frozen=True)
+Accept TypedDict/Protocol; return concrete types.
 
-| Need           | Use                       |
-| -------------- | ------------------------- |
-| Plain data     | `@dataclass`              |
-| Validation/API | `pydantic.BaseModel`      |
-| Typed dict     | `TypedDict`               |
-| Immutable      | `@dataclass(frozen=True)` |
+Use Pydantic for validation/coercion/JSON.
 
-* Accept `TypedDict`/`Protocol`; return concrete types.
-* Use Pydantic for validation/coercion/JSON.
+Async / Await
+No blocking I/O in coroutines → asyncio.to_thread.
 
-## Async / Await
+Keep task references; avoid orphan tasks.
 
-* No blocking I/O in coroutines → `asyncio.to_thread`.
-* Keep task references; avoid orphan tasks.
-* Prefer `TaskGroup` (3.11+).
-* `TaskGroup` cancels siblings on error; use `gather(..., return_exceptions=True)` if needed.
+Prefer TaskGroup (3.11+).
 
-```python
+TaskGroup cancels siblings on error; use gather(..., return_exceptions=True) when partial success matters.
+
+python
 async def main():
     async with asyncio.TaskGroup() as tg:
         a = tg.create_task(fetch_a())
         b = tg.create_task(fetch_b())
+    # Both tasks succeeded if we reach here
     print(a.result(), b.result())
 
 data = await asyncio.to_thread(blocking_db_query, arg)
-```
-## Packaging
+Packaging
+Use src/ layout.
 
-* Use `src/` layout.
-* `pyproject.toml` = single source of truth.
-* Editable install: `pip install -e ".[dev]"`.
-* Backends: hatchling, setuptools, flit, poetry-core.
+pyproject.toml = single source of truth.
 
-```toml
+Editable install: pip install -e ".[dev]".
+
+Backends: hatchling, setuptools, flit, poetry-core.
+
+toml
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -88,20 +92,19 @@ dependencies = ["httpx>=0.27"]
 
 [project.optional-dependencies]
 dev = ["pytest", "mypy", "ruff"]
-```
-## Tests
+Tests
+Prefer fixtures over setUp/tearDown.
 
-* Prefer fixtures over `setUp/tearDown`.
-* Use `@pytest.mark.parametrize`.
-* Use `monkeypatch`, `tmp_path` for isolation.
-* Register custom marks.
+Use @pytest.mark.parametrize.
 
-```toml
+Use monkeypatch, tmp_path for isolation.
+
+Register custom marks.
+
+toml
 [tool.pytest.ini_options]
 markers = ["integration: slow DB tests"]
-```
-
-```python
+python
 @pytest.fixture
 def client(tmp_path):
     return AppClient(tmp_path / "test.db")
@@ -115,26 +118,26 @@ def test_parse(raw, expected):
 
 @pytest.mark.integration
 def test_real_db(): ...
-```
-## Linting & Formatting
+Idioms
+if x is None (not falsy checks)
 
-* `ruff check` + `ruff format`
-* `mypy --strict`
-* Run both in CI.
+field(default_factory=list) (not mutable defaults)
 
-## Idioms
+Use @dataclass(slots=True) on Python 3.10+ instead of manual __slots__
 
-* `if x is None` (not falsy checks)
-* `field(default_factory=list)` (not mutable defaults)
-* `__slots__` for memory-heavy classes
-* `@cache` / `@lru_cache` for pure funcs
-* Prefer `match` over long `isinstance` chains
+@cache / @lru_cache for pure funcs
 
-## Avoid
+Prefer match over long isinstance chains
 
-* Mutable default args (`def f(x=[])`)
-* Bare `except` / swallowing `Exception`
-* Unexplained `type: ignore`
-* Redundant `@classmethod` factories
-* Threads for CPU-bound work (use `ProcessPoolExecutor`)
+Run ruff check + ruff format + mypy --strict in CI
 
+Avoid
+Mutable default args (def f(x=[]))
+
+Bare except / swallowing Exception
+
+Unexplained type: ignore
+
+Redundant @classmethod factories that merely duplicate __init__ with no new semantics
+
+Threads for CPU-bound work (use ProcessPoolExecutor)
