@@ -30,6 +30,7 @@
 | `principle-tdd` | "TDD", "test-driven", "red green refactor", "unit test", "test first". |
 | `principle-design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
 | `principle-clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
+| principle-security | Security design principles for auth, validation, secrets, and trust boundaries |
 
 ### Languages — auto-load by file type
 
