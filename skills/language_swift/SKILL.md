@@ -1,4 +1,4 @@
-name: languages-swift
+name: language-swift
 description: Swift best practices including async/await, actors, protocol-oriented design, and safe data handling.
 triggers:
   - .swift
