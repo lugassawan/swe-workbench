@@ -44,74 +44,61 @@ Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message 
 
 **Never use `git branch --merged` as a merge check.** GitHub's default squash-merge strategy creates a new commit SHA on `main`; the original branch tip is not a merge ancestor of `main`, so `git branch --merged` silently lies. `gh` is the only oracle that does not lie.
 
-### Step 3 — Locate Worktree
+### Batch A — Locate Worktree + Safety Checks
 
+Combine the worktree locate and both git safety checks into one shell. Emit exactly three fields:
+
+```bash
+WORKTREE=$(git worktree list --porcelain \
+  | awk '/^worktree /{p=$2} /^branch refs\/heads\/<headRefName>$/{print p; exit}')
+DIRTY=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" status --porcelain | wc -l | tr -d ' ' || echo 0)
+UNPUSHED=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" log @{upstream}..HEAD --oneline | wc -l | tr -d ' ' || echo 0)
+printf 'WORKTREE=%s\nDIRTY=%s\nUNPUSHED=%s\n' "$WORKTREE" "$DIRTY" "$UNPUSHED"
 ```
-git worktree list --porcelain
-```
 
-Match by `branch refs/heads/<headRefName>`. Per `superpowers:using-git-worktrees` convention, the worktree directory name equals the branch name. If no worktree matches, skip Steps 4 and 5 — the PR was developed in the main repo checkout, which is fine.
+- `WORKTREE`: matching worktree path, or empty if none (skip Batch B when empty).
+- `DIRTY`: count of uncommitted-change lines. Must be 0; if not, abort — re-run `git -C "$WORKTREE" status --porcelain` to show files.
+- `UNPUSHED`: count of unpushed commits. Must be 0; if not, abort — re-run `git -C "$WORKTREE" log @{upstream}..HEAD` to list them.
 
-### Step 4 — Safety Checks (Abort on Any Failure)
+### [Optional] cwd-fix
 
-Run these checks **inside the worktree directory** (if a worktree was found):
-
-**Check 1 — No uncommitted changes:**
-```
-git -C "<worktree-path>" status --porcelain
-```
-Must return empty output. If not, print the diff summary and abort — never delete a worktree with uncommitted work.
-
-**Check 2 — No unpushed commits:**
-```
-git -C "<worktree-path>" log @{upstream}..HEAD
-```
-Must return empty output. If not, list the unpushed commits and abort.
-
-**Check 3 — Not standing inside the worktree:**
-If `cwd` is a subdirectory of `<worktree-path>`, `cd` to the main repo root first:
+If `cwd` is a subdirectory of `$WORKTREE`, cd to the main repo root before removal:
 ```
 cd "$(git rev-parse --show-toplevel)"
 ```
-Never attempt to delete the directory you're standing in.
 
-### Step 5 — Remove Worktree
+### Batch B — Remove Worktree + Delete Local Branch
 
-```
-git worktree remove "<worktree-path>"
-```
+Only run if `WORKTREE` is non-empty. Both commands share abort-on-fail semantics; `&&` preserves that:
 
-No `--force`. If this fails (unexpected state), abort and report the error — do not proceed to branch deletion.
-
-### Step 6 — Delete Local Branch
-
-```
-git branch -D <headRefName>
+```bash
+git worktree remove "$WORKTREE" && git branch -D <headRefName>
 ```
 
-Capital `-D` is required. Because squash-merge creates a new commit on `main` with a different SHA, the local branch is never a merge ancestor of `main`. Lowercase `-d` would refuse to delete it. This is expected and correct behavior, not a footgun — the `gh` oracle already confirmed the PR is merged.
+No `--force`. If `git worktree remove` fails, the `&&` prevents `git branch -D` from running — abort and report the error verbatim.
 
-### Step 7 — Delete Remote Branch
+Capital `-D` is required: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
+
+### Step 9 — Delete Remote Branch
 
 ```
 git push origin --delete <headRefName>
 ```
 
-Treat HTTP 404 or "remote ref does not exist" as success — GitHub's `auto-delete-head-branches` repo setting commonly removes the remote branch immediately on merge. If the error is anything else, report it.
+Treat HTTP 404 or "remote ref does not exist" as success — GitHub's `auto-delete-head-branches` repo setting commonly removes the remote branch on merge. Any other error: report it.
 
-### Step 8 — Sync Local Main (Best-Effort)
+### Batch C — Sync Local Main (Best-Effort)
 
-After all artifact deletions succeed, fast-forward local `main` to match `origin/main`:
+Both commands share best-effort semantics; `||` prevents abort while `&&` ensures pull runs only after a clean checkout:
+
+```bash
+(git checkout main && git pull --ff-only origin main) \
+  || echo "sync-main: best-effort failed — reconcile main manually"
 ```
-git checkout main
-git pull --ff-only origin main
-```
 
-The explicit `git checkout main` is safe because Step 6 guarantees the feature branch is already deleted. **Best-effort:** if either command fails (dirty working tree, divergence, network error), capture the error and warn in Step 9's report — do not abort, as artifact deletions already succeeded. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
-### Step 9 — Report
-
-Print a clear summary of which artifacts were removed and which were already gone:
+### Step — Report
 
 ```
 Cleanup complete for PR #<number> (<headRefName>):
@@ -126,25 +113,23 @@ Cleanup complete for PR #<number> (<headRefName>):
 | Failure | Signal | Action |
 |---------|--------|--------|
 | PR not yet merged | `state != "MERGED"` or `mergedAt == null` | Abort. Print PR state and URL. Do not delete anything. |
-| Uncommitted changes in worktree | `git status --porcelain` non-empty | Abort. Print the dirty files. Tell user to stash or commit first. |
-| Unpushed commits in worktree | `git log @{upstream}..HEAD` non-empty | Abort. List the unpushed commits. Tell user to push or discard first. |
-| cwd is inside the worktree | Path comparison | `cd` to main repo root before removal, or abort with a clear message if `cd` is not possible. |
-| `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report the error verbatim. |
-| No matching worktree found | `git worktree list --porcelain` has no entry | Skip Steps 4–5. Proceed to Step 6 (local branch deletion). |
+| Uncommitted changes in worktree | `DIRTY > 0` | Abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first. |
+| Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
+| cwd is inside the worktree | Path comparison | `cd` to main repo root before Batch B, or abort if not possible. |
+| `git worktree remove` fails | Batch B `&&` short-circuits | Abort. Do not delete branches. Report verbatim. |
+| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed to Step 9 (local branch deletion). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
-| `git checkout main` fails (dirty working tree) | Non-zero exit | Warn in Step 9 report. Do not abort — deletions already succeeded. |
-| `git pull --ff-only` fails (local main has diverged) | Non-fast-forward error | Warn in Step 9 report. Do not abort. Tell user to reconcile main manually. |
-| Network error during sync | Network-related stderr | Warn in Step 9 report. Do not abort. |
-| PR number not derivable from current branch | `gh pr view` fails on current branch | Ask the user for the PR number explicitly. |
+| Batch C fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — deletions already succeeded. |
+| PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---------|-----|
-| Use `git branch --merged` to check if a PR is merged | Never. It lies after squash-merges (GitHub's default). Use `gh pr view --json state,mergedAt`. |
-| Use lowercase `git branch -d` | Always use `git branch -D` (capital D). Squash-merged branches are not merge ancestors of `main`. |
-| Force-delete a worktree with dirty state | Never. The safety checks in Step 4 exist to prevent data loss. |
-| Run cleanup from inside the worktree being deleted | Always `cd` to the main repo root first (Step 4, Check 3). |
+| Use `git branch --merged` to check if a PR is merged | Never. Squash-merges lie. Use `gh pr view --json state,mergedAt`. |
+| Use lowercase `git branch -d` | Always use `-D`. Squash-merged branches are not merge ancestors of `main`. |
+| Force-delete a worktree with dirty state | Never. Batch A aborts before Batch B runs. |
+| Run cleanup from inside the worktree being deleted | Always cd to the main repo root first (cwd-fix step). |
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
-| Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit on divergence, violating the skill's "does not alter commit history" promise. |
+| Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit. |
