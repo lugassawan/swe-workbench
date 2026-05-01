@@ -26,7 +26,7 @@
 
 ## Skills
 
-### Principles — auto-load when designing or writing code
+### Principles — consulted by reasoning agents (senior-engineer, reviewer, refactorer, test-writer, security-auditor) when relevant triggers apply
 
 | Skill | Triggers |
 |---|---|

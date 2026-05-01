@@ -163,6 +163,21 @@ def check_commands():
             fail(cmd_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
 
 
+def check_agent_skill_refs():
+    """Every `swe-workbench:<id>` in agents/*.md must resolve to skills/<id>/ on disk."""
+    agents_dir = ROOT / "agents"
+    skills_dir = ROOT / "skills"
+    pattern = re.compile(r'`swe-workbench:([\w-]+)`')
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        text = agent_md.read_text(encoding="utf-8")
+        for skill_id in set(pattern.findall(text)):
+            if not (skills_dir / skill_id).is_dir():
+                fail(
+                    agent_md.relative_to(ROOT),
+                    f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
+                )
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -177,6 +192,7 @@ def main():
     check_skills()
     check_agents()
     check_commands()
+    check_agent_skill_refs()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
