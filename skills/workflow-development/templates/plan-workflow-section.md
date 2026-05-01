@@ -72,7 +72,7 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 ## Test Plan
 - [ ] <verification steps>
 
-<!-- If your repo requires an issue reference, add it per CONTRIBUTING.md or PR template; if none, use a standalone "N/A — <reason>" line. -->
+<!-- If your repo requires an issue reference, add it per CONTRIBUTING.md or PR template; if none, use a standalone "Issue: N/A — <reason>" line. -->
 EOF
 )"
 ```
