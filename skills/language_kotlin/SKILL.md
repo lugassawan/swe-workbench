@@ -1,4 +1,4 @@
-name: languages-kotlin
+name: language-kotlin
 description: Kotlin best practices including coroutines, null safety, functional patterns, and idiomatic Kotlin usage.
 triggers:
   - .kt
