@@ -1,10 +1,10 @@
 {
   "name": "swe-workbench",
-  "version": "0.1.2",
-  "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns), language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
+  "version": "0.1.3",
+  "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
   "author": {
     "name": "Lugas Septiawan",
-    "email": "lugassawan@gmail.com",
+    "email": "11341007+lugassawan@users.noreply.github.com",
     "url": "https://github.com/lugassawan"
   },
   "homepage": "https://github.com/lugassawan/swe-workbench",

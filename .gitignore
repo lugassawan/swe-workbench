@@ -5,3 +5,5 @@ node_modules/
 .idea/
 .vscode/
 .worktrees/
+__pycache__/
+*.pyc

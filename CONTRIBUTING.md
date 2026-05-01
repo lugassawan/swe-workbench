@@ -1,5 +1,9 @@
 # Contributing
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
 ## Setup
 
 After cloning, run the setup script once:
@@ -45,6 +49,25 @@ Use the PR template (`.github/PULL_REQUEST_TEMPLATE.md`). It requires:
 
 `.github/workflows/pr.yml` runs the same commit-format and issue-reference checks on every PR. Skipping local setup does not skip CI — it just shifts the failure to after you push.
 
+## Validator
+
+Run the plugin self-validator locally before pushing:
+
+```sh
+bash scripts/validate.sh
+```
+
+It checks:
+
+- `.claude-plugin/plugin.json` — JSON well-formedness, required fields (`name`, `version`, `description`).
+- `.claude-plugin/marketplace.json` — JSON well-formedness, `plugins[0].name` and `plugins[0].version` match `plugin.json`.
+- `hooks/hooks.json` — JSON well-formedness and structural shape.
+- `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`).
+- `agents/*.md` — required frontmatter (`name`, `description`).
+- `commands/*.md` — required frontmatter (`description`).
+
+The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
+
 ## Testing locally
 
 ```sh
@@ -80,5 +103,5 @@ These two directories share the same depth but serve different runtimes:
 
 | Path | Purpose |
 |---|---|
-| `.githooks/` | Git hooks (`commit-msg`, `pre-commit`) — invoked by git. |
+| `.githooks/` | Git hooks (`commit-msg`, `pre-commit`, `pre-push`) — invoked by git. |
 | `hooks/hooks.json` | Claude Code plugin runtime hooks — invoked by the Claude Code plugin system. |

@@ -5,18 +5,23 @@
 | Command | Purpose |
 |---|---|
 | `/swe-workbench:review` | Review the current git diff — correctness, security, design, test gaps. |
+| `/swe-workbench:security-review` | Audit the current git diff for security vulnerabilities — OWASP Top 10, secrets, insecure APIs. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
+| `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
+| `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `workflow-development` lifecycle. |
 
 ## Subagents
 
 | Agent | When to invoke |
 |---|---|
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
+| `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
 | `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
+| `test-writer` | Authoring tests for an existing function, module, or change set. |
 
 ## Skills
 
@@ -30,6 +35,10 @@
 | `principle-tdd` | "TDD", "test-driven", "red green refactor", "unit test", "test first". |
 | `principle-design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
 | `principle-clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
+| `principle-observability` | "structured logs", "application metrics", "distributed traces", "span", "OpenTelemetry", "SLO", "SLI", "RED method", "USE method", "cardinality", "structured logging". |
+| `principle-api-design` | "api versioning", "idempotency", "idempotency key", "pagination", "cursor pagination", "error shape", "REST vs RPC", "event-driven", "API deprecation", "API contract". |
+| `principle-error-handling` | "errors as values", "Result type", "exception handling", "retry", "exponential backoff", "jitter", "circuit breaker", "fail fast", "fail soft", "idempotent retry", "error wrapping", "timeouts", "deadlines". |
+| `principle-concurrency` | "race condition", "deadlock", "livelock", "structured concurrency", "cancellation", "backpressure", "mutex vs channel", "actor model", "atomics", "memory model". |
 
 ### Languages — auto-load by file type
 
@@ -52,4 +61,4 @@ This skill is an orchestrator — it coordinates other skills rather than restat
 
 | Skill | Triggers | Delegation model |
 |---|---|---|
-| `ticket-context` | Jira keys (`[A-Z]+-\d+`), `atlassian.net/browse/...`, Confluence wiki URLs, `github.com/.../(issues\|pull)/N`, `#N` refs. | Invoked by command bodies as a prelude before subagent delegation. Fetches via `mcp__atlassian__*` and `gh` CLI. Returns structured context (title, summary, acceptance criteria, linked refs, recent comments). Does not act on the ticket — only resolves it. 
+| `ticket-context` | Jira keys (`[A-Z]+-\d+`), `atlassian.net/browse/...`, Confluence wiki URLs, `github.com/.../(issues\|pull)/N`, `#N` refs. | Invoked by command bodies as a prelude before subagent delegation. Fetches via `mcp__atlassian__*` and `gh` CLI. Returns structured context (title, summary, acceptance criteria, linked refs, recent comments). Does not act on the ticket — only resolves it. |
