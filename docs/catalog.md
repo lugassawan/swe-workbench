@@ -47,7 +47,7 @@
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-rust` | `.rs` files, `Cargo.toml`, keywords: Rust, cargo, ownership, borrow checker, trait, lifetime. |
 | `language-typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
-| `language-python` | `.py` files, `.pyi` files, `pyproject.toml`, `requirements.txt`, `setup.py` | Python idioms, typing, async, packaging, testing |
+| `language-python` | `.py` files, `.pyi` files, `pyproject.toml`, `requirements.txt`, `setup.py`, keywords: Python, pytest, mypy, asyncio, pydantic. |
 
 ### Workflows — auto-load during implementation
 
