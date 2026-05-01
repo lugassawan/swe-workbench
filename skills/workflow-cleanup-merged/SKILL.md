@@ -67,15 +67,21 @@ If `cwd` is a subdirectory of `$WORKTREE`, cd to the main repo root before remov
 cd "$(git rev-parse --show-toplevel)"
 ```
 
-### Batch B — Remove Worktree + Delete Local Branch
+### Batch B — Remove Worktree
 
-Only run if `WORKTREE` is non-empty. Both commands share abort-on-fail semantics; `&&` preserves that:
+Only run if `WORKTREE` is non-empty. If `git worktree remove` fails, abort and report the error verbatim — do not proceed to local branch deletion.
 
 ```bash
-git worktree remove "$WORKTREE" && git branch -D <headRefName>
+git worktree remove "$WORKTREE"
 ```
 
-No `--force`. If `git worktree remove` fails, the `&&` prevents `git branch -D` from running — abort and report the error verbatim.
+### Step 8 — Delete Local Branch (unconditional)
+
+Always runs, whether or not a worktree was found:
+
+```bash
+git branch -D <headRefName>
+```
 
 Capital `-D` is required: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
@@ -116,8 +122,8 @@ Cleanup complete for PR #<number> (<headRefName>):
 | Uncommitted changes in worktree | `DIRTY > 0` | Abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first. |
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
 | cwd is inside the worktree | Path comparison | `cd` to main repo root before Batch B, or abort if not possible. |
-| `git worktree remove` fails | Batch B `&&` short-circuits | Abort. Do not delete branches. Report verbatim. |
-| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed to Step 9 (local branch deletion). |
+| `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
+| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 8 (local branch delete). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Batch C fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — deletions already succeeded. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |

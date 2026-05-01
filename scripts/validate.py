@@ -143,13 +143,16 @@ def check_skills():
 def check_agents():
     agents_dir = ROOT / "agents"
     for agent_md in sorted(agents_dir.glob("*.md")):
-        fm = parse_frontmatter(agent_md)
+        text = agent_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(agent_md, text=text)
         if fm is None:
             fail(agent_md.relative_to(ROOT), "missing or malformed frontmatter")
             continue
         for field in ("name", "description"):
             if field not in fm:
                 fail(agent_md.relative_to(ROOT), f"frontmatter missing required field: {field!r}")
+        if re.search(r'`swe-workbench:[\w-]+`', text) and "Skill" not in fm.get("tools", ""):
+            fail(agent_md.relative_to(ROOT), "references swe-workbench: skills but 'Skill' is missing from tools: frontmatter")
 
 
 def check_commands():

@@ -59,7 +59,7 @@ git push -u origin <branch-name>
 gh pr create --title "<title>" --body-file <detected-template-path>
 ```
 
-Before invoking, replace the `Closes #` placeholder with the resolved issue ref (`Closes #123`) or a standalone `N/A — <reason>` line. Never leave `Closes #` empty.
+Before invoking, replace the `Closes #` placeholder with the resolved issue ref (`Closes #123`) or a standalone `Issue: N/A — <reason>` line. Never leave `Closes #` empty.
 
 If **no** template was found, use the heredoc fallback:
 

@@ -26,7 +26,7 @@
 
 ## Skills
 
-### Principles — consulted by reasoning agents (senior-engineer, reviewer, refactorer, test-writer, security-auditor) when relevant triggers apply
+### Principles — consulted by reasoning agents when relevant triggers apply
 
 | Skill | Triggers |
 |---|---|

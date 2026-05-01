@@ -20,7 +20,7 @@ Read at least one existing test file before writing — match the repo's style, 
 
 ## Principle consultation
 
-Invoke `swe-workbench:principle-tdd` via the Skill tool at the start of each session for the full red-green-refactor discipline and "What to test" checklist.
+Invoke `swe-workbench:principle-tdd` via the Skill tool before writing any test for the full red-green-refactor discipline and "What to test" checklist.
 
 ## What to test
 

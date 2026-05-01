@@ -59,7 +59,7 @@ Also check CLAUDE.md for project-specific conventions.
 | `Cargo.toml` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff format` or `black .` | `ruff check` | `pytest` |
 
-**PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `N/A — <one-line reason>` line. Never leave `Closes #` empty.
+**PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `Issue: N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
 ## The 5 Phases
 

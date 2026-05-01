@@ -39,9 +39,9 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          # Allow ad-hoc PRs that explicitly opt out with "N/A" on its own line.
-          # Accepts: "N/A", "N/A - reason", "N/A — reason" (bare N/A and with reason are both valid).
-          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
+          # Allow ad-hoc PRs that explicitly opt out with "N/A" or "Issue: N/A" on its own line.
+          # Accepts: "N/A", "Issue: N/A", "Issue: N/A — reason", "N/A — reason".
+          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
             exit 0
           fi
@@ -57,7 +57,7 @@ jobs:
             echo "  Fixes #123"
             echo "  Resolves #123"
             echo ""
-            echo "For ad-hoc changes without an issue, add a standalone 'N/A' line."
+            echo "For ad-hoc changes without an issue, add a standalone 'N/A' or 'Issue: N/A' line."
             echo ""
             echo "See: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue"
             exit 1
