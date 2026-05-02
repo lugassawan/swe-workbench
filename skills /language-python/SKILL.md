@@ -1,13 +1,19 @@
-
-name:language_python
+---
+name:language-python
 description: Python best practices, typing, async patterns, and packaging conventions
+---
+
 ## Example
 
 ```python
-def add(a, b):
-    return a + b
+from typing import TypedDict
 
-print(add(2, 3))
+class User(TypedDict):
+    name: str
+    age: int
+
+def get_user() -> User:
+    return {"name": "Satwik", "age": 20}
 
 
 
