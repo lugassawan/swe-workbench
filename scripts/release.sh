@@ -131,7 +131,7 @@ if [[ -n "$EXISTING_PR" && "$EXISTING_PR" != "null" ]]; then
   PR_URL=$(echo "$EXISTING_PR" | jq -r .url)
   echo "Reusing existing PR #${PR_NUM}: ${PR_URL}"
 else
-  gh pr create \
+  PR_URL=$(gh pr create \
     --base main \
     --head "$BRANCH" \
     --title "[chore] Bump version to ${NEXT}" \
@@ -146,9 +146,9 @@ else
 
 N/A
 PREOF
-)"
-  PR_NUM=$(gh pr view --head "$BRANCH" --json number -q .number)
-  PR_URL=$(gh pr view --head "$BRANCH" --json url -q .url)
+)" | tail -1)
+  PR_NUM="${PR_URL##*/}"
+  [[ "$PR_NUM" =~ ^[0-9]+$ ]] || { echo "Error: could not derive PR number from '${PR_URL}'" >&2; exit 1; }
   echo "PR created: ${PR_URL}"
 fi
 

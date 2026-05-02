@@ -52,7 +52,16 @@ Act on feedback:
 
 **PR template:** `<detected template path, or "none — use default format">`
 
-If a PR template exists, use it and fill in every section. Otherwise:
+If a PR template was detected (recorded in Project Detection), use it:
+
+```bash
+git push -u origin <branch-name>
+gh pr create --title "<title>" --body-file <detected-template-path>
+```
+
+Before invoking, replace the `Closes #` placeholder with the resolved issue ref (`Closes #123`) or a standalone `Issue: N/A — <reason>` line. Never leave `Closes #` empty.
+
+If **no** template was found, use the heredoc fallback:
 
 ```bash
 git push -u origin <branch-name>
@@ -62,6 +71,8 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 
 ## Test Plan
 - [ ] <verification steps>
+
+<!-- If your repo requires an issue reference, add it per CONTRIBUTING.md or PR template; if none, use a standalone "Issue: N/A — <reason>" line. -->
 EOF
 )"
 ```

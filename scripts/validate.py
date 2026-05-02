@@ -143,13 +143,16 @@ def check_skills():
 def check_agents():
     agents_dir = ROOT / "agents"
     for agent_md in sorted(agents_dir.glob("*.md")):
-        fm = parse_frontmatter(agent_md)
+        text = agent_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(agent_md, text=text)
         if fm is None:
             fail(agent_md.relative_to(ROOT), "missing or malformed frontmatter")
             continue
         for field in ("name", "description"):
             if field not in fm:
                 fail(agent_md.relative_to(ROOT), f"frontmatter missing required field: {field!r}")
+        if re.search(r'`swe-workbench:[\w-]+`', text) and "Skill" not in fm.get("tools", ""):
+            fail(agent_md.relative_to(ROOT), "references swe-workbench: skills but 'Skill' is missing from tools: frontmatter")
 
 
 def check_commands():
@@ -161,6 +164,21 @@ def check_commands():
             continue
         if "description" not in fm:
             fail(cmd_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
+
+
+def check_agent_skill_refs():
+    """Every `swe-workbench:<id>` in agents/*.md must resolve to skills/<id>/ on disk."""
+    agents_dir = ROOT / "agents"
+    skills_dir = ROOT / "skills"
+    pattern = re.compile(r'`swe-workbench:([\w-]+)`')
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        text = agent_md.read_text(encoding="utf-8")
+        for skill_id in set(pattern.findall(text)):
+            if not (skills_dir / skill_id).is_dir():
+                fail(
+                    agent_md.relative_to(ROOT),
+                    f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
+                )
 
 
 # ──────────────────────────────────────────────
@@ -177,6 +195,7 @@ def main():
     check_skills()
     check_agents()
     check_commands()
+    check_agent_skill_refs()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

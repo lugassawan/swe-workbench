@@ -13,12 +13,12 @@
 
      If no issue applies, DELETE the "Closes #" line and replace it with
      a standalone line:
-         N/A
+         Issue: N/A
      Preferred (more useful for reviewers):
-         N/A — <one-line reason, e.g. "trivial docs typo" or "urgent hotfix">
+         Issue: N/A — <one-line reason, e.g. "trivial docs typo" or "urgent hotfix">
 
      The following WILL fail CI:
        - leaving "Closes #" empty with no replacement
        - deleting the line entirely with nothing in its place
-       - writing "Closes N/A" or "Closes #N/A" (malformed — use a standalone "N/A" instead) -->
+       - writing "Closes N/A" or "Closes #N/A" (malformed — use a standalone "Issue: N/A" instead) -->
 Closes #

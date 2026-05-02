@@ -14,15 +14,16 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           # Keep in sync with .githooks/commit-msg
-          PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+'
+          PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\]:? .+'
           if ! echo "$PR_TITLE" | grep -qE "$PATTERN"; then
-            echo "::error::PR title must match format: [type] Description (e.g. [feat] Add new feature)"
+            echo "::error::PR title must match format: [type] Description or [type]: Description (e.g. [feat] Add new feature or [chore]: Bump dep)"
             echo ""
             echo "Allowed types: feat, fix, refactor, test, ci, docs, perf, chore, polish, breaking"
             exit 1
           fi
 
       - name: Validate PR description
+        # Intentionally runs for dependabot[bot] too — Dependabot bodies always contain release notes.
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -33,12 +34,14 @@ jobs:
           fi
 
       - name: Validate issue reference
+        # Dependabot cannot inject closing keywords; dependency bumps have no linked issue.
+        if: github.actor != 'dependabot[bot]'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          # Allow ad-hoc PRs that explicitly opt out with "N/A" on its own line.
-          # Accepts: "N/A", "N/A - reason", "N/A — reason" (bare N/A and with reason are both valid).
-          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
+          # Allow ad-hoc PRs that explicitly opt out with "N/A" or "Issue: N/A" on its own line.
+          # Accepts: "N/A", "Issue: N/A", "Issue: N/A — reason", "N/A — reason".
+          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
             exit 0
           fi
@@ -54,7 +57,7 @@ jobs:
             echo "  Fixes #123"
             echo "  Resolves #123"
             echo ""
-            echo "For ad-hoc changes without an issue, add a standalone 'N/A' line."
+            echo "For ad-hoc changes without an issue, add a standalone 'N/A' or 'Issue: N/A' line."
             echo ""
             echo "See: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue"
             exit 1
@@ -63,14 +66,14 @@ jobs:
   validate-plugin-files:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate plugin files
         run: bash scripts/validate.sh
 
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@2.0.0
         with:
