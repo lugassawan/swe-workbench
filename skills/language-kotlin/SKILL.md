@@ -1,12 +1,7 @@
+---
 name: language-kotlin
 description: Kotlin best practices including coroutines, null safety, functional patterns, and idiomatic Kotlin usage.
-triggers:
-  - .kt
-  - build.gradle.kts
-  - coroutines
-  - suspend
-  - Result
-  - sealed interfaces
+---
 
 ## Kotlin Best Practices
 Idiomatic Kotlin
@@ -23,7 +18,7 @@ Prefer safe calls ?.
 
 Use ?: (Elvis operator)
 
-Coroutines
+## Coroutines
 Use suspend functions
 
 Prefer structured concurrency
@@ -35,17 +30,17 @@ Use map, filter, fold
 
 Prefer immutable collections
 
-Error Handling
+## Error Handling
 Use Result for controlled failures
 
 Use exceptions sparingly
 
-Extensions
+## Extensions
 Use extension functions to improve readability
 
 Avoid overuse that hides logic
 
-Interoperability
+## Interoperability
 Be careful with Java interop nullability
 
 Use @JvmStatic, @JvmOverloads when needed
