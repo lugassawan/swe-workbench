@@ -5,7 +5,7 @@ argument-hint: <design question>
 
 The user is asking: $ARGUMENTS
 
-If $ARGUMENTS contains a ticket reference (Jira key like `PROJ-123`, an `atlassian.net` URL, a Confluence wiki URL, or a GitHub issue/PR URL or `#NNN`), invoke the `swe-workbench:ticket-context` skill first and prepend its structured summary so the subagent has the full design brief.
+If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary so the subagent has the full design brief. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 Delegate to the `senior-engineer` subagent. Its response must contain:
 
