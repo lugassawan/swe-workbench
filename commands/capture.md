@@ -7,7 +7,7 @@ The user wants to capture: $ARGUMENTS
 
 Delegate to the `product-manager` subagent. Its response must deliver all of the following before any issue is filed:
 
-1. **Repo detection.** Surface the target repo to the user in the preview as `Filing into: <owner>/<repo>`. If detection fails (not in a git repo, no remote, `gh` auth failure), bail with a clear single-line message and stop.
+1. **Auth + repo detection.** Run `gh auth status`, then `gh repo view --json nameWithOwner -q '.nameWithOwner'`. Surface the detected repo in the preview as `Filing into: <owner>/<repo>`. If either command fails, bail with a clear single-line message ("Repo detection failed: <reason>. Run `gh repo view` to diagnose.") and stop.
 
 2. **Restatement.** One sentence in the user's domain language confirming the thought. If the thought is ambiguous, ask exactly one clarifying question before continuing.
 
