@@ -1,5 +1,6 @@
 ---
 description: Audit the current git diff for security vulnerabilities — OWASP Top 10, secrets, insecure APIs, dependency CVEs
+argument-hint: "[ticket ref or leave blank to audit current diff]"
 ---
 
 Audit the pending changes on this branch for security vulnerabilities.

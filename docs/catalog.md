@@ -11,6 +11,7 @@
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
 | `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
 | `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `workflow-development` lifecycle. |
+| `/swe-workbench:capture <one-line thought>` | Capture an idea, bug, or improvement as a well-framed GitHub issue via the `product-manager` subagent. Auth + repo detection, product framing, duplicate scan, draft preview, and user-confirm gate before filing. |
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
 
 ## Subagents
@@ -23,6 +24,7 @@
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `test-writer` | Authoring tests for an existing function, module, or change set. |
+| `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
 
 ## Skills
 

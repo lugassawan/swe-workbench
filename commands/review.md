@@ -1,5 +1,6 @@
 ---
 description: Review the current git diff with senior-engineer depth — correctness, security, design, and test gaps
+argument-hint: "[ticket ref or leave blank to review current diff]"
 ---
 
 Review the pending changes on this branch.
