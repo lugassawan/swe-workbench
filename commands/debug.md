@@ -5,7 +5,7 @@ argument-hint: <symptom, failing test, or error, optionally with a ticket ref>
 
 Symptom: $ARGUMENTS
 
-If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. (Trigger patterns — Jira keys, Atlassian/Confluence URLs, GitHub issue/PR URLs — are defined in that skill's "When to invoke" section.)
+If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 Delegate to the `debugger` subagent. Its output must include:
 

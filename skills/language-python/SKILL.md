@@ -39,6 +39,16 @@ except FileNotFoundError:
 - `@contextlib.contextmanager` for ad-hoc managers without a full class.
 - Never hold a resource longer than the `with` block.
 
+```python
+@contextlib.contextmanager
+def managed_resource():
+    r = acquire()
+    try:
+        yield r
+    finally:
+        release(r)
+```
+
 ## Generators and iterators
 - Prefer generators over materializing full lists when you only iterate once.
 - `yield from` to delegate to sub-generators.
@@ -47,7 +57,7 @@ except FileNotFoundError:
 ```python
 def read_chunks(path: Path, size: int = 4096):
     with open(path, "rb") as f:
-        while chunk := f.read(size):
+        while chunk := f.read(size):  # walrus operator, 3.8+
             yield chunk
 ```
 
