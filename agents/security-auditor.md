@@ -98,6 +98,8 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
+> See @./shared/skills.md for the full skill catalog.
+
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 
 - `swe-workbench:principle-security` — trust boundaries, OWASP, input validation
