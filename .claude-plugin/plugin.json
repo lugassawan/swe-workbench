@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "swe-workbench",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
   "author": {
     "name": "Lugas Septiawan",
