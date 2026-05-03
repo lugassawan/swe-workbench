@@ -29,7 +29,7 @@ jobs:
           python3 -m pip install --quiet 'jsonschema==4.23.0'
           python3 - <<'PY'
           import json, sys
-          from jsonschema import Draft202012Validator
+          from jsonschema import Draft7Validator
           targets = [
               (".claude-plugin/plugin.json",      ".claude-plugin/schemas/plugin.schema.json"),
               (".claude-plugin/marketplace.json", ".claude-plugin/schemas/marketplace.schema.json"),
@@ -38,7 +38,7 @@ jobs:
           for doc_path, schema_path in targets:
               with open(doc_path) as f: doc = json.load(f)
               with open(schema_path) as f: schema = json.load(f)
-              errors = sorted(Draft202012Validator(schema).iter_errors(doc), key=lambda e: list(e.absolute_path))
+              errors = sorted(Draft7Validator(schema).iter_errors(doc), key=lambda e: list(e.absolute_path))
               if errors:
                   failed = True
                   print(f"::error file={doc_path}::{len(errors)} schema violation(s)")
