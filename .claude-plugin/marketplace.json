@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "swe-workbench",
   "description": "Senior-engineer toolkit for Claude Code — principled design, security review, language expertise, and pragmatic workflows",
   "owner": {
