@@ -19,6 +19,35 @@ jobs:
           jq empty .claude-plugin/plugin.json
           jq empty .claude-plugin/marketplace.json
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate manifests against vendored JSON schemas
+        run: |
+          python3 -m pip install --quiet 'jsonschema==4.23.0'
+          python3 - <<'PY'
+          import json, sys
+          from jsonschema import Draft202012Validator
+          targets = [
+              (".claude-plugin/plugin.json",      ".claude-plugin/schemas/plugin.schema.json"),
+              (".claude-plugin/marketplace.json", ".claude-plugin/schemas/marketplace.schema.json"),
+          ]
+          failed = False
+          for doc_path, schema_path in targets:
+              with open(doc_path) as f: doc = json.load(f)
+              with open(schema_path) as f: schema = json.load(f)
+              errors = sorted(Draft202012Validator(schema).iter_errors(doc), key=lambda e: list(e.absolute_path))
+              if errors:
+                  failed = True
+                  print(f"::error file={doc_path}::{len(errors)} schema violation(s)")
+                  for e in errors:
+                      loc = "/".join(str(p) for p in e.absolute_path) or "<root>"
+                      print(f"  {doc_path} @ {loc}: {e.message}")
+          sys.exit(1 if failed else 0)
+          PY
+
       - name: Verify tag matches manifest versions
         run: |
           TAG="${GITHUB_REF_NAME#v}"
