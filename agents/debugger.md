@@ -50,6 +50,10 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")
 
+## Available skills
+
+See @./shared/skills.md for the full skill catalog.
+
 ## Absolute rules
 - No fix without a failing test first.
 - No behavior change beyond what the failing test demands.

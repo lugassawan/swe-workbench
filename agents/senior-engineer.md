@@ -37,6 +37,8 @@ Be honest. If the existing code is fine, say so and stop.
 
 ## Principle consultation
 
+> See @./shared/skills.md for the full skill catalog.
+
 Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
 
 - `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency direction

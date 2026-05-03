@@ -8,7 +8,8 @@ To add a new language skill (say, Ruby or another language not already shipped):
 2. Rewrite `SKILL.md` frontmatter: `name: language-<your-language>`, and a keyword-rich `description` listing the language's file types and ecosystem terms.
 3. Replace the body with the idioms that matter: error handling, typing, packaging, async, testing.
 4. Keep it under 150 lines.
-5. Commit; users who reinstall the plugin will pick it up.
+5. Add an entry to `agents/shared/skills.md` (the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
+6. Commit; users who reinstall the plugin will pick it up.
 
 ## Philosophy
 

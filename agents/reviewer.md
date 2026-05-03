@@ -33,6 +33,8 @@ You are a senior code reviewer. Your job is to catch the issues a careful collea
 
 ## Principle consultation
 
+> See @./shared/skills.md for the full skill catalog.
+
 Invoke these skills via the Skill tool when the review surfaces a concern in their domain:
 
 - `swe-workbench:principle-clean-code` — naming, duplication, readability

@@ -181,6 +181,45 @@ def check_agent_skill_refs():
                 )
 
 
+def check_catalog_completeness():
+    """Catalog at agents/shared/skills.md must list every skill, and every agent must include it."""
+    catalog = ROOT / "agents" / "shared" / "skills.md"
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+
+    if not catalog.is_file():
+        fail(catalog.relative_to(ROOT), "missing — required catalog file")
+        return  # remaining checks require the file; can't continue without it
+
+    if not skills_dir.is_dir():
+        fail(skills_dir.relative_to(ROOT), "missing — required skills directory")
+        return
+
+    text = catalog.read_text(encoding="utf-8")
+    # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
+    entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
+    catalog_ids = {sid for sid, _ in entry_re.findall(text)}
+    on_disk = {p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file()}
+
+    for sid in sorted(on_disk - catalog_ids):
+        fail(catalog.relative_to(ROOT),
+             f"missing entry for 'swe-workbench:{sid}' (skills/{sid}/SKILL.md exists)")
+    for sid in sorted(catalog_ids - on_disk):
+        fail(catalog.relative_to(ROOT),
+             f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
+
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        try:
+            agent_text = agent_md.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
+            continue
+        if "@./shared/skills.md" not in agent_text:
+            fail(agent_md.relative_to(ROOT),
+                 "missing required '@./shared/skills.md' include"
+                 " — add: '> See @./shared/skills.md for the full skill catalog.'")
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -196,6 +235,7 @@ def main():
     check_agents()
     check_commands()
     check_agent_skill_refs()
+    check_catalog_completeness()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

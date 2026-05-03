@@ -28,6 +28,8 @@ You are a refactoring specialist. You improve structure without changing observa
 
 ## Principle consultation
 
+> See @./shared/skills.md for the full skill catalog.
+
 Invoke these skills via the Skill tool when the refactoring touches their domain:
 
 - `swe-workbench:principle-clean-code` — naming smells, DRY, function length

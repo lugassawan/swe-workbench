@@ -87,6 +87,8 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` �
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
+**Skill catalog**: `agents/shared/skills.md` is the single-source index of every skill in this plugin. When you add a new skill, add a corresponding entry there (format: `- \`swe-workbench:<name>\` — <one-line description>`). The validator's `check_catalog_completeness()` enforces that the catalog matches on-disk skills and that every agent file includes it via `@./shared/skills.md`. See `docs/extending.md` for the full recipe.
+
 ## Cutting a release
 
 Run the release script from a clean `main`:
