@@ -71,6 +71,18 @@ class TestCheckPluginJson:
         validate.check_plugin_json()
         assert any("missing required field: 'version'" in f for f in validate.FAILURES)
 
+    def test_missing_name_triggers_failure(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, plugin_json={"version": "1.0.0", "description": "y"})
+        validate.check_plugin_json()
+        assert any("missing required field: 'name'" in f for f in validate.FAILURES)
+
+    def test_missing_description_triggers_failure(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, plugin_json={"name": "x", "version": "1.0.0"})
+        validate.check_plugin_json()
+        assert any("missing required field: 'description'" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_marketplace_json
@@ -146,6 +158,19 @@ class TestCheckHooksJson:
         make_plugin_tree(root, hooks_json=bad)
         validate.check_hooks_json()
         assert any("command" in f for f in validate.FAILURES)
+
+    def test_non_string_matcher(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": 99, "hooks": [{"type": "command", "command": "exit 0"}]}
+                ]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("matcher" in f for f in validate.FAILURES)
 
 
 # ──────────────────────────────────────────────
