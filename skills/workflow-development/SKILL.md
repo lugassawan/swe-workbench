@@ -50,6 +50,13 @@ grep -E '^[a-zA-Z_-]+:' Makefile 2>/dev/null   # available make targets
 
 Also check CLAUDE.md for project-specific conventions.
 
+**Detection markers** used by `templates/plan-workflow-section.md` — substitute every `[[detect:KEY]]` before saving the plan:
+
+- `branch-convention` — from `git branch -a`
+- `commit-style` — from `git log --oneline -20`
+- `format-command`, `lint-command`, `test-command` — from Makefile targets or language-marker fallback below
+- `pr-template-path` — absolute path of the detected PR template, or `"none — use default format"`
+
 **Language marker fallback (if no Makefile):**
 
 | Marker | Format | Lint | Test |
@@ -142,7 +149,7 @@ Act on feedback:
 
 Invoke `superpowers:finishing-a-development-branch`.
 
-**PR template rule:** if a template was detected in Project Detection, use `gh pr create --body-file <detected-path>` — fill every section and substitute the `Closes #` placeholder before invoking. Do **not** fall through to a heredoc body when a template exists. Only use the heredoc fallback if no template was found.
+**PR template rule:** if a template was detected in Project Detection, use `gh pr create --body-file [[detect:pr-template-path]]` — fill every section and substitute the `Closes #` placeholder before invoking. Do **not** fall through to a heredoc body when a template exists. Only use the heredoc fallback if no template was found.
 
 ---
 
@@ -150,7 +157,7 @@ Invoke `superpowers:finishing-a-development-branch`.
 
 **Gate:** Before rendering the Workflow section, confirm the plan introduces file edits (fix / make / implement). If the plan is a pure design recommendation or analysis with no codebase changes, return without modifying the plan.
 
-When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute detected commands before saving.
+When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute every `[[detect:KEY]]` marker with concrete values from Project Detection. **Before saving, grep your rendered draft for `[[detect:` — if any match remains, you skipped Project Detection; redo it.**
 
 ## Implementation-Time Behavior (Mode B)
 
