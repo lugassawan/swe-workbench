@@ -521,3 +521,58 @@ class TestCheckTemplatePlaceholders:
         )
         validate.check_template_placeholders()
         assert validate.FAILURES == []
+
+
+# ──────────────────────────────────────────────
+# check_skill_trigger_fixtures
+# ──────────────────────────────────────────────
+
+def _skill_with_triggers(root, skill_name, triggers_content=None):
+    """Write skills/<skill_name>/SKILL.md and optionally triggers.txt."""
+    make_plugin_tree(root, skills={skill_name: f"---\nname: {skill_name}\ndescription: A skill\n---\n"})
+    if triggers_content is not None:
+        (root / "skills" / skill_name / "triggers.txt").write_text(
+            triggers_content, encoding="utf-8"
+        )
+
+
+class TestCheckSkillTriggerFixtures:
+    def test_two_fixtures_passes(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(root, "my-skill", "prompt one\nprompt two\n")
+        validate.check_skill_trigger_fixtures()
+        assert validate.FAILURES == []
+
+    def test_missing_triggers_file_fails(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(root, "my-skill")  # no triggers.txt
+        validate.check_skill_trigger_fixtures()
+        assert any("missing" in f for f in validate.FAILURES)
+
+    def test_one_fixture_fails(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(root, "my-skill", "only one prompt\n")
+        validate.check_skill_trigger_fixtures()
+        assert any("minimum is 2" in f for f in validate.FAILURES)
+
+    def test_comments_and_blanks_dont_count(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(
+            root, "my-skill",
+            "# this is a comment\n\n# another comment\n\nreal prompt\n",
+        )
+        validate.check_skill_trigger_fixtures()
+        assert any("minimum is 2" in f for f in validate.FAILURES)
+
+    def test_all_comments_and_blanks_fails(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(root, "my-skill", "# only comments\n\n# another\n")
+        validate.check_skill_trigger_fixtures()
+        assert any("minimum is 2" in f for f in validate.FAILURES)
+
+    def test_overlong_line_fails(self, reset_validate):
+        root = reset_validate
+        long_line = "x" * 201
+        _skill_with_triggers(root, "my-skill", f"short prompt\n{long_line}\n")
+        validate.check_skill_trigger_fixtures()
+        assert any("line exceeds 200 chars" in f for f in validate.FAILURES)

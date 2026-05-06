@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-go
+how should I handle errors in Go when wrapping context from a downstream call
+what is the idiomatic way to use goroutines and channels for concurrent processing in Go
+review this Go code for idiomatic error handling and interface design
+how do I use the context package to propagate cancellation through goroutines

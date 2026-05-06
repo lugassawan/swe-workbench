@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-java
+how do I use virtual threads in Java 21 for a high-concurrency service
+what is the idiomatic way to model a closed type hierarchy using Java sealed classes
+should I use records or a regular class for this data transfer object in Java
+how do I write idiomatic streams processing with the JDK 21 API

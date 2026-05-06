@@ -1,0 +1,13 @@
+# Sibling skill groups — prompts for skills in the same group may outrank each other
+# without triggering a harness failure. One comma-separated group per line.
+#
+# Rules:
+#   - Add an entry ONLY when a real BM25 overlap is observed and the overlap is
+#     intentional (i.e. the skills share genuine trigger surface).
+#   - Document the rationale in the same commit that adds the entry.
+#   - Never pre-populate as a shortcut to avoid fixing a drifted description.
+
+# Both skills discuss repository pattern, domain layers, and bounded contexts.
+# A question like "should the repository live in the domain or infrastructure layer?"
+# legitimately belongs to either skill.
+principle-clean-architecture, principle-ddd

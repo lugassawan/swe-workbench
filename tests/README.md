@@ -14,6 +14,7 @@ pytest tests/ -v
 |---|---|
 | `test_validate.py` | Every `check_*` function in `scripts/validate.py` (positive + negative) |
 | `test_hooks.py` | All 3 regex blockers in `hooks/hooks.json` (block + allow cases) |
+| `test_skill_triggers.py` | BM25 top-1 ranking harness across all 22 skills × their `triggers.txt` fixtures; deliberate-vague acceptance test |
 
 Tests are hermetic: `conftest.py` redirects `validate.ROOT` to a `tmp_path` so
 no test reads or writes outside of pytest's temporary directory.
@@ -61,5 +62,28 @@ To verify `check_template_placeholders` is tested:
 
    `TestCheckTemplatePlaceholders::test_orphan_marker_fails` will **fail** because
    the validator no longer records the expected failure.
+
+3. Revert the comment to restore the validator.
+
+To verify the missing-file path in `check_skill_trigger_fixtures` is tested:
+
+1. Open `scripts/validate.py` and comment out the `fail(...)` call inside
+   `check_skill_trigger_fixtures` for the missing-file case:
+
+   ```python
+   # fail(
+   #     triggers.relative_to(ROOT),
+   #     "missing — every skill needs ≥2 trigger fixtures ...",
+   # )
+   ```
+
+2. Run the targeted test:
+
+   ```bash
+   pytest tests/test_validate.py -k "missing_triggers" -v
+   ```
+
+   `TestCheckSkillTriggerFixtures::test_missing_triggers_file_fails` will **fail**
+   because the validator no longer records the expected failure.
 
 3. Revert the comment to restore the validator.

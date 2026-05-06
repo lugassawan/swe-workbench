@@ -1,0 +1,5 @@
+# Representative trigger prompts for principle-solid
+this class has too many responsibilities, how do I apply single responsibility principle to split it
+how do I refactor this code to depend on abstractions rather than concrete implementations using dependency inversion
+does this subclass violate the Liskov substitution principle because it throws where the parent doesn't
+how do I apply interface segregation to avoid fat interfaces that impose unused methods on implementors

@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-clean-architecture
+how do I structure my application to keep the domain model free from framework dependencies
+should the database repository live in the domain layer or the infrastructure layer
+how do I apply ports and adapters when my service needs to talk to multiple data stores
+what is the dependency rule in clean architecture and how does it affect my layer design
+how do I use hexagonal architecture to make the domain testable without a real database

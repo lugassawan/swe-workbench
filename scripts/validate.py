@@ -209,6 +209,37 @@ def check_template_placeholders():
                 )
 
 
+def check_skill_trigger_fixtures():
+    """Every skills/<name>/SKILL.md must have a sibling triggers.txt with ≥2
+    non-empty non-comment lines (each ≤200 chars)."""
+    skills_dir = ROOT / "skills"
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        triggers = skill_md.parent / "triggers.txt"
+        if not triggers.is_file():
+            fail(
+                triggers.relative_to(ROOT),
+                "missing — every skill needs ≥2 trigger fixtures (one per line). "
+                "See CONTRIBUTING.md.",
+            )
+            continue
+        lines = [
+            ln.strip()
+            for ln in triggers.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        if len(lines) < 2:
+            fail(
+                triggers.relative_to(ROOT),
+                f"has {len(lines)} trigger fixture(s); minimum is 2",
+            )
+        for ln in lines:
+            if len(ln) > 200:
+                fail(
+                    triggers.relative_to(ROOT),
+                    f"line exceeds 200 chars: {ln[:50]!r}…",
+                )
+
+
 def check_catalog_completeness():
     """Catalog at agents/shared/skills.md must list every skill, and every agent must include it."""
     catalog = ROOT / "agents" / "shared" / "skills.md"
@@ -260,6 +291,7 @@ def main():
     check_marketplace_json(plugin_data)
     check_hooks_json()
     check_skills()
+    check_skill_trigger_fixtures()
     check_agents()
     check_commands()
     check_agent_skill_refs()

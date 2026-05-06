@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-error-handling
+should I use typed error return values or exceptions for classifying transient versus permanent failures
+how do I implement exponential backoff with jitter for retry logic on transient errors
+when should I use a circuit breaker over retry with backoff to handle downstream service failures
+how do I wrap errors with context using an error chain so the original cause is preserved
+what is the log-once strategy to avoid duplicate error noise in a layered system with bulkheads

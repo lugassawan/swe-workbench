@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-swift
+how do I use Swift actors to prevent data races in shared mutable state
+what is the correct way to bridge Swift async/await with completion handler APIs
+when should I use value types versus reference types in Swift for this domain model
+how do I write a SwiftUI view that observes state changes with the new Observation framework

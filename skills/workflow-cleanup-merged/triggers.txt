@@ -1,0 +1,4 @@
+# Representative trigger prompts for workflow-cleanup-merged
+the PR was merged on GitHub, clean up the worktree and delete the local and remote branch
+I just merged my feature branch, remove it locally and from the remote and fast-forward main
+clean up after merging this pull request — delete branch and sync main
