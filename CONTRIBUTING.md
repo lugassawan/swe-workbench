@@ -65,6 +65,7 @@ It checks:
 - `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`).
 - `agents/*.md` — required frontmatter (`name`, `description`).
 - `commands/*.md` — required frontmatter (`description`).
+- `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 
