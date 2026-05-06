@@ -181,6 +181,30 @@ def check_agent_skill_refs():
                 )
 
 
+TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
+
+
+def check_template_placeholders():
+    """Every [[detect:KEY]] in skills/*/templates/*.md must be documented in the
+    adjacent SKILL.md's '## Project Detection' section as a backtick-wrapped key."""
+    skills_dir = ROOT / "skills"
+    for template in sorted(skills_dir.glob("*/templates/*.md")):
+        skill_md = template.parent.parent / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        skill_text = skill_md.read_text(encoding="utf-8")
+        pd_idx = skill_text.find("## Project Detection")
+        section = skill_text[pd_idx:] if pd_idx >= 0 else ""
+        keys = set(TEMPLATE_MARKER_RE.findall(template.read_text(encoding="utf-8")))
+        for key in sorted(keys):
+            if f"`{key}`" not in section:
+                fail(
+                    template.relative_to(ROOT),
+                    f"undocumented marker '[[detect:{key}]]' — add `{key}` to "
+                    f"'## Project Detection' in {skill_md.relative_to(ROOT)}",
+                )
+
+
 def check_catalog_completeness():
     """Catalog at agents/shared/skills.md must list every skill, and every agent must include it."""
     catalog = ROOT / "agents" / "shared" / "skills.md"
@@ -236,6 +260,7 @@ def main():
     check_commands()
     check_agent_skill_refs()
     check_catalog_completeness()
+    check_template_placeholders()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

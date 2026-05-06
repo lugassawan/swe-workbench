@@ -415,3 +415,89 @@ class TestCheckCatalogCompleteness:
         catalog_path.unlink()
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_template_placeholders
+# ──────────────────────────────────────────────
+
+def _make_template(root, skill_name, template_content, skill_extra=""):
+    """Write a SKILL.md + templates/plan-workflow-section.md under skills/<skill_name>/."""
+    skill_dir = root / "skills" / skill_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    templates_dir = skill_dir / "templates"
+    templates_dir.mkdir(exist_ok=True)
+    skill_text = (
+        f"---\nname: {skill_name}\ndescription: d\n---\n\n"
+        f"## Project Detection\n\n{skill_extra}"
+    )
+    (skill_dir / "SKILL.md").write_text(skill_text, encoding="utf-8")
+    (templates_dir / "plan-workflow-section.md").write_text(template_content, encoding="utf-8")
+
+
+class TestCheckTemplatePlaceholders:
+    def test_documented_marker_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        _make_template(
+            root, "my-skill",
+            template_content="Use `[[detect:format-command]]` here.",
+            skill_extra="**Detection markers:** `format-command`\n",
+        )
+        validate.check_template_placeholders()
+        assert validate.FAILURES == []
+
+    def test_orphan_marker_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        _make_template(
+            root, "my-skill",
+            template_content="Use `[[detect:lint-command]]` here.",
+            skill_extra="No mention of the key here.\n",
+        )
+        validate.check_template_placeholders()
+        assert any("undocumented marker '[[detect:lint-command]]'" in f for f in validate.FAILURES)
+
+    def test_no_markers_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        _make_template(
+            root, "my-skill",
+            template_content="No detect markers here at all.",
+        )
+        validate.check_template_placeholders()
+        assert validate.FAILURES == []
+
+    def test_multiple_orphans_aggregate(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        _make_template(
+            root, "my-skill",
+            template_content="`[[detect:foo]]` and `[[detect:bar]]`",
+            skill_extra="No documented keys.\n",
+        )
+        validate.check_template_placeholders()
+        assert len([f for f in validate.FAILURES if "undocumented marker" in f]) == 2
+
+    def test_marker_in_code_fence_still_counts(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        _make_template(
+            root, "my-skill",
+            template_content="```\n[[detect:test-command]]\n```",
+            skill_extra="No documented keys.\n",
+        )
+        validate.check_template_placeholders()
+        assert any("undocumented marker '[[detect:test-command]]'" in f for f in validate.FAILURES)
+
+    def test_template_without_skill_md_skipped(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        # Write a template without a sibling SKILL.md
+        orphan_dir = root / "skills" / "orphan-skill" / "templates"
+        orphan_dir.mkdir(parents=True, exist_ok=True)
+        (orphan_dir / "plan-workflow-section.md").write_text(
+            "`[[detect:foo]]`", encoding="utf-8"
+        )
+        validate.check_template_placeholders()
+        assert validate.FAILURES == []
