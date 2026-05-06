@@ -45,6 +45,18 @@ Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message 
 
 **Never use `git branch --merged` as a merge check.** GitHub's default squash-merge strategy creates a new commit SHA on `main`; the original branch tip is not a merge ancestor of `main`, so `git branch --merged` silently lies. `gh` is the only oracle that does not lie.
 
+### Step 3 — Sync Local Main (Best-Effort)
+
+Sync local main BEFORE destructive operations so the merge commit is visible on `main` and the next branch cut starts from a current tip. Best-effort: a sync failure does NOT abort cleanup.
+
+```bash
+MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+(git -C "$MAIN_REPO" checkout main && git -C "$MAIN_REPO" pull --ff-only origin main) \
+  || echo "sync-main: best-effort failed — reconcile main manually"
+```
+
+`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+
 ### Worktree Provider Detection
 
 ```sh
@@ -94,7 +106,7 @@ Only run if `WORKTREE` is non-empty. If `git worktree remove` fails, abort and r
 git worktree remove "$WORKTREE"
 ```
 
-### Step 8 — Delete Local Branch (unconditional)
+### Step 5 — Delete Local Branch (unconditional)
 
 Always runs, whether or not a worktree was found:
 
@@ -104,24 +116,13 @@ git branch -D <headRefName>
 
 Capital `-D` is required: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
-### Step 9 — Delete Remote Branch
+### Step 6 — Delete Remote Branch
 
 ```
 git push origin --delete <headRefName>
 ```
 
 Treat HTTP 404 or "remote ref does not exist" as success — GitHub's `auto-delete-head-branches` repo setting commonly removes the remote branch on merge. Any other error: report it.
-
-### Batch C — Sync Local Main (Best-Effort)
-
-Both commands share best-effort semantics; `||` prevents abort while `&&` ensures pull runs only after a clean checkout:
-
-```bash
-(git checkout main && git pull --ff-only origin main) \
-  || echo "sync-main: best-effort failed — reconcile main manually"
-```
-
-`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
 ### Step — Report
 
@@ -142,9 +143,9 @@ Cleanup complete for PR #<number> (<headRefName>):
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
 | cwd is inside the worktree | Path comparison | `cd` to main repo root before Batch B, or abort if not possible. |
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
-| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 8 (local branch delete). |
+| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (local branch delete). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
-| Batch C fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — deletions already succeeded. |
+| Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 
 ## Common Mistakes
