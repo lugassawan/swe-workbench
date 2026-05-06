@@ -19,8 +19,11 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 ## Languages
 
 - `swe-workbench:language-go` — Go idioms: error handling, goroutines, channels, interfaces, context, standard library.
+- `swe-workbench:language-java` — Java idioms: records, sealed types, virtual threads, streams, JDK 21+ patterns.
+- `swe-workbench:language-kotlin` — Kotlin idioms: null safety, coroutines, sealed interfaces, scope functions, Flow.
 - `swe-workbench:language-python` — Python idioms: PEP 8, type hints, dataclasses, asyncio, generators, pytest.
 - `swe-workbench:language-rust` — Rust idioms: ownership, borrowing, lifetimes, traits, iterators, error handling.
+- `swe-workbench:language-swift` — Swift idioms: optionals, value types, actors, async/await, protocols, Result builders.
 - `swe-workbench:language-typescript` — TypeScript/JavaScript idioms: strict mode, discriminated unions, async patterns, Node.
 
 ## Workflows

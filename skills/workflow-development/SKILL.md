@@ -74,6 +74,8 @@ Also check CLAUDE.md for project-specific conventions.
 ```sh
 # Prefer rimba MCP server when active in the session (no shell needed).
 # Otherwise resolve the binary: PATH first, then common install locations.
+# NOTE: use `rimba version` (subcommand) to print the version; `rimba --version`
+#       is not a recognised flag and exits non-zero.
 RIMBA=$(command -v rimba 2>/dev/null \
   || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
   || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
