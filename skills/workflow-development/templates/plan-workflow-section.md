@@ -9,7 +9,7 @@ Copy this `## Workflow` section into your plan and substitute `<detected ...>` p
 
 ### Phase 1: Branch
 - **Convention:** `<detected pattern, e.g., feature/description, fix/JIRA-123-description>`
-- **Create:** `git checkout -b <branch-name>` (or worktree via `superpowers:using-git-worktrees`)
+- **Create:** `rimba add <task>` (if rimba on PATH / `~/.local/bin/rimba` / `~/go/bin/rimba`) — else `superpowers:using-git-worktrees`
 
 ### Phase 2: Implement
 - Follow plan tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`

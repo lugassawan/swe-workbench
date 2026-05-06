@@ -57,7 +57,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ```
 
 **rimba path (preferred):** If the rimba MCP server is active or `$RIMBA` is non-empty, skip Batch A and Batch B:
-1. Run `$RIMBA remove <headRefName>` (or the `remove` tool on the `rimba mcp` server) — handles worktree location, dirty/unpushed checks, and removal internally.
+1. Run `$RIMBA remove <headRefName>` (or the `remove` tool on the `rimba mcp` server) — handles worktree location, dirty/unpushed checks, and removal internally. For bulk stale-worktree cleanup (e.g., after a Mode C orchestration run), use `$RIMBA clean` instead.
 2. On failure, report the rimba error verbatim and abort. Do not proceed to branch deletion.
 3. (Once per repo) recommend the user run `rimba hook install` to automate future post-merge cleanups via a git hook — this removes the need for manual `/swe-workbench:cleanup-merged` invocations.
 
