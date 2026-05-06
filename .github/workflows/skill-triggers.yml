@@ -9,6 +9,8 @@ jobs:
   smoke:
     name: BM25 trigger smoke
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v5

@@ -35,8 +35,9 @@ def _build_bm25_index(
     for tokens in corpus.values():
         for t in set(tokens):
             df[t] = df.get(t, 0) + 1
+    # Lucene BM25 variant — log argument is always ≥ 1, so IDF is always ≥ 0.
     idf = {
-        t: max(0.0, math.log((N - freq + 0.5) / (freq + 0.5) + 1))
+        t: math.log((N - freq + 0.5) / (freq + 0.5) + 1)
         for t, freq in df.items()
     }
     return {"idf": idf, "avg_dl": avg_dl, "k1": k1, "b": b}
@@ -108,6 +109,9 @@ def _collect_fixtures(skills_dir: Path) -> list[tuple[str, str]]:
 
 
 # ── Module-scope fixtures (load real skills once per session) ─────────────
+# These fixtures read from _SKILLS_DIR (an absolute Path constant in this module).
+# They are unaffected by the autouse reset_validate fixture in conftest.py,
+# which only patches validate.ROOT and is irrelevant to this test module.
 
 @pytest.fixture(scope="module")
 def real_corpus():
@@ -127,6 +131,10 @@ def sibling_sets():
 # ── Parametrized harness ───────────────────────────────────────────────────
 
 _FIXTURES = _collect_fixtures(_SKILLS_DIR)
+assert _FIXTURES, (
+    f"No trigger fixtures found under {_SKILLS_DIR} — "
+    "check that skills/*/triggers.txt files exist"
+)
 
 
 @pytest.mark.parametrize(
@@ -167,10 +175,14 @@ def test_prompt_ranks_target_skill_top1(
 # ── Deliberate-vague acceptance test (acceptance criterion #5) ───────────
 
 def test_deliberately_vague_description_is_flagged():
-    """A synthetic corpus with a vague description must lose to a specific one."""
+    """A synthetic corpus with a vague description must lose to a specific one.
+
+    Uses a fully self-contained synthetic corpus — no real skills/ files are read.
+    The skill name 'synthetic-specific-skill' is intentionally not a real skill.
+    """
     synthetic_corpus = {
-        "vague-skill": _tokenize("A skill that does general programming things"),
-        "principle-tdd": _tokenize(
+        "synthetic-vague-skill": _tokenize("A skill that does general programming things"),
+        "synthetic-specific-skill": _tokenize(
             "Test-Driven Development TDD red-green-refactor test-first spec-first "
             "Arrange-Act-Assert FIRST principles writing tests before code fast isolated"
         ),
@@ -181,7 +193,7 @@ def test_deliberately_vague_description_is_flagged():
         "red green refactor writing the test first"
     )
     ranked = _rank_skills(prompt, synthetic_corpus, index)
-    assert ranked[0][0] == "principle-tdd", (
-        f"vague-skill unexpectedly ranked #1 (score {ranked[0][1]:.2f}) — "
+    assert ranked[0][0] == "synthetic-specific-skill", (
+        f"synthetic-vague-skill unexpectedly ranked #1 (score {ranked[0][1]:.2f}) — "
         "BM25 IDF weighting may be broken."
     )

@@ -564,6 +564,12 @@ class TestCheckSkillTriggerFixtures:
         validate.check_skill_trigger_fixtures()
         assert any("minimum is 2" in f for f in validate.FAILURES)
 
+    def test_all_comments_and_blanks_fails(self, reset_validate):
+        root = reset_validate
+        _skill_with_triggers(root, "my-skill", "# only comments\n\n# another\n")
+        validate.check_skill_trigger_fixtures()
+        assert any("minimum is 2" in f for f in validate.FAILURES)
+
     def test_overlong_line_fails(self, reset_validate):
         root = reset_validate
         long_line = "x" * 201
