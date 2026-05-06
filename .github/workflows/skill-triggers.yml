@@ -1,0 +1,19 @@
+name: Skill Auto-Trigger Harness
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 07:00 UTC daily
+  workflow_dispatch: {}   # manual re-run after a fix
+
+jobs:
+  smoke:
+    name: BM25 trigger smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r tests/requirements.txt
+      - name: Run skill auto-trigger harness
+        run: pytest tests/test_skill_triggers.py -v

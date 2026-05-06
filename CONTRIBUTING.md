@@ -66,6 +66,7 @@ It checks:
 - `agents/*.md` — required frontmatter (`name`, `description`).
 - `commands/*.md` — required frontmatter (`description`).
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
+- `skills/*/triggers.txt` — every skill must have a sibling `triggers.txt` with ≥2 non-empty non-comment lines (each ≤200 chars).
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 
@@ -85,6 +86,8 @@ Then try:
 ```
 
 If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` — the description is the trigger surface.
+
+**Trigger fixtures**: every `skills/<name>/` directory must contain a `triggers.txt` with ≥2 representative prompts that a user would type to invoke the skill. These fixtures are used by the **Skill Auto-Trigger Harness** (`.github/workflows/skill-triggers.yml`), which runs nightly and scores each skill's description against its fixtures using BM25. A skill whose description fails to rank top-1 for its own prompts is flagged as drifted. When adding or editing a skill, keep `triggers.txt` in sync so the prompts still match the description's vocabulary. For documented intentional overlaps between sibling skills, add a group entry to `tests/skill_sibling_sets.txt`.
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
