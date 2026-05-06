@@ -1,6 +1,7 @@
 ---
 name: workflow-worktree-session
-description: Use when the user mentions "worktree" to start, switch, or end a worktree-bound session — routes to `EnterWorktree` / `ExitWorktree` so the running claude moves without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), pivoting current work into a new worktree, and exiting back. Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
+orchestrator: true
+description: Use when the user mentions "worktree" to start, switch, or end a worktree session — routes to `EnterWorktree` / `ExitWorktree` so the running claude moves into the worktree without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), pivoting current work into a new worktree, and exiting back. Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
 ---
 
 # Workflow: Worktree Session
@@ -19,10 +20,11 @@ Triggers: user named or pointed at a worktree that already exists
 1. Discover the path. Try `rimba list --json` first if `rimba` is on PATH (forward-compatible with rimba worktree-lifecycle integration). Otherwise use `git worktree list --porcelain`:
 
    ```bash
-   git worktree list --porcelain | awk '/^worktree /{path=$2} /^branch /{branch=$2; print path, branch}'
+   git worktree list --porcelain \
+     | awk '/^worktree /{path=substr($0,10); branch=""} /^branch /{branch=substr($0,8)} /^$/{print path, (branch ? branch : "(detached)")}'
    ```
 
-   Match the user's name against branch names or directory basenames.
+   Match the user's name against branch names or directory basenames. If no match is found, tell the user no worktree matched their description and stop — do not call `EnterWorktree` with an empty path.
 
 2. Call `EnterWorktree(path=<absolute-path>)`.
 
@@ -34,7 +36,7 @@ Triggers: "in a fresh worktree", "in a new worktree", "spin up a worktree for th
 
 Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent, `.gitignore` safety check, baseline tests, and calls `EnterWorktree(name=…)` itself (Step 1a of that skill). Do not duplicate its logic here.
 
-> **When rimba (#111) lands:** `rimba add <task>` prints a path. In that case, pass the printed path to `EnterWorktree(path=<rimba output>)` instead of deferring.
+> **When rimba (#111) lands:** use `rimba add <task>` to create the worktree, then still defer to `superpowers:using-git-worktrees` for consent and baseline checks before calling `EnterWorktree(path=<rimba output>)`. Do not bypass the superpowers lifecycle steps (consent, `.gitignore` check, baseline tests).
 
 ### Mode C — Exit the current worktree
 

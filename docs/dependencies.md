@@ -13,10 +13,10 @@ Install them via `/plugin marketplace add …` + `/plugin install …` before us
 
 The following tools are built into Claude Code itself — no plugin install required:
 
-| Tool | Used for | Minimum version |
+| Tool | Used for | Notes |
 |---|---|---|
-| `EnterWorktree(name=…)` | Create a new worktree and move the running session into it without restart. | Claude Code ≥ 1.0 (ships with `EnterWorktree` / `ExitWorktree` support) |
-| `EnterWorktree(path=…)` | Move the running session into an existing worktree (path must appear in `git worktree list`). Used by `workflow-worktree-session`. | same |
-| `ExitWorktree(action: "keep"\|"remove")` | Return the session to the main worktree; optionally delete the linked worktree dir. | same |
+| `EnterWorktree(name=…)` | Creates a new worktree (if the name doesn't already exist) and enters it — moves the session CWD without restart. Use `superpowers:using-git-worktrees` as the safe wrapper: it handles consent, `.gitignore` checks, and baseline tests before calling this. | Built into Claude Code; no install needed. Verify with `claude --version`. |
+| `EnterWorktree(path=…)` | Enters an existing worktree by absolute path (path must appear in `git worktree list`). Used directly by `workflow-worktree-session` for mid-session switches. | same |
+| `ExitWorktree(action: "keep"\|"remove")` | Returns the session to the main worktree. `"remove"` deletes the linked worktree dir; `"keep"` leaves it on disk. | same |
 
-These are the tools `workflow-worktree-session` routes to. Verify availability with `claude --version`.
+These are the tools `workflow-worktree-session` routes to. If a tool is not found, your Claude Code version may predate its introduction — run `claude --version` and update if needed.
