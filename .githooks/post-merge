@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# BEGIN RIMBA HOOK
+# Installed by rimba — do not edit this block manually
+if command -v rimba >/dev/null 2>&1; then
+  _rimba_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  if [ "$_rimba_branch" = "main" ]; then
+    rimba clean --merged --force 2>/dev/null || true
+  fi
+fi
+# END RIMBA HOOK

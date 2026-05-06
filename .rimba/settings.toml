@@ -1,0 +1,1 @@
+copy_files = ['.env', '.env.local', '.envrc', '.tool-versions']
