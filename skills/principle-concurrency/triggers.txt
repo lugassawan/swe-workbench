@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-concurrency
-how do I avoid a race condition when multiple goroutines update shared state
+how do I avoid a race condition when multiple goroutines update shared state with a mutex
 when should I use a mutex versus a channel for inter-goroutine communication
 how do I structure cancellation propagation through a tree of concurrent tasks with structured concurrency
-how do I prevent deadlock when two threads acquire locks in different orders
-what is the right backpressure strategy when a producer outpaces a consumer
+how do I prevent deadlock using lock ordering protocol when concurrent tasks acquire multiple mutexes
+how do I implement backpressure in a concurrent pipeline when producer throughput outpaces consumer capacity

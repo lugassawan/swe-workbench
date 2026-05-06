@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-security
-how should I handle API keys and secrets so they are never exposed in logs or responses
-what input validation should I add to this user-facing endpoint to prevent injection attacks
-how do I do a quick threat model for this new authentication feature
-what are the secure defaults I should apply when configuring this service
-how should I separate authentication from authorization in this access-control design
+how should I store secrets and credentials securely to prevent exposure through logs or side channels
+what input validation and sanitization do I need on this trust boundary to prevent injection attacks
+how do I build a lightweight threat model for a new authentication and authorization feature
+what secure defaults and defense in depth strategy should I apply to harden this service
+how should I separate authn and authz in this access control design with least privilege

@@ -1,5 +1,5 @@
 # Representative trigger prompts for workflow-worktree-session
-start a worktree for this feature branch so I can work in isolation
-I want to work on feat/new-feature in a worktree session
-switch my worktree to the fix/bug-123 branch mid-session using EnterWorktree
-end this worktree session and return to the main branch
+start a worktree session for this feature branch so I can work in isolation
+I want to work on feat/new-feature in a worktree using EnterWorktree
+switch my current worktree to the fix/bug-123 branch mid-session
+pivot my current work into a new worktree without restarting claude

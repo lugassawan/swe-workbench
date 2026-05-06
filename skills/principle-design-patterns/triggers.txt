@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-design-patterns
 should I use the strategy pattern or chain of responsibility for this validation logic
-how do I apply the decorator pattern to add logging to an existing service without modifying it
-what design pattern best fits a plugin system where behaviors are selected at runtime
-should I use factory method or abstract factory for creating these related objects
-how do I refactor toward the observer pattern when multiple components react to state changes
+how do I use the decorator design pattern to wrap a service class with cross-cutting concerns
+what design pattern best fits a plugin system where behaviors are selected at runtime via factory
+should I use factory method or abstract factory for creating these related collaborating objects
+how do I refactor toward the observer design pattern when multiple components react to state changes

@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-tdd
 how do I start implementing this feature using test-driven development red green refactor
-I want to write the test before the code, what should the first failing test assert
-how do I write a unit test following Arrange Act Assert structure
-what does F.I.R.S.T. mean for test design and how do I apply it to these tests
-how do I use TDD to drive the design of a new class instead of writing code first
+I want to write the failing test first before writing code, what should the test assert
+how do I write a unit test following the Arrange Act Assert structure for this function
+what are the fast isolated repeatable self-validating timely properties of well-written unit tests
+how do I use TDD red green refactor to drive the design of a new class before coding it

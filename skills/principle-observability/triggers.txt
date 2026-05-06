@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-observability
 should I model this as a structured log or a metric for my alerting dashboard
-how do I add distributed tracing to a microservice using OpenTelemetry
-what is the right way to define an SLO for a web API latency target using SLI measurements
-how do I control cardinality when adding labels to a Prometheus metric
-how do I use the RED method to instrument a new HTTP endpoint with the right metrics
+how do I instrument distributed tracing spans in a microservice using OpenTelemetry
+how do I compute an SLO error budget from SLI measurements using the RED method for a backend service
+how do I control label cardinality when instrumenting a Prometheus metric
+how do I use the RED method to instrument a new endpoint with the right rate error duration metrics
