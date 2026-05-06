@@ -490,6 +490,26 @@ class TestCheckTemplatePlaceholders:
         validate.check_template_placeholders()
         assert any("undocumented marker '[[detect:test-command]]'" in f for f in validate.FAILURES)
 
+    def test_key_in_later_section_fails(self, reset_validate):
+        """Key appearing only after ## Project Detection must not pass validation."""
+        root = reset_validate
+        make_plugin_tree(root)
+        skill_dir = root / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "templates").mkdir()
+        (skill_dir / "templates" / "plan-workflow-section.md").write_text(
+            "`[[detect:hidden-key]]`", encoding="utf-8"
+        )
+        # Key is documented AFTER Project Detection, not within it
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: d\n---\n\n"
+            "## Project Detection\n\nNothing here.\n\n"
+            "## The 5 Phases\n\n`hidden-key` documented only here.\n",
+            encoding="utf-8",
+        )
+        validate.check_template_placeholders()
+        assert any("undocumented marker '[[detect:hidden-key]]'" in f for f in validate.FAILURES)
+
     def test_template_without_skill_md_skipped(self, reset_validate):
         root = reset_validate
         make_plugin_tree(root)

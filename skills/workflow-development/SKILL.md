@@ -54,7 +54,9 @@ Also check CLAUDE.md for project-specific conventions.
 
 - `branch-convention` — from `git branch -a`
 - `commit-style` — from `git log --oneline -20`
-- `format-command`, `lint-command`, `test-command` — from Makefile targets or language-marker fallback below
+- `format-command` — from Makefile `format` target or language-marker fallback below
+- `lint-command` — from Makefile `lint` target or language-marker fallback below
+- `test-command` — from Makefile `test` target or language-marker fallback below
 - `pr-template-path` — absolute path of the detected PR template, or `"none — use default format"`
 
 **Language marker fallback (if no Makefile):**

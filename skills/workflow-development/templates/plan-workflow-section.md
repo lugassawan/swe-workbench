@@ -56,7 +56,7 @@ If a PR template was detected (recorded in Project Detection), use it:
 
 ```bash
 git push -u origin <branch-name>
-gh pr create --title "<title>" --body-file [[detect:pr-template-path]]
+gh pr create --title "<title>" --body-file "[[detect:pr-template-path]]"
 ```
 
 Before invoking, replace the `Closes #` placeholder with the resolved issue ref (`Closes #123`) or a standalone `Issue: N/A — <reason>` line. Never leave `Closes #` empty.

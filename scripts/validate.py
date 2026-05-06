@@ -194,7 +194,11 @@ def check_template_placeholders():
             continue
         skill_text = skill_md.read_text(encoding="utf-8")
         pd_idx = skill_text.find("## Project Detection")
-        section = skill_text[pd_idx:] if pd_idx >= 0 else ""
+        if pd_idx >= 0:
+            next_h2 = skill_text.find("\n## ", pd_idx + 4)
+            section = skill_text[pd_idx:next_h2] if next_h2 >= 0 else skill_text[pd_idx:]
+        else:
+            section = ""
         keys = set(TEMPLATE_MARKER_RE.findall(template.read_text(encoding="utf-8")))
         for key in sorted(keys):
             if f"`{key}`" not in section:
