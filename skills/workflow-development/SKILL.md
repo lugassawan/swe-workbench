@@ -25,7 +25,7 @@ Single source of truth for how development work flows. Three modes:
 ```
 Mode B — Single Implementation:
 
-  Phase 1 (Branch)    → superpowers:using-git-worktrees
+  Phase 1 (Branch)    → rimba add <task> (if rimba on PATH) OR superpowers:using-git-worktrees (fallback)
   Phase 2 (Implement) → superpowers:executing-plans OR superpowers:subagent-driven-development
                           └─ superpowers:test-driven-development (per unit)
   Phase 3 (Verify)    → superpowers:verification-before-completion
@@ -69,7 +69,22 @@ Also check CLAUDE.md for project-specific conventions.
 
 **Goal:** Isolated workspace with clean baseline.
 
-Invoke `superpowers:using-git-worktrees` for workspace setup. Verify baseline tests pass before writing any code.
+**Worktree provider detection:**
+
+```sh
+# Prefer rimba MCP server when active in the session (no shell needed).
+# Otherwise resolve the binary: PATH first, then common install locations.
+RIMBA=$(command -v rimba 2>/dev/null \
+  || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
+  || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
+  || true)
+```
+
+- **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
+- **`$RIMBA` non-empty (binary found):** run `$RIMBA add <task>` (or `$RIMBA add pr:<num>` for a PR). Rimba handles branch-prefix conventions (`feat/`, `fix/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
+- **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
+
+Verify baseline tests pass before writing any code.
 
 ---
 

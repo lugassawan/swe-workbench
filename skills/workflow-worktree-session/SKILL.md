@@ -17,7 +17,7 @@ Read the user's prompt and pick exactly one mode:
 Triggers: user named or pointed at a worktree that already exists
 ("open the `feat-login` worktree", "switch to `test-enter`", "move into `.worktrees/auth`", "cd into the worktree I made").
 
-1. Discover the path. Try `rimba list --json` first if `rimba` is on PATH (forward-compatible with rimba worktree-lifecycle integration). Otherwise use `git worktree list --porcelain`:
+1. Discover the path. Resolve rimba using the detection helper in `workflow-development` Phase 1 (`$RIMBA`). If non-empty, run `$RIMBA list --json` to list worktrees. Otherwise use `git worktree list --porcelain`:
 
    ```bash
    git worktree list --porcelain \
@@ -36,7 +36,7 @@ Triggers: "in a fresh worktree", "in a new worktree", "spin up a worktree for th
 
 Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent, `.gitignore` safety check, baseline tests, and calls `EnterWorktree(name=…)` itself (Step 1a of that skill). Do not duplicate its logic here.
 
-> **When rimba (#111) lands:** use `rimba add <task>` to create the worktree, then still defer to `superpowers:using-git-worktrees` for consent and baseline checks before calling `EnterWorktree(path=<rimba output>)`. Do not bypass the superpowers lifecycle steps (consent, `.gitignore` check, baseline tests).
+> **rimba integration:** if rimba is available (on PATH or at a common install location — see detection helper in `workflow-development` Phase 1), `workflow-development` Phase 1 detects it and uses `rimba add <task>` directly for branch creation. Mode B here still defers to `superpowers:using-git-worktrees` for consent, `.gitignore` checks, and baseline tests — rimba detection is owned by that caller's Phase 1. Do not bypass the superpowers lifecycle steps.
 
 ### Mode C — Exit the current worktree
 
