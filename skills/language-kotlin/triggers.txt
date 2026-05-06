@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-kotlin
+how should I handle nullable types in Kotlin without excessive null checks
+what is the idiomatic way to launch coroutines with structured concurrency in Kotlin
+when should I use let vs also vs run scope functions in Kotlin
+how do I model a sealed interface hierarchy for my domain types in Kotlin

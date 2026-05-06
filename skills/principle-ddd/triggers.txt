@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-ddd
+how should I decide the boundaries between my Order and Payment bounded contexts in DDD
+should this business rule live in the aggregate or a domain service
+how do I model a domain event for a state transition in my aggregate root
+what is an anti-corruption layer and when do I need one between bounded contexts
+how do I build a ubiquitous language glossary with the domain experts for this subdomain

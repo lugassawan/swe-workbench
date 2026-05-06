@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-typescript
+how do I model a discriminated union type in TypeScript for an API response
+what tsconfig settings should I enable for maximum type safety in a Node project
+how do I type async generator functions in TypeScript with strict mode enabled
+review this TypeScript code for type safety and discriminated union handling

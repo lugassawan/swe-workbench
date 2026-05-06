@@ -1,0 +1,5 @@
+# Representative trigger prompts for ticket-context
+fetch the context for PROJ-123 before I start implementing
+I need the details from GitHub issue #42 to understand the acceptance criteria
+pull the Jira ticket ENG-789 and summarize the requirements
+load context from this Confluence page before we design the solution

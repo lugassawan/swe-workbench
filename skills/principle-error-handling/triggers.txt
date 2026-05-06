@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-error-handling
+should this function return an error value or throw an exception for this failure case
+how do I implement exponential backoff with jitter for retry logic
+when should I use a circuit breaker versus just retrying the request on failure
+how do I add context to an error chain without losing the original error information
+what is the right log-once strategy to avoid duplicate error log noise in a layered system

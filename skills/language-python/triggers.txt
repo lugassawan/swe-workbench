@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-python
+should I use a dataclass or TypedDict for this configuration object in Python
+how do I write an async generator with proper cancellation handling using asyncio
+what are the type hint conventions for optional parameters in Python 3.11 with pyproject.toml
+how should I structure pytest fixtures for this service's unit tests

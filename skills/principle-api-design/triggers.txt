@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-api-design
+how should I design pagination for a list endpoint — cursor based versus offset based
+what is the right way to implement idempotency keys for a payment API endpoint
+should I use REST or gRPC for communication between these two microservices
+how do I design an API that remains backward compatible when adding required fields
+how should I version this public API and communicate a deprecation strategy to consumers

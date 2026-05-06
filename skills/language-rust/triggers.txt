@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-rust
+how do I resolve a borrow checker error when returning a reference from a function in Rust
+when should I use Box dyn Trait versus generics with trait bounds in Rust
+how do I model fallible operations with Result and the question mark operator in Rust
+what is the correct way to share state between async tasks without violating the borrow checker
