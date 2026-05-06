@@ -27,6 +27,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 
 - `swe-workbench:workflow-cleanup-merged` — Post-merge cleanup: remove worktree, delete local and remote branch, fast-forward main.
 - `swe-workbench:workflow-development` — Full development lifecycle: Branch → Implement → Verify → Review → Deliver.
+- `swe-workbench:workflow-worktree-session` — Start, switch, or end a worktree-bound session via `EnterWorktree` / `ExitWorktree`. No claude restart.
 
 ## Other
 

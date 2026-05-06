@@ -8,3 +8,15 @@
 | `claude-plugins-official` | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Official Anthropic plugin collection — install if you need any of its bundled tools. | Optional. |
 
 Install them via `/plugin marketplace add …` + `/plugin install …` before using the `workflow-development` skill.
+
+## Claude Code native tools
+
+The following tools are built into Claude Code itself — no plugin install required:
+
+| Tool | Used for | Minimum version |
+|---|---|---|
+| `EnterWorktree(name=…)` | Create a new worktree and move the running session into it without restart. | Claude Code ≥ 1.0 (ships with `EnterWorktree` / `ExitWorktree` support) |
+| `EnterWorktree(path=…)` | Move the running session into an existing worktree (path must appear in `git worktree list`). Used by `workflow-worktree-session`. | same |
+| `ExitWorktree(action: "keep"\|"remove")` | Return the session to the main worktree; optionally delete the linked worktree dir. | same |
+
+These are the tools `workflow-worktree-session` routes to. Verify availability with `claude --version`.
