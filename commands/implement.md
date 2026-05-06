@@ -10,7 +10,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 Activate the `swe-workbench:workflow-development` skill in **Mode B (Implementation-Time Behavior)**. Execute all five phases in order:
 
 **Phase 1 — Branch**
-Invoke `superpowers:using-git-worktrees` to isolate this work when the scope warrants it (non-trivial changes, risk of destabilizing main). For tiny single-file changes, skip with a written rationale.
+Isolate this work in a worktree when the scope warrants it (non-trivial changes, risk of destabilizing main). For tiny single-file changes, skip with a written rationale. `workflow-development` Phase 1 will detect the worktree provider automatically: `rimba add <task>` when rimba is available (PATH or common install locations), otherwise `superpowers:using-git-worktrees`.
 
 **Phase 2 — Implement**
 - **Architectural consult (conditional):** If the ticket implies a new service, a boundary or contract change, a technology choice, or any non-trivial design fork — invoke the `senior-engineer` subagent *before* plan-writing for a boundary/trade-off read. Fold its output into the plan.

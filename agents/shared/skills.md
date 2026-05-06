@@ -25,8 +25,8 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 
 ## Workflows
 
-- `swe-workbench:workflow-cleanup-merged` — Post-merge cleanup: remove worktree, delete local and remote branch, fast-forward main.
-- `swe-workbench:workflow-development` — Full development lifecycle: Branch → Implement → Verify → Review → Deliver.
+- `swe-workbench:workflow-cleanup-merged` — Post-merge cleanup: remove worktree (via `rimba remove` if available, else `git worktree` shell path), delete local and remote branch, fast-forward main.
+- `swe-workbench:workflow-development` — Full development lifecycle: Branch → Implement → Verify → Review → Deliver. Phase 1 uses `rimba add` when rimba is available; falls back to `superpowers:using-git-worktrees`.
 - `swe-workbench:workflow-worktree-session` — Start, switch, or end a worktree-bound session via `EnterWorktree` / `ExitWorktree`. No claude restart.
 
 ## Other
