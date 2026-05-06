@@ -1,6 +1,7 @@
 ---
 name: workflow-cleanup-merged
 description: Use after a PR has been merged on GitHub to remove the local worktree, delete the local branch, delete the remote branch, and fast-forward local main — safely, with squash-merge support.
+orchestrator: true
 ---
 
 # Workflow: Cleanup Merged Branch
