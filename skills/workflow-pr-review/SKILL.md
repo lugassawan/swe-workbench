@@ -172,8 +172,10 @@ Submit per the parsed decision:
 
 Cleanup non-blocking:
 ```bash
-( git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT" ) &
+( rimba remove "$(basename "$WT")" --force 2>/dev/null || git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT" ) &
 ```
+
+`rimba remove` also deletes the local branch; `git worktree remove` is the fallback when rimba is absent.
 
 ## Footer parsing contract
 
