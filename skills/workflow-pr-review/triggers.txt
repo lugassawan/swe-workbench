@@ -1,0 +1,5 @@
+# Representative trigger prompts for workflow-pr-review
+review pull request #123 on GitHub and post inline comments without re-raising what's already there
+fetch this PR, run the reviewer agent in an isolated worktree, and submit APPROVE or COMMENT
+review the open PR on this branch — dedup against existing threads and post only new findings
+do a peer review of PR 456 — post deduped suggestions and submit the review with the right decision
