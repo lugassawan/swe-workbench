@@ -12,7 +12,7 @@ After cloning, run the setup script once:
 ./scripts/setup.sh
 ```
 
-This sets `core.hooksPath` to `.githooks/`, activating the two local git hooks described below.
+This sets `core.hooksPath` to the absolute path of `.githooks/`, ensuring hooks fire from linked worktrees as well as the main checkout.
 
 ## Branch naming
 
