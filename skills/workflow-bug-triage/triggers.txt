@@ -1,0 +1,5 @@
+# Representative trigger prompts for workflow-bug-triage
+investigate this bug to find the root cause and file a GitHub issue with a code-path table
+something is broken — diagnose it carefully, do not patch, file an issue with the recommended fix
+file a structured bug report with root-cause analysis and impact assessment for this defect
+triage this bug — no quick fixes — produce a shareable issue with reproduction and a recommended fix
