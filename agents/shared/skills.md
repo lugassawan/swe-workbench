@@ -30,6 +30,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 
 - `swe-workbench:workflow-bug-triage` — Investigate-and-file-issue counterpart to /debug. Iron Law (no fix without root cause), 4-phase loop, files structured issue with code-path table and impact assessment.
 - `swe-workbench:workflow-cleanup-merged` — Post-merge cleanup: fast-forward main, then remove worktree (via `rimba remove` if available, else `git worktree` shell path), delete local + remote branch.
+- `swe-workbench:workflow-commit-and-pr` — Pre-merge half: enforces [type] commit format, branch-naming, [no ci] for docs, draft/ready prompt, PR template detection, and post-create /review CTA.
 - `swe-workbench:workflow-development` — Full development lifecycle: Branch → Implement → Verify → Review → Deliver. Phase 1 uses `rimba add` when rimba is available; falls back to `superpowers:using-git-worktrees`.
 - `swe-workbench:workflow-worktree-session` — Start, switch, or end a worktree-bound session via `EnterWorktree` / `ExitWorktree`. No claude restart.
 

@@ -1,0 +1,5 @@
+# Representative trigger prompts for workflow-commit-and-pr
+commit these staged changes with the right [type] prefix and push to a draft PR
+I finished the feature, draft the commit and pull request for me but don't push yet
+ship this branch — commit, push, and open the GitHub PR using our PR template
+draft a commit message in [type] Subject style and create a pull request
