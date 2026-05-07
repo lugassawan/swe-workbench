@@ -46,7 +46,17 @@ Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO` from the JSON for downstream steps.
 
 ### Step 2 — Ephemeral worktree
 
-Direct `git worktree add` (NOT `superpowers:using-git-worktrees`, which is consent-gated for durable feature work — review worktrees are ephemeral and self-cleaning, mirroring `workflow-cleanup-merged`'s orchestrator-owned-shell precedent):
+**When rimba is available** (preferred — handles cross-fork remotes automatically and skips dep installation):
+
+```bash
+RIMBA_OUT=$(rimba add pr:$PR --skip-deps --skip-hooks 2>&1)
+WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
+[ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
+```
+
+rimba derives the task name as `review/<PR>-<slug>` and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
+
+**When rimba is absent** (fallback — direct git, NOT `superpowers:using-git-worktrees` which is consent-gated for durable feature work):
 
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}"
@@ -68,7 +78,7 @@ Pass the agent:
 - Working-directory hint: absolute path of the worktree (`$WT`).
 - Diff: `git -C "$WT" diff "$BASE"..HEAD`.
 - Repo-relative-path instruction (load-bearing — strip the `$WT/` prefix before the colon):
-  > "Emit **repo-relative** paths in every finding (e.g. `src/foo.ts:42`, NOT `/tmp/swe-workbench-pr-review/123/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments."
+  > "Emit **repo-relative** paths in every finding (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments."
 - Footer instruction (load-bearing — opt-in per the agent's `## Decision footer (when instructed)` block):
   > "End the review with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**` on its own line, no prefix or trailing text. Never `REQUEST_CHANGES`."
 - Ticket-context prelude (if Step 3 produced one).
@@ -202,7 +212,7 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 
 | Mistake | Fix |
 |---|---|
-| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Direct `git worktree add` is correct here (ephemeral, self-cleaning). |
+| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
 | Use `--request-changes` | Never. APPROVE / COMMENT only. The agent footer never produces this value. |
