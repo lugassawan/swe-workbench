@@ -82,8 +82,8 @@ Combine the worktree locate and both git safety checks into one shell. Emit exac
 ```bash
 WORKTREE=$(git worktree list --porcelain \
   | awk '/^worktree /{p=$2} /^branch refs\/heads\/<headRefName>$/{print p; exit}')
-DIRTY=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" status --porcelain | wc -l | tr -d ' ' || echo 0)
-UNPUSHED=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" log @{upstream}..HEAD --oneline | wc -l | tr -d ' ' || echo 0)
+DIRTY=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" status --porcelain | grep -c . || echo 0)
+UNPUSHED=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" log @{upstream}..HEAD --oneline 2>/dev/null | grep -c . || echo 0)
 printf 'WORKTREE=%s\nDIRTY=%s\nUNPUSHED=%s\n' "$WORKTREE" "$DIRTY" "$UNPUSHED"
 ```
 
