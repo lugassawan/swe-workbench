@@ -27,12 +27,11 @@ Mode B — Single Implementation:
 
   Phase 1 (Branch)    → rimba add <task> (if rimba on PATH) OR superpowers:using-git-worktrees (fallback)
   Phase 2 (Implement) → superpowers:executing-plans OR superpowers:subagent-driven-development
-                          └─ superpowers:test-driven-development (per unit)
+                          └─ swe-workbench:principle-tdd (per unit)
   Phase 3 (Verify)    → superpowers:verification-before-completion
-  Phase 4 (Review)    → superpowers:requesting-code-review
-                          └─ superpowers:code-reviewer (plan-alignment)
+  Phase 4 (Review)    → superpowers:code-reviewer (plan-alignment)
                           └─ swe-workbench:reviewer (diff correctness/security/design)
-  Phase 5 (Deliver)   → superpowers:finishing-a-development-branch
+  Phase 5 (Deliver)   → swe-workbench:workflow-commit-and-pr
 
 Mode C — Orchestration: see orchestration.md
 ```
@@ -106,7 +105,7 @@ Verify baseline tests pass before writing any code.
 Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
-- **No plan / ad-hoc** → implement directly with `superpowers:test-driven-development` per unit
+- **No plan / ad-hoc** → implement directly with `swe-workbench:principle-tdd` per unit
 
 Commit logically grouped changes as you go. Never bundle unrelated changes.
 
@@ -149,7 +148,7 @@ Act on feedback:
 
 **Goal:** Push branch and create PR.
 
-Invoke `superpowers:finishing-a-development-branch`.
+Invoke `swe-workbench:workflow-commit-and-pr`.
 
 **PR template rule:** if a template was detected in Project Detection, use `gh pr create --body-file [[detect:pr-template-path]]` — fill every section and substitute the `Closes #` placeholder before invoking. Do **not** fall through to a heredoc body when a template exists. Only use the heredoc fallback if no template was found.
 

@@ -20,7 +20,7 @@ orchestrator: true
 - The PR is already merged → use `swe-workbench:workflow-cleanup-merged` for post-merge cleanup.
 - The user wants to amend or rebase an existing commit → out of scope; do not amend or force-push.
 - The user is staging files only (`git add`) with no commit intent → no skill needed.
-- `workflow-development` Phase 5 is currently driving the flow → that path uses `superpowers:finishing-a-development-branch` directly (do not interpose).
+- `workflow-development` Phase 5 is currently driving the flow → that path invokes `swe-workbench:workflow-commit-and-pr` directly (do not interpose).
 
 ## Trigger-phrase discipline
 
@@ -110,7 +110,7 @@ for cand in .github/PULL_REQUEST_TEMPLATE.md .github/pull_request_template.md do
 done
 ```
 
-If no template is found, use the heredoc fallback in `superpowers:finishing-a-development-branch` style.
+If no template is found, use a heredoc fallback.
 
 ## Draft vs ready prompt
 

@@ -13,7 +13,7 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 2: Implement
 - Follow plan tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`
-- Apply `superpowers:test-driven-development` per unit of work
+- Apply `swe-workbench:principle-tdd` per unit of work
 
 ### Phase 3: Verify
 
@@ -43,8 +43,6 @@ Dispatch both reviewers:
 Act on feedback:
 - **Critical/Important:** fix → re-verify → re-review
 - **Minor:** note or fix inline
-
-> **Sub-skill:** `superpowers:requesting-code-review`
 
 ### Phase 5: Deliver
 
@@ -77,5 +75,5 @@ EOF
 )"
 ```
 
-> **Sub-skill:** `superpowers:finishing-a-development-branch`
+> **Sub-skill:** `swe-workbench:workflow-commit-and-pr`
 ````
