@@ -9,7 +9,7 @@ Review code with senior-engineer depth. Two modes:
 
 ## Step 1 — Argument resolution + mode select
 
-1. If `$ARGUMENTS` is a positive integer (`[0-9]+`) → **PR mode** with that number.
+1. If `$ARGUMENTS` matches a positive non-zero integer (`[1-9][0-9]*`, stripping a leading `#` if present) → **PR mode** with that number.
 2. Else, run `gh pr view --json number,headRefName 2>/dev/null`. If it succeeds (current branch has an open PR), print:
    > "Detected PR #N on this branch — review it? Reply `yes` to enter PR mode, or `local` to review the local diff instead."
 

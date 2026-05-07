@@ -80,17 +80,19 @@ When ALL staged paths match doc-only patterns, append ` [no ci]` to the commit s
 Doc-only patterns:
   - *.md AND NOT under commands/, skills/, agents/      (e.g. README.md, root-level *.md)
   - docs/**
-  - .github/*.md
+  - .github/*.md  (direct children of .github/ only — not subdirs like ISSUE_TEMPLATE/)
 ```
 
 **Exclusion is load-bearing.** Markdown under `commands/`, `skills/`, `agents/` is plugin behaviour — changing those files changes the plugin's runtime, even though the file extension is `.md`. Never apply `[no ci]` to those.
 
 How to test the staged set:
 ```bash
-git diff --staged --name-only | grep -E -v '^(commands|skills|agents)/' | grep -E '\.md$|^docs/|^\.github/.*\.md$'
+TOTAL=$(git diff --staged --name-only | wc -l)
+MATCHED=$(git diff --staged --name-only | grep -Ev '^(commands|skills|agents)/' | grep -E '\.md$|^docs/|^\.github/[^/]*\.md$' | wc -l)
+[ "$MATCHED" -eq "$TOTAL" ] && echo "[no ci] applies" || echo "[no ci] does NOT apply"
 ```
 
-If every staged path matches, append ` [no ci]`. Otherwise, do not.
+If every staged path matches (`MATCHED == TOTAL`), append ` [no ci]`. Otherwise, do not.
 
 **Warning:** PR-level `[no ci]` is NOT honoured by this repo's CI (`.github/workflows/pr.yml` has no `[no ci]` guard). The marker is per-commit only. If all commits in a docs-only PR have `[no ci]`, the CI still runs on the PR — note this to the user.
 

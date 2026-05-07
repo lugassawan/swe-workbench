@@ -19,7 +19,7 @@ orchestrator: true
 
 - The user wants a fix **now** → use `/swe-workbench:debug` (counterpart skill that ends in code change + regression test).
 - The root cause is already known and only the fix is needed → use `/swe-workbench:debug`.
-- The user is capturing a feature request, idea, or improvement (not a bug) → use `/swe-workbench:capture`.
+- The user is capturing a feature request, idea, or improvement (not a bug) → use the `/capture` command directly.
 - The user is reviewing already-merged code for retroactive issues → use `/swe-workbench:review` first.
 
 ## Iron Law

@@ -61,7 +61,7 @@ When the invoker (e.g. `/review` PR mode) explicitly asks for a Review Decision 
 - `**Review Decision: APPROVE**` — no Critical or High findings; Medium/Low are optional polish.
 - `**Review Decision: COMMENT**` — at least one Critical/High finding, OR you want the author to see findings before merging without blocking the PR.
 
-**Never** emit `**Review Decision: REQUEST_CHANGES**`. swe-workbench's `/review` PR mode reads this footer to choose between `gh pr review --approve` and `gh pr review --comment`. A missing or malformed footer aborts the submit.
+**Never** emit `**Review Decision: REQUEST_CHANGES**`. The orchestrator (`workflow-pr-review`) reads this footer to choose between `gh pr review --approve` and `gh pr review --comment`. A missing or malformed footer aborts the submit.
 
 **When NOT instructed** (e.g. local-diff mode, ad-hoc invocation), do not emit this footer — keep output to severity-grouped findings only.
 

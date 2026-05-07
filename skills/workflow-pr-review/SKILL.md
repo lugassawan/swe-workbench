@@ -35,6 +35,8 @@ This skill orchestrates; analysis is delegated to:
 
 ```bash
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
+CURRENT_USER=$(gh api /user -q .login)
+mkdir -p /tmp/swe-workbench-pr-review
 gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,headRefOid,title,body \
   > "/tmp/swe-workbench-pr-review/${PR}.json"
 [ -s "/tmp/swe-workbench-pr-review/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
@@ -73,16 +75,18 @@ Pass the agent:
 
 ### Step 5 — Parse decision footer
 
-Read the agent's last non-blank line. Match:
+Scan ALL non-blank lines for the footer pattern:
 
 ```
 ^\*\*Review Decision:\s+(APPROVE|COMMENT)\*\*$
 ```
 
-If no match, OR if `REQUEST_CHANGES` appears anywhere → abort with:
-> "reviewer agent did not emit a valid Review Decision footer (APPROVE|COMMENT). Refusing to submit."
+Abort with "reviewer agent did not emit a valid Review Decision footer (APPROVE|COMMENT). Refusing to submit." if ANY of:
+- Zero matches found.
+- More than one matching line found.
+- `REQUEST_CHANGES` appears anywhere in the agent output.
 
-Do NOT clean up the worktree on this abort — leave it for inspection.
+Do NOT clean up the worktree on abort — leave it for inspection.
 
 ### Step 6 — Dedup + post inline comments
 
@@ -121,7 +125,7 @@ Do NOT clean up the worktree on this abort — leave it for inspection.
      - `|finding.line - thread.line| ≤ 5` (use `startLine` for multi-line ranges).
      - Body Jaccard token overlap ≥ 0.4 (cheap content-similarity proxy).
      - `isResolved == false`.
-   - **On match**: skip posting. If our user has not already 👍'd, add a 👍 to the thread head (first comment's `id`):
+   - **On match**: skip posting. If `$CURRENT_USER` has not already 👍'd (check `reactions.nodes[].user.login`; use `reactions(first: 20, ...)` — 5 truncates busy threads), add a 👍 to the thread head (first comment's `id`):
 
      ```bash
      gh api graphql -F subjectId="$THREAD_HEAD_ID" -f query='
@@ -164,17 +168,17 @@ Cleanup non-blocking:
 ## Footer parsing contract
 
 - Regex: `^\*\*Review Decision:\s+(APPROVE|COMMENT)\*\*$`
-- Source: agent's **last non-blank line**.
+- Source: scan ALL non-blank lines of agent output.
 - Abort cases (do NOT submit, preserve worktree):
-  - No match.
+  - Zero matches.
+  - More than one matching line.
   - `REQUEST_CHANGES` appears anywhere in the agent output.
-  - Multiple footer lines.
 
 ## Dedup contract
 
 A new finding `(path, line, body)` matches an existing thread `T` IFF:
 1. `T.path == finding.path` (exact, repo-relative).
-2. `|T.line - finding.line| ≤ 5` (use `T.startLine` for multi-line ranges).
+2. `|T.line - finding.line| ≤ 5` (if `T.startLine` is null, use `T.line`; otherwise use `T.startLine`).
 3. Jaccard overlap of word tokens between `T.comments[0].body` and `finding.body` ≥ 0.4.
 4. `T.isResolved == false`.
 
@@ -190,6 +194,7 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Reviewer aborts mid-scan | Agent error | Skip submit. **Leave worktree** for inspection (do not remove). |
 | Decision footer missing or malformed | Regex no-match | Abort with explicit message. Worktree preserved. |
 | Comment-post returns 422 (line out of range) | HTTP 422 | Skip that finding, log "skipped (line out of range)", continue. |
+| All POSTs returned 422 (stale `commit_id` — PR head advanced between Step 1 and Step 6) | `posted == 0` AND every finding skipped with 422 | Re-fetch `HEAD_SHA` via `gh pr view "$PR" --json headRefOid -q .headRefOid` and retry once. If still failing, abort with "HEAD_SHA mismatch — PR updated mid-review". |
 | All findings dedup-matched | `posted == 0` | Submit with body "no new findings — all previously raised". Decision footer still respected. |
 | GraphQL pagination needed (PR > 100 threads) | `hasNextPage == true` | Loop with `after: endCursor`. Document as known limit if not implemented in v1. |
 
