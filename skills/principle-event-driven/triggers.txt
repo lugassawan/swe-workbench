@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-event-driven
-how do I use the outbox pattern to avoid dual-write data loss when publishing events after a database transaction
-should I use choreography or orchestration for a saga that spans three services and needs compensation on partial failure
+how does the outbox pattern prevent event sourcing failures when consumers and producers need exactly-once effective delivery
+should sagas use choreography or orchestration when coordinating event-driven workflows across consumers that require compensation
 my consumers are receiving duplicate events — how do I design idempotent handlers to avoid double-processing side effects
-how should I version event schemas so adding new fields does not break existing consumers that were deployed earlier
-when does event-driven architecture add more complexity than it solves compared to synchronous REST or RPC calls
+how do schema evolution strategies help when evolving event schemas across consumer groups without breaking existing consumers
+what signals indicate that event-driven architecture is overkill when sagas and dead letter queues add more complexity than they solve
