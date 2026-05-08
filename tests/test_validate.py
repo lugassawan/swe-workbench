@@ -576,3 +576,77 @@ class TestCheckSkillTriggerFixtures:
         _skill_with_triggers(root, "my-skill", f"short prompt\n{long_line}\n")
         validate.check_skill_trigger_fixtures()
         assert any("line exceeds 200 chars" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_unwired_principle_skills
+# ──────────────────────────────────────────────
+
+class TestCheckUnwiredPrincipleSkills:
+    def _agent_body(self, extra=""):
+        return (
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
+            "\n> See @./shared/skills.md for the full skill catalog.\n"
+            + extra
+        )
+
+    def test_wired_principle_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            self._agent_body("\n- `swe-workbench:principle-foo` — rationale\n"),
+            encoding="utf-8",
+        )
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_unwired_principle_skill_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            self._agent_body(),  # no reference to principle-foo
+            encoding="utf-8",
+        )
+        validate.check_unwired_principle_skills()
+        assert any("principle-foo" in f and "not referenced" in f for f in validate.FAILURES)
+
+    def test_non_principle_skill_unwired_does_not_fail(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"language-foo": "---\nname: language-foo\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            self._agent_body(),  # no reference to language-foo — check should ignore it
+            encoding="utf-8",
+        )
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_catalog_reference_alone_does_not_satisfy_wiring(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+            # No agents written — the auto-generated catalog at agents/shared/skills.md
+            # will contain the skill id, but that must not count as a wiring reference.
+        )
+        validate.check_unwired_principle_skills()
+        assert any("principle-foo" in f for f in validate.FAILURES)
+
+    def test_principle_dir_without_skill_md_is_ignored(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        # principle-bare/ exists on disk but has no SKILL.md — must not register
+        (root / "skills" / "principle-bare").mkdir(parents=True, exist_ok=True)
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0

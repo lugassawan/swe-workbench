@@ -24,6 +24,8 @@ Read at least one existing test file before writing — match the repo's style, 
 
 Invoke `swe-workbench:principle-tdd` via the Skill tool before writing any test for the full red-green-refactor discipline and "What to test" checklist.
 
+Invoke `swe-workbench:principle-testing` for test pyramid balance, doubles taxonomy, coverage-vs-confidence, flaky-test triage, and contract testing.
+
 ## What to test
 
 - **Behavior** — not implementation. "Returns total with tax" survives refactor; "calls foo then bar" does not.

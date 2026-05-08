@@ -1,0 +1,8 @@
+# Trigger fixtures for principle-testing
+# These emphasize strategy, pyramid, mock-vs-real, coverage, flakiness, and contract testing
+# — intentionally distinct from principle-tdd triggers (red-green-refactor, AAA, F.I.R.S.T.)
+How do I decide the right shape for my test pyramid and measure whether my coverage actually catches bugs using mutation testing
+Should I mock the database in this integration test or stand up a real one for confidence on the migration
+We have ninety percent line coverage but production bugs still slip through how do I diagnose missing branch coverage
+How do I identify a flaky test that fails randomly due to shared mutable state or timing in my test suite
+How do I decide when to use a stub versus a fake versus a real dependency and where contract testing fits in my test pyramid

@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-i18n
+format this date and number for display in the user's locale — Intl.DateTimeFormat vs toLocaleString
+plural rules for "N items" copy across English, Russian, and Arabic — CLDR forms
+store this timestamp — UTC in DB, render local in UI
+audit these UI strings for translation readiness — string concatenation and missing message keys
+right-to-left layout review — logical CSS properties, icon mirroring, bidi isolation

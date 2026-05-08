@@ -12,7 +12,9 @@ After cloning, run the setup script once:
 ./scripts/setup.sh
 ```
 
-This sets `core.hooksPath` to the absolute path of `.githooks/`, ensuring hooks fire from linked worktrees as well as the main checkout.
+This installs per-file symlinks in `.git/hooks/` pointing at `.githooks/`. The default git location is used (no `core.hooksPath` config), so the setup is resistant to tools that reset that key.
+
+> **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink.
 
 ## Branch naming
 

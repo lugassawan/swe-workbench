@@ -294,6 +294,35 @@ def check_catalog_completeness():
                  " — add: '> See @./shared/skills.md for the full skill catalog.'")
 
 
+def check_unwired_principle_skills():
+    """Every skills/principle-*/ must be referenced by at least one agent.
+
+    agents/shared/skills.md (the catalog) is explicitly excluded — it lists
+    every skill by design and must not count as a wiring reference.
+    """
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+    catalog = agents_dir / "shared" / "skills.md"
+
+    principle_skills = sorted(
+        p.name for p in skills_dir.glob("principle-*")
+        if (p / "SKILL.md").is_file()
+    )
+
+    agent_files = sorted(f for f in agents_dir.rglob("*.md") if f != catalog)
+
+    for skill_id in principle_skills:
+        needle = f"`swe-workbench:{skill_id}`"
+        wired = any(needle in f.read_text(encoding="utf-8") for f in agent_files)
+        if not wired:
+            fail(
+                Path("agents") / "<unwired>",
+                f"principle skill 'swe-workbench:{skill_id}' is not referenced by any "
+                f"agent in agents/*.md — wire it into a relevant agent's "
+                f"'## Principle consultation' list",
+            )
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -313,6 +342,7 @@ def main():
     check_command_skill_refs()
     check_catalog_completeness()
     check_template_placeholders()
+    check_unwired_principle_skills()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

@@ -26,8 +26,8 @@ If `superpowers:systematic-debugging` is unavailable, say so plainly and run the
 ## Principle lens (what makes this swe-workbench-shaped)
 
 After the root cause is known, answer:
-- **SOLID** — does the bug's shape signal an SRP breach (one module absorbing unrelated change vectors), LSP breach (subtype lying about its contract), or DIP inversion (domain importing infrastructure)?
-- **Clean Architecture** — did the defect cross a boundary that should have stopped it (validation in the domain that belongs at the edge, or vice versa)?
+- **SOLID** — does the bug's shape signal a responsibility, substitutability, or dependency-direction breach? Consult `swe-workbench:principle-solid`.
+- **Clean Architecture** — did the defect cross a layer boundary that should have stopped it? Consult `swe-workbench:principle-clean-architecture`.
 - **Test gap** — why did the existing suite not catch this? Missing branch, missing boundary, or test mirrored the implementation.
 
 Call this out even when the minimal fix does not address it. Silence signals the principle is clean.
@@ -49,6 +49,14 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Minimal fix (diff summary + what it deliberately does NOT touch)
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")
+
+## Principle consultation
+
+Invoke these skills via the Skill tool when the diagnosis surfaces a concern in their domain:
+
+- `swe-workbench:principle-solid` — responsibility, substitutability, dependency direction
+- `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency rule
+- `swe-workbench:principle-concurrency` — race conditions, deadlock, missing cancellation propagation, ordering bugs, memory-model surprises
 
 ## Available skills
 

@@ -1,0 +1,7 @@
+# Representative trigger prompts for principle-distributed-systems
+
+should this service be CP or AP under a network partition, and what does PACELC say about the no-partition case
+how do I order events from multiple nodes when the wall clocks have skew — Lamport timestamps, vector clocks, or hybrid logical clocks
+why does my replicated store need a quorum of N/2 + 1 and how does Raft prevent split-brain after a leader election
+what's the difference between exactly-once delivery and exactly-once effects when retries cross node boundaries
+my reads are sometimes stale right after a write — which consistency model do I actually need: linearizable, causal, or read-your-writes

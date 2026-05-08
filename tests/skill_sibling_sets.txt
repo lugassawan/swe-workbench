@@ -7,7 +7,9 @@
 #   - Document the rationale in the same commit that adds the entry.
 #   - Never pre-populate as a shortcut to avoid fixing a drifted description.
 
-# Both skills discuss repository pattern, domain layers, and bounded contexts.
-# A question like "should the repository live in the domain or infrastructure layer?"
-# legitimately belongs to either skill.
-principle-clean-architecture, principle-ddd
+# principle-clean-architecture and principle-ddd share repository pattern, domain
+# layers, and bounded contexts. principle-event-driven joins the group because domain
+# events are a DDD tactical pattern AND the core primitive of event-driven systems —
+# a prompt like "how do I model a domain event for a state transition?" legitimately
+# belongs to any of these three skills.
+principle-clean-architecture, principle-ddd, principle-event-driven

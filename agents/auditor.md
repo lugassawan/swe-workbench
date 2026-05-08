@@ -89,4 +89,5 @@ Invoke these skills via the Skill tool when a finding surfaces a concern in thei
 - `swe-workbench:principle-performance` — latency, throughput, N+1, allocation pressure
 - `swe-workbench:principle-resiliency` — reliability findings: failure domains, bulkheads, graceful degradation, retry patterns
 - `swe-workbench:principle-observability` — missing logs, metrics, traces; SLI/SLO gaps
-- `swe-workbench:principle-tdd` — coverage gaps, mock overuse, missing integration tests
+- `swe-workbench:principle-tdd` — test-first discipline, red-green-refactor violations, F.I.R.S.T. failures
+- `swe-workbench:principle-testing` — coverage gaps, mock overuse, missing integration tests, flaky tests, test pyramid imbalance
