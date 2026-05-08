@@ -59,12 +59,11 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-event-driven` — async coupling, event schema evolution, sagas, DLQ strategy
 - `swe-workbench:principle-data-modeling` — multi-system data ownership, schema strategy, storage paradigm selection
 - `swe-workbench:principle-resiliency` — failure domains, blast radius, bulkheads, degradation strategy
+- `swe-workbench:principle-distributed-systems` — CAP/PACELC, consistency models, consensus and quorum, replication, delivery semantics
 - `swe-workbench:principle-observability` — slis/slos, instrumentation at system boundaries, alerting on symptoms vs causes
 - `swe-workbench:principle-security` — trust boundaries between systems, threat modeling, auth/authz at the contract surface
 - `swe-workbench:principle-performance` — system-level latency budgets, scalability trade-offs, profile-first discipline
 - `swe-workbench:principle-concurrency` — ordering guarantees, idempotency across hops, cancellation propagation
-
-_Note: a dedicated swe-workbench:principle-distributed-systems skill is planned (see #87). Until then, route distributed-system concerns through `principle-resiliency`, `principle-event-driven`, and `principle-concurrency`._
 
 ## Absolute rules
 
