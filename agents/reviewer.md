@@ -76,3 +76,4 @@ Invoke these skills via the Skill tool when the review surfaces a concern in the
 - `swe-workbench:principle-solid` — responsibility violations, coupling
 - `swe-workbench:principle-security` — auth, input validation, trust boundaries
 - `swe-workbench:principle-performance` — hot-path allocations, N+1 queries, algorithmic complexity
+- `swe-workbench:principle-resiliency` — partial failure, bulkheads, graceful degradation, health-check correctness

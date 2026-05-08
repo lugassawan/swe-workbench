@@ -13,6 +13,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:principle-error-handling` — Error handling: errors as values, classification, wrapping, retry, circuit breakers.
 - `swe-workbench:principle-observability` — Observability: logs vs metrics vs traces, structured logging, OpenTelemetry, SLI/SLO.
 - `swe-workbench:principle-performance` — Performance: latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries.
+- `swe-workbench:principle-resiliency` — Resiliency: failure domains, bulkheads, graceful degradation, fail-fast vs fail-soft, health checks, blast radius containment.
 - `swe-workbench:principle-security` — Security: trust boundaries, input validation, secrets handling, secure defaults, threat modeling.
 - `swe-workbench:principle-solid` — SOLID principles: SRP, OCP, LSP, ISP, DIP — responsibility, coupling, abstractions.
 - `swe-workbench:principle-tdd` — TDD: red-green-refactor, test-first, F.I.R.S.T., Arrange-Act-Assert.

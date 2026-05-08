@@ -46,3 +46,4 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-api-design` — contracts, versioning, idempotency
 - `swe-workbench:principle-solid` — responsibility, coupling, open-closed
 - `swe-workbench:principle-performance` — latency vs throughput, profile-first, scalability trade-offs
+- `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
