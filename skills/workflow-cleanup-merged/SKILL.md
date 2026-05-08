@@ -56,44 +56,20 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 
 If `EnterWorktree` was never called this session (or the `ExitWorktree` tool is unavailable), this step is a no-op — proceed to 3b without aborting.
 
-**3b. Derive `$MAIN_REPO` and anchor the shell.** The rimba post-merge hook fires during the pull below and deletes any merged worktree — including the one this skill may be running from. Anchoring before the pull keeps the cwd valid regardless:
+**3b+3c. Anchor cwd, sync local main, and verify hook cleanup** with the companion script:
 
 ```bash
-MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
-[ -n "$MAIN_REPO" ] || { echo "sync-main: could not resolve main repo path — aborting" >&2; exit 1; }
-cd "$MAIN_REPO"
+_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>")"
 ```
 
-**3c. Sync local main** so the merge commit is visible on `main` and the next branch cut starts from a current tip:
-
-```bash
-(git checkout main && git pull --ff-only origin main) \
-  || echo "sync-main: best-effort failed — reconcile main manually"
-```
-
-`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+The script: anchors the shell to the main repo root (so the rimba hook cannot strand a deleted cwd), runs `git checkout main && git pull --ff-only origin main` (best-effort — sync failure warns to stderr but does not abort), then checks whether the hook already removed the worktree and local branch. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
 When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
 
-For all other paths, sync failure is best-effort: a warning is recorded in the report and cleanup proceeds.
-
 ### Step 4 — Remove Worktree
 
-After Step 3 sync, run the verification gate to check whether the rimba post-merge hook already cleaned up the worktree and local branch. `$MAIN_REPO` is set during Step 3 and must be in scope here — run this gate in the **same bash invocation** as Step 3b so the variable remains defined:
-
-```bash
-WORKTREE_FOUND=$(git worktree list --porcelain \
-  | awk '/^branch refs\/heads\/<headRefName>$/{print 1; exit}')
-if git -C "$MAIN_REPO" rev-parse --verify "refs/heads/<headRefName>" 2>/dev/null; then
-  BRANCH_FOUND=1
-else
-  BRANCH_FOUND=
-fi
-WORKTREE_GONE=0
-[ -z "$WORKTREE_FOUND" ] && [ -z "$BRANCH_FOUND" ] && WORKTREE_GONE=1
-```
-
-(`WORKTREE_FOUND` is `1` when the worktree is present, empty when absent. Same for `BRANCH_FOUND`. The gate fires when both are empty — i.e., both are already gone. `refs/heads/` prefix prevents a same-named tag or remote ref from being mistaken for a live local branch.)
+`sync-and-verify.sh` (Step 3) emits `WORKTREE_GONE=0|1` into the shell environment via `eval`.
 
 - **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. No further action is needed in Step 4; skip Step 5 and proceed directly to Step 6.
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
