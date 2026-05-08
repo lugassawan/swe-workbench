@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-bash
+how should I set up set -e pipefail and trap in bash for idempotent error handling and cleanup
+what's the right way to use trap for cleanup and signal handling in a bash deploy script
+how do I avoid word splitting bugs when iterating over filenames in bash
+when should I use bash double-bracket tests versus POSIX single-bracket and does shellcheck care

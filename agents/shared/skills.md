@@ -25,6 +25,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 
 ## Languages
 
+- `swe-workbench:language-bash` — Bash idioms: strict mode, quoting, parameter expansion, arrays, pipefail, trap cleanup, idempotency, heredocs, and POSIX portability.
 - `swe-workbench:language-go` — Go idioms: error handling, goroutines, channels, interfaces, context, standard library.
 - `swe-workbench:language-java` — Java idioms: records, sealed types, virtual threads, streams, JDK 21+ patterns.
 - `swe-workbench:language-kotlin` — Kotlin idioms: null safety, coroutines, sealed interfaces, scope functions, Flow.
