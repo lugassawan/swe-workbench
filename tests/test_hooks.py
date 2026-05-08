@@ -135,3 +135,17 @@ class TestHardResetPatternMatch:
     ])
     def test_pattern_does_not_match(self, hook_patterns, cmd):
         assert not grep_matches(hook_patterns["hard_reset"], cmd), f"Expected no match for: {cmd!r}"
+
+
+class TestPrePushHook:
+    """Verify .githooks/pre-push contains the expected invocations."""
+
+    PRE_PUSH = Path(__file__).parent.parent / ".githooks" / "pre-push"
+
+    def test_pre_push_runs_validate(self):
+        content = self.PRE_PUSH.read_text(encoding="utf-8")
+        assert "validate.sh" in content, "pre-push hook must invoke validate.sh"
+
+    def test_pre_push_runs_pytest(self):
+        content = self.PRE_PUSH.read_text(encoding="utf-8")
+        assert "pytest" in content, "pre-push hook must invoke pytest"
