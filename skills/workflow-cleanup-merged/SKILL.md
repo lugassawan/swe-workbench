@@ -63,15 +63,17 @@ For all other paths, sync failure is best-effort: a warning is recorded in the r
 
 ### Step 4 — Remove Worktree
 
-After Step 3 sync, run the verification gate to check whether the rimba post-merge hook already cleaned up the worktree and local branch:
+After Step 3 sync, run the verification gate to check whether the rimba post-merge hook already cleaned up the worktree and local branch. `$MAIN_REPO` is set during Step 3 and must be in scope here:
 
 ```bash
-WORKTREE_PRESENT=$(git worktree list --porcelain \
+WORKTREE_FOUND=$(git worktree list --porcelain \
   | awk '/^branch refs\/heads\/<headRefName>$/{print 1; exit}')
-BRANCH_PRESENT=$(git -C "$MAIN_REPO" rev-parse --verify <headRefName> 2>/dev/null && echo 1 || true)
+BRANCH_FOUND=$(git -C "$MAIN_REPO" rev-parse --verify "refs/heads/<headRefName>" 2>/dev/null && echo 1 || true)
 WORKTREE_GONE=0
-[ -z "$WORKTREE_PRESENT" ] && [ -z "$BRANCH_PRESENT" ] && WORKTREE_GONE=1
+[ -z "$WORKTREE_FOUND" ] && [ -z "$BRANCH_FOUND" ] && WORKTREE_GONE=1
 ```
+
+(`WORKTREE_FOUND` is `1` when the worktree is present, empty when absent. Same for `BRANCH_FOUND`. The gate fires when both are empty — i.e., both are already gone. `refs/heads/` prefix prevents a same-named tag or remote ref from being mistaken for a live local branch.)
 
 - **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. Skip this step AND Step 5. Proceed directly to Step 6.
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
@@ -110,21 +112,19 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 ### rimba + post-merge hook (fast path)
 
-**Preconditions — all three must hold:**
+**Preconditions — both must hold:**
 
-1. `rimba` resolves on PATH or a known install location (`$RIMBA` is non-empty).
-2. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
+1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection (uses `$MAIN_REPO` from Step 3):
    ```bash
-   MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
    HOOKS_DIR=$(git -C "$MAIN_REPO" config --get core.hooksPath || echo "$MAIN_REPO/.git/hooks")
    case "$HOOKS_DIR" in /*) ;; *) HOOKS_DIR="$MAIN_REPO/$HOOKS_DIR" ;; esac
    HOOK_FILE="$HOOKS_DIR/post-merge"
    RIMBA_HOOK_ACTIVE=0
-   [ -x "$HOOK_FILE" ] && grep -q 'rimba clean --merged --force' "$HOOK_FILE" \
+   [ -x "$HOOK_FILE" ] && grep -qE '^[^#]*rimba clean --merged --force' "$HOOK_FILE" \
      && RIMBA_HOOK_ACTIVE=1
    ```
-   `RIMBA_HOOK_ACTIVE=1` is required.
-3. After Step 3 sync, HEAD on `$MAIN_REPO` is on `main` (the hook's own branch guard requires it).
+   `RIMBA_HOOK_ACTIVE=1` is required. (The grep excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
+2. After Step 3 sync, HEAD on `$MAIN_REPO` is on `main` (the hook's own branch guard requires it).
 
 **Procedure:**
 
