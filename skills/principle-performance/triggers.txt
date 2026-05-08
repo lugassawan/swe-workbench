@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-performance
+how do I weigh latency vs throughput trade-offs for this hot-path endpoint
+what should I profile before optimizing this slow request
+how do I avoid N+1 queries on this list endpoint
+what allocation patterns will hurt GC pause times in this service
+how do I think about Big-O complexity for this data-processing loop
