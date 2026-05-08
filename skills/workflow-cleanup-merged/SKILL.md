@@ -47,7 +47,7 @@ Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message 
 
 ### Step 3 — Sync Local Main
 
-Sync local main BEFORE destructive operations so the merge commit is visible on `main` and the next branch cut starts from a current tip. Best-effort: a sync failure does NOT abort cleanup.
+Sync local main BEFORE destructive operations so the merge commit is visible on `main` and the next branch cut starts from a current tip.
 
 ```bash
 MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
@@ -57,13 +57,28 @@ MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 
 `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
+When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
+
+For all other paths, sync failure is best-effort: a warning is recorded in the report and cleanup proceeds.
+
 ### Step 4 — Remove Worktree
 
-Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
+After Step 3 sync, run the verification gate to check whether the rimba post-merge hook already cleaned up the worktree and local branch:
+
+```bash
+WORKTREE_PRESENT=$(git worktree list --porcelain \
+  | awk '/^branch refs\/heads\/<headRefName>$/{print 1; exit}')
+BRANCH_PRESENT=$(git -C "$MAIN_REPO" rev-parse --verify <headRefName> 2>/dev/null && echo 1 || true)
+WORKTREE_GONE=0
+[ -z "$WORKTREE_PRESENT" ] && [ -z "$BRANCH_PRESENT" ] && WORKTREE_GONE=1
+```
+
+- **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. Skip this step AND Step 5. Proceed directly to Step 6.
+- **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
 
 ### Step 5 — Delete Local Branch (unconditional)
 
-Always runs, whether or not a worktree was found:
+Always runs unless `WORKTREE_GONE=1` from Step 4:
 
 ```bash
 git branch -D <headRefName>
@@ -92,6 +107,34 @@ Cleanup complete for PR #<number> (<headRefName>):
 ## Worktree Removal Strategies
 
 Execute the first strategy whose preconditions hold. Fall through to the next if preconditions fail.
+
+### rimba + post-merge hook (fast path)
+
+**Preconditions — all three must hold:**
+
+1. `rimba` resolves on PATH or a known install location (`$RIMBA` is non-empty).
+2. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
+   ```bash
+   MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+   HOOKS_DIR=$(git -C "$MAIN_REPO" config --get core.hooksPath || echo "$MAIN_REPO/.git/hooks")
+   case "$HOOKS_DIR" in /*) ;; *) HOOKS_DIR="$MAIN_REPO/$HOOKS_DIR" ;; esac
+   HOOK_FILE="$HOOKS_DIR/post-merge"
+   RIMBA_HOOK_ACTIVE=0
+   [ -x "$HOOK_FILE" ] && grep -q 'rimba clean --merged --force' "$HOOK_FILE" \
+     && RIMBA_HOOK_ACTIVE=1
+   ```
+   `RIMBA_HOOK_ACTIVE=1` is required.
+3. After Step 3 sync, HEAD on `$MAIN_REPO` is on `main` (the hook's own branch guard requires it).
+
+**Procedure:**
+
+Nothing strategy-specific. The `git pull --ff-only origin main` in Step 3 fired the post-merge hook, which ran `rimba clean --merged --force` and removed the worktree and local branch as a side-effect.
+
+The verification gate in Step 4 (`WORKTREE_GONE=1`) confirms the hook succeeded and routes the spine to skip Steps 4 and 5 directly to Step 6.
+
+**Failure handling:**
+
+The hook silently swallows errors (`|| true`). If the verification gate yields `WORKTREE_GONE=0` — because the hook didn't fire, rimba refused due to dirty/unpushed state, or sync failed — fall through to `### rimba (MCP / binary)` or `### shell fallback`. No abort.
 
 ### rimba (MCP / binary)
 
@@ -170,6 +213,7 @@ git worktree remove "$WORKTREE"
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
+| Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
 
 ## Common Mistakes
 
@@ -182,3 +226,4 @@ git worktree remove "$WORKTREE"
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
 | Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit. |
+| Check `.githooks/post-merge` directly for hook presence | Always resolve via `git config --get core.hooksPath` — the file exists in the repo but is only active when `core.hooksPath` points to its parent. |

@@ -28,7 +28,8 @@ For dispatching individual agents and agent prompt structure, see `superpowers:d
 │   └─ Spawn fix agents for any conflicting PRs
 │
 ├─ 7. CLEANUP: For each merged PR → invoke `swe-workbench:workflow-cleanup-merged`
-│   └─ Skill handles: gh-verified merge check, worktree removal, local + remote branch deletion
+│   └─ Skill handles: gh-verified merge check, worktree + local branch removal (auto-cleaned
+│      by rimba post-merge hook when active; verified then skipped if already gone), remote branch deletion
 │
 └─ 8. NEXT ROUND: Back to step 1 — re-evaluate dependency graph
 ```
@@ -47,6 +48,6 @@ For dispatching individual agents and agent prompt structure, see `superpowers:d
 | Spawn only 3 agents when 8 are unblocked | Spawn all unblocked agents. Maximize throughput. |
 | Wait for batch 1 to merge before spawning remaining unblocked issues | If unblocked issues remain, spawn them immediately. |
 | Skip CI verification on PR | Always run `gh pr checks`. CI failures caught early prevent merge issues. |
-| Don't clean up worktrees after merge | Invoke `swe-workbench:workflow-cleanup-merged` after each merge round — it handles gh-verified merge check, worktree removal, and local + remote branch deletion safely. |
+| Don't clean up worktrees after merge | Invoke `swe-workbench:workflow-cleanup-merged` after each merge round — it verifies the merge via `gh`, skips worktree/branch removal when the rimba post-merge hook already cleaned them, and deletes the remote branch. |
 | Ignore merge conflicts on remaining PRs after a merge | Always check `gh pr view --json mergeable` after each merge round. |
 | Use heredocs for PR bodies with code | Use `--body-file` with temp files. |
