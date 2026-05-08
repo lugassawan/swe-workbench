@@ -47,3 +47,4 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-solid` — responsibility, coupling, open-closed
 - `swe-workbench:principle-performance` — latency vs throughput, profile-first, scalability trade-offs
 - `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
+- `swe-workbench:principle-observability` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
