@@ -181,6 +181,21 @@ def check_agent_skill_refs():
                 )
 
 
+def check_command_skill_refs():
+    """Every `swe-workbench:<id>` in commands/*.md must resolve to skills/<id>/ on disk."""
+    commands_dir = ROOT / "commands"
+    skills_dir = ROOT / "skills"
+    pattern = re.compile(r'`swe-workbench:([\w-]+)`')
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        text = cmd_md.read_text(encoding="utf-8")
+        for skill_id in set(pattern.findall(text)):
+            if not (skills_dir / skill_id).is_dir():
+                fail(
+                    cmd_md.relative_to(ROOT),
+                    f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
+                )
+
+
 TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
 
 
@@ -295,6 +310,7 @@ def main():
     check_agents()
     check_commands()
     check_agent_skill_refs()
+    check_command_skill_refs()
     check_catalog_completeness()
     check_template_placeholders()
 
