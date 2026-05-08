@@ -9,7 +9,10 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 1: Branch
 - **Convention:** `[[detect:branch-convention]]`
-- **Create:** `rimba add <task>` (if rimba on PATH / `~/.local/bin/rimba` / `~/go/bin/rimba`) — else `superpowers:using-git-worktrees`
+- **Primary:** `rimba add <task>` (check PATH, `~/.local/bin/rimba`, `~/go/bin/rimba`) — produces canonical `feature/<slug>` branch names.
+- **Enter worktree:** `EnterWorktree path=<rimba-output-path>` (harness tool) to switch the session in, or `cd <path>` in shell.
+- **Fallback only when rimba is absent:** invoke `superpowers:using-git-worktrees`. Do NOT invoke it when rimba is available — its Step 1a guidance steers toward `EnterWorktree name=…`, which mangles branch names containing `/` (e.g. `feature/101-foo` → `worktree-feature+101-foo`).
+- **If `rimba add` fails** (non-zero exit): report the error verbatim and ask the user whether to retry or fall back to `superpowers:using-git-worktrees`. Do not silently swallow the error.
 
 ### Phase 2: Implement
 - Follow plan tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`
