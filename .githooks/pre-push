@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Pre-push hook: validate plugin files before pushing to remote.
+# Pre-push hook: validate plugin files and run tests before pushing to remote.
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 bash "$REPO_ROOT/scripts/validate.sh"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-push: ERROR — python3 is required to run tests. Install Python 3.12+." >&2
+  exit 1
+fi
+if ! python3 -c 'import pytest' 2>/dev/null; then
+  echo "pre-push: ERROR — pytest not installed. Run: pip install -r tests/requirements.txt" >&2
+  exit 1
+fi
+python3 -m pytest "$REPO_ROOT/tests/" -q

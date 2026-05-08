@@ -45,13 +45,20 @@ Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message 
 
 **Never use `git branch --merged` as a merge check.** GitHub's default squash-merge strategy creates a new commit SHA on `main`; the original branch tip is not a merge ancestor of `main`, so `git branch --merged` silently lies. `gh` is the only oracle that does not lie.
 
-### Step 3 — Sync Local Main
+### Step 3 — Anchor cwd + Sync Local Main
 
-Sync local main BEFORE destructive operations so the merge commit is visible on `main` and the next branch cut starts from a current tip.
+First, derive `$MAIN_REPO` and anchor the shell to it. The rimba post-merge hook fires during the pull below and deletes any merged worktree — including the one this skill may be running from. Anchoring before the pull keeps the cwd valid regardless:
 
 ```bash
 MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
-(git -C "$MAIN_REPO" checkout main && git -C "$MAIN_REPO" pull --ff-only origin main) \
+[ -n "$MAIN_REPO" ] || { echo "sync-main: could not resolve main repo path — aborting" >&2; exit 1; }
+cd "$MAIN_REPO"
+```
+
+Then sync local main so the merge commit is visible on `main` and the next branch cut starts from a current tip:
+
+```bash
+(git checkout main && git pull --ff-only origin main) \
   || echo "sync-main: best-effort failed — reconcile main manually"
 ```
 
@@ -214,6 +221,7 @@ git worktree remove "$WORKTREE"
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
+| cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3 cwd-anchor (`cd "$MAIN_REPO"` before pull) prevents this. If observed, re-run from the main repo root. |
 
 ## Common Mistakes
 
@@ -222,7 +230,7 @@ git worktree remove "$WORKTREE"
 | Use `git branch --merged` to check if a PR is merged | Never. Squash-merges lie. Use `gh pr view --json state,mergedAt`. |
 | Use lowercase `git branch -d` | Always use `-D`. Squash-merged branches are not merge ancestors of `main`. |
 | Force-delete a worktree with dirty state | Never. Batch A aborts before Batch B runs. |
-| Run cleanup from inside the worktree being deleted | Always cd to the main repo root first (cwd-fix step). |
+| Run cleanup from inside the worktree being deleted | Step 3 anchors cwd to $MAIN_REPO before the pull. If skipped, the rimba hook can delete the cwd mid-flight and strand subsequent commands with "fatal: not a git repository". |
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
 | Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit. |
