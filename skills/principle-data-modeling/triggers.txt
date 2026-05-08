@@ -1,0 +1,9 @@
+# Representative trigger prompts for principle-data-modeling
+how do I choose between a relational database and a document store for this access pattern
+should I normalize this schema or denormalize it for read performance
+what indexes should I add to this table to avoid slow queries and write amplification
+how do I design the schema around the queries I need to run rather than the data I have
+how do I evolve the schema without breaking existing clients using expand contract migration
+we have a hot key or hot partition causing P99 latency spikes on one shard what should I do
+should I use a graph database or relational for this highly connected data traversal query
+how do I set up data retention archival and TTL expiry for old records in this table
