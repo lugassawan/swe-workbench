@@ -52,8 +52,6 @@ Call this out even when the minimal fix does not address it. Silence signals the
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
-
 Invoke these skills via the Skill tool when the diagnosis surfaces a concern in their domain:
 
 - `swe-workbench:principle-solid` — responsibility, substitutability, dependency direction

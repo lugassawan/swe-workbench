@@ -631,3 +631,22 @@ class TestCheckUnwiredPrincipleSkills:
         )
         validate.check_unwired_principle_skills()
         assert len(validate.FAILURES) == 0
+
+    def test_catalog_reference_alone_does_not_satisfy_wiring(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+            # No agents written — the auto-generated catalog at agents/shared/skills.md
+            # will contain the skill id, but that must not count as a wiring reference.
+        )
+        validate.check_unwired_principle_skills()
+        assert any("principle-foo" in f for f in validate.FAILURES)
+
+    def test_principle_dir_without_skill_md_is_ignored(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        # principle-bare/ exists on disk but has no SKILL.md — must not register
+        (root / "skills" / "principle-bare").mkdir(parents=True, exist_ok=True)
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0

@@ -295,17 +295,21 @@ def check_catalog_completeness():
 
 
 def check_unwired_principle_skills():
-    """Every skills/principle-*/ must be referenced by at least one agent
-    (excluding agents/shared/skills.md which is the catalog and references all skills)."""
+    """Every skills/principle-*/ must be referenced by at least one agent.
+
+    agents/shared/skills.md (the catalog) is explicitly excluded — it lists
+    every skill by design and must not count as a wiring reference.
+    """
     skills_dir = ROOT / "skills"
     agents_dir = ROOT / "agents"
+    catalog = agents_dir / "shared" / "skills.md"
 
     principle_skills = sorted(
         p.name for p in skills_dir.glob("principle-*")
         if (p / "SKILL.md").is_file()
     )
 
-    agent_files = sorted(agents_dir.glob("*.md"))
+    agent_files = sorted(f for f in agents_dir.rglob("*.md") if f != catalog)
 
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
