@@ -1,1 +1,4 @@
-copy_files = ['.env', '.env.local', '.envrc', '.tool-versions']
+copy_files = ['.env', '.env.local', '.envrc', '.claude']
+
+[open]
+agent = 'claude'
