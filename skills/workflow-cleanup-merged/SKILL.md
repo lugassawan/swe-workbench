@@ -134,16 +134,12 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 **Preconditions — both must hold:**
 
-1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection (uses `$MAIN_REPO` from Step 3):
+1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
    ```bash
-   HOOKS_DIR=$(git -C "$MAIN_REPO" config --get core.hooksPath || echo "$MAIN_REPO/.git/hooks")
-   case "$HOOKS_DIR" in /*) ;; *) HOOKS_DIR="$MAIN_REPO/$HOOKS_DIR" ;; esac
-   HOOK_FILE="$HOOKS_DIR/post-merge"
-   RIMBA_HOOK_ACTIVE=0
-   [ -x "$HOOK_FILE" ] && grep -qE '^[^#]*rimba clean --merged --force' "$HOOK_FILE" \
-     && RIMBA_HOOK_ACTIVE=1
+   _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+   eval "$("$_SCRIPTS/check-rimba-hook.sh")"
    ```
-   `RIMBA_HOOK_ACTIVE=1` is required. (The grep excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
+   `RIMBA_HOOK_ACTIVE=1` is required. (The grep inside the script excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
 2. After Step 3 sync, HEAD on `$MAIN_REPO` is on `main` (the hook's own branch guard requires it).
 
 **Procedure:**
