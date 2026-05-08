@@ -166,6 +166,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Use `(scope):` in commit subject | This repo uses `[type] Subject` not `type(scope): Subject`. Quote the regex. |
 | Append `[no ci]` to a commit touching `commands/foo.md` | The exclusion of `commands/`, `skills/`, `agents/` is load-bearing. |
 | Use `gh pr create --fill` | Use `--body-file <PR template path>` so the `Closes #` line is filled correctly. |
+| Pass both `--body-file` and `--body` to `gh pr create` | `gh` silently uses `--body-file` and discards `--body`. Write the filled body to a temp file and pass `--body-file <tmp>` only — never both flags together. Pattern: `TMP=$(mktemp); <fill template> > "$TMP"; gh pr create --body-file "$TMP"; rm "$TMP"` |
 | Auto-`gh pr create --draft` without asking | Always ask `draft` vs `ready`. Drafts hide the PR from `assignees` and reviewers. |
 
 ## Quick reference
