@@ -39,9 +39,15 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+          # Strip HTML comments first so example text inside <!-- ... --> blocks
+          # (e.g. "Issue: N/A" documentation in the PR template) does not
+          # accidentally match the opt-out or closing-keyword patterns.
+          PR_BODY_VISIBLE=$(echo "$PR_BODY" | python3 -c \
+            "import re,sys; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))")
+
           # Allow ad-hoc PRs that explicitly opt out with "N/A" or "Issue: N/A" on its own line.
           # Accepts: "N/A", "Issue: N/A", "Issue: N/A — reason", "N/A — reason".
-          if echo "$PR_BODY" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
+          if echo "$PR_BODY_VISIBLE" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
             exit 0
           fi
@@ -49,7 +55,7 @@ jobs:
           # Require a GitHub closing keyword (case-insensitive).
           # "Closes N/A" or "Closes #N/A" will NOT match the N/A check above (not a standalone line)
           # and will NOT match this check — so they correctly fail CI.
-          if ! echo "$PR_BODY" | grep -iqE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+'; then
+          if ! echo "$PR_BODY_VISIBLE" | grep -iqE '(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+'; then
             echo "::error::PR body must reference an issue with a closing keyword"
             echo ""
             echo "Add one of these to your PR description:"
