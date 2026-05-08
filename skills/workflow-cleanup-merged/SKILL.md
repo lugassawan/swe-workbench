@@ -51,6 +51,7 @@ First, derive `$MAIN_REPO` and anchor the shell to it. The rimba post-merge hook
 
 ```bash
 MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+[ -n "$MAIN_REPO" ] || { echo "sync-main: could not resolve main repo path — aborting" >&2; exit 1; }
 cd "$MAIN_REPO"
 ```
 

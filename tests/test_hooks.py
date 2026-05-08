@@ -148,4 +148,6 @@ class TestPrePushHook:
 
     def test_pre_push_runs_pytest(self):
         content = self.PRE_PUSH.read_text(encoding="utf-8")
-        assert "pytest" in content, "pre-push hook must invoke pytest"
+        assert "pytest" in content and "tests/" in content, (
+            "pre-push hook must invoke pytest against the tests/ directory"
+        )

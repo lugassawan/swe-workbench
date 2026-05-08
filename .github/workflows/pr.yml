@@ -43,7 +43,7 @@ jobs:
           # (e.g. "Issue: N/A" documentation in the PR template) does not
           # accidentally match the opt-out or closing-keyword patterns.
           PR_BODY_VISIBLE=$(echo "$PR_BODY" | python3 -c \
-            "import re,sys; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))")
+            "import re,sys; print(re.sub(r'<!--.*?(?:-->|$)','',sys.stdin.read(),flags=re.DOTALL))")
 
           # Allow ad-hoc PRs that explicitly opt out with "N/A" or "Issue: N/A" on its own line.
           # Accepts: "N/A", "Issue: N/A", "Issue: N/A — reason", "N/A — reason".

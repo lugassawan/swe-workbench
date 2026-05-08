@@ -8,21 +8,12 @@ import re
 
 
 def strip_html_comments(text: str) -> str:
-    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
-
-
-def has_na_optout(visible: str) -> bool:
-    return bool(
-        re.search(
-            r"^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$",
-            visible,
-            re.IGNORECASE | re.MULTILINE,
-        )
-    )
+    """Strip <!-- ... --> blocks. Unterminated comments are stripped to end-of-string."""
+    return re.sub(r"<!--.*?(?:-->|$)", "", text, flags=re.DOTALL)
 
 
 def _na_optout(visible: str) -> bool:
-    """Python-native equivalent of the bash grep -iqE pattern."""
+    """Python-native equivalent of the bash grep -iqE N/A opt-out pattern."""
     return bool(
         re.search(
             r"^[ \t]*(Issue:[ \t]+)?N/A([ \t]+[—\-].+)?[ \t]*$",
@@ -102,6 +93,18 @@ class TestStripHtmlComments:
     def test_preserves_text_outside_comments(self):
         result = strip_html_comments("<!-- hidden -->visible")
         assert result == "visible"
+
+    def test_unterminated_comment_stripped_to_end(self):
+        body = "## Summary\n- x\n\n<!-- Issue: N/A\n(no closing tag)"
+        result = strip_html_comments(body)
+        assert "Issue: N/A" not in result
+
+    def test_closing_keyword_inside_comment_not_visible(self):
+        body = "## Summary\n- x\n\n<!-- Closes #42 -->\n"
+        visible = strip_html_comments(body)
+        assert not has_closing_keyword(visible), (
+            "'Closes #42' inside an HTML comment must NOT match after stripping"
+        )
 
 
 class TestPr127Regression:
