@@ -338,6 +338,7 @@ def main():
     check_command_skill_refs()
     check_catalog_completeness()
     check_template_placeholders()
+    check_unwired_principle_skills()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
