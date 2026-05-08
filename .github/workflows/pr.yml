@@ -96,3 +96,14 @@ jobs:
           python-version: '3.12'
       - run: pip install -r tests/requirements.txt
       - run: pytest tests/ -v
+
+  markdown-links:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check markdown links (lychee)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .lychee.toml './**/*.md'
+          fail: true
