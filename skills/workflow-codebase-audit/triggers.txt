@@ -1,6 +1,6 @@
 Run a cold-start audit on this repo
 I just inherited this service — give me a tech-debt sweep
-Take-home assessment audit, 90 minutes, security and perf
+Take-home assessment audit, 30 minutes, security and perf
 Due-diligence review for the acquired-team repo
 Pre-refactor tech-debt sweep across the monorepo
 Multi-domain audit with reasoning chains

@@ -9,7 +9,7 @@ Cold-start audit of this codebase across multiple domains.
 
 From `$ARGUMENTS`, extract:
 
-- `--time-box <duration>` — default `90m`. Any trailing `m`/`h` suffix is accepted (e.g. `30m`, `2h`).
+- `--time-box <duration>` — default `30m`. Any trailing `m`/`h` suffix is accepted (e.g. `30m`, `2h`).
 - `--scope <list>` — default `all`. Comma-separated domain names: `security`, `perf`, `reliability`, `tooling`, `testing`, or `all`.
 - `--depth <quick|standard|deep>` — default `standard`. Controls fan-out behaviour:
   - `quick` — single-pass auditor, no fan-out.
