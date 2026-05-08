@@ -1,0 +1,9 @@
+# Representative trigger prompts for principle-data-modeling
+how do I choose between a relational database and a document store for this access pattern
+what is the right normalization depth for this schema given these read and write access patterns
+what indexing strategy should I define for this database schema to support these query access patterns
+what is query-first schema design and how do I list access patterns before defining database tables and indexes
+how do I evolve a database schema without breaking existing clients using an expand-contract migration
+we have a hot key or hot partition skew in our database what schema design or data partitioning strategy should I change
+should I use a graph database or relational database for this highly connected data traversal query pattern
+how do I set up data retention archival and TTL expiry policy for old records in this database schema
