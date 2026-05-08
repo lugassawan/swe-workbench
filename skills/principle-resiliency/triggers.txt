@@ -1,6 +1,6 @@
 # Representative trigger prompts for principle-resiliency
-how do I prevent a slow downstream dependency from exhausting all my service threads
+how do I use bulkheads for isolating dependencies so one slow failure does not exhaust my resource pools
 should this service fail fast or degrade gracefully when the cache is unavailable
-what is the right pattern for isolating one dependency's failures from the rest of the system
+how do I use failure domains and bulkheads for isolating dependencies and containing the blast radius
 how should liveness and readiness probes differ for a Kubernetes deployment that warms a cache on startup
-my system cascades to total outage when one upstream gets slow — what resilience patterns should I add
+my system has cascading failure when one upstream degrades — what graceful degradation or fault tolerance should I add

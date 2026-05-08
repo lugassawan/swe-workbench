@@ -1,6 +1,6 @@
 ---
 name: principle-resiliency
-description: Resiliency principles — fault tolerance, partial failure, blast radius, failure domains, bulkheads, resource isolation, graceful degradation, fail-fast vs fail-soft, health checks, liveness vs readiness probes, cascading failure, gray failure, fault isolation. Auto-load when designing for partial failure, isolating dependencies via bulkheads, planning graceful degradation, choosing fail-fast vs fail-soft, configuring health/readiness/liveness probes, evaluating cascading failure risk, designing fallback paths, or reviewing system-level fault tolerance.
+description: Resiliency principles — fault tolerance, resilience, partial failure, blast radius, failure domains, bulkheads, resource isolation, graceful degradation, fail-fast vs fail-soft, health checks, liveness vs readiness probes, cascading failure, gray failure, fault isolation. Auto-load when designing for partial failure, isolating dependencies via bulkheads, planning graceful degradation, choosing fail-fast vs fail-soft, configuring health/readiness/liveness probes, evaluating cascading failure risk, designing fallback paths, or reviewing system-level fault tolerance.
 ---
 
 # Resiliency
