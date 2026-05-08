@@ -25,6 +25,7 @@
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `test-writer` | Authoring tests for an existing function, module, or change set. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
+| `tech-writer` | Generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments — style-aware, reads existing docs first. |
 
 ## Skills
 
