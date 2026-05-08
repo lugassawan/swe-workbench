@@ -36,6 +36,7 @@
 | `principle-ddd` | "DDD", "domain-driven", "bounded context", "aggregate", "value object", "ubiquitous language". |
 | `principle-solid` | "SOLID", "single responsibility", "open-closed", "Liskov", "interface segregation", "dependency inversion". |
 | `principle-tdd` | "TDD", "test-driven", "red green refactor", "unit test", "test first". |
+| `principle-testing` | "test pyramid", "test double", "mock", "stub", "fake", "fixture", "coverage", "mutation testing", "flaky", "contract test", "property-based test", "characterization test". |
 | `principle-design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
 | `principle-clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
 | `principle-observability` | "structured logs", "application metrics", "distributed traces", "span", "OpenTelemetry", "SLO", "SLI", "RED method", "USE method", "cardinality", "structured logging". |

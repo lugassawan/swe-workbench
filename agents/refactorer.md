@@ -35,3 +35,4 @@ Invoke these skills via the Skill tool when the refactoring touches their domain
 - `swe-workbench:principle-clean-code` — naming smells, DRY, function length
 - `swe-workbench:principle-solid` — responsibility splits, coupling
 - `swe-workbench:principle-design-patterns` — when a pattern fits the smell being removed
+- `swe-workbench:principle-testing` — characterization tests before touching legacy code, coverage audit, test data builders
