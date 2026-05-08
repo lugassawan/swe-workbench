@@ -56,44 +56,20 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 
 If `EnterWorktree` was never called this session (or the `ExitWorktree` tool is unavailable), this step is a no-op — proceed to 3b without aborting.
 
-**3b. Derive `$MAIN_REPO` and anchor the shell.** The rimba post-merge hook fires during the pull below and deletes any merged worktree — including the one this skill may be running from. Anchoring before the pull keeps the cwd valid regardless:
+**3b. Anchor cwd, sync local main, and verify hook cleanup** with the companion script:
 
 ```bash
-MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
-[ -n "$MAIN_REPO" ] || { echo "sync-main: could not resolve main repo path — aborting" >&2; exit 1; }
-cd "$MAIN_REPO"
+_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>")"
 ```
 
-**3c. Sync local main** so the merge commit is visible on `main` and the next branch cut starts from a current tip:
-
-```bash
-(git checkout main && git pull --ff-only origin main) \
-  || echo "sync-main: best-effort failed — reconcile main manually"
-```
-
-`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+The script: derives `MAIN_REPO=` (main worktree root via `git worktree list --porcelain`), anchors the shell there so the rimba hook cannot strand a deleted cwd, then runs `git checkout main && git pull --ff-only origin main` (best-effort — sync failure warns to stderr but does not abort), then checks whether the hook already removed the worktree and local branch. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
 When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
 
-For all other paths, sync failure is best-effort: a warning is recorded in the report and cleanup proceeds.
-
 ### Step 4 — Remove Worktree
 
-After Step 3 sync, run the verification gate to check whether the rimba post-merge hook already cleaned up the worktree and local branch. `$MAIN_REPO` is set during Step 3 and must be in scope here — run this gate in the **same bash invocation** as Step 3b so the variable remains defined:
-
-```bash
-WORKTREE_FOUND=$(git worktree list --porcelain \
-  | awk '/^branch refs\/heads\/<headRefName>$/{print 1; exit}')
-if git -C "$MAIN_REPO" rev-parse --verify "refs/heads/<headRefName>" 2>/dev/null; then
-  BRANCH_FOUND=1
-else
-  BRANCH_FOUND=
-fi
-WORKTREE_GONE=0
-[ -z "$WORKTREE_FOUND" ] && [ -z "$BRANCH_FOUND" ] && WORKTREE_GONE=1
-```
-
-(`WORKTREE_FOUND` is `1` when the worktree is present, empty when absent. Same for `BRANCH_FOUND`. The gate fires when both are empty — i.e., both are already gone. `refs/heads/` prefix prevents a same-named tag or remote ref from being mistaken for a live local branch.)
+`sync-and-verify.sh` (Step 3) emits `WORKTREE_GONE=0|1` into the shell environment via `eval`.
 
 - **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. No further action is needed in Step 4; skip Step 5 and proceed directly to Step 6.
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
@@ -134,16 +110,12 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 **Preconditions — both must hold:**
 
-1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection (uses `$MAIN_REPO` from Step 3):
+1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
    ```bash
-   HOOKS_DIR=$(git -C "$MAIN_REPO" config --get core.hooksPath || echo "$MAIN_REPO/.git/hooks")
-   case "$HOOKS_DIR" in /*) ;; *) HOOKS_DIR="$MAIN_REPO/$HOOKS_DIR" ;; esac
-   HOOK_FILE="$HOOKS_DIR/post-merge"
-   RIMBA_HOOK_ACTIVE=0
-   [ -x "$HOOK_FILE" ] && grep -qE '^[^#]*rimba clean --merged --force' "$HOOK_FILE" \
-     && RIMBA_HOOK_ACTIVE=1
+   _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+   eval "$("$_SCRIPTS/check-rimba-hook.sh")"
    ```
-   `RIMBA_HOOK_ACTIVE=1` is required. (The grep excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
+   `RIMBA_HOOK_ACTIVE=1` is required. (The grep inside the script excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
 2. After Step 3 sync, HEAD on `$MAIN_REPO` is on `main` (the hook's own branch guard requires it).
 
 **Procedure:**
@@ -160,11 +132,9 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 
 **Preconditions:**
 - rimba MCP server is active in the session, OR the rimba binary resolves on PATH or a known install location:
-  ```sh
-  RIMBA=$(command -v rimba 2>/dev/null \
-    || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
-    || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
-    || true)
+  ```bash
+  _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+  RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
   ```
   `RIMBA` must be non-empty (or MCP server active).
 
@@ -191,14 +161,11 @@ If `$RIMBA remove` exits non-zero, run a filesystem probe as the canonical signa
 
 *Batch A — Locate Worktree + Safety Checks*
 
-Combine the worktree locate and both git safety checks into one shell. Emit exactly three fields:
+Run the companion script and eval its `KEY=VALUE` output:
 
 ```bash
-WORKTREE=$(git worktree list --porcelain \
-  | awk '/^worktree /{p=$2} /^branch refs\/heads\/<headRefName>$/{print p; exit}')
-DIRTY=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" status --porcelain | grep -c . || echo 0)
-UNPUSHED=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" log @{upstream}..HEAD --oneline 2>/dev/null | grep -c . || echo 0)
-printf 'WORKTREE=%s\nDIRTY=%s\nUNPUSHED=%s\n' "$WORKTREE" "$DIRTY" "$UNPUSHED"
+_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 ```
 
 - `WORKTREE`: matching worktree path, or empty if none (skip Batch B when empty).
