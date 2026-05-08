@@ -160,11 +160,9 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 
 **Preconditions:**
 - rimba MCP server is active in the session, OR the rimba binary resolves on PATH or a known install location:
-  ```sh
-  RIMBA=$(command -v rimba 2>/dev/null \
-    || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
-    || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
-    || true)
+  ```bash
+  _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+  RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
   ```
   `RIMBA` must be non-empty (or MCP server active).
 
