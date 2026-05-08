@@ -77,3 +77,4 @@ Invoke these skills via the Skill tool when the review surfaces a concern in the
 - `swe-workbench:principle-security` — auth, input validation, trust boundaries
 - `swe-workbench:principle-performance` — hot-path allocations, N+1 queries, algorithmic complexity
 - `swe-workbench:principle-resiliency` — partial failure, bulkheads, graceful degradation, health-check correctness
+- `swe-workbench:principle-accessibility` — semantic HTML, ARIA usage, keyboard navigation, focus management, contrast, screen-reader compatibility

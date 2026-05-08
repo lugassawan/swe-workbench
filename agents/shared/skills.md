@@ -4,6 +4,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 
 ## Principles
 
+- `swe-workbench:principle-accessibility` — Accessibility: WCAG 2.2 AA, semantic HTML, ARIA, keyboard navigation, focus management, color contrast, screen-reader compatibility.
 - `swe-workbench:principle-api-design` — API design: contract-first, versioning, idempotency, REST/RPC/event trade-offs.
 - `swe-workbench:principle-clean-architecture` — Clean Architecture: dependency rule, ports and adapters, domain-centric layering.
 - `swe-workbench:principle-clean-code` — Clean code: DRY, KISS, YAGNI, naming, function length, abstraction level.

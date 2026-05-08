@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-accessibility
+review this modal for accessibility — keyboard trap and focus restoration
+semantic HTML button vs div onclick — ARIA role keyboard accessibility for screen readers
+WCAG 2.2 AA contrast check on the dashboard cards
+audit ARIA roles on the navigation menu
+add alt text and accessible names to the icon-only buttons
