@@ -191,14 +191,11 @@ If `$RIMBA remove` exits non-zero, run a filesystem probe as the canonical signa
 
 *Batch A — Locate Worktree + Safety Checks*
 
-Combine the worktree locate and both git safety checks into one shell. Emit exactly three fields:
+Run the companion script and eval its `KEY=VALUE` output:
 
 ```bash
-WORKTREE=$(git worktree list --porcelain \
-  | awk '/^worktree /{p=$2} /^branch refs\/heads\/<headRefName>$/{print p; exit}')
-DIRTY=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" status --porcelain | grep -c . || echo 0)
-UNPUSHED=$([ -n "$WORKTREE" ] && git -C "$WORKTREE" log @{upstream}..HEAD --oneline 2>/dev/null | grep -c . || echo 0)
-printf 'WORKTREE=%s\nDIRTY=%s\nUNPUSHED=%s\n' "$WORKTREE" "$DIRTY" "$UNPUSHED"
+_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 ```
 
 - `WORKTREE`: matching worktree path, or empty if none (skip Batch B when empty).
