@@ -29,29 +29,21 @@ def test_cleanup_merged_step3_calls_exit_worktree_before_cwd_anchor():
     assert "### Step 3" in body, "Step 3 section must exist"
     step3 = body.split("### Step 3")[1].split("### Step 4")[0]
 
-    assert "ExitWorktree" in step3, (
-        "Step 3 must instruct calling ExitWorktree action=keep "
-        "before MAIN_REPO derivation and before git pull"
+    # Structural check: ExitWorktree must be in sub-section 3a (before 3b)
+    assert "**3a." in step3, "Step 3 must have a **3a. sub-section"
+    assert "**3b." in step3, "Step 3 must have a **3b. sub-section"
+    section_3a = step3.split("**3b.")[0]
+    assert "ExitWorktree" in section_3a, (
+        "ExitWorktree must be in sub-section 3a (before **3b.), not a later section"
     )
-    assert "action=keep" in step3, (
-        "ExitWorktree must be called with action=keep so the worktree directory is "
-        "preserved for rimba to remove (not deleted by the tool itself)"
+    assert "action=keep" in section_3a, (
+        "ExitWorktree action=keep must appear in sub-section 3a"
     )
 
-    exit_idx = step3.find("ExitWorktree")
-    main_repo_idx = step3.find("MAIN_REPO=")
-    pull_idx = step3.find("git pull")
-
-    assert main_repo_idx > 0, "Step 3 must contain MAIN_REPO= derivation"
-    assert pull_idx > 0, "Step 3 must contain git pull"
-    assert exit_idx < main_repo_idx, (
-        "ExitWorktree must precede MAIN_REPO= derivation in Step 3 "
-        f"(ExitWorktree at {exit_idx}, MAIN_REPO= at {main_repo_idx})"
-    )
-    assert exit_idx < pull_idx, (
-        "ExitWorktree must precede git pull in Step 3 "
-        f"(ExitWorktree at {exit_idx}, git pull at {pull_idx})"
-    )
+    # Ordering check: MAIN_REPO= and git pull are in 3b/3c, after 3a
+    section_3bc = step3.split("**3b.")[1]
+    assert "MAIN_REPO=" in section_3bc, "MAIN_REPO= derivation must be in 3b or later"
+    assert "git pull" in section_3bc, "git pull must be in 3b or later (after ExitWorktree)"
 
 
 def test_cleanup_merged_step3_exit_worktree_is_no_op_when_not_entered():
@@ -76,7 +68,8 @@ def test_cleanup_merged_rimba_path_handles_partial_success():
     """
     body = SKILL.read_text()
     assert "### rimba (MCP / binary)" in body, "rimba strategy section must exist"
-    rimba_block = body.split("### rimba (MCP / binary)")[1].split("###")[0]
+    assert "### shell fallback" in body, "shell fallback section must exist as boundary"
+    rimba_block = body.split("### rimba (MCP / binary)")[1].split("### shell fallback")[0]
 
     has_partial = "partial" in rimba_block.lower()
     has_fallthrough = "fall through to Step 5" in rimba_block or "fall through to step 5" in rimba_block.lower()

@@ -84,7 +84,11 @@ After Step 3 sync, run the verification gate to check whether the rimba post-mer
 ```bash
 WORKTREE_FOUND=$(git worktree list --porcelain \
   | awk '/^branch refs\/heads\/<headRefName>$/{print 1; exit}')
-BRANCH_FOUND=$(git -C "$MAIN_REPO" rev-parse --verify "refs/heads/<headRefName>" 2>/dev/null && echo 1 || true)
+if git -C "$MAIN_REPO" rev-parse --verify "refs/heads/<headRefName>" 2>/dev/null; then
+  BRANCH_FOUND=1
+else
+  BRANCH_FOUND=
+fi
 WORKTREE_GONE=0
 [ -z "$WORKTREE_FOUND" ] && [ -z "$BRANCH_FOUND" ] && WORKTREE_GONE=1
 ```
@@ -170,8 +174,13 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 3. (Once per repo) recommend the user run `rimba hook install` to automate future post-merge cleanups via a git hook — this removes the need for manual `/swe-workbench:cleanup-merged` invocations.
 
 **Failure handling:**
-- If rimba reports that the worktree was removed but branch deletion failed (e.g. "worktree removed but failed to delete branch", or rimba exits non-zero after the worktree directory is confirmed gone) — treat as **partial success**. The worktree is already gone; `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 executes normally. Fall through to Step 5 (`git branch -D`) from `$MAIN_REPO`. Do NOT abort.
-- On any other rimba failure (e.g. dirty worktree refused, cannot locate worktree), report the rimba error verbatim and abort. Do not proceed to branch deletion.
+
+If `$RIMBA remove` exits non-zero, run a filesystem probe as the canonical signal — do not rely on rimba's message text:
+```bash
+[ -d "<worktree-path>" ] && WORKTREE_STILL_PRESENT=1 || WORKTREE_STILL_PRESENT=0
+```
+- **`WORKTREE_STILL_PRESENT=0`** (worktree directory is gone): treat as **partial success** — the branch deletion failed but the worktree is already removed. `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 executes normally. Fall through to Step 5 (`git branch -D`) from `$MAIN_REPO`. Do NOT abort.
+- **`WORKTREE_STILL_PRESENT=1`** (worktree directory still exists — rimba refused, e.g. dirty/unpushed): report the rimba error verbatim and abort. Do not proceed to branch deletion.
 
 ### shell fallback
 
@@ -231,7 +240,7 @@ git worktree remove "$WORKTREE"
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
-| cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Re-run from the main repo root. (Step 3a `ExitWorktree action=keep` prevents this when followed.) |
+| cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` prevents this when followed. If observed, re-run from the main repo root. |
 | rimba `remove` removes worktree but fails branch delete | Non-zero exit after worktree directory is gone | Partial success — fall through to Step 5 from `$MAIN_REPO`. Worktree is gone; only branch remains. |
 
 ## Common Mistakes
