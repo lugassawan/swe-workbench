@@ -1,0 +1,16 @@
+# Markdown link checker config — used by .github/workflows/pr.yml
+# and runnable locally as `lychee .` from the repo root.
+
+# Skip all HTTP/HTTPS resolution; only validate filesystem paths and
+# relative links. Issue #75 scoped external URL checking out to avoid
+# CI flakiness from rate limits and transient failures.
+offline = true
+
+# Don't print per-link progress; CI logs are noisy enough.
+no_progress = true
+
+# Paths to skip when discovering markdown.
+exclude_path = [
+  "node_modules",
+  ".git",
+]
