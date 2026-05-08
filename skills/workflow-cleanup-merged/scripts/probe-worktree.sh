@@ -6,8 +6,9 @@ set -euo pipefail
 
 HEAD_REF="${1:?Usage: probe-worktree.sh <head_ref>}"
 
+# Use awk string comparison (-v) to avoid regex metachar injection from HEAD_REF
 WORKTREE=$(git worktree list --porcelain \
-  | awk '/^worktree /{p=$2} /^branch refs\/heads\/'"$HEAD_REF"'$/{print p; exit}')
+  | awk -v ref="branch refs/heads/$HEAD_REF" '/^worktree /{p=$2} $0 == ref {print p; exit}')
 
 if [ -n "${WORKTREE:-}" ]; then
   DIRTY=$(git -C "$WORKTREE" status --porcelain | grep -c . || echo 0)
@@ -17,4 +18,5 @@ else
   UNPUSHED=0
 fi
 
-printf 'WORKTREE=%s\nDIRTY=%s\nUNPUSHED=%s\n' "${WORKTREE:-}" "$DIRTY" "$UNPUSHED"
+# %q shell-quotes WORKTREE so eval in the caller handles paths with spaces safely
+printf 'WORKTREE=%q\nDIRTY=%s\nUNPUSHED=%s\n' "${WORKTREE:-}" "$DIRTY" "$UNPUSHED"

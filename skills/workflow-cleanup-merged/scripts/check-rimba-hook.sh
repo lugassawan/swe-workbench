@@ -15,7 +15,9 @@ esac
 
 HOOK_FILE="$HOOKS_DIR/post-merge"
 RIMBA_HOOK_ACTIVE=0
-[ -x "$HOOK_FILE" ] && grep -qE '^[^#]*rimba clean --merged --force' "$HOOK_FILE" \
-  && RIMBA_HOOK_ACTIVE=1
+# Use if/fi so set -e doesn't fire when grep finds no match (grep exits 1 on no-match)
+if [ -x "$HOOK_FILE" ] && grep -qE '^[^#]*rimba clean --merged --force' "$HOOK_FILE" 2>/dev/null; then
+  RIMBA_HOOK_ACTIVE=1
+fi
 
 printf 'RIMBA_HOOK_ACTIVE=%s\n' "$RIMBA_HOOK_ACTIVE"

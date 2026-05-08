@@ -18,9 +18,10 @@ cd "$MAIN_REPO"
   || echo "sync-main: best-effort failed — reconcile main manually" >&2
 
 # Block C: verification gate — check whether hook already cleaned up
+# Use awk string comparison (-v) to avoid regex metachar injection from HEAD_REF
 WORKTREE_FOUND=$(git worktree list --porcelain \
-  | awk '/^branch refs\/heads\/'"$HEAD_REF"'$/{print 1; exit}')
-if git -C "$MAIN_REPO" rev-parse --verify "refs/heads/$HEAD_REF" 2>/dev/null; then
+  | awk -v ref="branch refs/heads/$HEAD_REF" '$0 == ref {print 1; exit}')
+if git rev-parse --verify "refs/heads/$HEAD_REF" 2>/dev/null; then
   BRANCH_FOUND=1
 else
   BRANCH_FOUND=
