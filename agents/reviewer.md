@@ -80,3 +80,4 @@ Invoke these skills via the Skill tool when the review surfaces a concern in the
 - `swe-workbench:principle-accessibility` — semantic HTML, ARIA usage, keyboard navigation, focus management, contrast, screen-reader compatibility
 - `swe-workbench:principle-concurrency` — race conditions, deadlocks, missing synchronization, lost cancellation propagation
 - `swe-workbench:principle-observability` — log/metric/trace gaps, structured-logging hygiene, cardinality blowups, alerting on causes vs symptoms
+- `swe-workbench:principle-i18n` — locale-aware formatting, time zones, plural rules, translatable string composition, RTL layout
