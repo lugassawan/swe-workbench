@@ -13,6 +13,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:principle-ddd` — Domain-Driven Design: bounded contexts, aggregates, ubiquitous language, domain events.
 - `swe-workbench:principle-design-patterns` — Design patterns: GoF catalog — Strategy, Factory, Observer, Decorator, Adapter, and more.
 - `swe-workbench:principle-error-handling` — Error handling: errors as values, classification, wrapping, retry, circuit breakers.
+- `swe-workbench:principle-event-driven` — Event-driven architecture: event sourcing, CQRS, sagas, schema evolution, consumer groups, DLQ, idempotent handlers.
 - `swe-workbench:principle-i18n` — Internationalization & localization: locale-aware formatting, time zones, plural rules, message catalogs, RTL layout, ISO 8601, currency.
 - `swe-workbench:principle-observability` — Observability: logs vs metrics vs traces, structured logging, OpenTelemetry, SLI/SLO.
 - `swe-workbench:principle-performance` — Performance: latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries.

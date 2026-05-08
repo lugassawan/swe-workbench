@@ -45,6 +45,7 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-data-modeling` — storage paradigm selection, normalization, schema evolution, query-first design
 - `swe-workbench:principle-ddd` — bounded contexts, aggregates, ubiquitous language
 - `swe-workbench:principle-api-design` — contracts, versioning, idempotency
+- `swe-workbench:principle-event-driven` — event sourcing, CQRS, sagas, schema evolution, idempotent consumers, DLQ
 - `swe-workbench:principle-solid` — responsibility, coupling, open-closed
 - `swe-workbench:principle-performance` — latency vs throughput, profile-first, scalability trade-offs
 - `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
