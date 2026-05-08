@@ -64,7 +64,7 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-performance` — system-level latency budgets, scalability trade-offs, profile-first discipline
 - `swe-workbench:principle-concurrency` — ordering guarantees, idempotency across hops, cancellation propagation
 
-_Note: a dedicated swe-workbench:principle-distributed-systems skill is planned (see #147). Until then, route distributed-system concerns through `principle-resiliency`, `principle-event-driven`, and `principle-concurrency`._
+_Note: a dedicated swe-workbench:principle-distributed-systems skill is planned (see #87). Until then, route distributed-system concerns through `principle-resiliency`, `principle-event-driven`, and `principle-concurrency`._
 
 ## Absolute rules
 
