@@ -32,6 +32,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:language-kotlin` — Kotlin idioms: null safety, coroutines, sealed interfaces, scope functions, Flow.
 - `swe-workbench:language-python` — Python idioms: PEP 8, type hints, dataclasses, asyncio, generators, pytest.
 - `swe-workbench:language-rust` — Rust idioms: ownership, borrowing, lifetimes, traits, iterators, error handling.
+- `swe-workbench:language-sql` — SQL idioms: query optimization, EXPLAIN plans, schema design, transactions, window functions, CTEs, and pagination.
 - `swe-workbench:language-swift` — Swift idioms: optionals, value types, actors, async/await, protocols, Result builders.
 - `swe-workbench:language-typescript` — TypeScript/JavaScript idioms: strict mode, discriminated unions, async patterns, Node.
 

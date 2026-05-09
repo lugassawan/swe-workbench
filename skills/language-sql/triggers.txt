@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-sql
+how do I optimize this SQL query using EXPLAIN ANALYZE and better indexes
+should this report query use a CTE, subquery, or window function for pagination
+what transaction isolation level should I use to avoid deadlocks in this SQL workflow
+review this schema design for constraints indexes and migration safety
