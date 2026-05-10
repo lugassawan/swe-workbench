@@ -107,6 +107,11 @@ class TestForcePushBlocker:
         "git push --force origin feature/x",  # force but not main/master
         "git push --force origin mainline",   # "mainline" is not main (boundary check)
         "git push --force origin my-master",  # "my-master" is not master
+        # --force-with-lease is safe (regression #163)
+        "git push --force-with-lease origin main",
+        "git push --force-with-lease origin HEAD:main",
+        "git push --force-with-lease origin feature/x",
+        "git push --force-with-lease=30 origin main",
     ])
     def test_allowed(self, hook_patterns, cmd):
         assert not force_push_blocked(hook_patterns, cmd), f"Expected ALLOW for: {cmd!r}"
