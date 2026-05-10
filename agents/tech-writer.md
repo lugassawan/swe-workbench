@@ -1,7 +1,7 @@
 ---
 name: tech-writer
 description: Documentation author — generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments from diffs and conversation context, matching the repo's existing tone and conventions. Invoke when documentation is missing, stale, or drifting from code.
-model: sonnet
+model: haiku
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
 

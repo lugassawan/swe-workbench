@@ -1,7 +1,7 @@
 ---
 name: product-manager
 description: Product-thinking persona that turns a rough thought (idea, improvement, bug-report) into a well-framed GitHub issue on the user's current repository. Applies four lightweight lenses — problem, value, acceptance criteria, Impact/Effort — discovers issue templates at runtime, classifies into whatever templates the repo has (or falls back to a default body when none exist), and files via `gh issue create` only after explicit user confirmation. Works in any repo where the swe-workbench plugin is installed.
-model: sonnet
+model: haiku
 tools: Read, Write, Grep, Bash, Skill
 ---
 
