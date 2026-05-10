@@ -8,7 +8,7 @@
 
 ## Agents
 
-All 14 agents ship with `model: sonnet` at audit time. None invoke the `Agent` or `Task` tool — subagent spawning is exclusively via the orchestrating Claude session.
+All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-auditor, product-manager, tech-writer, test-writer) were flipped to `model: haiku` in this PR; see the Recommended tier column. None invoke the `Agent` or `Task` tool (verified by `grep -r 'Agent\|Task' agents/ --include='*.md'` at snapshot) — subagent spawning is exclusively via the orchestrating Claude session.
 
 | Surface | Path | Current model | Spawns subagents? | Recommended tier | Notes |
 |---|---|---|---|---|---|
@@ -16,7 +16,7 @@ All 14 agents ship with `model: sonnet` at audit time. None invoke the `Agent` o
 | architect | `agents/architect.md` | sonnet | No | M–L | ADR/RFC authoring; multi-system reasoning; keep on sonnet |
 | auditor | `agents/auditor.md` | sonnet | No | M–L | Multi-domain cold-start sweep; calibration and counter-evidence require reasoning |
 | debugger | `agents/debugger.md` | sonnet | No | M | Delegates investigation to `systematic-debugging` skill; fix is minimal but judgment-bearing |
-| dependency-auditor | `agents/dependency-auditor.md` | sonnet | No | **S → haiku** | Reads manifests, reports versions/licenses; mechanical extraction, low reasoning density. Watch: license-compatibility edge cases (SPDX vs. policy) may need a revert window |
+| dependency-auditor | `agents/dependency-auditor.md` | sonnet | No | **S → haiku** | Reads manifests, reports versions/licenses; mechanical extraction, low reasoning density. Watch window: GPL/AGPL transitive in MIT projects, SSPL/BUSL/Commons-Clause, per-version license changes, dev-only vs. production viral scope — any relational license judgment that misclassifies to lower severity is a revert trigger. |
 | migrator | `agents/migrator.md` | sonnet | No | M–L | Expand-backfill-switch-contract reasoning across deployments; phase correctness is high-stakes |
 | performance-tuner | `agents/performance-tuner.md` | sonnet | No | M | Profile-driven; delegates to `principle-performance` skill; hotspot ranking requires judgment |
 | product-manager | `agents/product-manager.md` | sonnet | No | **S → haiku** | Formats rough ideas into structured GitHub issues; template discovery + fill is mechanical |
@@ -25,7 +25,7 @@ All 14 agents ship with `model: sonnet` at audit time. None invoke the `Agent` o
 | security-auditor | `agents/security-auditor.md` | sonnet | No | L | OWASP depth-first; exploitability assessment requires strong reasoning |
 | senior-engineer | `agents/senior-engineer.md` | sonnet | No | L | Architectural advice; trade-off synthesis; one-way-door assessment |
 | tech-writer | `agents/tech-writer.md` | sonnet | No | **S → haiku** | Generates docs from diffs and context; prose transformation with existing tone-matching |
-| test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec |
+| test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec. Watch: test-writer auto-detects framework, reads existing tests, and invokes `principle-tdd`/`principle-testing` skills — multi-step steps that haiku may skip. Revert if Skill invocations are skipped or framework detection regresses. |
 
 **Tier S agents (flipped to haiku in this PR):** dependency-auditor, product-manager, tech-writer, test-writer  
 **Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, refactorer, reviewer, security-auditor, senior-engineer
@@ -84,6 +84,6 @@ Skills have no `model:` field — they are prose instructions injected into the 
 |---|---|---|---|
 | 1 | `ticket-context` skill | ~30% | Skill body tightened in this PR |
 | 2 | Subagents attributed to swe-workbench | ~19% | 4 Tier-S agents flipped to haiku |
-| 3 | All other swe-workbench surfaces | ~22% | No change; monitor |
+| 3 | All other swe-workbench surfaces | ~22% | No change; monitor. If any single surface exceeds 15% for 3 consecutive days, open a cost-audit follow-up. |
 
 **Post-merge:** compare against this baseline after one representative day of use. Log delta as a comment on issue #160.

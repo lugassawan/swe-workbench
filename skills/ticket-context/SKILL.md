@@ -7,7 +7,7 @@ description: Fetch ticket context from Jira (PROJ-123), Confluence, or GitHub (`
 
 Auto-loads when the caller references:
 
-- **Jira key**: `[A-Z][A-Z0-9]+-\d+` — e.g. `PROJ-123`, `ENG-4567`.
+- **Jira key**: `[A-Z][A-Z0-9]+-\d+` — e.g. `PROJ-123`.
 - **Atlassian Jira URL**: `*.atlassian.net/browse/<KEY>`.
 - **Confluence URL**: `*.atlassian.net/wiki/spaces/...` or `*.atlassian.net/wiki/pages/...`.
 - **GitHub issue/PR URL**: `github.com/<owner>/<repo>/(issues|pull)/\d+`.
@@ -23,7 +23,7 @@ First fetch in session: call `mcp__atlassian__getAccessibleAtlassianResources` f
 
 ### Confluence page
 
-Extract page ID from `/pages/<ID>` in the URL. Use `mcp__atlassian__getConfluencePage`; fall back to `mcp__atlassian__fetch` with raw URL if ID unclear. Extract: title, version, body (rendered text, not storage XML), footer comments via `mcp__atlassian__getConfluencePageFooterComments` if any.
+Extract page ID from `/pages/<ID>` in the URL. Use `mcp__atlassian__getConfluencePage`; fall back to `mcp__atlassian__fetch` with raw URL if ID unclear. Extract: title, version, body (rendered text), footer comments via `mcp__atlassian__getConfluencePageFooterComments` if any.
 
 ### GitHub issue or PR
 
@@ -42,8 +42,8 @@ One block per reference, prepended to caller context:
 
 **Title:** ...
 **Type / Status:** ...
-**Summary:** ...
-**Acceptance criteria / Definition of done:** ...
+**Summary:** ... (1–3 sentences)
+**Acceptance criteria / Definition of done:** ... (bulleted if present, otherwise "not specified")
 **Linked references:** ...
 **Recent activity:** ...
 **Source:** <URL>
@@ -51,14 +51,12 @@ One block per reference, prepended to caller context:
 
 ## Degradation
 
-If a fetch fails, say what failed and return — never fabricate content.
-
 | Condition | Action |
 |---|---|
 | Atlassian MCP unavailable | Try `mcp__atlassian__fetch` with raw URL; if still failing, emit `ticket-context: Atlassian MCP unavailable; proceeding without context.` |
 | `gh` CLI missing | Emit `ticket-context: gh CLI unavailable; proceeding without context.` |
-
-Auth errors and empty/404 responses: surface what failed; never guess.
+| Auth error | Surface the raw error; never fabricate. |
+| Fetch returns empty or 404 | Say so; do not guess. |
 
 ## Absolute rules
 

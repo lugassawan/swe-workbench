@@ -56,12 +56,12 @@ or security/correctness judgment?
 ## When to revisit
 
 Downgrade a Tier M agent to haiku when:
-- Multiple sessions confirm output quality is unchanged on real tasks.
+- At least 5 real-task invocations with no regression complaint (trial window: 14 days).
 - No regression complaints tied to the agent.
 
 Revert a haiku agent to sonnet when:
-- A user-visible regression is traced to reasoning depth (not tool availability).
-- PR description should note the reversion and the failing case.
+- A user-visible regression is traced to reasoning depth (not tool availability) within 14 days.
+- PR description must note the reversion and the failing case.
 
 Flag concentration in telemetry: if any single agent exceeds 15% of session token spend for more than 3 days, open a cost-audit follow-up issue.
 
