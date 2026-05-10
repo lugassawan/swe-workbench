@@ -172,6 +172,72 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_string_entry_raises_validation_not_attributeerror(self, reset_validate):
+        root = reset_validate
+        # Malformed hooks.json where a list entry is a string instead of an object
+        bad = {
+            "hooks": {
+                "PreToolUse": ["unexpected-string"]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_int_entry_raises_validation(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [42]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_null_entry_raises_validation(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [None]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_non_dict_inner_hook_raises_validation(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": ["invalid-string-hook"],
+                    }
+                ]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_mixed_valid_and_invalid_entries(self, reset_validate):
+        root = reset_validate
+        # Valid entry + invalid entry; should validate the valid one and report the invalid one
+        bad = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "exit 0"}]},
+                    "bad-string-entry",
+                ]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        # Should report the bad entry
+        assert any("must be an object" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills
