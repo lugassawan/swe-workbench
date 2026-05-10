@@ -286,6 +286,60 @@ class TestCheckAgents:
 
 
 # ──────────────────────────────────────────────
+# performance-tuner agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestPerformanceTunerAgent:
+    """Integration tests: assert the real agents/performance-tuner.md satisfies all
+    acceptance criteria from issue #102 without relying on a synthetic fixture."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "performance-tuner.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/performance-tuner.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        # Extract YAML block between the first pair of ---
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: performance-tuner" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_principle_performance_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-performance`" in text, (
+            "agent must reference swe-workbench:principle-performance"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/skills.md" in text, (
+            "agent must include @./shared/skills.md catalog reference"
+        )
+
+    def test_profile_first_rule_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "## Refusal protocol" in text, "Refusal protocol section must be present"
+        assert "without a profile" in text.lower(), (
+            "refusal protocol must explicitly refuse optimization without a profile"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        val.check_agents()
+        val.check_agent_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
