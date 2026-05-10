@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-cost-awareness
+how do I model egress costs when replicating data across regions for this service
+what right-sizing strategy should I use to balance cold-start latency and scale-to-zero savings
+how should I think about cost-per-request when designing this chatty microservice boundary
+which storage tier should I choose for this audit log data that is queried infrequently
+how do I reduce log ingestion costs without losing observability signal for error investigation

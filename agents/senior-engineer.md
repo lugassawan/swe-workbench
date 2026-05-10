@@ -51,3 +51,4 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
 - `swe-workbench:principle-distributed-systems` — CAP/PACELC, consistency models, consensus and quorum, replication, exactly-once effects
 - `swe-workbench:principle-observability` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
+- `swe-workbench:principle-cost-awareness` — cost-per-request mental model, scale-to-zero vs cold-start, storage tier selection

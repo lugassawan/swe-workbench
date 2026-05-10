@@ -64,6 +64,7 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-security` — trust boundaries between systems, threat modeling, auth/authz at the contract surface
 - `swe-workbench:principle-performance` — system-level latency budgets, scalability trade-offs, profile-first discipline
 - `swe-workbench:principle-concurrency` — ordering guarantees, idempotency across hops, cancellation propagation
+- `swe-workbench:principle-cost-awareness` — system-level cost trade-offs, egress topology, right-sizing, cross-AZ/region data movement
 
 ## Absolute rules
 

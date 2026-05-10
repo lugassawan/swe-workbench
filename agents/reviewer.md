@@ -82,4 +82,5 @@ Invoke these skills via the Skill tool when the review surfaces a concern in the
 - `swe-workbench:principle-observability` — log/metric/trace gaps, structured-logging hygiene, cardinality blowups, alerting on causes vs symptoms
 - `swe-workbench:principle-i18n` — locale-aware formatting, time zones, plural rules, translatable string composition, RTL layout
 - `swe-workbench:principle-testing` — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior, flaky tests, mock overuse
+- `swe-workbench:principle-cost-awareness` — chatty service calls, log volume / cardinality, missed storage-tier opportunities
 - `swe-workbench:principle-version-control` — atomic commits, mixed formatting + logic in one diff, commit-message quality, missing PR test plan, force-push smells

@@ -9,6 +9,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:principle-clean-architecture` — Clean Architecture: dependency rule, ports and adapters, domain-centric layering.
 - `swe-workbench:principle-clean-code` — Clean code: DRY, KISS, YAGNI, naming, function length, abstraction level.
 - `swe-workbench:principle-concurrency` — Concurrency: race conditions, deadlock, structured concurrency, cancellation, backpressure.
+- `swe-workbench:principle-cost-awareness` — Cost awareness: FinOps mindset, egress, right-sizing, scale-to-zero, cost-per-request, storage tiers, observability cost.
 - `swe-workbench:principle-data-modeling` — Data modeling: storage paradigm selection, normalization depth, indexing strategy, hot-key avoidance, schema evolution, query-first design, retention.
 - `swe-workbench:principle-ddd` — Domain-Driven Design: bounded contexts, aggregates, ubiquitous language, domain events.
 - `swe-workbench:principle-design-patterns` — Design patterns: GoF catalog — Strategy, Factory, Observer, Decorator, Adapter, and more.
