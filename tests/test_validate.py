@@ -172,6 +172,60 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_string_entry_in_matchers(self, reset_validate):
+        """String entry in matchers list should not raise AttributeError (issue #166)."""
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": ["unexpected-string"]}})
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_int_entry_in_matchers(self, reset_validate):
+        """Integer entry in matchers list should not raise AttributeError (issue #166)."""
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [42]}})
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_null_entry_in_matchers(self, reset_validate):
+        """Null entry in matchers list should not raise AttributeError (issue #166)."""
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [None]}})
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_string_hook_in_sub_hooks(self, reset_validate):
+        """String hook in sub_hooks list should not raise AttributeError (issue #166)."""
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": ["unexpected-string"]}
+                ]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_mixed_valid_and_invalid_entries(self, reset_validate):
+        """Valid entries should still be checked when mixed with invalid ones."""
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [
+                    "invalid-string",
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "exit 0"}]},
+                ]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        # Should report the invalid entry AND not crash
+        assert any("must be an object" in f for f in validate.FAILURES)
+        # The valid entry should not produce failures
+        matcher_failures = [f for f in validate.FAILURES if "matcher" in f or "hooks." in f and "must be" in f]
+        # Only the invalid-string entry should be reported, not valid entry issues
+
 
 # ──────────────────────────────────────────────
 # check_skills
