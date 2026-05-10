@@ -23,7 +23,7 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
 6. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
 
-7. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<timestamp>.md` using the `Write` tool (not a Bash heredoc), then print:
+7. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write the exact `gh issue create --title "..." --body-file <path>` command to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool. Then print:
    ```
    Filing into: <owner>/<repo>
    Template: <chosen template> | none — default body
@@ -39,4 +39,4 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
    ```
    **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-8. **File on confirm.** Only when the user replies `confirm`, run the exact printed command and return the issue URL.
+8. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 7 and run it exactly as written — do not regenerate the title or path. Return the issue URL.
