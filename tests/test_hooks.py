@@ -98,6 +98,10 @@ class TestForcePushBlocker:
         "git push -f origin master",
         "git push --force origin main:main",
         "git push --force origin master:master",
+        "git push --force origin HEAD:main",
+        "git push --force origin HEAD:master",
+        "git push --force origin feature:main",
+        "git push --force origin feature:master",
     ])
     def test_blocked(self, hook_patterns, cmd):
         assert force_push_blocked(hook_patterns, cmd), f"Expected BLOCK for: {cmd!r}"
