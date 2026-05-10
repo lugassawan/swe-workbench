@@ -4,8 +4,8 @@
 
 | Command | Purpose |
 |---|---|
-| `/swe-workbench:review` | Review the current git diff — correctness, security, design, test gaps. |
-| `/swe-workbench:security-review` | Audit the current git diff for security vulnerabilities — OWASP Top 10, secrets, insecure APIs. |
+| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf) or auto-inferred from the diff when omitted. PR number arg unchanged. |
+| `/swe-workbench:security-review` | Alias for `/swe-workbench:review --mode security`. Kept for backward compat. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
