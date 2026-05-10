@@ -97,6 +97,9 @@ def check_hooks_json():
             fail(path.relative_to(ROOT), f"hooks.{event} must be a list")
             continue
         for i, entry in enumerate(matchers):
+            if not isinstance(entry, dict):
+                fail(path.relative_to(ROOT), f"hooks.{event}[{i}] must be an object")
+                continue
             if not isinstance(entry.get("matcher"), str):
                 fail(path.relative_to(ROOT), f"hooks.{event}[{i}].matcher must be a string")
             sub_hooks = entry.get("hooks")
@@ -104,6 +107,9 @@ def check_hooks_json():
                 fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks must be a list")
                 continue
             for j, hook in enumerate(sub_hooks):
+                if not isinstance(hook, dict):
+                    fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}] must be an object")
+                    continue
                 if not isinstance(hook.get("type"), str):
                     fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}].type must be a string")
                 if not isinstance(hook.get("command"), str):
