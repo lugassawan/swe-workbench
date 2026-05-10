@@ -23,7 +23,7 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
 6. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
 
-7. **Preview gate.** Write the body to `/tmp/capture-<repo-slug>-<timestamp>.md`, then print:
+7. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<timestamp>.md` using the `Write` tool (not a Bash heredoc), then print:
    ```
    Filing into: <owner>/<repo>
    Template: <chosen template> | none — default body

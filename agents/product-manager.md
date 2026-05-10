@@ -51,7 +51,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
      ## Additional context
      ```
 
-7. **Write temp file.** Derive `<repo-slug>` from the `nameWithOwner` value, replacing `/` with `-` and stripping any character outside `[a-zA-Z0-9_-]`. Write the drafted body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool. Also write a one-line command file to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` containing the exact `gh issue create --title "..." --body-file <path>` command (title double-quoted, path absolute). Do NOT run `gh issue create` yet.
+7. **Write temp file.** Derive `<repo-slug>` from the `nameWithOwner` value, replacing `/` with `-` and stripping any character outside `[a-zA-Z0-9_-]`. Obtain a Unix timestamp once via `date +%s` and store it — reuse the same value for both filenames below; never re-derive or re-glob. Write the drafted body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (never via Bash heredoc). Also write a one-line command file to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool, containing the exact `gh issue create --title "..." --body-file <absolute-path>` command (title double-quoted, path absolute and matching the body file written above). Do NOT run `gh issue create` yet.
 
 8. **Preview gate.** Print the following to the user and wait. Do NOT execute on this turn:
    ```
