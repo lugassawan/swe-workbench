@@ -10,7 +10,7 @@ git -C "$ROOT" config --unset core.hooksPath 2>/dev/null || true
 mkdir -p "$GIT_DIR/hooks"
 for src in "$ROOT"/.githooks/*; do
   name=$(basename "$src")
-  ln -sfn "../../.githooks/$name" "$GIT_DIR/hooks/$name"
+  ln -sfn "$ROOT/.githooks/$name" "$GIT_DIR/hooks/$name"
 done
 
-echo "Git hooks linked: .git/hooks/<name> -> ../../.githooks/<name>"
+echo "Git hooks linked: $GIT_DIR/hooks/<name> -> $ROOT/.githooks/<name>"
