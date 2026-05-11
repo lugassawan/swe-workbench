@@ -172,6 +172,45 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_string_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": ["bad"]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [42]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [None]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_string_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": ["bad"]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [42]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [None]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills
