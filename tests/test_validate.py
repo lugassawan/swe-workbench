@@ -444,6 +444,60 @@ class TestCheckAgentSkillRefs:
 
 
 # ──────────────────────────────────────────────
+# check_command_skill_refs
+# ──────────────────────────────────────────────
+
+class TestCheckCommandSkillRefs:
+    def test_ref_to_existing_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_absent_skill_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:nonexistent` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+
+    def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nUse `swe-workbench:foo` and `swe-workbench:fooo`.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 1
+        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "swe-workbench:foo'" not in validate.FAILURES[0]
+
+    def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
 # check_catalog_completeness
 # ──────────────────────────────────────────────
 
