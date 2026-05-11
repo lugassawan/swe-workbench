@@ -14,14 +14,14 @@ MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 cd "$MAIN_REPO"
 
 # Block B: sync local main (best-effort — failure warns, does not abort)
-(git checkout main && git pull --ff-only origin main) \
+(git checkout main && git pull --ff-only origin main) >/dev/null \
   || echo "sync-main: best-effort failed — reconcile main manually" >&2
 
 # Block C: verification gate — check whether hook already cleaned up
 # Use awk string comparison (-v) to avoid regex metachar injection from HEAD_REF
 WORKTREE_FOUND=$(git worktree list --porcelain \
   | awk -v ref="branch refs/heads/$HEAD_REF" '$0 == ref {print 1; exit}')
-if git rev-parse --verify "refs/heads/$HEAD_REF" 2>/dev/null; then
+if git rev-parse --verify "refs/heads/$HEAD_REF" >/dev/null 2>&1; then
   BRANCH_FOUND=1
 else
   BRANCH_FOUND=
