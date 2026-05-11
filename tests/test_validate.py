@@ -172,6 +172,51 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_non_dict_entry_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            hooks_json={"hooks": {"PreToolUse": ["unexpected-string"]}},
+        )
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_non_dict_sub_hook_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            hooks_json={
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": ["not-a-dict"],
+                        }
+                    ]
+                }
+            },
+        )
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_int_entry_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            hooks_json={"hooks": {"PreToolUse": [42]}},
+        )
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
+    def test_null_entry_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            hooks_json={"hooks": {"PreToolUse": [None]}},
+        )
+        validate.check_hooks_json()
+        assert any("must be an object" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills
