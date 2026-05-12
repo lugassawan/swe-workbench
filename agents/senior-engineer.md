@@ -47,7 +47,9 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-api-design` — contracts, versioning, idempotency
 - `swe-workbench:principle-event-driven` — event sourcing, CQRS, sagas, schema evolution, idempotent consumers, DLQ
 - `swe-workbench:principle-solid` — responsibility, coupling, open-closed
+- `swe-workbench:principle-refactoring` — when assessing whether code can be safely restructured (rule of three, characterization-test coverage, behavior-preserving moves)
 - `swe-workbench:principle-performance` — latency vs throughput, profile-first, scalability trade-offs
 - `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
 - `swe-workbench:principle-distributed-systems` — CAP/PACELC, consistency models, consensus and quorum, replication, exactly-once effects
 - `swe-workbench:principle-observability` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
+- `swe-workbench:principle-cost-awareness` — cost-per-request mental model, scale-to-zero vs cold-start, storage tier selection

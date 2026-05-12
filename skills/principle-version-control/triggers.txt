@@ -1,0 +1,6 @@
+# Representative trigger prompts for principle-version-control
+how do I split this giant commit into atomic logical changes for easier review and bisect
+should I rebase or merge to bring my feature branch up to date with main
+should this PR squash-merge or preserve all commits in the history
+help me write a good commit message what should the subject and body say
+when should we use trunk-based development vs feature branches in our team

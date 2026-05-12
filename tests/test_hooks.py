@@ -98,6 +98,7 @@ class TestForcePushBlocker:
         "git push -f origin master",
         "git push --force origin main:main",
         "git push --force origin master:master",
+        "git push origin main --force",       # --force at end-of-string: exercises $ branch
     ])
     def test_blocked(self, hook_patterns, cmd):
         assert force_push_blocked(hook_patterns, cmd), f"Expected BLOCK for: {cmd!r}"
@@ -107,6 +108,10 @@ class TestForcePushBlocker:
         "git push --force origin feature/x",  # force but not main/master
         "git push --force origin mainline",   # "mainline" is not main (boundary check)
         "git push --force origin my-master",  # "my-master" is not master
+        "git push --force-with-lease origin main",              # safe force variant — must not be blocked
+        "git push --force-with-lease origin master",            # safe force variant — must not be blocked
+        "git push --force-if-includes origin main",             # safe force variant — must not be blocked
+        "git push --force-with-lease=origin/main origin main",  # = form: boundary ([[:space:]]|$) excludes '='
     ])
     def test_allowed(self, hook_patterns, cmd):
         assert not force_push_blocked(hook_patterns, cmd), f"Expected ALLOW for: {cmd!r}"

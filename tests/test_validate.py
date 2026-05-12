@@ -172,6 +172,45 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_string_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": ["bad"]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [42]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [None]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_string_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": ["bad"]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [42]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [None]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills
@@ -286,6 +325,96 @@ class TestCheckAgents:
 
 
 # ──────────────────────────────────────────────
+# performance-tuner agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestPerformanceTunerAgent:
+    """Integration tests: assert the real agents/performance-tuner.md satisfies all
+    acceptance criteria from issue #102 without relying on a synthetic fixture."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "performance-tuner.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/performance-tuner.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        # Extract YAML block between the first pair of ---
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: performance-tuner" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_principle_performance_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-performance`" in text, (
+            "agent must reference swe-workbench:principle-performance"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/skills.md" in text, (
+            "agent must include @./shared/skills.md catalog reference"
+        )
+
+    def test_profile_first_rule_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "## Refusal protocol" in text, "Refusal protocol section must be present"
+        assert "without a profile" in text.lower(), (
+            "refusal protocol must explicitly refuse optimization without a profile"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        val.check_agents()
+        val.check_agent_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# principle-code-review skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrincipleCodeReviewSkill:
+    """Integration tests: assert the real skills/principle-code-review/SKILL.md satisfies
+    all acceptance criteria from issue #180 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-code-review" / "SKILL.md"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-code-review/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-code-review" in text
+
+    def test_four_axis_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Four-Axis Review Lens" in text
+
+    def test_confidence_filtering_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Confidence-Based Filtering" in text
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
@@ -348,6 +477,60 @@ class TestCheckAgentSkillRefs:
         )
         validate.check_agent_skill_refs()
         assert any("does not exist" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_command_skill_refs
+# ──────────────────────────────────────────────
+
+class TestCheckCommandSkillRefs:
+    def test_ref_to_existing_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_absent_skill_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:nonexistent` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+
+    def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nUse `swe-workbench:foo` and `swe-workbench:fooo`.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 1
+        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "swe-workbench:foo'" not in validate.FAILURES[0]
+
+    def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────

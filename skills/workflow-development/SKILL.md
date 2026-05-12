@@ -169,7 +169,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 
 | Phase | Failure | Skip condition |
 |-------|---------|----------------|
-| 1 | Tests fail on baseline → report, ask to proceed | Never |
+| 1 | Tests fail on baseline → report, ask to proceed | When caller passes `skip-phase-1: <rationale>` — branch already exists (e.g. invoked by `workflow-extend`) |
 | 2 | Implementation blocked → stop, ask for clarification | Never |
 | 3 | Verification fails → fix, re-run from format | Sub-skill verified with evidence |
 | 4 | Critical review issues → fix, re-verify, re-review | Sub-skill reviewed with evidence |
