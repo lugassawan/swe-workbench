@@ -142,6 +142,40 @@ def test_extend_template_no_phase_1():
     )
 
 
+def test_extend_command_no_open_pr_fallback():
+    """extend.md must contain the AskUserQuestion fallback and prohibit gh pr create."""
+    text = EXTEND_CMD.read_text()
+    assert "AskUserQuestion" in text, (
+        "extend.md must contain an AskUserQuestion block for the no-open-PR fallback"
+    )
+    assert "Abort" in text, (
+        "extend.md fallback must include an Abort option"
+    )
+    # gh pr create must only appear in a prohibition context, never as a bare invocation
+    assert re.search(r'[Nn]ever call.*gh pr create|do not.*gh pr create', text), (
+        "extend.md must explicitly prohibit 'gh pr create' (e.g. 'Never call gh pr create')"
+    )
+
+
+def test_extend_commit_format_sub_idea_prefix():
+    """SKILL.md and template must both mandate the 'sub-idea:' commit prefix."""
+    assert "sub-idea:" in SKILL_MD.read_text(), (
+        "SKILL.md Phase D must mandate the '[<type>] sub-idea: <restatement>' commit format"
+    )
+    assert "sub-idea:" in TEMPLATE_MD.read_text(), (
+        "plan-extend-section.md Phase 5 must show the 'sub-idea:' commit format"
+    )
+
+
+def test_extend_skill_trunk_branch_guard():
+    """SKILL.md must document the trunk-branch guard (main/master → fail loudly)."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'main.*master|master.*main', text, re.IGNORECASE), (
+        "SKILL.md Failure modes must document the trunk-branch guard "
+        "(HEAD_REF is main or master → fail loudly)"
+    )
+
+
 def test_extend_skill_requires_ref_traceability():
     """SKILL.md must mandate 'Ref: extend-' in the commit body (Phase D traceability)."""
     assert SKILL_MD.exists(), "skills/workflow-extend/SKILL.md must exist"

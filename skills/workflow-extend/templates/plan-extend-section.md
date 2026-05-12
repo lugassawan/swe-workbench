@@ -54,7 +54,7 @@ Act on feedback:
 
 **Commit format:** `[<type>] sub-idea: <one-line restatement>`
 
-**Commit body must include:** `Ref: extend-${TS}` (where `TS` is the timestamp from Phase A's `date +%s` call)
+**Commit body must include:** `Ref: extend-[[detect:extend-ts]]` (substitute `[[detect:extend-ts]]` with the actual timestamp from Phase A's `date +%s` call)
 
 **Delivery path:** Update existing PR #[[detect:pr-number]] — **never** run `gh pr create`.
 

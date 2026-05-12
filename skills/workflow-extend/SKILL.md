@@ -26,8 +26,9 @@ The command body detects the open PR before activating this skill and passes:
 - `PR_NUM` — open PR number
 - `HEAD_REF` — current branch name
 - `PR_URL` — URL of the existing open PR
+- `IS_DRAFT` — `"true"` if the PR is a draft, `"false"` otherwise (always lowercase)
 
-If any of these are absent, **fail loudly**: "workflow-extend requires an open PR on the current branch. Run `gh pr view` to diagnose or use the command-level fallback."
+If PR_NUM, HEAD_REF, or PR_URL are absent, **fail loudly**: "workflow-extend requires an open PR on the current branch. Run `gh pr view` to diagnose or use the command-level fallback." If `IS_DRAFT` is absent, treat as non-draft and log a warning.
 
 ## Phase A — Capture (inline; no top-level issue by default)
 
@@ -81,9 +82,9 @@ Commit format: `[<type>] sub-idea: <one-line restatement>` (e.g. `[feat] sub-ide
 
 Commit body must include `Ref: extend-${TS}` on its own line.
 
-Push. Then invoke `swe-workbench:workflow-commit-and-pr`. The existing-PR check in that skill surfaces the **"Update existing PR"** AskUserQuestion — choose it. **Never call `gh pr create`** when an open PR exists for this branch.
+Push. Then invoke `swe-workbench:workflow-commit-and-pr`. That skill will surface an **"Update existing PR"** AskUserQuestion — the user must select it. **Never call `gh pr create`** when an open PR exists for this branch. Tell the user to expect this prompt and select "Update existing PR".
 
-Optional: if the user opts in ("append follow-on section"), add a `## Follow-on` section to the PR body via `gh pr edit --body-file <tmp>`.
+Optional: if the user opts in ("append follow-on section"), fetch the current PR body first (`gh pr view --json body -q .body`), append the `## Follow-on` section, write to a tempfile, then `gh pr edit --body-file <tmp>` — this avoids overwriting collaborator edits.
 
 ## Project Detection
 
@@ -94,6 +95,7 @@ Inherits detections from `workflow-development` for shared markers; adds extend-
 - `branch-name` — `git rev-parse --abbrev-ref HEAD`
 - `pr-url` — `gh pr view --json url -q '.url'`
 - `pr-number` — `gh pr view --json number -q '.number'`
+- `extend-ts` — `TS` captured in Phase A via `date +%s`; substitute manually into template (no shell script context)
 - `commit-style` — from `git log --oneline -5` (detect `[type]` vs `type:` pattern)
 - `format-command` — from Makefile `format` target or language-marker fallback
 - `lint-command` — from Makefile `lint` target or language-marker fallback

@@ -15,10 +15,12 @@ PR_STATE=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin)
 PR_NUM=$(echo "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('number',''))" 2>/dev/null || true)
 HEAD_REF=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('headRefName',''))" 2>/dev/null || true)
 PR_URL=$(echo "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('url',''))" 2>/dev/null || true)
-IS_DRAFT=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isDraft','false'))" 2>/dev/null || true)
+IS_DRAFT=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isDraft') else 'false')" 2>/dev/null || true)
 ```
 
-If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into context. If `IS_DRAFT` is `"True"`, note "Draft PR detected — it will not be auto-marked ready-for-review." Then activate `swe-workbench:workflow-extend` with all four values.
+Note: `gh pr view` resolves against `origin`; on fork-based workflows where `origin` is the fork, it may return no PR. If that happens, use `gh pr view --repo <upstream-owner>/<repo>` explicitly.
+
+If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into context. If `IS_DRAFT` is `"true"`, note "Draft PR detected — it will not be auto-marked ready-for-review." Then activate `swe-workbench:workflow-extend` with all four values.
 
 If `PR_STATE` is not `"OPEN"` (empty, `"CLOSED"`, `"MERGED"`, or `gh` error): surface the following `AskUserQuestion` and **return** — do **not** activate `workflow-extend`:
 
