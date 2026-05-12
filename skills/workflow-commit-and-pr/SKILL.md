@@ -130,22 +130,26 @@ If no template is found, use a heredoc fallback.
 
 ## Draft vs ready prompt
 
-Before running `gh pr create`, ask the user:
+Before running `gh pr create`, call the `AskUserQuestion` tool with:
 
+```json
+{
+  "questions": [{
+    "question": "Open this PR as draft or ready for review?",
+    "header": "PR mode",
+    "multiSelect": false,
+    "options": [
+      { "label": "Ready for review", "description": "Default; runs `gh pr create`" },
+      { "label": "Draft",            "description": "Adds `--draft` flag; hides from reviewers" }
+    ]
+  }]
+}
 ```
-Ready to push to GitHub? Reply with one of:
-  - `draft`  — open the PR as a draft (gh pr create --draft)
-  - `ready`  — open the PR for review (default)
-```
 
-**Wait for the user to reply** with one of those exact words. Reject any other reply (re-prompt).
-
-**Choose the asking medium by question shape:**
-
-- **Binary or short-list selections** (≤4 mutually exclusive options) — e.g., draft vs. ready PR, commit `[type]` when ambiguous, branch-rename vs. continue — prefer **`AskUserQuestion`**.
-- **Confirmation-with-preview** (show the diff/message and ask "ship it?") — prefer plain prose so the user can read the artifact inline.
-
-The two forms coexist; neither replaces the other.
+Map the `Draft` answer → append `--draft` to `gh pr create`. Any other
+answer (including `Ready for review` and the free-text `Other` channel) →
+no flag. If the user supplies an `Other` reply that signals abort/cancel,
+stop and re-confirm before running `gh pr create`.
 
 ## Ticket-context chain
 
@@ -188,7 +192,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Append `[no ci]` to a commit touching `commands/foo.md` | The exclusion of `commands/`, `skills/`, `agents/` is load-bearing. |
 | Use `gh pr create --fill` | Use `--body-file <PR template path>` so the `Closes #` line is filled correctly. |
 | Pass both `--body-file` and `--body` to `gh pr create` | `gh` silently uses `--body-file` and discards `--body`. Write the filled body to a temp file and pass `--body-file <tmp>` only — never both flags together. Pattern: `TMP=$(mktemp); trap 'rm -f "$TMP"' EXIT; <fill template> > "$TMP"; gh pr create --body-file "$TMP"` (trap ensures cleanup on failure too). |
-| Auto-`gh pr create --draft` without asking | Always ask `draft` vs `ready`. Drafts hide the PR from `assignees` and reviewers. |
+| Auto-`gh pr create --draft` without asking | Always use `AskUserQuestion` to present `Draft` vs `Ready for review` — never ask via free-form prose. Drafts hide the PR from `assignees` and reviewers. |
 
 ## Quick reference
 

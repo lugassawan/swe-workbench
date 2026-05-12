@@ -11,11 +11,17 @@ Both were eval'd by the caller, causing "command not found" errors.
 This test pins the contract: stdout must be exactly one line.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
+
+# Strip GIT_* env vars for all subprocess calls so tests running inside a git
+# hook or worktree context cannot cross-contaminate the parent repository.
+_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_CLEAN_ENV["GIT_CONFIG_NOSYSTEM"] = "1"
 
 SCRIPT = (
     Path(__file__).parent.parent
@@ -44,12 +50,6 @@ def _build_repo(base: Path, default_branch: str = "main") -> Path:
     origin = base / "origin.git"
     repo = base / "main_repo"
 
-    # Strip inherited GIT_* env vars so fixture git operations use the tmp repo,
-    # not a parent worktree whose GIT_DIR may be set by a calling git hook.
-    import os as _os
-    _clean_env = {k: v for k, v in _os.environ.items() if not k.startswith("GIT_")}
-    _clean_env["GIT_CONFIG_NOSYSTEM"] = "1"
-
     def run(*args, cwd=None):
         return subprocess.run(
             list(args),
@@ -57,7 +57,7 @@ def _build_repo(base: Path, default_branch: str = "main") -> Path:
             check=True,
             capture_output=True,
             text=True,
-            env=_clean_env,
+            env=_CLEAN_ENV,
         )
 
     run("git", "init", "--bare", str(origin))
@@ -100,20 +100,12 @@ def git_repo_trunk(tmp_path):
 
 
 def _run_script(repo: Path, head_ref: str, default_branch: str = "main"):
-    # Clear git environment variables so the script operates on the fixture
-    # repo, not on a parent worktree whose GIT_DIR may be inherited when tests
-    # run inside a git hook (e.g. pre-push).  Without this, sync-and-verify.sh
-    # would derive MAIN_REPO from the parent worktree and git checkout would
-    # switch the parent worktree's branch as a side-effect.
-    env = {k: v for k, v in __import__("os").environ.items()
-           if not k.startswith("GIT_")}
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return subprocess.run(
         ["bash", str(SCRIPT), head_ref, default_branch],
         cwd=str(repo),
         capture_output=True,
         text=True,
-        env=env,
+        env=_CLEAN_ENV,
     )
 
 
@@ -154,6 +146,7 @@ class TestSyncAndVerifyStdoutContract:
                 check=True,
                 capture_output=True,
                 text=True,
+                env=_CLEAN_ENV,
             )
 
         result = _run_script(git_repo, BRANCH, default_branch="main")
@@ -174,6 +167,7 @@ class TestSyncAndVerifyNonMainDefaultBranch:
             check=True,
             capture_output=True,
             text=True,
+            env=_CLEAN_ENV,
         )
         result = _run_script(git_repo_trunk, BRANCH, default_branch="trunk")
         _assert_contract(result, "1")
