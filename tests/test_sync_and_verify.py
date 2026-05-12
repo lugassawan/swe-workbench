@@ -35,8 +35,12 @@ NOISE_STRINGS = [
 ]
 
 
-def _build_repo(base: Path) -> Path:
-    """Create a minimal git environment: bare origin + working main_repo."""
+def _build_repo(base: Path, default_branch: str = "main") -> Path:
+    """Create a minimal git environment: bare origin + working main_repo.
+
+    default_branch controls the name of the default branch so tests can verify
+    Treatment D works on repos whose default branch is not 'main'.
+    """
     origin = base / "origin.git"
     repo = base / "main_repo"
 
@@ -53,35 +57,56 @@ def _build_repo(base: Path) -> Path:
     run("git", "init", str(repo))
     run("git", "config", "user.email", "test@example.com", cwd=repo)
     run("git", "config", "user.name", "Test", cwd=repo)
+    # Prevent the global core.hooksPath (set to swe-workbench hooks) from
+    # running the commit-msg hook inside test fixture repos.  The fixture
+    # tests sync-and-verify.sh, not commit formatting.
+    no_hooks = base / ".nohooks"
+    no_hooks.mkdir(exist_ok=True)
+    run("git", "config", "core.hooksPath", str(no_hooks), cwd=repo)
 
     (repo / "README.md").write_text("hello\n")
     run("git", "add", "README.md", cwd=repo)
     run("git", "commit", "-m", "init", cwd=repo)
-    run("git", "branch", "-M", "main", cwd=repo)
+    run("git", "branch", "-M", default_branch, cwd=repo)
     run("git", "remote", "add", "origin", str(origin), cwd=repo)
-    run("git", "push", "-u", "origin", "main", cwd=repo)
+    run("git", "push", "-u", "origin", default_branch, cwd=repo)
 
     run("git", "checkout", "-b", BRANCH, cwd=repo)
     (repo / "feature.txt").write_text("feature\n")
     run("git", "add", "feature.txt", cwd=repo)
     run("git", "commit", "-m", "add feature", cwd=repo)
     run("git", "push", "-u", "origin", BRANCH, cwd=repo)
-    run("git", "checkout", "main", cwd=repo)
+    run("git", "checkout", default_branch, cwd=repo)
 
     return repo
 
 
 @pytest.fixture
 def git_repo(tmp_path):
-    return _build_repo(tmp_path)
+    return _build_repo(tmp_path, default_branch="main")
 
 
-def _run_script(repo: Path, head_ref: str):
+@pytest.fixture
+def git_repo_trunk(tmp_path):
+    """Repo whose default branch is 'trunk', not 'main' (Treatment D coverage)."""
+    return _build_repo(tmp_path, default_branch="trunk")
+
+
+def _run_script(repo: Path, head_ref: str, default_branch: str = "main"):
+    # Clear git environment variables so the script operates on the fixture
+    # repo, not on a parent worktree whose GIT_DIR may be inherited when tests
+    # run inside a git hook (e.g. pre-push).  Without this, sync-and-verify.sh
+    # would derive MAIN_REPO from the parent worktree and git checkout would
+    # switch the parent worktree's branch as a side-effect.
+    env = {k: v for k, v in __import__("os").environ.items()
+           if not k.startswith("GIT_")}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return subprocess.run(
-        ["bash", str(SCRIPT), head_ref],
+        ["bash", str(SCRIPT), head_ref, default_branch],
         cwd=str(repo),
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -124,5 +149,24 @@ class TestSyncAndVerifyStdoutContract:
                 text=True,
             )
 
-        result = _run_script(git_repo, BRANCH)
+        result = _run_script(git_repo, BRANCH, default_branch="main")
         _assert_contract(result, expected)
+
+
+class TestSyncAndVerifyNonMainDefaultBranch:
+    """Treatment D: script must work when the default branch is not 'main'."""
+
+    def test_branch_present_trunk_default(self, git_repo_trunk):
+        result = _run_script(git_repo_trunk, BRANCH, default_branch="trunk")
+        _assert_contract(result, "0")
+
+    def test_branch_absent_trunk_default(self, git_repo_trunk):
+        subprocess.run(
+            ["git", "branch", "-D", BRANCH],
+            cwd=str(git_repo_trunk),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = _run_script(git_repo_trunk, BRANCH, default_branch="trunk")
+        _assert_contract(result, "1")
