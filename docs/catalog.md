@@ -51,6 +51,7 @@
 
 | Skill | Triggers |
 |---|---|
+| `language-sql` | `.sql` files, migration files; keywords: SQL, SELECT, JOIN, EXPLAIN, CTE, window function, transaction isolation, deadlock, pagination. |
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-java` | `.java` files, `pom.xml`, `build.gradle`, keywords: Java, JVM, Spring, Maven, Gradle, records, sealed classes, virtual threads. |
 | `language-kotlin` | `.kt` files, `build.gradle.kts`, keywords: Kotlin, coroutines, suspend, StateFlow, sealed interface, Kotlin DSL. |

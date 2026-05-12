@@ -73,4 +73,4 @@ LIMIT 50;
 - Schema changes without rollback or compatibility planning.
 - Unbounded queries in production paths.
 - Relying on implicit ordering without `ORDER BY`.
-- Building SQL with string concatenation and untrusted input; use parameters.
+- Never build SQL by concatenating untrusted input — use parameterized queries or prepared statements. ORM raw-query escape hatches (e.g. Django's `extra()`, SQLAlchemy's `text()`) are equally dangerous. See `swe-workbench:principle-security`.
