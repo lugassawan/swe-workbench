@@ -44,6 +44,12 @@ def _build_repo(base: Path, default_branch: str = "main") -> Path:
     origin = base / "origin.git"
     repo = base / "main_repo"
 
+    # Strip inherited GIT_* env vars so fixture git operations use the tmp repo,
+    # not a parent worktree whose GIT_DIR may be set by a calling git hook.
+    import os as _os
+    _clean_env = {k: v for k, v in _os.environ.items() if not k.startswith("GIT_")}
+    _clean_env["GIT_CONFIG_NOSYSTEM"] = "1"
+
     def run(*args, cwd=None):
         return subprocess.run(
             list(args),
@@ -51,6 +57,7 @@ def _build_repo(base: Path, default_branch: str = "main") -> Path:
             check=True,
             capture_output=True,
             text=True,
+            env=_clean_env,
         )
 
     run("git", "init", "--bare", str(origin))
