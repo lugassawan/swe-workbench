@@ -4,7 +4,7 @@
 
 ## What it is
 
-`swe-workbench` bundles the reasoning a careful senior engineer does every day: architectural judgement (Clean Architecture, DDD, SOLID), test discipline (TDD, F.I.R.S.T.), pattern fluency (GoF and beyond), and idiomatic expertise in Go, Rust, and TypeScript. Principles auto-load when you are designing or writing code; language skills auto-load by file extension; commands and subagents are there when you want explicit help.
+`swe-workbench` bundles the reasoning a careful senior engineer does every day: architectural judgement (Clean Architecture, DDD, SOLID), test discipline (TDD, F.I.R.S.T.), pattern fluency (GoF and beyond), and idiomatic expertise in Bash, Go, Java, Kotlin, Python, Rust, Swift, and TypeScript. Principles auto-load when you are designing or writing code; language skills auto-load by file extension; commands and subagents are there when you want explicit help.
 
 ## Install
 
@@ -26,10 +26,10 @@ cd swe-workbench
 
 ## What's inside
 
-- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:cleanup-merged` — see [docs/catalog.md](docs/catalog.md).
-- **Subagents** — `reviewer`, `senior-engineer`, `refactorer`, `debugger`, `security-auditor`, `test-writer`, `product-manager`, `tech-writer`, `performance-tuner` — see [docs/catalog.md](docs/catalog.md).
+- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:cleanup-merged` — see [docs/catalog.md](docs/catalog.md).
+- **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `debugger`, `dependency-auditor`, `migrator`, `performance-tuner`, `product-manager`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security — auto-load by trigger keyword.
-- **Languages** — Go, Rust, TypeScript, Python — auto-load by file extension.
+- **Languages** — Bash, Go, Java, Kotlin, Python, Rust, Swift, TypeScript — auto-load by file extension.
 - **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.
 - **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle.
 

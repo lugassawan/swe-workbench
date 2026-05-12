@@ -172,6 +172,45 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("matcher" in f for f in validate.FAILURES)
 
+    def test_string_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": ["bad"]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [42]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_matcher_entry(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, hooks_json={"hooks": {"PreToolUse": [None]}})
+        validate.check_hooks_json()
+        assert any("PreToolUse[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_string_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": ["bad"]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_int_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [42]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_null_sub_hook(self, reset_validate):
+        root = reset_validate
+        bad = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [None]}]}}
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills
@@ -340,6 +379,42 @@ class TestPerformanceTunerAgent:
 
 
 # ──────────────────────────────────────────────
+# principle-code-review skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrincipleCodeReviewSkill:
+    """Integration tests: assert the real skills/principle-code-review/SKILL.md satisfies
+    all acceptance criteria from issue #180 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-code-review" / "SKILL.md"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-code-review/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-code-review" in text
+
+    def test_four_axis_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Four-Axis Review Lens" in text
+
+    def test_confidence_filtering_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Confidence-Based Filtering" in text
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
@@ -402,6 +477,60 @@ class TestCheckAgentSkillRefs:
         )
         validate.check_agent_skill_refs()
         assert any("does not exist" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_command_skill_refs
+# ──────────────────────────────────────────────
+
+class TestCheckCommandSkillRefs:
+    def test_ref_to_existing_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_absent_skill_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nRun `swe-workbench:nonexistent` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+
+    def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nUse `swe-workbench:foo` and `swe-workbench:fooo`.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 1
+        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "swe-workbench:foo'" not in validate.FAILURES[0]
+
+    def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────

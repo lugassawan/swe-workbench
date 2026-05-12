@@ -36,7 +36,17 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
 
 ## Codified commit format
 
-This repo enforces `[type] Subject` via `.githooks/commit-msg`. The regex (load-bearing — quote, do not re-derive):
+**Detect commit format.** Probe the host repo before authoring any commit message:
+
+1. If `.githooks/commit-msg` exists (or `.git/hooks/commit-msg` symlinked from `core.hooksPath`), read it and **quote the regex verbatim** from the hook file — do not re-derive. Examples of conventions you may detect:
+   - `[type] Subject` (swe-workbench plugin style) — enforced by the regex below
+   - `type(scope): subject` (Conventional Commits)
+   - `JIRA-123: subject` (JIRA-prefix style)
+   Apply whichever convention the hook enforces for this host repo.
+2. If no commit-msg hook exists, infer convention from `git log --oneline -10`. Default to Conventional Commits if no pattern dominates.
+3. If both fail (new repo, empty history), ask the user which convention to follow.
+
+**When the host repo uses the swe-workbench plugin's `[type] Subject` convention**, the enforcing regex is (load-bearing — quote, do not re-derive):
 
 ```
 ^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+
@@ -94,7 +104,13 @@ MATCHED=$(git diff --staged --name-only | grep -Ev '^(commands|skills|agents)/' 
 
 If every staged path matches (`MATCHED == TOTAL`), append ` [no ci]`. Otherwise, do not.
 
-**Warning:** PR-level `[no ci]` is NOT honoured by this repo's CI (`.github/workflows/pr.yml` has no `[no ci]` guard). The marker is per-commit only. If all commits in a docs-only PR have `[no ci]`, the CI still runs on the PR — note this to the user.
+**Detect `[no ci]` behaviour.** Whether per-PR `[no ci]` is honoured depends on the host repo's CI configuration:
+
+- If `.github/workflows/` exists, grep each PR-triggering workflow for `[no ci]` / `skip-ci` / `ci-skip` markers in `if:` conditions. If none honour the marker, warn the user: "Per-PR `[no ci]` will not skip CI — the marker is per-commit only. If all commits in a docs-only PR have `[no ci]`, the CI still runs on the PR."
+- If the host uses GitLab CI, note that the equivalent marker is `[ci skip]` or `[skip ci]` in the commit message.
+- If the host uses Bitbucket Pipelines or other CI, check its docs for the skip marker.
+
+**Note for the swe-workbench plugin repo specifically:** `.github/workflows/pr.yml` has no `[no ci]` guard at the PR level. The marker is per-commit only in that repo.
 
 ## Project Detection
 
@@ -112,19 +128,61 @@ done
 
 If no template is found, use a heredoc fallback.
 
+## Pre-check: existing PR for this branch
+
+Before running `gh pr create`, check whether an OPEN PR already exists for this branch:
+
+```bash
+PR_INFO=$(gh pr view --json url,state -q '.state + "\t" + .url' 2>/dev/null || true)
+PR_STATE=$(echo "$PR_INFO" | cut -f1)
+PR_URL=$(echo "$PR_INFO"   | cut -f2)
+```
+
+Filter: act only when `PR_STATE == "OPEN"`. Ignore `CLOSED` or `MERGED` PRs — those do not block new-PR creation.
+
+If an OPEN PR is found, call `AskUserQuestion` with:
+
+```json
+{
+  "questions": [{
+    "question": "An open PR already exists for this branch. Update it or cancel?",
+    "header": "Existing PR",
+    "multiSelect": false,
+    "options": [
+      { "label": "Update existing PR", "description": "New commits are already on the branch — skip gh pr create and use the existing PR URL." },
+      { "label": "Cancel",             "description": "Abort the flow. No PR is created or modified." }
+    ]
+  }]
+}
+```
+
+- **`Update existing PR`** → skip `gh pr create`. Use the existing PR URL in all output. Run the Post-create CTA (offer `/review`) against the existing PR number.
+- **`Cancel`** → abort. Print the existing PR URL for reference.
+
+If no OPEN PR is found → proceed to the `## Draft vs ready prompt` step normally.
+
 ## Draft vs ready prompt
 
-Before running `gh pr create`, ask the user:
+Before running `gh pr create`, call the `AskUserQuestion` tool with:
 
+```json
+{
+  "questions": [{
+    "question": "Open this PR as draft or ready for review?",
+    "header": "PR mode",
+    "multiSelect": false,
+    "options": [
+      { "label": "Ready for review", "description": "Default; runs `gh pr create`" },
+      { "label": "Draft",            "description": "Adds `--draft` flag; hides from reviewers" }
+    ]
+  }]
+}
 ```
-Ready to push to GitHub? Reply with one of:
-  - `draft`  — open the PR as a draft (gh pr create --draft)
-  - `ready`  — open the PR for review (default)
-```
 
-**Wait for the user to reply** with one of those exact words. Reject any other reply (re-prompt).
-
-Plain-prose ask (NOT the AskUserQuestion tool — zero usage in this repo; convention is plain-prose preview-gate-then-confirm, mirroring `commands/capture.md`).
+Map the `Draft` answer → append `--draft` to `gh pr create`. Any other
+answer (including `Ready for review` and the free-text `Other` channel) →
+no flag. If the user supplies an `Other` reply that signals abort/cancel,
+stop and re-confirm before running `gh pr create`.
 
 ## Ticket-context chain
 
@@ -155,6 +213,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | `gh pr create` fails on PR-template body validation | CI rejects empty `Closes #` | Re-read `.github/PULL_REQUEST_TEMPLATE.md` instructions; substitute `Closes #<issue>` or standalone `Issue: N/A — <reason>`; re-attempt. |
 | `git push` rejected (non-FF) | Non-zero exit | Abort. Tell user to `git pull --rebase`; do NOT force-push. |
 | Doc-only `[no ci]` rule mis-triggers (ambiguous case) | User disagrees | Skip `[no ci]` and warn. The doc-only rule is conservative — when in doubt, run CI. |
+| Duplicate PR (already exists) | `gh pr view` returns `state == "OPEN"` before `gh pr create` | Surface URL via `AskUserQuestion` (see Pre-check section). On `Update existing PR`, skip `gh pr create`. **Never** re-run `gh pr create` to recover. |
 
 ## Common mistakes
 
@@ -163,11 +222,12 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Auto-escalate "I'm done" to a full ship | Always preview-only on completion phrases. Wait for the user's explicit "commit" or "ship". |
 | Use `--no-verify` to bypass a failing hook | Never. Re-read the hook, fix the cause, re-commit. The hook is the contract. |
 | Force-push to recover from a hook failure | Never. Hook failures don't create commits — there's nothing to force-push. |
-| Use `(scope):` in commit subject | This repo uses `[type] Subject` not `type(scope): Subject`. Quote the regex. |
+| Use `(scope):` in commit subject when the detected hook enforces `[type]` | Quote the regex from the detected commit-msg hook (see Detect commit format step). If the host repo enforces Conventional Commits instead, `(scope):` is correct — ignore this row. |
 | Append `[no ci]` to a commit touching `commands/foo.md` | The exclusion of `commands/`, `skills/`, `agents/` is load-bearing. |
 | Use `gh pr create --fill` | Use `--body-file <PR template path>` so the `Closes #` line is filled correctly. |
 | Pass both `--body-file` and `--body` to `gh pr create` | `gh` silently uses `--body-file` and discards `--body`. Write the filled body to a temp file and pass `--body-file <tmp>` only — never both flags together. Pattern: `TMP=$(mktemp); trap 'rm -f "$TMP"' EXIT; <fill template> > "$TMP"; gh pr create --body-file "$TMP"` (trap ensures cleanup on failure too). |
-| Auto-`gh pr create --draft` without asking | Always ask `draft` vs `ready`. Drafts hide the PR from `assignees` and reviewers. |
+| Auto-`gh pr create --draft` without asking | Always use `AskUserQuestion` to present `Draft` vs `Ready for review` — never ask via free-form prose. Drafts hide the PR from `assignees` and reviewers. |
+| Re-run `gh pr create` after a "pull request already exists" failure | The pre-check section detects this before it happens. After push, an existing OPEN PR is already updated — `gh pr create` has nothing left to do. Use the `Update existing PR` path instead. |
 
 ## Quick reference
 
@@ -176,5 +236,6 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | "I finished the feature" | Preview | Show diff + drafted commit msg. Do NOT commit. |
 | "Commit this" | Commit | `git commit -m "[type] …"`. Stop. No push. |
 | "Push it" | Push | `git push -u origin <branch>`. Stop. No PR. |
-| "Ship this" | Ship | Commit → push → draft/ready prompt → `gh pr create`. |
-| "Open a PR for what I just pushed" | PR-only | Skip commit. Run draft/ready prompt → `gh pr create`. |
+| "Ship this" | Ship | Commit → push → existing-PR check → draft/ready prompt → `gh pr create`. |
+| "Ship this" (existing OPEN PR found) | Ship | Commit → push → existing-PR check surfaces URL → `AskUserQuestion` → skip `gh pr create`. |
+| "Open a PR for what I just pushed" | PR-only | Skip commit. Run existing-PR check → draft/ready prompt → `gh pr create`. |

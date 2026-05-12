@@ -25,7 +25,7 @@ Why this change was made. What would break if reverted.
 Link the issue or ticket. Note non-obvious constraints.
 ```
 
-Format schemes — Conventional Commits (`feat:`, `fix:`), `[type] Subject`, JIRA-prefix — are all valid conventions. Pick one; apply consistently. **This repo enforces `[type] Subject`** via `.githooks/commit-msg`; Conventional Commits will be rejected by the hook. See `swe-workbench:workflow-commit-and-pr` for the enforced regex and the `[no ci]` rule.
+Format schemes — Conventional Commits (`feat:`, `fix:`), `[type] Subject`, JIRA-prefix — are all valid conventions. Pick one; apply consistently and enforce via a `commit-msg` hook. Example: the swe-workbench plugin repo enforces `[type] Subject` via `.githooks/commit-msg`. Before authoring commit messages, detect the host repo's convention via the detection step in `swe-workbench:workflow-commit-and-pr`.
 
 ## Never mix formatting and logic
 
