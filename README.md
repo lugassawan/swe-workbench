@@ -26,7 +26,7 @@ cd swe-workbench
 
 ## What's inside
 
-- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:cleanup-merged` — see [docs/catalog.md](docs/catalog.md).
+- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:refactor`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:cleanup-merged` — see [docs/catalog.md](docs/catalog.md).
 - **Subagents** — `reviewer`, `senior-engineer`, `refactorer`, `debugger`, `security-auditor`, `test-writer`, `product-manager`, `tech-writer`, `performance-tuner` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security — auto-load by trigger keyword.
 - **Languages** — Go, Rust, TypeScript, Python — auto-load by file extension.
