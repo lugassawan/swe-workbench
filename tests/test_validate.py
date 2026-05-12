@@ -379,6 +379,42 @@ class TestPerformanceTunerAgent:
 
 
 # ──────────────────────────────────────────────
+# principle-code-review skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrincipleCodeReviewSkill:
+    """Integration tests: assert the real skills/principle-code-review/SKILL.md satisfies
+    all acceptance criteria from issue #180 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-code-review" / "SKILL.md"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-code-review/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-code-review" in text
+
+    def test_four_axis_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Four-Axis Review Lens" in text
+
+    def test_confidence_filtering_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Confidence-Based Filtering" in text
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
