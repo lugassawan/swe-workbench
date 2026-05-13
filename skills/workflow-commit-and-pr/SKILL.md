@@ -73,6 +73,8 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
 - No trailing period.
 - Optional scope as a colon-prefix inside subject: `[chore] cleanup-merged: sync local main first`.
 
+**Trailer hygiene.** Never emit a `Co-authored-by`, `Signed-off-by`, or similar trailer in the commit message body or PR body **unless the user explicitly asked for it in this turn**. Do not derive trailers from `git config user.email` / `user.name`, the harness environment, or any auto-detected identity. If the staged work has multiple genuine authors, ask the user whether to attribute them rather than guessing.
+
 **Sync source:** `.githooks/commit-msg` is canonical. If a commit fails the hook, re-read the hook (don't guess).
 
 ## Branch-naming check
@@ -296,3 +298,4 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Seed type-tailored bullets AFTER `gh pr create` (no-op) | Seeding mutates the body BEFORE the `$TMP` write; once `gh pr create` runs, the body is immutable via this flow. |
 | Strip host-template bullets to make room for type-tailored ones | Append under the `### Type-tailored checks` sub-heading; never delete host bullets. The only allowed strip is a trailing empty `- [ ]` placeholder on the host section. |
 | Pick a `[test]` or `[chore]` type when the PR also contains a `[feat]` commit | Apply the precedence ladder over all commits since merge-base. `feat`, `fix`, and `breaking` outrank prep-commits. |
+| Append `Co-authored-by: <harness identity>` to commits or PR bodies | The placeholder identity from git config leaks into public output. Trailers must reflect a real human collaborator the user named. |
