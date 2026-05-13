@@ -91,12 +91,10 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 
 ```bash
 PR_BRANCH=$(jq -r .headRefName "/tmp/swe-workbench-address-feedback/${PR}.json")
-RIMBA_OUT=$(rimba add "$PR_BRANCH" --task "address-feedback-$PR" 2>&1)
+RIMBA_OUT=$(rimba add "$PR_BRANCH" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
 WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
-
-Do NOT pass `--skip-deps` (owner needs deps to run tests). Do NOT add `--skip-hooks`.
 
 **When rimba is absent** (durable fallback):
 
@@ -195,7 +193,7 @@ After all replies and resolutions land, emit the follow-up CTA:
 
 | Mistake | Fix |
 |---|---|
-| Use `--skip-deps` on the worktree | Owner needs deps to run tests locally. Never skip. |
+| Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
 | Auto-cleanup the worktree after Phase 5 | This is a durable worktree — commits land here. Clean up post-merge via `swe-workbench:workflow-cleanup-merged`. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Resolve a CLARIFIED thread | Only resolve ADDRESSED threads. CLARIFIED = reply only, no resolve. |
