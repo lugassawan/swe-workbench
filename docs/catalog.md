@@ -26,6 +26,7 @@
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `test-writer` | Authoring tests for an existing function, module, or change set. |
+| `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
 | `tech-writer` | Generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments — style-aware, reads existing docs first. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
