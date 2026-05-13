@@ -106,8 +106,10 @@ SUSPICIOUS=$(git diff --staged --name-only \
 ```
 
 The exclusion pass (`*.example`, `*.sample`, `*.template`, `*.dist`)
-prevents false-positives on sanitised template files that are conventional
-to commit (e.g. `.env.example`, `secrets.sample.yaml`).
+prevents false-positives on `.env` template variants (e.g. `.env.example`,
+`.env.sample`). Files like `secrets.example.yaml` are already excluded by
+the positive pattern (which requires a single trailing extension), so the
+exclusion pass is not their gate.
 
 **On no matches** → silent; continue to `## Doc-only [no ci] rule`.
 
