@@ -507,6 +507,31 @@ class TestCheckCommandSkillRefs:
         validate.check_command_skill_refs()
         assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
 
+    def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nUse `swe-workbench:foo` and `swe-workbench:fooo`.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 1
+        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "swe-workbench:foo'" not in validate.FAILURES[0]
+
+    def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
 
 # ──────────────────────────────────────────────
 # test-reviewer agent structural assertions
@@ -528,6 +553,7 @@ class TestTestReviewerAgent:
         assert match, "frontmatter block not found"
         fm_text = match.group(1)
         assert "name: test-reviewer" in fm_text
+        assert "description:" in fm_text
         assert "model: sonnet" in fm_text
         assert re.search(r"tools:.*\bRead\b", fm_text)
         assert re.search(r"tools:.*\bSkill\b", fm_text)
@@ -580,31 +606,6 @@ class TestTestReviewerAgent:
         val.check_agents()
         val.check_agent_skill_refs()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
-
-    def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(
-            root,
-            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
-        )
-        (root / "commands" / "my-cmd.md").write_text(
-            "---\ndescription: d\n---\n\nUse `swe-workbench:foo` and `swe-workbench:fooo`.\n",
-            encoding="utf-8",
-        )
-        validate.check_command_skill_refs()
-        assert len(validate.FAILURES) == 1
-        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
-        assert "swe-workbench:foo'" not in validate.FAILURES[0]
-
-    def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root)
-        (root / "commands" / "my-cmd.md").write_text(
-            "---\ndescription: d\n---\n\nNo plugin references here.\n",
-            encoding="utf-8",
-        )
-        validate.check_command_skill_refs()
-        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
