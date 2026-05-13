@@ -91,8 +91,26 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ```
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
-- **`$RIMBA` non-empty (binary found):** run `$RIMBA add <task>` (or `$RIMBA add pr:<num>` for a PR). Rimba handles branch-prefix conventions (`feat/`, `fix/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
+- **`$RIMBA` non-empty (binary found):** run `$RIMBA add <task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
 - **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
+
+**Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
+
+| Work type | rimba flag | Branch prefix produced | Maps to commit-tag |
+|---|---|---|---|
+| New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
+| Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
+| Hotfix | `--hotfix` | `hotfix/<task>` | `[hotfix]` |
+| Documentation | `--docs` | `docs/<task>` | `[docs]` |
+| Tests | `--test` | `test/<task>` | `[test]` |
+| Chore / tooling | `--chore` | `chore/<task>` | `[chore]` |
+
+Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMBA add ci-matrix --chore` → `chore/ci-matrix`.
+
+**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
+
+- **TDD / red-first plans:** if Phase 3 (or the first Phase 2 commit) needs to invoke the test suite immediately, pass `--skip-deps` and `--skip-hooks` to skip the post-create pipeline, then install deps yourself before the first test run (e.g. `pip install -e .[dev]`, `go mod download`).
+- **All other cases:** omit the flags and wait for `rimba add` to complete — deps will be ready when you enter Phase 2.
 
 Verify baseline tests pass before writing any code.
 

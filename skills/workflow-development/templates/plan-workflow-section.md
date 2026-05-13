@@ -9,7 +9,19 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 1: Branch
 - **Convention:** `[[detect:branch-convention]]`
-- **Primary:** `rimba add <task>` (check PATH, `~/.local/bin/rimba`, `~/go/bin/rimba`) — produces canonical `feature/<slug>` branch names.
+- **Primary:** `rimba add <task> [--flag]` (check PATH, `~/.local/bin/rimba`, `~/go/bin/rimba`) — produces typed branch names; pick the flag that matches the commit-tag this change will carry:
+
+  | Work type | rimba flag | Branch prefix | Commit-tag |
+  |---|---|---|---|
+  | New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
+  | Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
+  | Hotfix | `--hotfix` | `hotfix/<task>` | `[hotfix]` |
+  | Documentation | `--docs` | `docs/<task>` | `[docs]` |
+  | Tests | `--test` | `test/<task>` | `[test]` |
+  | Chore / tooling | `--chore` | `chore/<task>` | `[chore]` |
+
+- **Picking the prefix:** derive from the commit-tag the change will carry (taxonomy lives in `workflow-commit-and-pr`). Example: a `[fix]` change → `rimba add <task> --bugfix`.
+- **Post-create timing:** `rimba add` installs deps and runs `post_create` hooks after creating the worktree. TDD/red-first runs: pass `--skip-deps`/`--skip-hooks` and install deps yourself before the first test; otherwise wait for `Path: <abs-path>` output before moving to Phase 2.
 - **Enter worktree:** `EnterWorktree path=<rimba-output-path>` (harness tool) to switch the session in, or `cd <path>` in shell.
 - **Fallback only when rimba is absent:** invoke `superpowers:using-git-worktrees`. Do NOT invoke it when rimba is available — its Step 1a guidance steers toward `EnterWorktree name=…`, which mangles branch names containing `/` (e.g. `feature/101-foo` → `worktree-feature+101-foo`).
 - **If `rimba add` fails** (non-zero exit): report the error verbatim and ask the user whether to retry or fall back to `superpowers:using-git-worktrees`. Do not silently swallow the error.
