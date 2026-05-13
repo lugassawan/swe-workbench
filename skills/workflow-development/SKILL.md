@@ -112,7 +112,7 @@ Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMB
 - `$RIMBA add backend-api/auth-redirect --bugfix` → `bugfix/backend-api/auth-redirect`
 - `$RIMBA add frontend/dark-mode` → `feature/frontend/dark-mode`
 
-Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. Omit it for repo-wide changes (CI, root config, cross-cutting refactors).
+Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land; only omit the scope if no service clearly dominates (e.g. a root-only config change with no service files touched).
 
 **Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
 

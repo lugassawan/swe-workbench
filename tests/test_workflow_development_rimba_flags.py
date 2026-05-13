@@ -137,11 +137,12 @@ def test_template_has_work_type_to_flag_mapping():
 
 
 def test_skill_documents_monorepo_scope():
-    """SKILL.md Phase 1 must document the <service>/<task> monorepo naming pattern.
+    """SKILL.md Phase 1 must document the <service>/<task> monorepo naming pattern
+    and the majority-service heuristic for cross-cutting changes.
 
-    Without this, agents working in a monorepo always produce flat branch names
-    (e.g. bugfix/auth-redirect) instead of service-scoped ones
-    (e.g. bugfix/backend-api/auth-redirect), losing branch grouping by service.
+    Without the heuristic, agents omit the scope for any cross-cutting change —
+    the old "omit for repo-wide changes" guidance was actively wrong because it
+    ignores the repo's branch convention.
     """
     body = SKILL.read_text()
     phase1 = _phase1_section(body)
@@ -154,10 +155,17 @@ def test_skill_documents_monorepo_scope():
         "SKILL.md Phase 1 must include a worked monorepo example "
         "(e.g. rimba add backend-api/auth-redirect --bugfix)"
     )
+    # Must document the majority-service heuristic — "omit" alone is wrong advice
+    lower = phase1.lower()
+    assert "majority" in lower or "most" in lower, (
+        "SKILL.md Phase 1 must explain the majority-service heuristic for "
+        "cross-cutting changes (pick the service where most file edits land)"
+    )
 
 
 def test_template_documents_monorepo_scope():
-    """plan-workflow-section.md Phase 1 must document the monorepo scope pattern.
+    """plan-workflow-section.md Phase 1 must document the monorepo scope pattern
+    and the majority-service heuristic.
 
     Mirrors test_skill_documents_monorepo_scope — the template is what lands in
     generated plans, so the guidance must appear there too.
@@ -170,6 +178,10 @@ def test_template_documents_monorepo_scope():
     )
     assert "backend-api/" in phase1 or "frontend/" in phase1 or "monorepo" in phase1.lower(), (
         "plan-workflow-section.md Phase 1 must include a monorepo scope example or explicit mention"
+    )
+    lower = phase1.lower()
+    assert "majority" in lower or "most" in lower, (
+        "plan-workflow-section.md Phase 1 must include the majority-service heuristic"
     )
 
 
