@@ -71,3 +71,21 @@ def test_address_feedback_skill_fetches_head_repository():
         "SKILL.md Phase 1 gh pr view must include headRepository in --json fields "
         "so that $OWNER and $REPO are populated for the GraphQL thread fetch and REST reply endpoint"
     )
+
+
+def test_address_feedback_skill_no_literal_pr_branch_placeholder():
+    """Phase 2 rimba code block must not contain the literal <pr-branch> placeholder."""
+    text = SKILL_MD.read_text()
+    assert "<pr-branch>" not in text, (
+        "SKILL.md Phase 2 rimba code block must use $PR_BRANCH (extracted via jq), "
+        "not the literal <pr-branch> placeholder"
+    )
+
+
+def test_address_feedback_skill_captures_fix_sha():
+    """Phase 4 must specify a git rev-parse step to capture $FIX_SHA after workflow-commit-and-pr."""
+    text = SKILL_MD.read_text()
+    assert "rev-parse HEAD" in text, (
+        "SKILL.md Phase 4 must capture $FIX_SHA via 'git ... rev-parse HEAD' after "
+        "workflow-commit-and-pr returns, so the ADDRESSED reply template is populated"
+    )

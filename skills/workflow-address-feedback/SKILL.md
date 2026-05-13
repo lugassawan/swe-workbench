@@ -90,12 +90,13 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 **When rimba is available** (preferred — durable, owner commits land here):
 
 ```bash
-RIMBA_OUT=$(rimba add <pr-branch> --task "address-feedback-$PR" 2>&1)
+PR_BRANCH=$(jq -r .headRefName "/tmp/swe-workbench-address-feedback/${PR}.json")
+RIMBA_OUT=$(rimba add "$PR_BRANCH" --task "address-feedback-$PR" 2>&1)
 WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
-Replace `<pr-branch>` with `headRefName` from the PR JSON. Do NOT pass `--skip-deps` (owner needs deps to run tests). Do NOT add `--skip-hooks`.
+Do NOT pass `--skip-deps` (owner needs deps to run tests). Do NOT add `--skip-hooks`.
 
 **When rimba is absent** (durable fallback):
 
@@ -111,7 +112,7 @@ git worktree add "$WT" "${PR_BRANCH}"
 
 ### Phase 3 — Triage digest
 
-Render outstanding unresolved threads, one by one. For each thread:
+Render outstanding unresolved threads, one by one. Skip any thread where `isResolved == true` — only present threads where `isResolved == false`. For each remaining thread:
 
 ```
 ─────────────────────────────────────────────────
@@ -142,7 +143,11 @@ For each `ADDRESSED` thread (in order):
 After all `ADDRESSED` fixes are applied, invoke `swe-workbench:workflow-commit-and-pr` with the prompt:
 > "commit and push these fixes addressing review feedback on PR #N"
 
-This reuses the existing `[type]` commit format, branch-naming check, and push logic. Capture the resulting commit SHA as `$FIX_SHA`.
+This reuses the existing `[type]` commit format, branch-naming check, and push logic. After the skill returns, capture the resulting commit SHA:
+
+```bash
+FIX_SHA=$(git -C "$WT" rev-parse HEAD)
+```
 
 ### Phase 5 — Reply + resolve
 
@@ -151,7 +156,7 @@ For each thread, post a reply via REST then conditionally resolve:
 ```bash
 # Post reply
 gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments/${COMMENT_DATABASEID}/replies" \
-  -f body="$REPLY_BODY"
+  -F body="$REPLY_BODY"
 ```
 
 Reply body templates by triage classification:
