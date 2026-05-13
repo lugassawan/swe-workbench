@@ -50,7 +50,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:workflow-extend` — Mid-PR sub-idea capture and implementation onto the existing branch. Skips Phase 1 (Branch), preserves Verify → Review → Deliver, updates the existing PR via workflow-commit-and-pr.
 - `swe-workbench:workflow-address-feedback` — PR-owner feedback loop: fetch open review threads, per-thread ADDRESSED/CLARIFIED/DEFERRED triage, Edit-tool fixes, workflow-commit-and-pr commit, REST reply posting, and GraphQL resolveReviewThread. Invoked by `/address-feedback`.
 - `swe-workbench:workflow-pr-review` — Remote-PR review orchestration: ephemeral worktree + reviewer agent + GraphQL thread dedup + REST inline-comment post + APPROVE/COMMENT submit. Invoked by `/review` PR mode.
-- `swe-workbench:workflow-pr-review-followup` — Reviewer follow-up re-check: re-runs reviewer agent against the updated diff, deduplicates against existing threads, and reports a digest to the reviewer. GitHub-read-only (no submit, no comments). Invoked by `/review --check-followup <N>`.
+- `swe-workbench:workflow-pr-review-followup` — Reviewer follow-up re-check: re-runs reviewer agent against the updated diff, deduplicates against existing threads (Jaccard ±5-line), posts only truly-new inline comments, and submits APPROVE/COMMENT. Invoked by `/review --check-followup <N>`.
 - `swe-workbench:workflow-worktree-session` — Start, switch, or end a worktree-bound session via `EnterWorktree` / `ExitWorktree`. No claude restart.
 
 ## Integration

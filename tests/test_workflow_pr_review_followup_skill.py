@@ -39,12 +39,15 @@ def test_followup_triggers_txt():
     )
 
 
-def test_followup_skill_does_not_submit_review():
-    """SKILL.md must explicitly state it does NOT call gh pr review --approve or --comment."""
+def test_followup_skill_requires_footer_instruction():
+    """SKILL.md Step 4 must pass the footer instruction so the agent emits APPROVE|COMMENT."""
     text = SKILL_MD.read_text()
-    assert re.search(r"Never.*gh pr review|gh pr review.*Never|NOT.*gh pr review|never.*--approve|never.*--comment", text, re.IGNORECASE), (
-        "SKILL.md must explicitly state it does not call `gh pr review --approve|--comment` "
-        "(this is the key anti-pattern for a follow-up skill)"
+    assert "Review Decision: APPROVE" in text or "APPROVE|COMMENT" in text, (
+        "SKILL.md must include the footer instruction so the reviewer agent emits "
+        "**Review Decision: APPROVE|COMMENT** (required for Step 5 footer parsing)"
+    )
+    assert "REQUEST_CHANGES" in text, (
+        "SKILL.md must mention REQUEST_CHANGES in the footer constraint (Never REQUEST_CHANGES)"
     )
 
 
