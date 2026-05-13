@@ -85,7 +85,7 @@ Pass the agent:
   > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. The orchestrator uses these paragraphs as the top-level PR review body. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
 - Ticket-context prelude (if Step 3 produced one).
 
-Store the agent's complete text response as a shell variable: `REVIEWER_OUTPUT=<agent response>`. Step 7's awk block reads from this variable via `<<< "$REVIEWER_OUTPUT"`.
+Store the agent's complete text response as `REVIEWER_OUTPUT` before Step 7 runs — in practice the orchestrator assigns the subagent's full text reply to this variable. Step 7's awk block reads from it via `<<< "$REVIEWER_OUTPUT"`.
 
 ### Step 5 — Parse decision footer
 
