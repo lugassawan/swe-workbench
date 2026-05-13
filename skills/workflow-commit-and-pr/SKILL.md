@@ -31,6 +31,8 @@ The user's exact phrasing determines what action you take. **Never escalate with
 | **Preview only** | "I finished the feature", "I'm done", "feature is complete", "ready to commit" | Show: diff summary, drafted commit message, current branch name, doc-only `[no ci]` check. **Do NOT commit.** Wait for user to escalate to "commit this" or "ship this". |
 | **Commit only** | "commit this", "make a commit", "commit these changes" | Run `git commit` with the drafted message. **Stop.** Do NOT push. Do NOT create a PR. Tell the user: "Committed. Reply `push` to push, or `ship` to push and open a PR." |
 | **One-shot ship** | "commit and create a PR", "ship this", "ship it", "ship this branch" | Run commit → push → `gh pr create`. No intermediate pause. Run draft-vs-ready prompt before `gh pr create`. |
+| **Push only** | "push this", "push it", "push my branch" | `git push -u origin <branch>`. **Stop.** No commit. No PR. |
+| **PR only** | "open a PR for what I just pushed", "create a PR" (no staged changes) | Skip commit. Run existing-PR check → draft/ready prompt → `gh pr create`. |
 
 Ambiguous wording: **default to preview-only** and ask the user to escalate.
 
@@ -249,6 +251,12 @@ If the prompt OR current branch name OR last-5 commit messages mention a ticket 
 
 Prepend the ticket-context summary to the PR body so the reviewer has the full spec.
 
+## Test plan generation
+
+Seed `## Test Plan` with type-tailored bullets BEFORE `gh pr create --body-file "$TMP"` runs. Never strip or replace host bullets — append `### Type-tailored checks ([type])` only. Heredoc fallback: replace `- [ ] <verification steps>` placeholder. See `swe-workbench:principle-testing`.
+
+**Precedence:** `breaking` → `feat` → `fix` → `perf` → most-frequent → latest → `feat`. **Types:** `breaking` migration+compat; `feat` new-behaviour; `fix` reproduce+verify; `refactor` same-outputs; `perf` baseline; `test` passes; `ci` parses; `docs` links; `chore` builds; `polish` clean.
+
 ## Post-create CTA
 
 After `gh pr create` succeeds and prints the PR URL, append:
@@ -285,14 +293,6 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Auto-`gh pr create --draft` without asking | Always use `AskUserQuestion` to present `Draft` vs `Ready for review` — never ask via free-form prose. Drafts hide the PR from `assignees` and reviewers. |
 | Re-run `gh pr create` after a "pull request already exists" failure | The pre-check section detects this before it happens. After push, an existing OPEN PR is already updated — `gh pr create` has nothing left to do. Use the `Update existing PR` path instead. |
 | Auto-`git restore --staged` after a `Cancel` answer | Never. Leave staging untouched — the scan is advisory, not authoritative. The user may have reviewed the file and explicitly staged it. |
-
-## Quick reference
-
-| User says | Phase | Action |
-|---|---|---|
-| "I finished the feature" | Preview | Show diff + drafted commit msg. Do NOT commit. |
-| "Commit this" | Commit | `git commit -m "[type] …"`. Stop. No push. |
-| "Push it" | Push | `git push -u origin <branch>`. Stop. No PR. |
-| "Ship this" | Ship | Commit → push → existing-PR check → draft/ready prompt → `gh pr create`. |
-| "Ship this" (existing OPEN PR found) | Ship | Commit → push → existing-PR check surfaces URL → `AskUserQuestion` → skip `gh pr create`. |
-| "Open a PR for what I just pushed" | PR-only | Skip commit. Run existing-PR check → draft/ready prompt → `gh pr create`. |
+| Seed type-tailored bullets AFTER `gh pr create` (no-op) | Seeding mutates the body BEFORE the `$TMP` write; once `gh pr create` runs, the body is immutable via this flow. |
+| Strip host-template bullets to make room for type-tailored ones | Append under the `### Type-tailored checks` sub-heading; never delete host bullets. The only allowed strip is a trailing empty `- [ ]` placeholder on the host section. |
+| Pick a `[test]` or `[chore]` type when the PR also contains a `[feat]` commit | Apply the precedence ladder over all commits since merge-base. `feat`, `fix`, and `breaking` outrank prep-commits. |
