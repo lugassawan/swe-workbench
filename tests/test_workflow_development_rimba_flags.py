@@ -77,6 +77,25 @@ def test_skill_no_longer_uses_wrong_feat_fix_prefixes():
     assert "bugfix/" in phase1, "SKILL.md Phase 1 must document the `bugfix/` prefix"
 
 
+def test_template_no_longer_uses_wrong_feat_fix_prefixes():
+    """plan-workflow-section.md Phase 1 must not claim rimba produces `feat/` or `fix/` prefixes.
+
+    Mirrors test_skill_no_longer_uses_wrong_feat_fix_prefixes for the template.
+    Both files must be guarded — they are kept in sync by convention, not codegen.
+    """
+    body = TEMPLATE.read_text()
+    phase1 = _phase1_section(body)
+
+    assert "`feat/`" not in phase1, (
+        "plan-workflow-section.md Phase 1 must not use `feat/` as a branch prefix"
+    )
+    assert "`fix/`" not in phase1, (
+        "plan-workflow-section.md Phase 1 must not use `fix/` as a branch prefix"
+    )
+    assert "feature/" in phase1, "plan-workflow-section.md Phase 1 must document the `feature/` prefix"
+    assert "bugfix/" in phase1, "plan-workflow-section.md Phase 1 must document the `bugfix/` prefix"
+
+
 def test_template_documents_all_five_branch_prefix_flags():
     """plan-workflow-section.md Phase 1 must enumerate all five rimba branch-prefix flags.
 

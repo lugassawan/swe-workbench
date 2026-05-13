@@ -96,7 +96,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 
 **Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
 
-| Work type | rimba flag | Branch prefix produced | Maps to commit-tag |
+| Work type | rimba flag | Branch prefix | Commit-tag |
 |---|---|---|---|
 | New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
 | Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
