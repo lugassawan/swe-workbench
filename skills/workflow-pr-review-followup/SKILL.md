@@ -44,6 +44,12 @@ gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,head
 
 Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO` from the JSON. The state file is stored under `${PR}-followup.json` (distinct from `${PR}.json` used by the primary review) to allow both to coexist.
 
+Check that the PR is open before proceeding:
+```bash
+STATE=$(jq -r .state "/tmp/swe-workbench-pr-review/${PR}-followup.json")
+[ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — follow-up review only applies to open PRs."; exit 1; }
+```
+
 ### Step 2 — Ephemeral worktree
 
 **When rimba is available** (preferred):
@@ -88,7 +94,7 @@ Store the agent's complete text response as `REVIEWER_OUTPUT`.
 
 ### Step 5 — Parse findings
 
-Parse `Severity | File:Line | Issue | Why | Fix` rows from `REVIEWER_OUTPUT`. Collect as a list of `(path, line, severity, issue, why, fix)` tuples. If no rows found, skip Step 6 and jump to Step 7.
+Parse `Severity | File:Line | Issue | Why | Fix` rows from `REVIEWER_OUTPUT`. Collect as a list of `(path, line, severity, issue, why, fix)` tuples. If no rows found, set `agent_findings = 0`, skip Step 6, and jump to Step 7 using the **Case A0** template.
 
 ### Step 6 — Dedup (report-only)
 
@@ -133,7 +139,15 @@ Match against ANY author. Track:
 
 Choose the report template based on counts:
 
-**Case A — No new findings:**
+**Case A0 — Agent found no findings at all (clean diff):**
+Use this when Step 5 exits early because the agent produced zero findings (before dedup runs).
+```
+## Follow-up Check: PR #N
+
+Reviewer agent found no new findings in the updated diff. Previously raised threads remain as-is on GitHub.
+```
+
+**Case A — Dedup matched all findings (truly_new == 0 AND deduped > 0):**
 ```
 ## Follow-up Check: PR #N
 

@@ -62,3 +62,12 @@ def test_address_feedback_skill_uses_three_way_triage():
     assert "ADDRESSED" in text, "SKILL.md must reference ADDRESSED triage state"
     assert "CLARIFIED" in text, "SKILL.md must reference CLARIFIED triage state"
     assert "DEFERRED" in text, "SKILL.md must reference DEFERRED triage state"
+
+
+def test_address_feedback_skill_fetches_head_repository():
+    """Phase 1 gh pr view must include headRepository so OWNER/REPO can be extracted."""
+    text = SKILL_MD.read_text()
+    assert "headRepository" in text, (
+        "SKILL.md Phase 1 gh pr view must include headRepository in --json fields "
+        "so that $OWNER and $REPO are populated for the GraphQL thread fetch and REST reply endpoint"
+    )

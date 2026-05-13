@@ -34,12 +34,24 @@ This skill orchestrates:
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 mkdir -p /tmp/swe-workbench-address-feedback
-gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision \
+gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision,headRepository,state \
   > "/tmp/swe-workbench-address-feedback/${PR}.json"
 [ -s "/tmp/swe-workbench-address-feedback/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
 ```
 
-Extract `AUTHOR_LOGIN` from `author.login`. If `CURRENT_USER != AUTHOR_LOGIN`, warn:
+Extract fields from the JSON:
+- `AUTHOR_LOGIN` from `author.login`
+- `OWNER` from `headRepository.nameWithOwner | split("/")[0]`
+- `REPO` from `headRepository.name`
+- `STATE` from `state`
+
+Check that the PR is open before proceeding:
+```bash
+STATE=$(jq -r .state "/tmp/swe-workbench-address-feedback/${PR}.json")
+[ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
+```
+
+If `CURRENT_USER != AUTHOR_LOGIN`, warn:
 > "You are not the PR author (PR author: @AUTHOR_LOGIN, you: @CURRENT_USER). Address-feedback flows are typically owner-side. Continue anyway? Reply `yes` to proceed."
 
 Wait for confirmation before continuing.
@@ -88,7 +100,7 @@ Replace `<pr-branch>` with `headRefName` from the PR JSON. Do NOT pass `--skip-d
 **When rimba is absent** (durable fallback):
 
 ```bash
-PR_BRANCH=$(jq -r .headRefName /tmp/swe-workbench-address-feedback/${PR}.json)
+PR_BRANCH=$(jq -r .headRefName "/tmp/swe-workbench-address-feedback/${PR}.json")
 WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
 mkdir -p "$(dirname "$WT")"
 git fetch origin "${PR_BRANCH}"
