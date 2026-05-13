@@ -112,11 +112,11 @@ Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMB
 - `$RIMBA add backend-api/auth-redirect --bugfix` → `bugfix/backend-api/auth-redirect`
 - `$RIMBA add frontend/dark-mode` → `feature/frontend/dark-mode`
 
-Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land; only omit the scope if no service clearly dominates (e.g. a root-only config change with no service files touched).
+Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land. If two services tie, prefer the service that owns the primary interface changed (e.g. the API layer for a contract change, the UI layer for a rendering change); only omit the scope entirely if no service file is touched at all (e.g. a root-only CI config change).
 
 **Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
 
-- **TDD / red-first plans:** if Phase 3 (or the first Phase 2 commit) needs to invoke the test suite immediately, pass `--skip-deps` and `--skip-hooks` to skip the post-create pipeline, then install deps yourself before the first test run (e.g. `pip install -e .[dev]`, `go mod download`).
+- **TDD / red-first plans:** if the first Phase 2 test run needs to invoke the test suite immediately after worktree creation, pass `--skip-deps` and `--skip-hooks` to skip the post-create pipeline, then install deps yourself before the first test run (e.g. `pip install -e .[dev]`, `go mod download`).
 - **All other cases:** omit the flags and wait for `rimba add` to complete — deps will be ready when you enter Phase 2.
 
 Verify baseline tests pass before writing any code.

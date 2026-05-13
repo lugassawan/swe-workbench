@@ -232,3 +232,8 @@ def test_template_documents_post_create_timing():
     assert "--skip-hooks" in phase1, (
         "plan-workflow-section.md Phase 1 must document --skip-hooks"
     )
+    lower = phase1.lower()
+    assert any(kw in lower for kw in ("tdd", "test", "wait")), (
+        "plan-workflow-section.md Phase 1 must contextualise --skip-deps/--skip-hooks "
+        "with TDD/red-first timing guidance (substring: tdd, test, or wait)"
+    )
