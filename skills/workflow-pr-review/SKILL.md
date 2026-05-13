@@ -118,7 +118,7 @@ Do NOT clean up the worktree on abort — leave it for inspection.
                  nodes {
                    id databaseId body
                    author { login }
-                   reactions(first: 5, content: THUMBS_UP) {
+                   reactions(first: 20, content: THUMBS_UP) {
                      nodes { user { login } }
                    }
                  }

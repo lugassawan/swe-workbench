@@ -149,7 +149,7 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each thread, post a reply via REST then conditionally resolve:
+For each thread, post a reply via REST then conditionally resolve. Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
 
 ```bash
 # Post reply

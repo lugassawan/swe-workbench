@@ -66,3 +66,12 @@ def test_followup_skill_delegates_to_reviewer_agent():
     assert "`swe-workbench:reviewer`" in text or "swe-workbench:reviewer" in text, (
         "SKILL.md must delegate to the swe-workbench:reviewer agent"
     )
+
+
+def test_followup_skill_documents_stale_commit_retry():
+    """SKILL.md failure modes must document the stale commit_id all-422 retry."""
+    text = SKILL_MD.read_text()
+    assert "headRefOid" in text or "HEAD_SHA mismatch" in text, (
+        "SKILL.md failure modes must document the stale commit_id retry: "
+        "re-fetch HEAD_SHA via headRefOid when all POSTs return 422"
+    )

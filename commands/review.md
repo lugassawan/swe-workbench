@@ -88,8 +88,8 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **Trigger:** `--check-followup <N>` where `N` is a PR number (with or without leading `#`).
 
-**Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings without submitting a new review event to GitHub.
+**Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings, posts only truly-new inline comments, and submits APPROVE or COMMENT.
 
 Invoke `swe-workbench:workflow-pr-review-followup` via the `Skill` tool, passing the resolved PR number.
 
-The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), and a digest report to the reviewer. It **never** calls `gh pr review` and **never** posts inline comments — it is GitHub-read-only. See `skills/workflow-pr-review-followup/SKILL.md` for the full 7-step contract.
+The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), posts only truly-new inline comments, and submits an APPROVE or COMMENT review event. See `skills/workflow-pr-review-followup/SKILL.md` for the full 7-step contract.

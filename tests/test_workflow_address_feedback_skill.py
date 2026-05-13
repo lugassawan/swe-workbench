@@ -89,3 +89,21 @@ def test_address_feedback_skill_captures_fix_sha():
         "SKILL.md Phase 4 must capture $FIX_SHA via 'git ... rev-parse HEAD' after "
         "workflow-commit-and-pr returns, so the ADDRESSED reply template is populated"
     )
+
+
+def test_address_feedback_skill_binds_comment_databaseid():
+    """Phase 5 must specify that COMMENT_DATABASEID comes from comments.nodes[0] (thread root)."""
+    text = SKILL_MD.read_text()
+    assert "nodes[0]" in text or "thread root" in text or "first comment" in text, (
+        "SKILL.md Phase 5 must specify that $COMMENT_DATABASEID is populated from "
+        "comments.nodes[0].databaseId (the thread root), not a subsequent reply"
+    )
+
+
+def test_address_feedback_skill_clarified_no_resolve():
+    """SKILL.md must state that CLARIFIED threads are not resolved (reply only)."""
+    text = SKILL_MD.read_text()
+    assert re.search(r"CLARIFIED.*[Nn]o resolve|[Nn]o resolve.*CLARIFIED|CLARIFIED.*reply only", text), (
+        "SKILL.md must state that CLARIFIED threads get a reply but are NOT resolved "
+        "(only ADDRESSED threads trigger resolveReviewThread)"
+    )
