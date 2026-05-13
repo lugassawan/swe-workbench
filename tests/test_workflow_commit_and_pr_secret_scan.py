@@ -110,8 +110,9 @@ def test_secret_scan_section_present_with_askuserquestion():
         "on Cancel — encoding the no-auto-unstage invariant"
     )
 
-    assert "#181" in section, (
-        "Pre-commit gate section must cross-reference issue #181 (write-time hook complement)"
+    assert re.search(r"PreToolUse|Write/Edit hook|authoring time", section), (
+        "Pre-commit gate section must describe its write-time hook complement without "
+        "baking in a repo-specific issue number (e.g. '#181')"
     )
 
 

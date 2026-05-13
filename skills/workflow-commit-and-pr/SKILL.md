@@ -86,9 +86,10 @@ Behaviour:
 
 Before the commit preview (or before running `git commit`), scan the staged
 file set for filenames that commonly hold secrets. This is a commit-layer
-twin of #181's write-time hook: #181 catches secrets the agent introduces
-via Write/Edit; this gate catches secrets staged by anyone (a human running
-`git add`, an IDE that auto-stages, or any other tool) before commit.
+twin of the PreToolUse Write/Edit hook: that hook catches secrets the agent
+introduces at authoring time; this gate catches secrets staged by anyone (a
+human running `git add`, an IDE that auto-stages, or any other tool) before
+commit.
 
 The scan is a filename heuristic, not a content scan — it cannot catch a
 secret pasted inside an otherwise innocuous `config.yaml`. False negatives

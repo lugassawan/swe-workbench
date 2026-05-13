@@ -104,6 +104,38 @@ def test_workflow_commit_and_pr_has_no_unguarded_this_repo_refs():
     )
 
 
+def test_workflow_commit_and_pr_has_no_bare_issue_refs():
+    """No bare #NNN issue references may appear in prose outside fenced/inline code.
+
+    When a skill is loaded into a foreign repo, #181 resolves to *that repo's*
+    issue #181, not swe-workbench's.  Explanatory cross-references must use
+    descriptive language (e.g. "the PreToolUse Write/Edit hook") rather than
+    a bare issue number.
+
+    Inline code (backtick-quoted) is excluded — those are example placeholders,
+    not claim-bearing references.
+    """
+    body = COMMIT_AND_PR_SKILL.read_text()
+    # Strip fenced code blocks first
+    outside_fences = _strip_fenced_code_blocks(body)
+    # Strip inline code (backtick spans) — these are examples, not claims
+    outside_inline = re.sub(r'`[^`\n]+`', '', outside_fences)
+
+    hits = []
+    for lineno, line in enumerate(outside_inline.splitlines(), 1):
+        if re.search(r'#\d+', line):
+            hits.append((lineno, line.strip()))
+
+    assert not hits, (
+        "Found bare #NNN issue reference(s) in "
+        "skills/workflow-commit-and-pr/SKILL.md (outside fenced/inline code).\n"
+        "Use descriptive language instead (e.g. 'the PreToolUse Write/Edit hook')\n"
+        "so the reference does not resolve to the wrong issue in a foreign repo.\n\n"
+        "Violations:\n"
+        + "\n".join(f"  ~line {ln}: {txt}" for ln, txt in hits)
+    )
+
+
 def test_principle_version_control_attributes_type_format_to_swe_workbench():
     """The [type] Subject enforcement sentence must name 'swe-workbench' explicitly.
 
