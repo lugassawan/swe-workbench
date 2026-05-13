@@ -49,6 +49,18 @@ When the invoker (e.g. `/review` PR mode) explicitly asks for a Review Decision 
 
 **When NOT instructed** (e.g. local-diff mode, ad-hoc invocation), do not emit this footer — keep output to severity-grouped findings only.
 
+## Review Summary (when instructed)
+
+When the invoker (e.g. `workflow-pr-review` Step 4) explicitly asks for a Review Summary, begin the review with a `## Review Summary` section — before any severity-grouped findings. Write 2–4 sentences covering:
+
+1. **Overall posture** — APPROVE-lean or COMMENT-lean, and why in one clause.
+2. **Strongest positives** — what the diff does well (architecture, test coverage, clarity).
+3. **Most important concerns** — top 1–2 issues the author should know before reading inline comments.
+
+Do **not** repeat per-finding detail in this section — that belongs in the severity-grouped findings below. The orchestrator extracts these paragraphs verbatim and uses them as the top-level PR review body.
+
+**When NOT instructed** (e.g. local-diff mode, ad-hoc invocation), do not emit this section — keep output to severity-grouped findings only.
+
 ## Principle consultation
 
 > See @./shared/skills.md for the full skill catalog.

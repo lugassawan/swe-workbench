@@ -81,7 +81,11 @@ Pass the agent:
   > "Emit **repo-relative** paths in every finding (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments."
 - Footer instruction (load-bearing — opt-in per the agent's `## Decision footer (when instructed)` block):
   > "End the review with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**` on its own line, no prefix or trailing text. Never `REQUEST_CHANGES`."
+- Narrative instruction (load-bearing — opt-in per the agent's `## Review Summary (when instructed)` block):
+  > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. The orchestrator uses these paragraphs as the top-level PR review body. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
 - Ticket-context prelude (if Step 3 produced one).
+
+Store the agent's complete text response as a shell variable: `REVIEWER_OUTPUT=<agent response>`. Step 7's awk block reads from this variable via `<<< "$REVIEWER_OUTPUT"`.
 
 ### Step 5 — Parse decision footer
 
@@ -159,9 +163,26 @@ Do NOT clean up the worktree on abort — leave it for inspection.
 
 ### Step 7 — Submit + cleanup
 
-Body summary:
-```
-Reviewed by `reviewer` (swe-workbench). Posted N inline comments, deduped M.
+Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
+
+```bash
+NARRATIVE=$(awk '
+  /^[[:space:]]*(Critical|High|Medium|Low|Severity)[[:space:]]*\|/ { exit }
+  /^###[[:space:]]+(Critical|High|Medium|Low)\b/ { exit }
+  /^\*\*Review Decision:/ { exit }
+  { print }
+' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
+
+# $posted and $deduped are set in Step 6.
+BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/${OWNER}/${REPO})). Posted ${posted} inline comments, deduped ${deduped}._"
+
+if [ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ]; then
+  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
+    "$NARRATIVE" "$DECISION" "$BYLINE")
+else
+  # Fallback: no prose above the findings table — use the legacy one-liner.
+  SUMMARY="Reviewed by \`reviewer\` (swe-workbench). Posted $posted inline comments, deduped $deduped."
+fi
 ```
 
 Submit per the parsed decision:
@@ -221,3 +242,4 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Parse threads from REST `pulls/{N}/comments` | REST returns review-comment-by-comment; threading is reconstructed by the GraphQL `reviewThreads` shape. Use GraphQL to fetch, REST to post. |
 | Force-add 👍 to your own existing comment | Check `reactions.nodes[].user.login` first; skip if you've already reacted. |
 | Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
+| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the legacy one-liner silently — body is not wrong but loses the prose narrative. |
