@@ -39,6 +39,8 @@ NEGATIVE_FILENAMES = [
     ".env.sample",
     ".env.template",
     ".env.dist",
+    ".env.EXAMPLE",   # case-insensitive exclusion must fire
+    ".env.Sample",    # mixed-case variant
     "secrets.example.yaml",
     "secrets.sample.json",
     "README.md",
@@ -134,7 +136,7 @@ def test_secret_scan_regex_matches_expected_positives_and_negatives():
     assert pos_match, "Could not extract grep -iE pattern from bash block"
     pos_pattern = pos_match.group(1)
 
-    excl_match = re.search(r"grep\s+-vE\s+'([^']+)'", bash_block)
+    excl_match = re.search(r"grep\s+-i?vE\s+'([^']+)'", bash_block)
     assert excl_match, "Could not extract grep -vE pattern from bash block"
     excl_pattern = excl_match.group(1)
 

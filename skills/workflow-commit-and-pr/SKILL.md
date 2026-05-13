@@ -100,7 +100,7 @@ are expected; treat a clean scan as "no obvious filename red flags", not
 ```bash
 SUSPICIOUS=$(git diff --staged --name-only \
   | grep -iE '(^|/)([^/]*\.env(\.|$)|.+\.pem$|.+\.key$|credentials\.json$|secrets?\.[a-z]+$)' \
-  | grep -vE '\.(example|sample|template|dist)$' \
+  | grep -ivE '\.(example|sample|template|dist)$' \
   || true)
 ```
 
