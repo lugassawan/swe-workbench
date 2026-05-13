@@ -82,6 +82,58 @@ Behaviour:
 - If branch doesn't match `<type>/<kebab>` → **warn-only** (don't auto-rename): "Branch `<name>` doesn't match the `<type>/<kebab>` convention. Continue anyway? Reply `yes` or rename first."
 - If branch matches → silent.
 
+## Pre-commit gate: suspicious staged files
+
+Before the commit preview (or before running `git commit`), scan the staged
+file set for filenames that commonly hold secrets. This is a commit-layer
+twin of #181's write-time hook: #181 catches secrets the agent introduces
+via Write/Edit; this gate catches secrets staged by anyone (a human running
+`git add`, an IDE that auto-stages, or any other tool) before commit.
+
+The scan is a filename heuristic, not a content scan — it cannot catch a
+secret pasted inside an otherwise innocuous `config.yaml`. False negatives
+are expected; treat a clean scan as "no obvious filename red flags", not
+"safe to commit".
+
+**Scan command** (run before `[no ci]` is computed):
+
+```bash
+SUSPICIOUS=$(git diff --staged --name-only \
+  | grep -iE '(^|/)([^/]*\.env(\.|$)|.+\.pem$|.+\.key$|credentials\.json$|secrets?\.[a-z]+$)' \
+  | grep -vE '\.(example|sample|template|dist)$' \
+  || true)
+```
+
+The exclusion pass (`*.example`, `*.sample`, `*.template`, `*.dist`)
+prevents false-positives on sanitised template files that are conventional
+to commit (e.g. `.env.example`, `secrets.sample.yaml`).
+
+**On no matches** → silent; continue to `## Doc-only [no ci] rule`.
+
+**On match**, print the file list verbatim to the user, then call
+`AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Staged files have names that commonly contain secrets. Commit anyway, or cancel?",
+    "header": "Suspicious",
+    "multiSelect": false,
+    "options": [
+      { "label": "Commit anyway", "description": "Files were reviewed and are intentional — proceed to the commit preview." },
+      { "label": "Cancel",        "description": "Abort. No commit is made. Staging is NOT touched — unstaging is the user's call." }
+    ]
+  }]
+}
+```
+
+- **`Commit anyway`** → continue to `## Doc-only [no ci] rule` and the
+  normal commit flow.
+- **`Cancel`** → abort the flow. **Do NOT run `git restore --staged`** or
+  otherwise alter the index. The user inspects and unstages on their own.
+  If the user re-invokes the skill after staging changes, the scan re-runs
+  cleanly — no state machine.
+
 ## Doc-only `[no ci]` rule
 
 When ALL staged paths match doc-only patterns, append ` [no ci]` to the commit subject:
@@ -214,6 +266,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | `git push` rejected (non-FF) | Non-zero exit | Abort. Tell user to `git pull --rebase`; do NOT force-push. |
 | Doc-only `[no ci]` rule mis-triggers (ambiguous case) | User disagrees | Skip `[no ci]` and warn. The doc-only rule is conservative — when in doubt, run CI. |
 | Duplicate PR (already exists) | `gh pr view` returns `state == "OPEN"` before `gh pr create` | Surface URL via `AskUserQuestion` (see Pre-check section). On `Update existing PR`, skip `gh pr create`. **Never** re-run `gh pr create` to recover. |
+| Staged files look like secrets | `grep` matches against curated pattern set | Print file list. `AskUserQuestion` → on `Cancel`, abort with no `git restore --staged` and no commit. Never auto-unstage. |
 
 ## Common mistakes
 
@@ -228,6 +281,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | Pass both `--body-file` and `--body` to `gh pr create` | `gh` silently uses `--body-file` and discards `--body`. Write the filled body to a temp file and pass `--body-file <tmp>` only — never both flags together. Pattern: `TMP=$(mktemp); trap 'rm -f "$TMP"' EXIT; <fill template> > "$TMP"; gh pr create --body-file "$TMP"` (trap ensures cleanup on failure too). |
 | Auto-`gh pr create --draft` without asking | Always use `AskUserQuestion` to present `Draft` vs `Ready for review` — never ask via free-form prose. Drafts hide the PR from `assignees` and reviewers. |
 | Re-run `gh pr create` after a "pull request already exists" failure | The pre-check section detects this before it happens. After push, an existing OPEN PR is already updated — `gh pr create` has nothing left to do. Use the `Update existing PR` path instead. |
+| Auto-`git restore --staged` after a `Cancel` answer | Never. Leave staging untouched — the scan is advisory, not authoritative. The user may have reviewed the file and explicitly staged it. |
 
 ## Quick reference
 
