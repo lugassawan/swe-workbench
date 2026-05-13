@@ -116,8 +116,8 @@ Use the service scope whenever the work is clearly contained within one module �
 
 **Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
 
-- **TDD / red-first plans:** if the first Phase 2 test run needs to invoke the test suite immediately after worktree creation, pass `--skip-deps` and `--skip-hooks` to skip the post-create pipeline, then install deps yourself before the first test run (e.g. `pip install -e .[dev]`, `go mod download`).
-- **All other cases:** omit the flags and wait for `rimba add` to complete — deps will be ready when you enter Phase 2.
+- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before entering Phase 2. This applies regardless of whether the plan is TDD-first — if the test suite needs installed packages, rimba must finish first.
+- **No deps needed:** pass `--skip-deps` and `--skip-hooks` only when the test suite requires no installation step (e.g. pure shell scripts, documentation assertion tests). Never skip deps and then reinstall them manually — rimba's pipeline already handles it correctly.
 
 Verify baseline tests pass before writing any code.
 
