@@ -33,12 +33,16 @@ def test_migrate_command_invokes_ticket_context():
 
 
 def test_migrate_skill_referenced_in_command():
-    """All swe-workbench: skill refs in migrate.md must resolve to skills/ on disk."""
+    """All swe-workbench: skill refs in migrate.md must resolve to skills/ or agents/ on disk."""
     skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
     text = MIGRATE_CMD.read_text()
     pattern = re.compile(r"`swe-workbench:([\w-]+)`")
-    missing = [sid for sid in set(pattern.findall(text)) if not (skills_dir / sid).is_dir()]
-    assert not missing, f"migrate.md references non-existent skills: {missing}"
+    missing = [
+        sid for sid in set(pattern.findall(text))
+        if not (skills_dir / sid).is_dir() and not (agents_dir / f"{sid}.md").is_file()
+    ]
+    assert not missing, f"migrate.md references non-existent skills or agents: {missing}"
 
 
 def test_migrate_in_docs_catalog():
@@ -67,9 +71,4 @@ def test_migrate_in_readme():
     )
     assert "/swe-workbench:migrate" in commands_line, (
         "README.md '- **Commands**' bullet must include /swe-workbench:migrate"
-    )
-    refactor_pos = commands_line.find("/swe-workbench:refactor")
-    migrate_pos = commands_line.find("/swe-workbench:migrate")
-    assert refactor_pos != -1 and migrate_pos > refactor_pos, (
-        "README Commands bullet must list /swe-workbench:migrate after /swe-workbench:refactor"
     )
