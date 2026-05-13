@@ -91,8 +91,33 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ```
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
-- **`$RIMBA` non-empty (binary found):** run `$RIMBA add <task>` (or `$RIMBA add pr:<num>` for a PR). Rimba handles branch-prefix conventions (`feat/`, `fix/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
+- **`$RIMBA` non-empty (binary found):** run `$RIMBA add [<service>/]<task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
 - **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
+
+**Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
+
+| Work type | rimba flag | Branch prefix | Commit-tag |
+|---|---|---|---|
+| New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
+| Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
+| Hotfix | `--hotfix` | `hotfix/<task>` | `[hotfix]` |
+| Documentation | `--docs` | `docs/<task>` | `[docs]` |
+| Tests | `--test` | `test/<task>` | `[test]` |
+| Chore / tooling | `--chore` | `chore/<task>` | `[chore]` |
+
+Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMBA add ci-matrix --chore` → `chore/ci-matrix`.
+
+**Monorepo scope** — in a monorepo, prefix the task with the service or package name using `<service>/<task>`. The type flag still controls the branch prefix:
+
+- `$RIMBA add backend-api/auth-redirect --bugfix` → `bugfix/backend-api/auth-redirect`
+- `$RIMBA add frontend/dark-mode` → `feature/frontend/dark-mode`
+
+Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land. If two services tie, prefer the service that owns the primary interface changed (e.g. the API layer for a contract change, the UI layer for a rendering change); only omit the scope entirely if no service file is touched at all (e.g. a root-only CI config change).
+
+**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
+
+- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before entering Phase 2. This applies regardless of whether the plan is TDD-first — if the test suite needs installed packages, rimba must finish first.
+- **No deps needed:** pass `--skip-deps` and `--skip-hooks` only when the test suite requires no installation step (e.g. pure shell scripts, documentation assertion tests). Never skip deps and then reinstall them manually — rimba's pipeline already handles it correctly.
 
 Verify baseline tests pass before writing any code.
 

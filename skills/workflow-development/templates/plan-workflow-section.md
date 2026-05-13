@@ -9,7 +9,20 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 1: Branch
 - **Convention:** `[[detect:branch-convention]]`
-- **Primary:** `rimba add <task>` (check PATH, `~/.local/bin/rimba`, `~/go/bin/rimba`) — produces canonical `feature/<slug>` branch names.
+- **Primary:** `rimba add [<service>/]<task> [--flag]` (check PATH, `~/.local/bin/rimba`, `~/go/bin/rimba`) — produces typed branch names; pick the flag that matches the commit-tag this change will carry:
+
+  | Work type | rimba flag | Branch prefix | Commit-tag |
+  |---|---|---|---|
+  | New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
+  | Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
+  | Hotfix | `--hotfix` | `hotfix/<task>` | `[hotfix]` |
+  | Documentation | `--docs` | `docs/<task>` | `[docs]` |
+  | Tests | `--test` | `test/<task>` | `[test]` |
+  | Chore / tooling | `--chore` | `chore/<task>` | `[chore]` |
+
+- **Picking the prefix:** derive from the commit-tag the change will carry (taxonomy lives in `workflow-commit-and-pr`). Example: a `[fix]` change → `rimba add <task> --bugfix`.
+- **Monorepo scope:** prefix the task with the service/package name — `rimba add <service>/<task> [--flag]` → `<prefix>/<service>/<task>` (e.g. `rimba add backend-api/auth-redirect --bugfix` → `bugfix/backend-api/auth-redirect`). For cross-cutting changes, pick the service where most file edits land; if two services tie, prefer the service that owns the primary interface changed; omit scope only if no service file is touched at all.
+- **Post-create timing:** `rimba add` installs deps and runs `post_create` hooks after creating the worktree. Wait for `Path: <abs-path>` output before moving to Phase 2 — this applies to TDD-first plans too if the test suite requires installed packages. Only pass `--skip-deps`/`--skip-hooks` when the test suite genuinely needs no installation step; never skip and reinstall manually.
 - **Enter worktree:** `EnterWorktree path=<rimba-output-path>` (harness tool) to switch the session in, or `cd <path>` in shell.
 - **Fallback only when rimba is absent:** invoke `superpowers:using-git-worktrees`. Do NOT invoke it when rimba is available — its Step 1a guidance steers toward `EnterWorktree name=…`, which mangles branch names containing `/` (e.g. `feature/101-foo` → `worktree-feature+101-foo`).
 - **If `rimba add` fails** (non-zero exit): report the error verbatim and ask the user whether to retry or fall back to `superpowers:using-git-worktrees`. Do not silently swallow the error.
