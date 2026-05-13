@@ -91,7 +91,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ```
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
-- **`$RIMBA` non-empty (binary found):** run `$RIMBA add <task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
+- **`$RIMBA` non-empty (binary found):** run `$RIMBA add [<service>/]<task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
 - **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
 
 **Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
@@ -106,6 +106,13 @@ RIMBA=$(command -v rimba 2>/dev/null \
 | Chore / tooling | `--chore` | `chore/<task>` | `[chore]` |
 
 Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMBA add ci-matrix --chore` → `chore/ci-matrix`.
+
+**Monorepo scope** — in a monorepo, prefix the task with the service or package name using `<service>/<task>`. The type flag still controls the branch prefix:
+
+- `$RIMBA add backend-api/auth-redirect --bugfix` → `bugfix/backend-api/auth-redirect`
+- `$RIMBA add frontend/dark-mode` → `feature/frontend/dark-mode`
+
+Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. Omit it for repo-wide changes (CI, root config, cross-cutting refactors).
 
 **Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
 

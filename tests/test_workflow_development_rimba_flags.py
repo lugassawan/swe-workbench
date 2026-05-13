@@ -132,6 +132,48 @@ def test_template_has_work_type_to_flag_mapping():
 
 
 # ---------------------------------------------------------------------------
+# Defect 4 — Monorepo scope undocumented
+# ---------------------------------------------------------------------------
+
+
+def test_skill_documents_monorepo_scope():
+    """SKILL.md Phase 1 must document the <service>/<task> monorepo naming pattern.
+
+    Without this, agents working in a monorepo always produce flat branch names
+    (e.g. bugfix/auth-redirect) instead of service-scoped ones
+    (e.g. bugfix/backend-api/auth-redirect), losing branch grouping by service.
+    """
+    body = SKILL.read_text()
+    phase1 = _phase1_section(body)
+
+    assert "<service>/" in phase1, (
+        "SKILL.md Phase 1 must document the <service>/<task> monorepo scope syntax"
+    )
+    # A concrete example must be present so agents can pattern-match
+    assert "backend-api/" in phase1 or "frontend/" in phase1, (
+        "SKILL.md Phase 1 must include a worked monorepo example "
+        "(e.g. rimba add backend-api/auth-redirect --bugfix)"
+    )
+
+
+def test_template_documents_monorepo_scope():
+    """plan-workflow-section.md Phase 1 must document the monorepo scope pattern.
+
+    Mirrors test_skill_documents_monorepo_scope — the template is what lands in
+    generated plans, so the guidance must appear there too.
+    """
+    body = TEMPLATE.read_text()
+    phase1 = _phase1_section(body)
+
+    assert "<service>/" in phase1, (
+        "plan-workflow-section.md Phase 1 must document the <service>/<task> monorepo scope syntax"
+    )
+    assert "backend-api/" in phase1 or "frontend/" in phase1 or "monorepo" in phase1.lower(), (
+        "plan-workflow-section.md Phase 1 must include a monorepo scope example or explicit mention"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Defect 2 — Post-create timing undocumented
 # ---------------------------------------------------------------------------
 
