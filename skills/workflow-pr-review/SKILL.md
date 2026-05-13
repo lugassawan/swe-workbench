@@ -37,12 +37,12 @@ This skill orchestrates; analysis is delegated to:
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,headRefOid,title,body \
+gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,headRefOid,title,body,author \
   > "/tmp/swe-workbench-pr-review/${PR}.json"
 [ -s "/tmp/swe-workbench-pr-review/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
 ```
 
-Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO` from the JSON for downstream steps.
+Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO`, and `AUTHOR_LOGIN` (from `author.login`) from the JSON for downstream steps.
 
 ### Step 2 — Ephemeral worktree
 
@@ -191,6 +191,12 @@ Submit per the parsed decision:
 
 **Never** use `--request-changes`.
 
+**Address-feedback CTA (conditional):** After the submit call succeeds, if `CURRENT_USER != AUTHOR_LOGIN` (i.e., the reviewer is not also the PR author), append:
+
+> "Want me to help the PR owner address this feedback? Reply `yes` to start `/address-feedback <N>`."
+
+Suppress this CTA silently when `CURRENT_USER == AUTHOR_LOGIN` — self-review is a legitimate flow; asking the author if they want to address their own feedback is noise.
+
 Cleanup non-blocking:
 ```bash
 ( rimba remove "pr-review-$PR" --force 2>/dev/null \
@@ -246,3 +252,4 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Force-add 👍 to your own existing comment | Check `reactions.nodes[].user.login` first; skip if you've already reacted. |
 | Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
 | Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the legacy one-liner silently — body is not wrong but loses the prose narrative. |
+| Emit the address-feedback CTA when `CURRENT_USER == AUTHOR_LOGIN` | Always suppress for self-review — asking the author if they want to address their own feedback is noise. Only emit the CTA when `CURRENT_USER != AUTHOR_LOGIN`. |

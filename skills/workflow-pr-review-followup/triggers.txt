@@ -1,0 +1,6 @@
+# Trigger phrases for workflow-pr-review-followup
+re-check PR after feedback was addressed
+check if my review comments were addressed on PR 123
+reviewer followup recheck PR no new comments
+followup review digest existing threads read-only report
+re-run reviewer followup report new-only findings without posting
