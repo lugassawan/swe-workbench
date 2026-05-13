@@ -49,12 +49,12 @@ Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO` from the JSON for downstream steps.
 **When rimba is available** (preferred — handles cross-fork remotes automatically and skips dep installation):
 
 ```bash
-RIMBA_OUT=$(rimba add pr:$PR --skip-deps --skip-hooks 2>&1)
+RIMBA_OUT=$(rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks 2>&1)
 WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
-rimba derives the task name as `review/<PR>-<slug>` and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
+rimba registers the task as `pr-review-<PR>` (overriding its default `review/<N>-<slug>` derivation) and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
 
 **When rimba is absent** (fallback — direct git, NOT `superpowers:using-git-worktrees` which is consent-gated for durable feature work):
 
@@ -64,8 +64,8 @@ if [ -d "$WT" ]; then
   git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"
 fi
 mkdir -p "$(dirname "$WT")"
-git fetch origin "pull/${PR}/head:pr-review/${PR}" --force
-git worktree add --detach "$WT" "pr-review/${PR}"
+git fetch origin "pull/${PR}/head:pr-review-${PR}" --force
+git worktree add --detach "$WT" "pr-review-${PR}"
 ```
 
 ### Step 3 — Ticket-context chain
@@ -193,10 +193,13 @@ Submit per the parsed decision:
 
 Cleanup non-blocking:
 ```bash
-( rimba remove "$(basename "$WT")" --force 2>/dev/null || git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT" ) &
+( rimba remove "pr-review-$PR" --force 2>/dev/null \
+  || { git worktree remove --force "$WT" 2>/dev/null; \
+       git branch -D "pr-review-$PR" 2>/dev/null; \
+       rm -rf "$WT" 2>/dev/null; } ) &
 ```
 
-`rimba remove` also deletes the local branch; `git worktree remove` is the fallback when rimba is absent.
+`rimba remove` deletes both the worktree and the local `pr-review-<N>` branch (task name pinned via `--task` in Step 2 to keep it consistent). The `git worktree remove` + `git branch -D` group is the defensive fallback for rimba-absent or rimba-failure environments.
 
 ## Footer parsing contract
 
@@ -235,7 +238,7 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 
 | Mistake | Fix |
 |---|---|
-| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
+| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
 | Use `--request-changes` | Never. APPROVE / COMMENT only. The agent footer never produces this value. |

@@ -74,7 +74,6 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
 - Optional scope as a colon-prefix inside subject: `[chore] cleanup-merged: sync local main first`.
 
 **Trailer hygiene.** Never emit a `Co-authored-by`, `Signed-off-by`, or similar trailer in the commit message body or PR body **unless the user explicitly asked for it in this turn**. Do not derive trailers from `git config user.email` / `user.name`, the harness environment, or any auto-detected identity. If the staged work has multiple genuine authors, ask the user whether to attribute them rather than guessing.
-
 **Sync source:** `.githooks/commit-msg` is canonical. If a commit fails the hook, re-read the hook (don't guess).
 
 ## Branch-naming check
