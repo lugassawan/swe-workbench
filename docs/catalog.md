@@ -7,6 +7,7 @@
 | `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf) or auto-inferred from the diff when omitted. PR number arg unchanged. |
 | `/swe-workbench:security-review` | Alias for `/swe-workbench:review --mode security`. Kept for backward compat. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
+| `/swe-workbench:architect <decision>` | Author an ADR, RFC, or cross-service contract via the architect subagent. Use when the output must be a written decision record — service decomposition, multi-system tech selection, cross-team contract — not advice about existing code. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
 | `/swe-workbench:migrate <description>` | Multi-deployment migration via expand → backfill → dual-write → switch → contract. Use when a single revertable commit will not do. |
 | `/swe-workbench:debug <symptom>` | Diagnose a bug or failing test via systematic-debugging, then minimal fix + regression test. |
@@ -22,6 +23,7 @@
 |---|---|
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
 | `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
+| `architect` | Authoring ADRs, RFCs, and cross-service contracts for decisions that predate any codebase — service decomposition, multi-system tech selection, cross-team contract. Prefer over `senior-engineer` when the output must be a durable written artifact, not advice about existing code. Invoked by `/swe-workbench:architect`. |
 | `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
