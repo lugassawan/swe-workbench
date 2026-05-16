@@ -6,7 +6,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _extract_pattern(path: Path) -> str:
-    matches = re.findall(r"PATTERN='([^']+)'", path.read_text())
+    matches = re.findall(r"PATTERN='([^']+)'", path.read_text())  # single-quoted shell assignment
     assert len(matches) == 1, (
         f"Expected exactly one PATTERN='...' assignment in {path}, found {len(matches)}"
     )
@@ -15,6 +15,8 @@ def _extract_pattern(path: Path) -> str:
 
 class TestCommitMsgPrParity:
     def test_hook_and_ci_patterns_match(self):
+        """Assert structural parity only — pattern correctness is out of scope here.
+        Add behavioral tests in test_pr_validation.py if the pattern semantics change."""
         hook = _extract_pattern(REPO / ".githooks/commit-msg")
         ci = _extract_pattern(REPO / ".github/workflows/pr.yml")
         assert hook == ci, (
