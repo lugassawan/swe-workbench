@@ -986,3 +986,34 @@ class TestFileReadCaching:
                 f"{skill_path.parent.name}/SKILL.md was read {count} times; expected ≤1 "
                 "(check_skills and check_template_placeholders share the same cache)"
             )
+
+    def test_unreadable_agent_cached_as_failure(self, reset_validate, monkeypatch):
+        root = reset_validate
+        _make_full_valid_tree(root)
+
+        agents_dir = root / "agents"
+        unreadable = sorted(agents_dir.glob("*.md"))[0]
+
+        original = Path.read_text
+        read_count = {"n": 0}
+
+        def patched_read_text(self_path, *args, **kwargs):
+            if self_path.resolve() == unreadable.resolve():
+                read_count["n"] += 1
+                raise OSError("simulated read failure")
+            return original(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", patched_read_text)
+        try:
+            validate.main()
+        except SystemExit:
+            pass
+
+        assert read_count["n"] == 1, (
+            f"Expected unreadable file to be attempted exactly once (cache build only), "
+            f"got {read_count['n']} — None sentinel may not be preventing consumer re-reads"
+        )
+        rel = str(unreadable.relative_to(root))
+        assert any(rel in entry for entry in validate.FAILURES), (
+            f"Expected a failure entry for unreadable {rel!r}, got: {validate.FAILURES}"
+        )

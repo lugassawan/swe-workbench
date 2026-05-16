@@ -236,7 +236,8 @@ class TestPrYamlSync:
             ("Fixes #99",          True),
             ("Fixed #7",           True),
             ("Resolves #100",      True),
-            ("resolved #99",       True),   # resolve[sd]? matches 'resolved'
+            ("resolved #99",       True),   # resolve[sd]? matches 'resolved' and 'resolves'
+            ("resolves #99",       True),
             ("Fix #5",             True),   # fix(e[sd])? matches plain 'fix'
             ("Close #3",           True),   # close[sd]? matches plain 'close'
             ("see Closes #42",     True),   # keyword not required at line start

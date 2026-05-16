@@ -153,8 +153,13 @@ def check_skills(cache=None):
     # glob("*/SKILL.md") matches exactly depth-2 paths; no need for a post-hoc depth guard.
     for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
         skill_dir_name = skill_md.parent.name
-        text = (skills_cache.get(skill_md) if skills_cache is not None else None) \
-            or skill_md.read_text(encoding="utf-8")
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = skill_md.read_text(encoding="utf-8")
         line_count = len(text.splitlines())  # total file length including frontmatter
         fm = parse_frontmatter(skill_md, text=text)
         if fm is None:
@@ -183,8 +188,13 @@ def check_agents(cache=None):
     agents_dir = ROOT / "agents"
     agents_cache = cache[0] if cache is not None else None
     for agent_md in sorted(agents_dir.glob("*.md")):
-        text = (agents_cache.get(agent_md) if agents_cache is not None else None) \
-            or agent_md.read_text(encoding="utf-8")
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = agent_md.read_text(encoding="utf-8")
         fm = parse_frontmatter(agent_md, text=text)
         if fm is None:
             fail(agent_md.relative_to(ROOT), "missing or malformed frontmatter")
@@ -214,8 +224,13 @@ def check_agent_skill_refs(cache=None):
     agents_cache = cache[0] if cache is not None else None
     pattern = re.compile(r'`swe-workbench:([\w-]+)`')
     for agent_md in sorted(agents_dir.glob("*.md")):
-        text = (agents_cache.get(agent_md) if agents_cache is not None else None) \
-            or agent_md.read_text(encoding="utf-8")
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = agent_md.read_text(encoding="utf-8")
         for skill_id in set(pattern.findall(text)):
             if not (skills_dir / skill_id).is_dir():
                 fail(
@@ -251,8 +266,13 @@ def check_template_placeholders(cache=None):
         skill_md = template.parent.parent / "SKILL.md"
         if not skill_md.is_file():
             continue
-        skill_text = (skills_cache.get(skill_md) if skills_cache is not None else None) \
-            or skill_md.read_text(encoding="utf-8")
+        if skills_cache is not None and skill_md in skills_cache:
+            skill_text = skills_cache[skill_md]
+            if skill_text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            skill_text = skill_md.read_text(encoding="utf-8")
         pd_idx = skill_text.find("## Project Detection")
         if pd_idx >= 0:
             next_h2 = skill_text.find("\n## ", pd_idx + 4)
@@ -381,15 +401,15 @@ def check_unwired_principle_skills(cache=None):
         if (p / "SKILL.md").is_file()
     )
 
-    agent_files = sorted(f for f in agents_dir.rglob("*.md") if f != catalog)
+    agent_files = [
+        f for f in sorted(agents_dir.rglob("*.md"))
+        if f != catalog and (agents_cache is None or agents_cache.get(f) is not None)
+    ]
 
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
         wired = any(
-            needle in (
-                (agents_cache.get(f) if agents_cache is not None else None)
-                or f.read_text(encoding="utf-8")
-            )
+            needle in (agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8"))
             for f in agent_files
         )
         if not wired:
