@@ -308,6 +308,17 @@ class TestFlushHook:
             assert result.returncode == 0, f"Expected exit 0 for agent_type={malicious!r}"
             assert json.loads(result.stdout) == {}, f"Expected {{}} for agent_type={malicious!r}"
 
+    def test_path_traversal_agent_id_is_noop(self, plugin_root, cache_dir):
+        """Flush rejects agent_id values with path-traversal characters."""
+        for malicious in ["../../evil", "../sensitive", "foo/bar", "foo bar"]:
+            result = _run_flush(
+                {"agent_id": malicious, "agent_type": "reviewer"},
+                plugin_root,
+                cache_dir,
+            )
+            assert result.returncode == 0, f"Expected exit 0 for agent_id={malicious!r}"
+            assert json.loads(result.stdout) == {}, f"Expected {{}} for agent_id={malicious!r}"
+
     def test_midnight_straddle(self, plugin_root, cache_dir):
         """Buffers from both today and yesterday contribute to the flush line."""
         import datetime

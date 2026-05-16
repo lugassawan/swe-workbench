@@ -12,7 +12,8 @@ agent_id=$(printf '%s' "$input" | jq -r '.agent_id // empty')
 agent_type=$(printf '%s' "$input" | jq -r '.agent_type // empty')
 { [ -z "$agent_id" ] || [ -z "$agent_type" ]; } && { printf '{}'; exit 0; }
 
-# Sanitize agent_type: plain identifiers only — reject path-traversal attempts.
+# Sanitize agent_id and agent_type: plain identifiers only — reject path-traversal attempts.
+[[ "$agent_id" =~ ^[A-Za-z0-9_-]+$ ]] || { printf '{}'; exit 0; }
 [[ "$agent_type" =~ ^[A-Za-z0-9_-]+$ ]] || { printf '{}'; exit 0; }
 
 # Scope + opt-out (same gates as the record hook).
