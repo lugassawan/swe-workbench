@@ -19,24 +19,32 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
 4. **Template discovery.** List `.github/ISSUE_TEMPLATE/` filtered to `*.md`, skipping `config.yml`. Read each template's frontmatter and first ~20 body lines. Classify the thought into the closest-fit template with a one-sentence reason, or note "No issue templates found; using default body shape" when none exist.
 
-5. **Duplicate scan.** `gh issue list --search "<2-3 keywords>" --state open --limit 5`. Surface matches. Ask before drafting if any look duplicative.
+5. **Label discovery.** Run `gh label list --json name -q '.[].name'` to get the repo's available labels. Select a label using this chain:
 
-6. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
+   a. **Template frontmatter:** if the chosen template has a `labels:` field and that value exists verbatim in the repo's label list, use it.
+   b. **Fallback — substring match (case-insensitive):** if the frontmatter label is not present verbatim, pick the first repo label whose name case-insensitively contains (or is contained by) the template's value.
+   c. **No template chosen:** map by commit-tag — `[feat]` → `enhancement`, `[bug]` → `bug`, `[chore]` → `documentation` — then apply the same chain against the repo's label list.
+   d. **No match found:** omit `--label`; record this so the preview can warn the user ("No matching label found; filing without label").
 
-7. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write the exact `gh issue create --title "..." --body-file <path>` command to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool. Then print:
+6. **Duplicate scan.** `gh issue list --search "<2-3 keywords>" --state open --limit 5`. Surface matches. Ask before drafting if any look duplicative.
+
+7. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
+
+8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write the exact `gh issue create --title "..." --body-file <path> --label "<chosen-label>"` command to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool (omit `--label` when no label was matched). Then print:
    ```
    Filing into: <owner>/<repo>
    Template: <chosen template> | none — default body
    Title: <drafted title>
+   Label: <chosen label> | none — no matching label found
    Possibly related: <#N list, or "none">
 
    Body:
    <code-fenced body>
 
-   Command: gh issue create --title "<title>" --body-file <path>
+   Command: gh issue create --title "<title>" --body-file <path> --label "<chosen-label>"
 
-   Reply 'confirm' to file, or edit any of the above and I'll redraft.
+   Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
-   **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
+   When no label was matched, drop the `--label "<chosen-label>"` segment from the `Command:` line. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-8. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 7 and run it exactly as written — do not regenerate the title or path. Return the issue URL.
+9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL.
