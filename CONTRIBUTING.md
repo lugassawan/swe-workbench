@@ -32,6 +32,7 @@ The `commit-msg` hook enforces a `[type] Subject` prefix on every commit:
 [feat] Add Python language skill
 [fix] Resolve trigger keyword collision in DDD skill
 [docs] Clarify F.I.R.S.T. principle in TDD skill
+[chore]: Bump actions/setup-python from 5 to 6
 ```
 
 Allowed types: `feat`, `fix`, `refactor`, `test`, `ci`, `docs`, `perf`, `chore`, `polish`, `breaking`.

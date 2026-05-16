@@ -9,7 +9,7 @@ case "$SUBJECT" in
 esac
 
 # Keep in sync with .github/workflows/pr.yml
-PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\] .+'
+PATTERN='^\[(feat|fix|refactor|test|ci|docs|perf|chore|polish|breaking)\]:? .+'
 
 if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
     echo ""
@@ -18,6 +18,7 @@ if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
     echo ""
     echo "Expected format:"
     echo "  [type] Description"
+    echo "  [type]: Description"
     echo ""
     echo "Allowed types:"
     echo "  feat, fix, refactor, test, ci, docs, perf, chore, polish, breaking"
@@ -26,5 +27,6 @@ if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
     echo "  [feat] Add worktree sync command"
     echo "  [fix] Resolve branch detection on Windows"
     echo "  [ci] Add coverage gate to CI pipeline"
+    echo "  [chore]: Bump actions/setup-python from 5 to 6"
     exit 1
 fi
