@@ -942,7 +942,8 @@ class TestFileReadCaching:
 
         def counting_read_text(self_path, *args, **kwargs):
             key = str(self_path.resolve())
-            read_counts[key] = read_counts.get(key, 0) + 1
+            if str(root) in key:  # only count reads under the test tree
+                read_counts[key] = read_counts.get(key, 0) + 1
             return original(self_path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", counting_read_text)

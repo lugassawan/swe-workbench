@@ -186,7 +186,8 @@ class TestPrYamlSync:
         # No POSIX classes — pattern is byte-identical between shell and Python.
         assert extracted == r"<!--.*?(?:-->|$)", (
             f"pr.yml HTML-stripper pattern {extracted!r} diverged from the "
-            "pattern used in strip_html_comments() — sync one of them."
+            "pattern used in strip_html_comments() — "
+            "update strip_html_comments() or the expected string in this test."
         )
 
     def test_na_optout_matches_pr_yml(self):

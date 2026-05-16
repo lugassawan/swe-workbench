@@ -52,6 +52,9 @@ def _build_cache():
     Unreadable files are stored as None so consumers that track failures
     (e.g. check_catalog_completeness) can report them without re-reading.
     ROOT is resolved inside this function so test monkeypatching of ROOT works.
+
+    Note: skills/*/templates/*.md files are NOT cached here; check_template_placeholders
+    reads each template file directly (one read_text() call per template).
     """
     agents_dir = ROOT / "agents"
     skills_dir = ROOT / "skills"
