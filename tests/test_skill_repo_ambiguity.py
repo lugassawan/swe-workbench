@@ -25,6 +25,8 @@ COMMIT_AND_PR_SKILL = ROOT / "skills" / "workflow-commit-and-pr" / "SKILL.md"
 VERSION_CONTROL_SKILL = ROOT / "skills" / "principle-version-control" / "SKILL.md"
 CLEANUP_MERGED_SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 SYNC_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sync-and-verify.sh"
+PR_REVIEW_SKILL = ROOT / "skills" / "workflow-pr-review" / "SKILL.md"
+PR_REVIEW_FOLLOWUP_SKILL = ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md"
 
 # Regex matching literal "main" used as a branch name in checkout/pull commands
 _LITERAL_MAIN_IN_GIT_CMD = re.compile(
@@ -219,3 +221,48 @@ def test_cleanup_merged_resolves_default_branch_dynamically():
         "Use a variable resolved at script entry (e.g. DEFAULT_BRANCH) instead:\n\n"
         + "\n".join(f"  line {ln}: {txt}" for ln, txt in offending_lines)
     )
+
+
+def test_pr_review_byline_and_summary_link_to_tool_repo():
+    """BYLINE and SUMMARY in both pr-review skills must link to the tool repo.
+
+    The bug: BYLINE used https://github.com/${OWNER}/${REPO} — the PR's repo —
+    instead of the constant https://github.com/lugassawan/swe-workbench. The
+    fallback SUMMARY had no URL at all (bare parenthetical "(swe-workbench)").
+
+    Assertions per file:
+    1. Templated URL ${OWNER}/${REPO} is gone — not present anywhere in the file.
+    2. No BYLINE= or SUMMARY= assignment contains a bare "(swe-workbench)" without
+       a markdown link.
+    3. The canonical markdown link appears at least twice (BYLINE + SUMMARY fallback).
+    """
+    canonical = "[swe-workbench](https://github.com/lugassawan/swe-workbench)"
+    buggy_url = "https://github.com/${OWNER}/${REPO}"
+    bare_paren = re.compile(r'^(BYLINE|SUMMARY)=.*\(swe-workbench\)', re.MULTILINE)
+
+    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL):
+        body = skill_path.read_text()
+        skill_name = skill_path.parent.name
+
+        # 1. Templated buggy URL must be gone
+        assert buggy_url not in body, (
+            f"{skill_name}/SKILL.md still contains the templated URL "
+            f"'{buggy_url}' in the byline.\n"
+            f"Replace with the hardcoded tool URL: https://github.com/lugassawan/swe-workbench"
+        )
+
+        # 2. No BYLINE= or SUMMARY= assignment with bare (swe-workbench) — no link
+        bare_hits = bare_paren.findall(body)
+        assert not bare_hits, (
+            f"{skill_name}/SKILL.md has a BYLINE= or SUMMARY= assignment with bare "
+            f"'(swe-workbench)' (no markdown link).\n"
+            f"Replace with '[swe-workbench](https://github.com/lugassawan/swe-workbench)'."
+        )
+
+        # 3. Canonical link must appear at least twice (primary BYLINE + fallback SUMMARY)
+        count = body.count(canonical)
+        assert count >= 2, (
+            f"{skill_name}/SKILL.md contains {count} occurrence(s) of the canonical "
+            f"link '{canonical}', expected at least 2 (one for BYLINE, one for SUMMARY).\n"
+            f"Both the primary byline and the fallback summary must be clickable links."
+        )
