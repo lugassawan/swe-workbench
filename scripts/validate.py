@@ -9,6 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 FAILURES = []
 
+# Hook events that fire unconditionally and have no tool name to match against.
+_LIFECYCLE_HOOK_EVENTS = frozenset({"SubagentStop", "PreCompact", "Stop", "Notification"})
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -134,7 +137,7 @@ def check_hooks_json():
             if not isinstance(entry, dict):
                 fail(path.relative_to(ROOT), f"hooks.{event}[{i}] must be an object")
                 continue
-            if not isinstance(entry.get("matcher"), str):
+            if event not in _LIFECYCLE_HOOK_EVENTS and not isinstance(entry.get("matcher"), str):
                 fail(path.relative_to(ROOT), f"hooks.{event}[{i}].matcher must be a string")
             sub_hooks = entry.get("hooks")
             if not isinstance(sub_hooks, list):

@@ -35,6 +35,16 @@ cd swe-workbench
 
 Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide and philosophy → [docs/extending.md](docs/extending.md). Runtime dependencies → [docs/dependencies.md](docs/dependencies.md).
 
+## Skill-usage telemetry
+
+When the orchestrator dispatches a subagent, the skills that subagent invokes are surfaced in the transcript:
+
+```
+Skills used by reviewer: swe-workbench:principle-code-review, swe-workbench:principle-clean-code
+```
+
+Top-level skill calls and zero-skill runs produce no output. Individual agents can opt out via `skill_telemetry: false` in their frontmatter. See [docs/skill-usage-telemetry.md](docs/skill-usage-telemetry.md) for full details.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
