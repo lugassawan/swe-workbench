@@ -91,7 +91,7 @@ Goal: produce a structured GitHub issue that documents the diagnosis.
 2. **Augment the template** by prepending the Root-Cause / Pattern-Analysis / Impact sections. **Do NOT use `gh issue create --template`** — that gives the user no in-skill editing. Use `--body-file` instead, mirroring `agents/product-manager.md`.
 3. **Render the body** using the schema below.
 4. **Preview-gate-then-confirm.** Print the body, the title, the target repo, and the `gh issue create` command. Wait for user to reply `confirm`. **Do NOT** run `gh issue create` until the user replies.
-5. **On `confirm`**, run the printed command and return the issue URL.
+5. **On `confirm`**, run the **exact** `gh issue create` command as printed in the preview above — do not regenerate or rephrase it. Return the issue URL.
 
 ## Output: issue body schema
 

@@ -38,7 +38,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
    - **No templates found:** note "No issue templates found in this repo; using default body shape." Proceed to draft with default body.
    - **Discovery fails (no `.github/` dir, permission error):** fall through to default body shape with a one-line note.
 
-   After classifying the template, run `gh label list --json name -q '.[].name'` and select a label using this chain:
+   After classifying the template, run `gh label list --json name -q '.[].name'`. If the command fails or returns empty output, treat the label list as empty and proceed directly to chain step 4 (no match → omit `--label`). Otherwise select a label using this chain:
 
    1. **Template frontmatter:** if the chosen template's `labels:` field value exists verbatim in the repo's label list, use it.
    2. **Fallback — substring match (case-insensitive):** if not present verbatim, pick the first repo label whose name contains (or is contained by) the template value.
@@ -101,7 +101,7 @@ Invoke these skills via the Skill tool when the question directly concerns their
 
 ## Output format
 
-On the preview turn (step 8): one response containing, in order — repo detected, restatement, product framing (4 lenses), classification + reason (or "no templates → default"), dup-scan results, drafted title, drafted body (code-fenced), and the exact `gh issue create` command — followed by `Reply 'confirm' to file, or edit any of the above and I'll redraft.`
+On the preview turn (step 8): one response containing, in order — repo detected, restatement, product framing (4 lenses), classification + reason (or "no templates → default"), dup-scan results, drafted title, chosen label (or "none — no matching label"), drafted body (code-fenced), and the exact `gh issue create --title "..." --body-file <path> --label "<chosen-label>"` command (omitting `--label` when no label was matched) — followed by `Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.`
 
 ## Mutation rule
 
