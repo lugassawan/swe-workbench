@@ -39,7 +39,7 @@ model: sonnet
 ---
 ```
 
-Both hooks check this flag independently, so a crash between `PreToolUse` and `SubagentStop` cannot cause a buffer to accumulate for an opted-out agent.
+Both hooks check this flag independently. In the common case — where the flag is present before the subagent starts — no buffer is ever written. If the flag is added mid-run, any in-flight buffer is cleaned up by the 24-hour sweep.
 
 ## Scope
 

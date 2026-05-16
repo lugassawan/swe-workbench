@@ -170,6 +170,21 @@ class TestRecordHook:
             assert result.returncode == 0, f"Expected exit 0 for agent_type={malicious!r}"
             assert _buffer_files(cache_dir) == [], f"Expected no buffer for agent_type={malicious!r}"
 
+    def test_path_traversal_agent_id_is_noop(self, plugin_root, cache_dir):
+        """agent_id with path-traversal chars must be rejected — no buffer written."""
+        for malicious in ["../../evil", "../sensitive", "foo/bar", "foo bar"]:
+            result = _run_record(
+                {
+                    "agent_id": malicious,
+                    "agent_type": "reviewer",
+                    "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                },
+                plugin_root,
+                cache_dir,
+            )
+            assert result.returncode == 0, f"Expected exit 0 for agent_id={malicious!r}"
+            assert _buffer_files(cache_dir) == [], f"Expected no buffer for agent_id={malicious!r}"
+
     def test_missing_skill_is_noop(self, plugin_root, cache_dir):
         """tool_input.skill absent → exit 0, no buffer."""
         result = _run_record(
@@ -348,3 +363,66 @@ class TestHooksJson:
         cmd = bash_hooks[0]["hooks"][0]["command"]
         # The guard pattern for destructive rm must be present verbatim
         assert "rm" in cmd and "exit 2" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Integration — record → flush pipeline (end-to-end acceptance criterion)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordFlushIntegration:
+    def test_record_then_flush_emits_skill_line(self, plugin_root, cache_dir):
+        """Sequential record→flush with matching agent_id produces the telemetry line."""
+        _run_record(
+            {
+                "agent_id": "integ-001",
+                "agent_type": "reviewer",
+                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+            },
+            plugin_root,
+            cache_dir,
+        )
+        # Buffer should exist after record
+        assert len(_buffer_files(cache_dir)) == 1
+
+        result = _run_flush(
+            {"agent_id": "integ-001", "agent_type": "reviewer"},
+            plugin_root,
+            cache_dir,
+        )
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        assert "systemMessage" in out
+        assert "Skills used by reviewer" in out["systemMessage"]
+        assert "swe-workbench:principle-code-review" in out["systemMessage"]
+        # Buffer cleaned up
+        assert _buffer_files(cache_dir) == []
+
+    def test_record_multiple_skills_then_flush_dedupes(self, plugin_root, cache_dir):
+        """Multiple record calls with a duplicate produce a single deduped line."""
+        for skill in [
+            "swe-workbench:principle-tdd",
+            "swe-workbench:principle-clean-code",
+            "swe-workbench:principle-tdd",  # duplicate
+        ]:
+            _run_record(
+                {
+                    "agent_id": "integ-002",
+                    "agent_type": "reviewer",
+                    "tool_input": {"skill": skill},
+                },
+                plugin_root,
+                cache_dir,
+            )
+
+        result = _run_flush(
+            {"agent_id": "integ-002", "agent_type": "reviewer"},
+            plugin_root,
+            cache_dir,
+        )
+        assert result.returncode == 0
+        msg = json.loads(result.stdout)["systemMessage"]
+        # Dedup: tdd appears exactly once
+        assert msg.count("principle-tdd") == 1
+        # First-seen order preserved
+        assert msg.index("principle-tdd") < msg.index("principle-clean-code")

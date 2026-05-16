@@ -33,8 +33,8 @@ for f in "$cache_dir"/*-"$agent_id".txt; do
 done
 [ "${#buffers[@]}" -eq 0 ] && { printf '{}'; exit 0; }
 
-# Dedupe preserving first-seen order; join with ", ".
-skills=$(cat "${buffers[@]}" 2>/dev/null | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g')
+# Dedupe preserving first-seen order; join with ", " in one pass (POSIX awk, no paste/sed).
+skills=$(cat "${buffers[@]}" 2>/dev/null | awk '!seen[$0]++ { out = (out ? out ", " : "") $0 } END { print out }')
 [ -z "$skills" ] && { printf '{}'; exit 0; }
 
 # Clean up all matching buffers regardless of whether the emit succeeds below.

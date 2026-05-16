@@ -10,6 +10,8 @@ ROOT = Path(__file__).parent.parent
 FAILURES = []
 
 # Hook events that fire unconditionally and have no tool name to match against.
+# Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
+# must carry a "matcher" field. Only true lifecycle events belong in this set.
 _LIFECYCLE_HOOK_EVENTS = frozenset({"SubagentStop", "PreCompact", "Stop", "Notification"})
 
 
