@@ -82,7 +82,7 @@ Pass the agent:
 - Footer instruction (load-bearing — opt-in per the agent's `## Decision footer (when instructed)` block):
   > "End the review with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**` on its own line, no prefix or trailing text. Never `REQUEST_CHANGES`."
 - Narrative instruction (load-bearing — opt-in per the agent's `## Review Summary (when instructed)` block):
-  > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. The orchestrator uses these paragraphs as the top-level PR review body. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
+  > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. When the reviewer is not the PR author, the orchestrator uses these paragraphs as the top-level PR review body; otherwise the narrative is shown in the Claude session only and not posted to GitHub. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
 - Ticket-context prelude (if Step 3 produced one).
 
 Store the agent's complete text response as `REVIEWER_OUTPUT` before Step 7 runs — in practice the orchestrator assigns the subagent's full text reply to this variable. Step 7's awk block reads from it via `<<< "$REVIEWER_OUTPUT"`.
@@ -172,15 +172,17 @@ NARRATIVE=$(awk '
   /^\*\*Review Decision:/ { exit }
   { print }
 ' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
+HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true || echo false)"
+IS_SELF_REVIEW="$([ -n "$CURRENT_USER" ] && [ -n "$AUTHOR_LOGIN" ] && [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ] && echo true || echo false)"
 
 # $posted and $deduped are set in Step 6.
 BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
 
-if [ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ]; then
+if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
   SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
     "$NARRATIVE" "$DECISION" "$BYLINE")
 else
-  # Fallback: no prose above the findings table — reuse BYLINE directly.
+  # Reused for empty-narrative AND self-review.
   SUMMARY="$BYLINE"
 fi
 ```
@@ -251,5 +253,6 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Parse threads from REST `pulls/{N}/comments` | REST returns review-comment-by-comment; threading is reconstructed by the GraphQL `reviewThreads` shape. Use GraphQL to fetch, REST to post. |
 | Force-add 👍 to your own existing comment | Check `reactions.nodes[].user.login` first; skip if you've already reacted. |
 | Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
-| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the legacy one-liner silently — body is not wrong but loses the prose narrative. |
+| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see row below). |
 | Emit the address-feedback CTA when `CURRENT_USER == AUTHOR_LOGIN` | Always suppress for self-review — asking the author if they want to address their own feedback is noise. Only emit the CTA when `CURRENT_USER != AUTHOR_LOGIN`. |
+| Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false` — same policy axis as the address-feedback CTA suppression above. The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
