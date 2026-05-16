@@ -32,7 +32,7 @@ skills/principle-clean-architecture/
 
 **Loading model:** examples are never auto-loaded. `SKILL.md` holds an explicit pointer (e.g. `> See examples/ for worked implementations.`). The agent or user reads them on demand — this preserves the SKILL.md context budget.
 
-**File cap:** each `examples/*.md` file must be ≤120 lines. `scripts/validate.sh` enforces this. Examples that grow beyond 120 lines should be split by sub-topic or trimmed.
+**File cap:** each `examples/*.md` file must be ≤120 lines. `scripts/validate.py` (`check_examples()`) enforces this. Examples that grow beyond 120 lines should be split by sub-topic or trimmed.
 
 **Multi-component examples use multiple fenced blocks, not one mega-blob.** When a pattern involves several files (Model + View + Controller), use a separate fence per file, each prefixed with a `// file: path/to/file.ext` (or `# file:` for Python) comment header. Anti-pattern: a single 200-line fence containing all three components.
 

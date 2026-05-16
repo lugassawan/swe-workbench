@@ -304,7 +304,11 @@ def check_examples():
     """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
     skills_dir = ROOT / "skills"
     for example in sorted(skills_dir.glob("*/examples/**/*.md")):
-        text = example.read_text(encoding="utf-8")
+        try:
+            text = example.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(example.relative_to(ROOT), f"could not read file: {e}")
+            continue
         line_count = len(text.splitlines())
         if line_count > 120:
             fail(

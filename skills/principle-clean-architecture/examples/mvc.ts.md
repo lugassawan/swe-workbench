@@ -52,13 +52,10 @@ import { ProductModel } from "./model";
 import { ProductView } from "./view";
 
 export class ProductController {
-  private model: ProductModel;
-  private view: ProductView;
-
-  public constructor(model: ProductModel, view: ProductView) {
-    this.model = model;
-    this.view = view;
-  }
+  public constructor(
+    private model: ProductModel,
+    private view: ProductView,
+  ) {}
 
   public showByCategory(category: string): void {
     const products = this.model.byCategory(category);
