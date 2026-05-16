@@ -54,3 +54,14 @@ class TestSetupShGlobGuard:
         for name in ("commit-msg", "pre-push", "pre-commit"):
             link = hooks_dir / name
             assert link.is_symlink(), f"Expected symlink for {name}"
+
+    def test_no_githooks_dir_exits_cleanly(self, tmp_path):
+        """When .githooks/ does not exist at all, setup.sh exits 0 without errors."""
+        result = _run_setup(tmp_path)
+        assert result.returncode == 0, result.stderr
+        hooks_dir = tmp_path / ".git" / "hooks"
+        symlinks = [p for p in hooks_dir.iterdir() if p.is_symlink()]
+        assert symlinks == [], (
+            f"Expected no symlinks when .githooks/ is absent, "
+            f"but found: {[p.name for p in symlinks]}"
+        )

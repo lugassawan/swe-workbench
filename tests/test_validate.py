@@ -952,7 +952,6 @@ class TestFileReadCaching:
         except SystemExit:
             pass  # we care about read counts, not pass/fail
 
-        monkeypatch.setattr(Path, "read_text", original)
         return read_counts
 
     def test_each_agent_md_read_at_most_once(self, reset_validate, monkeypatch):

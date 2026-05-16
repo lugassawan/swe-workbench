@@ -7,17 +7,24 @@ These tests replicate the strip-then-match pipeline from
 import re
 from pathlib import Path
 
+import pytest
+
 _PR_YML_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pr.yml"
-_PR_YML_TEXT = _PR_YML_PATH.read_text(encoding="utf-8")
+try:
+    _PR_YML_TEXT: str | None = _PR_YML_PATH.read_text(encoding="utf-8")
+except FileNotFoundError:
+    _PR_YML_TEXT = None
 
 
 def _extract_pr_yml_pattern(anchor: str) -> str:
     """Extract the first capture group from pr.yml using a stable anchor regex.
 
-    Uses re.DOTALL so anchors can span lines. Raises AssertionError with a
-    diagnostic message if the anchor cannot be located — callers can rely on
-    pytest surfacing it as a clear failure.
+    Uses re.DOTALL so anchors can span lines. Skips the test (pytest.skip) if
+    pr.yml is absent — avoids a FileNotFoundError at collection time for partial
+    checkouts. Raises AssertionError if the anchor cannot be located.
     """
+    if _PR_YML_TEXT is None:
+        pytest.skip(f"pr.yml not found at {_PR_YML_PATH} — skipping sync tests")
     m = re.search(anchor, _PR_YML_TEXT, re.DOTALL)
     if not m:
         raise AssertionError(
@@ -173,7 +180,9 @@ class TestPrYamlSync:
 
     def test_html_stripper_matches_pr_yml(self):
         """strip_html_comments() must use the exact same regex as pr.yml."""
-        extracted = _extract_pr_yml_pattern(r"re\.sub\(r'([^']+)'")
+        # Anchor includes 'python3 -c' context so a future re.sub addition
+        # above line 61 in pr.yml doesn't silently redirect extraction.
+        extracted = _extract_pr_yml_pattern(r"python3 -c.*?re\.sub\(r'([^']+)'")
         # No POSIX classes — pattern is byte-identical between shell and Python.
         assert extracted == r"<!--.*?(?:-->|$)", (
             f"pr.yml HTML-stripper pattern {extracted!r} diverged from the "
@@ -203,6 +212,10 @@ class TestPrYamlSync:
         for text, expected in samples:
             yml_result = bool(yml_re.search(text))
             py_result = _na_optout(text)
+            assert yml_result == py_result, (
+                f"yml_re and _na_optout() disagree on {text!r}: "
+                f"yml={yml_result}, py={py_result}"
+            )
             assert yml_result == expected, (
                 f"yml regex gave {yml_result!r} for {text!r}, expected {expected}"
             )
