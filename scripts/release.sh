@@ -125,6 +125,10 @@ fi
 
 # ── PR (reuse if open, create otherwise) ─────────────────────
 
+# EXISTING_PR resolves to the literal string "null" via two independent paths:
+#   1. gh succeeds but finds no open PRs → `--jq '.[0]'` on an empty array emits "null"
+#   2. gh itself fails (auth error, network, etc.) → `|| echo "null"` fires
+# The `!= "null"` guard below catches both; do not simplify this without preserving both paths.
 EXISTING_PR=$(gh pr list --head "$BRANCH" --base main --state open --json number,url --jq '.[0]' 2>/dev/null || echo "null")
 if [[ -n "$EXISTING_PR" && "$EXISTING_PR" != "null" ]]; then
   PR_NUM=$(echo "$EXISTING_PR" | jq -r .number)
