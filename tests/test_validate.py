@@ -1017,3 +1017,33 @@ class TestFileReadCaching:
         assert any(rel in entry for entry in validate.FAILURES), (
             f"Expected a failure entry for unreadable {rel!r}, got: {validate.FAILURES}"
         )
+
+    def test_unreadable_catalog_cached_as_failure(self, reset_validate, monkeypatch):
+        root = reset_validate
+        _make_full_valid_tree(root)
+
+        catalog = root / "agents" / "shared" / "skills.md"
+
+        original = Path.read_text
+        read_count = {"n": 0}
+
+        def patched_read_text(self_path, *args, **kwargs):
+            if self_path.resolve() == catalog.resolve():
+                read_count["n"] += 1
+                raise OSError("simulated catalog read failure")
+            return original(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", patched_read_text)
+        try:
+            validate.main()
+        except SystemExit:
+            pass
+
+        assert read_count["n"] == 1, (
+            f"Catalog should be attempted exactly once (cache build only), "
+            f"got {read_count['n']} — check_catalog_completeness may bypass the None sentinel"
+        )
+        rel = str(catalog.relative_to(root))
+        assert any(rel in entry for entry in validate.FAILURES), (
+            f"Expected a failure entry for unreadable catalog {rel!r}, got: {validate.FAILURES}"
+        )

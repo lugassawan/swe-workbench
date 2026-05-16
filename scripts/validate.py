@@ -335,8 +335,17 @@ def check_catalog_completeness(cache=None):
         fail(skills_dir.relative_to(ROOT), "missing — required skills directory")
         return
 
-    text = (agents_cache.get(catalog) if agents_cache is not None else None) \
-        or catalog.read_text(encoding="utf-8")
+    if agents_cache is not None and catalog in agents_cache:
+        text = agents_cache[catalog]
+        if text is None:
+            fail(catalog.relative_to(ROOT), "could not read file")
+            return
+    else:
+        try:
+            text = catalog.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(catalog.relative_to(ROOT), f"could not read file: {e}")
+            return
     # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
     entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
     catalog_ids = {sid for sid, _ in entry_re.findall(text)}

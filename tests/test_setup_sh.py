@@ -15,9 +15,11 @@ _CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 def _run_setup(tmp_path: Path) -> subprocess.CompletedProcess:
     """Run setup.sh inside a minimal git repo rooted at tmp_path."""
-    subprocess.run(
-        ["git", "init", str(tmp_path)], check=True, capture_output=True, env=_CLEAN_ENV
+    init = subprocess.run(
+        ["git", "init", str(tmp_path)], capture_output=True, text=True, env=_CLEAN_ENV
     )
+    if init.returncode != 0:
+        raise RuntimeError(f"git init failed: {init.stderr.strip()}")
     return subprocess.run(
         ["sh", str(SETUP_SH)],
         cwd=str(tmp_path),

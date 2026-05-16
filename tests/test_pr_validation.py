@@ -12,7 +12,7 @@ import pytest
 _PR_YML_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pr.yml"
 try:
     _PR_YML_TEXT: str | None = _PR_YML_PATH.read_text(encoding="utf-8")
-except FileNotFoundError:
+except OSError:
     _PR_YML_TEXT = None
 
 
