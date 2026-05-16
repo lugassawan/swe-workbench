@@ -207,7 +207,7 @@ When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
 
 **Address-feedback CTA (conditional):** After the submit call succeeds, append the CTA below **only when ALL of the following hold**:
 - `CURRENT_USER != AUTHOR_LOGIN` (cross-author review), AND
-- the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0`.
+- the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing).
 
 > "Want me to help the PR owner address this feedback? Reply `yes` to start `/address-feedback <N>`."
 
