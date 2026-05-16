@@ -30,9 +30,9 @@ def test_report_issue_passes_repo_flag_to_gh():
     text = REPORT_ISSUE_MD.read_text()
     repo_flag = "--repo lugassawan/swe-workbench"
     count = text.count(repo_flag)
-    assert count >= 4, (
-        f"commands/report-issue.md must include '{repo_flag}' at least 4 times "
-        f"(issue create, issue list, label list, repo view) — found {count}"
+    assert count >= 6, (
+        f"commands/report-issue.md must include '{repo_flag}' at least 6 times "
+        f"(issue create, issue list, label list, repo view, template discovery, version fallback) — found {count}"
     )
     assert "gh issue create" in text, (
         "commands/report-issue.md must include a gh issue create call"
