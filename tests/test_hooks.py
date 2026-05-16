@@ -98,6 +98,9 @@ class TestForcePushBlocker:
         "git push -f origin master",
         "git push --force origin main:main",
         "git push --force origin master:master",
+        "git push --force origin HEAD:main",
+        "git push --force origin feature:main",
+        "git push --force origin HEAD:master",
         "git push origin main --force",       # --force at end-of-string: exercises $ branch
     ])
     def test_blocked(self, hook_patterns, cmd):
