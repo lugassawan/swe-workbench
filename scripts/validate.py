@@ -46,8 +46,11 @@ def parse_frontmatter(path, text=None):
 def _build_cache():
     """Read every agent .md and every skills/*/SKILL.md exactly once.
 
-    Returns (agents, skills) where each is a dict[Path, str]. Paths that
-    cannot be read are omitted so per-check OSError handling is preserved.
+    Returns (agents, skills) where each is a dict[Path, str | None].
+    rglob("*.md") is intentional: it covers check_unwired_principle_skills
+    (which uses rglob) in addition to the flat-glob consumers.
+    Unreadable files are stored as None so consumers that track failures
+    (e.g. check_catalog_completeness) can report them without re-reading.
     ROOT is resolved inside this function so test monkeypatching of ROOT works.
     """
     agents_dir = ROOT / "agents"
@@ -58,12 +61,12 @@ def _build_cache():
         try:
             agents[p] = p.read_text(encoding="utf-8")
         except OSError:
-            pass
+            agents[p] = None  # sentinel: present but unreadable
     for p in skills_dir.glob("*/SKILL.md"):
         try:
             skills[p] = p.read_text(encoding="utf-8")
         except OSError:
-            pass
+            skills[p] = None  # sentinel: present but unreadable
     return agents, skills
 
 
@@ -327,9 +330,11 @@ def check_catalog_completeness(cache=None):
              f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
 
     for agent_md in sorted(agents_dir.glob("*.md")):
-        cached = agents_cache.get(agent_md) if agents_cache is not None else None
-        if cached is not None:
-            agent_text = cached
+        if agents_cache is not None and agent_md in agents_cache:
+            agent_text = agents_cache[agent_md]
+            if agent_text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
         else:
             try:
                 agent_text = agent_md.read_text(encoding="utf-8")

@@ -960,7 +960,7 @@ class TestFileReadCaching:
         read_counts = self._count_reads(root, monkeypatch)
 
         agents_dir = root / "agents"
-        agent_files = [p for p in agents_dir.glob("*.md")]
+        agent_files = [p for p in agents_dir.rglob("*.md")]
         assert agent_files, "Expected at least one agent .md file"
 
         for agent_path in agent_files:

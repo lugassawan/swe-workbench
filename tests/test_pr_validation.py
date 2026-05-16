@@ -257,7 +257,7 @@ class TestPrYamlSync:
 
     def test_title_pattern_locks_allowed_types(self):
         """PR title regex in pr.yml must accept only defined types."""
-        pattern = _extract_pr_yml_pattern(r"PATTERN='([^']+)'")
+        pattern = _extract_pr_yml_pattern(r"Validate PR title.*?PATTERN='([^']+)'")
         title_re = re.compile(pattern)
 
         positives = [

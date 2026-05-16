@@ -34,7 +34,7 @@ class TestSetupShGlobGuard:
         result = _run_setup(tmp_path)
         assert result.returncode == 0, result.stderr
         hooks_dir = tmp_path / ".git" / "hooks"
-        symlinks = [p for p in hooks_dir.iterdir() if p.is_symlink()]
+        symlinks = [p for p in hooks_dir.iterdir() if p.is_symlink()] if hooks_dir.exists() else []
         assert symlinks == [], (
             f"Expected no symlinks in .git/hooks/ when .githooks/ is empty, "
             f"but found: {[p.name for p in symlinks]}"
@@ -69,7 +69,7 @@ class TestSetupShGlobGuard:
         result = _run_setup(tmp_path)
         assert result.returncode == 0, result.stderr
         hooks_dir = tmp_path / ".git" / "hooks"
-        symlinks = [p for p in hooks_dir.iterdir() if p.is_symlink()]
+        symlinks = [p for p in hooks_dir.iterdir() if p.is_symlink()] if hooks_dir.exists() else []
         assert symlinks == [], (
             f"Expected no symlinks when .githooks/ is absent, "
             f"but found: {[p.name for p in symlinks]}"
