@@ -47,6 +47,80 @@ def repo_with_worktree(tmp_path):
     return repo, worktree
 
 
+class TestSetupShPreservation:
+    def _run_setup(self, repo, *args):
+        return subprocess.run(
+            ["sh", "scripts/setup.sh", *args],
+            cwd=repo, check=False, capture_output=True, text=True, env=_CLEAN_ENV,
+        )
+
+    def test_idempotent_rerun(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        r1 = self._run_setup(repo)
+        assert r1.returncode == 0
+        r2 = self._run_setup(repo)
+        assert r2.returncode == 0
+        assert r2.stderr == ""
+
+    def test_refuses_to_clobber_existing_regular_file_hook(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        hook = hooks_dir / "pre-push"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        result = self._run_setup(repo)
+        assert result.returncode != 0
+        assert not hook.is_symlink(), "hook must not have been replaced"
+        assert str(hook) in result.stderr
+        assert not (hooks_dir / "commit-msg").exists(), "no hooks should be installed after a conflict"
+
+    def test_refuses_to_clobber_foreign_symlink(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        link = hooks_dir / "pre-push"
+        link.symlink_to("/tmp/foo")
+        result = self._run_setup(repo)
+        assert result.returncode != 0
+        assert os.readlink(link) == "/tmp/foo", "symlink target must be unchanged"
+        assert str(link) in result.stderr
+
+    def test_refuses_to_unset_user_core_hookspath(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        _git("config", "--local", "core.hooksPath", "/tmp/elsewhere", cwd=repo)
+        result = self._run_setup(repo)
+        assert result.returncode != 0
+        val = subprocess.check_output(
+            ["git", "config", "--local", "--get", "core.hooksPath"],
+            cwd=repo, text=True, env=_CLEAN_ENV,
+        ).strip()
+        assert val == "/tmp/elsewhere", "core.hooksPath must remain unchanged"
+
+    def test_force_overrides_all_conflicts(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        hooks_dir = repo / ".git" / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        _git("config", "--local", "core.hooksPath", "/tmp/elsewhere", cwd=repo)
+        (hooks_dir / "pre-push").write_text("#!/bin/sh\nexit 0\n")
+        (hooks_dir / "commit-msg").symlink_to("/tmp/foreign")
+
+        result = self._run_setup(repo, "--force")
+        assert result.returncode == 0
+
+        for name in ("pre-push", "commit-msg"):
+            link = hooks_dir / name
+            assert link.is_symlink(), f"{link} must be a symlink"
+            assert os.readlink(link) == str(repo / ".githooks" / name)
+
+        hp = subprocess.run(
+            ["git", "config", "--local", "--get", "core.hooksPath"],
+            cwd=repo, capture_output=True, text=True, env=_CLEAN_ENV,
+        )
+        assert hp.returncode != 0, "core.hooksPath must be unset after --force"
+
+        assert "warning:" in result.stderr
+
+
 class TestSetupShInWorktree:
     def test_symlinks_resolve_from_worktree(self, repo_with_worktree):
         repo, worktree = repo_with_worktree

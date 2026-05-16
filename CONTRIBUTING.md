@@ -12,9 +12,15 @@ After cloning, run the setup script once:
 ./scripts/setup.sh
 ```
 
-This installs per-file symlinks in `.git/hooks/` pointing at `.githooks/`. The default git location is used (no `core.hooksPath` config), so the setup is resistant to tools that reset that key.
+This installs per-file symlinks in `.git/hooks/` pointing at `.githooks/`. After a successful run, no `core.hooksPath` config is set — the default git hook location is used, which is resistant to tools that reset that key.
 
-> **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink.
+If you have pre-existing hooks in `.git/hooks/` or a non-default repo-local `core.hooksPath`, setup.sh will refuse to overwrite them and print a conflict list. Re-run with `--force` to acknowledge and overwrite:
+
+```sh
+./scripts/setup.sh --force
+```
+
+> **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink. Re-running on an already-configured repo is safe — no warnings are emitted to stderr.
 
 ## Branch naming
 
