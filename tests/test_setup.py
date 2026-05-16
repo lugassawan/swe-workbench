@@ -62,6 +62,18 @@ class TestSetupShPreservation:
         assert r2.returncode == 0
         assert r2.stderr == ""
 
+    def test_idempotent_with_whitelisted_hookspath(self, repo_with_worktree):
+        repo, _ = repo_with_worktree
+        _git("config", "--local", "core.hooksPath", ".githooks", cwd=repo)
+        result = self._run_setup(repo)
+        assert result.returncode == 0
+        assert result.stderr == ""
+        val = subprocess.check_output(
+            ["git", "config", "--local", "--get", "core.hooksPath"],
+            cwd=repo, text=True, env=_CLEAN_ENV,
+        ).strip()
+        assert val == ".githooks", "whitelisted core.hooksPath must not be silently cleared"
+
     def test_refuses_to_clobber_existing_regular_file_hook(self, repo_with_worktree):
         repo, _ = repo_with_worktree
         hooks_dir = repo / ".git" / "hooks"

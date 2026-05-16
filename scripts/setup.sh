@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 FORCE=0
 for arg in "$@"; do
@@ -34,7 +34,7 @@ fi
 
 mkdir -p "$GIT_DIR/hooks"
 for src in "$ROOT"/.githooks/*; do
-  [ -e "$src" ] || [ -L "$src" ] || break   # empty glob — nothing to do
+  [ -e "$src" ] || [ -L "$src" ] || break   # glob unexpanded — .githooks is empty or missing
   name="$(basename "$src")"
   target="$GIT_DIR/hooks/$name"
   expected="$ROOT/.githooks/$name"
@@ -60,9 +60,14 @@ if [ -n "$conflicts" ]; then
 fi
 
 # --- Apply -----------------------------------------------------------------
-git -C "$ROOT" config --local --unset core.hooksPath 2>/dev/null || true
+existing_hp_final="$(git -C "$ROOT" config --local --get core.hooksPath 2>/dev/null || true)"
+existing_hp_final="${existing_hp_final%/}"
+case "$existing_hp_final" in
+  ""|.githooks|"$ROOT/.githooks") ;;   # unset or already correct — leave it alone
+  *) git -C "$ROOT" config --local --unset core.hooksPath ;;
+esac
 for src in "$ROOT"/.githooks/*; do
-  [ -e "$src" ] || [ -L "$src" ] || break   # empty glob — nothing to do
+  [ -e "$src" ] || [ -L "$src" ] || break   # glob unexpanded — .githooks is empty or missing
   name="$(basename "$src")"
   ln -sfn "$ROOT/.githooks/$name" "$GIT_DIR/hooks/$name"
 done
