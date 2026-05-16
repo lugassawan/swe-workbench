@@ -205,11 +205,15 @@ When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
 
 **Never** use `--request-changes`.
 
-**Address-feedback CTA (conditional):** After the submit call succeeds, if `CURRENT_USER != AUTHOR_LOGIN` (i.e., the reviewer is not also the PR author), append:
+**Address-feedback CTA (conditional):** After the submit call succeeds, append the CTA below **only when ALL of the following hold**:
+- `CURRENT_USER != AUTHOR_LOGIN` (cross-author review), AND
+- the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0`.
 
 > "Want me to help the PR owner address this feedback? Reply `yes` to start `/address-feedback <N>`."
 
-Suppress this CTA silently when `CURRENT_USER == AUTHOR_LOGIN` — self-review is a legitimate flow; asking the author if they want to address their own feedback is noise.
+Suppress this CTA silently when:
+- `CURRENT_USER == AUTHOR_LOGIN` — self-review is a legitimate flow; asking the author to address their own feedback is noise.
+- `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
 Cleanup non-blocking:
 ```bash
@@ -266,5 +270,5 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Force-add 👍 to your own existing comment | Check `reactions.nodes[].user.login` first; skip if you've already reacted. |
 | Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
 | Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see "Post `## Review Summary` on self-review" row). |
-| Emit the address-feedback CTA when `CURRENT_USER == AUTHOR_LOGIN` | Always suppress for self-review — asking the author if they want to address their own feedback is noise. Only emit the CTA when `CURRENT_USER != AUTHOR_LOGIN`. |
+| Emit the address-feedback CTA when there is nothing to address | The CTA is gated on TWO axes: identity (`CURRENT_USER != AUTHOR_LOGIN`) AND outcome (`DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`). Suppress on self-review **and** on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). |
 | Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false` — same policy axis as the address-feedback CTA suppression above. The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
