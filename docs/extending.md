@@ -16,3 +16,33 @@ To add a new language skill (say, Ruby or another language not already shipped):
 Skills are intentionally small — each under 150 lines. A sharp, well-triggered skill teaches Claude the right thing at the right moment. A giant skill burns context on material the current task does not need. If a skill grows past 150 lines, split it.
 
 Orchestrator skills that compose many sub-skills (see the `development` workflow) may exceed 150 lines. When they do, extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
+
+## Adding worked examples to a skill
+
+For skills that describe patterns (e.g. `principle-*`), add language-specific implementations as companion files in an `examples/` subdirectory inside the skill's directory:
+
+```
+skills/principle-clean-architecture/
+├── SKILL.md
+└── examples/
+    ├── mvc.go.md
+    ├── mvc.java.md
+    └── mvc.ts.md
+```
+
+**Loading model:** examples are never auto-loaded. `SKILL.md` holds an explicit pointer (e.g. `> See examples/ for worked implementations.`). The agent or user reads them on demand — this preserves the SKILL.md context budget.
+
+**File cap:** each `examples/*.md` file must be ≤120 lines. `scripts/validate.sh` enforces this. Examples that grow beyond 120 lines should be split by sub-topic or trimmed.
+
+**Multi-component examples use multiple fenced blocks, not one mega-blob.** When a pattern involves several files (Model + View + Controller), use a separate fence per file, each prefixed with a `// file: path/to/file.ext` (or `# file:` for Python) comment header. Anti-pattern: a single 200-line fence containing all three components.
+
+**Member visibility ordering: `public > protected > private`.** Public API surface reads first so consumers can scan the contract without scrolling past implementation details. Per-language translation:
+
+| Language | Ordering rule |
+|----------|--------------|
+| Java / TypeScript / Swift | Explicit modifiers in order: `public` → `protected` → `private` |
+| Kotlin | `public` → `internal` → `protected` → `private` (defaults to `public`, so mark what is *restricted*) |
+| Go | Exported (Capitalized) declarations before unexported (lowercase) |
+| Python | Convention-only: public (no underscore) → `_protected` → `__private` |
+| Rust | `pub` → `pub(crate)` → private (no modifier) |
+| SQL | Not applicable |
