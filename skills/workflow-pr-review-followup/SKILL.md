@@ -189,15 +189,20 @@ BYLINE="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassa
 if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
   SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
     "$NARRATIVE" "$DECISION" "$BYLINE")
-else
-  # Reused for empty-narrative AND self-review.
+elif [ "$IS_SELF_REVIEW" = false ]; then
+  # No narrative but cross-author: post just the byline.
   SUMMARY="$BYLINE"
+else
+  # Self-review: nothing posted to GitHub; inline comments speak for themselves.
+  SUMMARY=""
 fi
 ```
 
-Submit per the parsed decision:
+Submit only when `IS_SELF_REVIEW = false` — GitHub blocks self-approval, and for self-review the Step 6 inline comments are sufficient without a review-event body:
 - `APPROVE` → `gh pr review "$PR" --approve --body "$SUMMARY"`
 - `COMMENT` → `gh pr review "$PR" --comment --body "$SUMMARY"`
+
+When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
 
 **Never** use `--request-changes`.
 
