@@ -29,7 +29,7 @@ If `$ARGUMENTS` is **empty**, do NOT error. Instead:
 
    Reply with 1/2/3 or type your own thought.
    ```
-   Wait for the user's reply. The selected or typed thought becomes `$ARGUMENTS` and flow continues at **Step 2**.
+   Wait for the user's reply. The selected or typed thought becomes `$ARGUMENTS` and flow continues at the **Auth + repo check** step below.
 
 4. If neither conversation nor memory yields anything plugin-related, exit cleanly:
    > No plugin-related thought found in conversation or memory. Try `/swe-workbench:report-issue <your thought>`.
@@ -50,7 +50,7 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
    - **Acceptance criteria.** 2–4 bullets (Given/When/Then or simple bullets).
    - **Impact / Effort (RICE-lite).** `Impact: S/M/L` and `Effort: S/M/L`, one sentence each.
 
-4. **Template discovery.** Fetch templates via `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE --repo lugassawan/swe-workbench --jq '.[].name'` to list template file names (skip `config.yml`). For each `.md` template, fetch its body with `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE/<name> --repo lugassawan/swe-workbench --jq '.content' | base64 -d`. Read the frontmatter and first ~20 body lines. Classify the thought into the closest-fit template with a one-sentence reason, or note "No issue templates found; using default body shape" when none exist.
+4. **Template discovery.** Fetch templates via `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE --jq '.[].name'` to list template file names (skip `config.yml`). For each `.md` template, fetch its body with `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE/<name> --jq '.content' | python3 -c "import base64,sys; print(base64.b64decode(sys.stdin.read()).decode())"`. Read the frontmatter and first ~20 body lines. Classify the thought into the closest-fit template with a one-sentence reason, or note "No issue templates found; using default body shape" when none exist.
 
 5. **Label discovery.** Run `gh label list --repo lugassawan/swe-workbench --json name -q '.[].name'`. If the command fails or returns empty output, treat the label list as empty and proceed directly to step d (no match → omit `--label`). Otherwise select a label using this chain:
 
@@ -71,7 +71,7 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
    ```
 
    **Version capture (run once, before drafting):**
-   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | base64 -d | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"`.
+   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read()))['version'])"`.
    - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
 
 8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it. Write the body to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write a one-line command to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path> --label "<matched-label>"`; when no label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path>` (no `--label` segment). Then print:

@@ -85,7 +85,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
 - Does not edit, close, assign, or milestone issues. v1 only files (with the discovered label applied at filing time).
 - Does not score numerically beyond Impact/Effort letters.
 - Does not run any mutating command other than `gh issue create`, and only after explicit `confirm`.
-- Does not pass `--repo` explicitly to `gh issue create` — relies on the current-repo context, which `gh` resolves via the local remote.
+- Does not pass `--repo` explicitly to `gh issue create` unless the calling command explicitly directs a specific target repo — relies on the current-repo context by default.
 - Does not manage a backlog, roadmap, or quarterly plan. Capture only.
 - Does not prioritize across multiple issues. One thought → one issue.
 
@@ -105,4 +105,4 @@ On the preview turn (step 8): one response containing, in order — repo detecte
 
 ## Mutation rule
 
-> **The only mutating command you may run is `gh issue create`, and only after the user replies `confirm` to a rendered preview. Never use `--assignee` or `--milestone` in v1. You MAY pass `--label "<name>"` when the value was discovered via the Step 4 label-selection chain (template frontmatter → repo-label match → omit if no match). Never combine `gh issue create` with any other write command. Never pass `--repo` — rely on the detected current-repo context.**
+> **The only mutating command you may run is `gh issue create`, and only after the user replies `confirm` to a rendered preview. Never use `--assignee` or `--milestone` in v1. You MAY pass `--label "<name>"` when the value was discovered via the Step 4 label-selection chain (template frontmatter → repo-label match → omit if no match). Never combine `gh issue create` with any other write command. Never pass `--repo` unless the calling command explicitly directs a specific target repo — rely on the detected current-repo context by default.**
