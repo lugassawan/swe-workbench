@@ -908,3 +908,82 @@ class TestCheckUnwiredPrincipleSkills:
         (root / "skills" / "principle-bare").mkdir(parents=True, exist_ok=True)
         validate.check_unwired_principle_skills()
         assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
+# File-read caching
+# ──────────────────────────────────────────────
+
+def _make_full_valid_tree(root: Path) -> None:
+    """Build a minimal plugin tree that passes all validate.main() checks."""
+    skills = {
+        "skill-a": "---\nname: skill-a\ndescription: Skill A\n---\n",
+        "skill-b": "---\nname: skill-b\ndescription: Skill B\n---\n",
+    }
+    agents = [
+        {"name": "agent-a", "description": "Agent A"},
+        {"name": "agent-b", "description": "Agent B"},
+        {"name": "agent-c", "description": "Agent C"},
+    ]
+    make_plugin_tree(root, skills=skills, agents=agents)
+    for skill_name in ("skill-a", "skill-b"):
+        (root / "skills" / skill_name / "triggers.txt").write_text(
+            "trigger phrase one\ntrigger phrase two\n", encoding="utf-8"
+        )
+
+
+class TestFileReadCaching:
+    """After the cache refactor, main() reads each agent and skill file exactly once."""
+
+    def _count_reads(self, root: Path, monkeypatch):
+        """Patch Path.read_text, run main(), return per-path read counts."""
+        read_counts: dict[str, int] = {}
+        original = Path.read_text
+
+        def counting_read_text(self_path, *args, **kwargs):
+            key = str(self_path.resolve())
+            read_counts[key] = read_counts.get(key, 0) + 1
+            return original(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+        try:
+            validate.main()
+        except SystemExit:
+            pass  # we care about read counts, not pass/fail
+
+        monkeypatch.setattr(Path, "read_text", original)
+        return read_counts
+
+    def test_each_agent_md_read_at_most_once(self, reset_validate, monkeypatch):
+        root = reset_validate
+        _make_full_valid_tree(root)
+        read_counts = self._count_reads(root, monkeypatch)
+
+        agents_dir = root / "agents"
+        agent_files = [p for p in agents_dir.glob("*.md")]
+        assert agent_files, "Expected at least one agent .md file"
+
+        for agent_path in agent_files:
+            count = read_counts.get(str(agent_path.resolve()), 0)
+            assert count <= 1, (
+                f"{agent_path.name} was read {count} times; expected ≤1 "
+                "(check_agents, check_agent_skill_refs, check_catalog_completeness, "
+                "and check_unwired_principle_skills share the same cache)"
+            )
+
+    def test_each_skill_md_read_at_most_once(self, reset_validate, monkeypatch):
+        root = reset_validate
+        _make_full_valid_tree(root)
+        read_counts = self._count_reads(root, monkeypatch)
+
+        skills_dir = root / "skills"
+        skill_files = list(skills_dir.glob("*/SKILL.md"))
+        assert skill_files, "Expected at least one SKILL.md"
+
+        for skill_path in skill_files:
+            count = read_counts.get(str(skill_path.resolve()), 0)
+            assert count <= 1, (
+                f"{skill_path.parent.name}/SKILL.md was read {count} times; expected ≤1 "
+                "(check_skills and check_template_placeholders share the same cache)"
+            )

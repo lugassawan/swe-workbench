@@ -40,6 +40,34 @@ def parse_frontmatter(path, text=None):
 
 
 # ──────────────────────────────────────────────
+# File-read cache
+# ──────────────────────────────────────────────
+
+def _build_cache():
+    """Read every agent .md and every skills/*/SKILL.md exactly once.
+
+    Returns (agents, skills) where each is a dict[Path, str]. Paths that
+    cannot be read are omitted so per-check OSError handling is preserved.
+    ROOT is resolved inside this function so test monkeypatching of ROOT works.
+    """
+    agents_dir = ROOT / "agents"
+    skills_dir = ROOT / "skills"
+    agents: dict = {}
+    skills: dict = {}
+    for p in agents_dir.rglob("*.md"):
+        try:
+            agents[p] = p.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    for p in skills_dir.glob("*/SKILL.md"):
+        try:
+            skills[p] = p.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return agents, skills
+
+
+# ──────────────────────────────────────────────
 # Validators
 # ──────────────────────────────────────────────
 
@@ -116,12 +144,14 @@ def check_hooks_json():
                     fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}].command must be a string")
 
 
-def check_skills():
+def check_skills(cache=None):
     skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
     # glob("*/SKILL.md") matches exactly depth-2 paths; no need for a post-hoc depth guard.
     for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
         skill_dir_name = skill_md.parent.name
-        text = skill_md.read_text(encoding="utf-8")
+        text = (skills_cache.get(skill_md) if skills_cache is not None else None) \
+            or skill_md.read_text(encoding="utf-8")
         line_count = len(text.splitlines())  # total file length including frontmatter
         fm = parse_frontmatter(skill_md, text=text)
         if fm is None:
@@ -146,10 +176,12 @@ def check_skills():
             )
 
 
-def check_agents():
+def check_agents(cache=None):
     agents_dir = ROOT / "agents"
+    agents_cache = cache[0] if cache is not None else None
     for agent_md in sorted(agents_dir.glob("*.md")):
-        text = agent_md.read_text(encoding="utf-8")
+        text = (agents_cache.get(agent_md) if agents_cache is not None else None) \
+            or agent_md.read_text(encoding="utf-8")
         fm = parse_frontmatter(agent_md, text=text)
         if fm is None:
             fail(agent_md.relative_to(ROOT), "missing or malformed frontmatter")
@@ -172,13 +204,15 @@ def check_commands():
             fail(cmd_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
 
 
-def check_agent_skill_refs():
+def check_agent_skill_refs(cache=None):
     """Every `swe-workbench:<id>` in agents/*.md must resolve to skills/<id>/ on disk."""
     agents_dir = ROOT / "agents"
     skills_dir = ROOT / "skills"
+    agents_cache = cache[0] if cache is not None else None
     pattern = re.compile(r'`swe-workbench:([\w-]+)`')
     for agent_md in sorted(agents_dir.glob("*.md")):
-        text = agent_md.read_text(encoding="utf-8")
+        text = (agents_cache.get(agent_md) if agents_cache is not None else None) \
+            or agent_md.read_text(encoding="utf-8")
         for skill_id in set(pattern.findall(text)):
             if not (skills_dir / skill_id).is_dir():
                 fail(
@@ -205,15 +239,17 @@ def check_command_skill_refs():
 TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
 
 
-def check_template_placeholders():
+def check_template_placeholders(cache=None):
     """Every [[detect:KEY]] in skills/*/templates/*.md must be documented in the
     adjacent SKILL.md's '## Project Detection' section as a backtick-wrapped key."""
     skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
     for template in sorted(skills_dir.glob("*/templates/*.md")):
         skill_md = template.parent.parent / "SKILL.md"
         if not skill_md.is_file():
             continue
-        skill_text = skill_md.read_text(encoding="utf-8")
+        skill_text = (skills_cache.get(skill_md) if skills_cache is not None else None) \
+            or skill_md.read_text(encoding="utf-8")
         pd_idx = skill_text.find("## Project Detection")
         if pd_idx >= 0:
             next_h2 = skill_text.find("\n## ", pd_idx + 4)
@@ -261,11 +297,12 @@ def check_skill_trigger_fixtures():
                 )
 
 
-def check_catalog_completeness():
+def check_catalog_completeness(cache=None):
     """Catalog at agents/shared/skills.md must list every skill, and every agent must include it."""
     catalog = ROOT / "agents" / "shared" / "skills.md"
     skills_dir = ROOT / "skills"
     agents_dir = ROOT / "agents"
+    agents_cache = cache[0] if cache is not None else None
 
     if not catalog.is_file():
         fail(catalog.relative_to(ROOT), "missing — required catalog file")
@@ -275,7 +312,8 @@ def check_catalog_completeness():
         fail(skills_dir.relative_to(ROOT), "missing — required skills directory")
         return
 
-    text = catalog.read_text(encoding="utf-8")
+    text = (agents_cache.get(catalog) if agents_cache is not None else None) \
+        or catalog.read_text(encoding="utf-8")
     # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
     entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
     catalog_ids = {sid for sid, _ in entry_re.findall(text)}
@@ -289,11 +327,15 @@ def check_catalog_completeness():
              f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
 
     for agent_md in sorted(agents_dir.glob("*.md")):
-        try:
-            agent_text = agent_md.read_text(encoding="utf-8")
-        except OSError as e:
-            fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
-            continue
+        cached = agents_cache.get(agent_md) if agents_cache is not None else None
+        if cached is not None:
+            agent_text = cached
+        else:
+            try:
+                agent_text = agent_md.read_text(encoding="utf-8")
+            except OSError as e:
+                fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
+                continue
         if "@./shared/skills.md" not in agent_text:
             fail(agent_md.relative_to(ROOT),
                  "missing required '@./shared/skills.md' include"
@@ -318,7 +360,7 @@ def check_examples():
             )
 
 
-def check_unwired_principle_skills():
+def check_unwired_principle_skills(cache=None):
     """Every skills/principle-*/ must be referenced by at least one agent.
 
     agents/shared/skills.md (the catalog) is explicitly excluded — it lists
@@ -327,6 +369,7 @@ def check_unwired_principle_skills():
     skills_dir = ROOT / "skills"
     agents_dir = ROOT / "agents"
     catalog = agents_dir / "shared" / "skills.md"
+    agents_cache = cache[0] if cache is not None else None
 
     principle_skills = sorted(
         p.name for p in skills_dir.glob("principle-*")
@@ -337,7 +380,13 @@ def check_unwired_principle_skills():
 
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
-        wired = any(needle in f.read_text(encoding="utf-8") for f in agent_files)
+        wired = any(
+            needle in (
+                (agents_cache.get(f) if agents_cache is not None else None)
+                or f.read_text(encoding="utf-8")
+            )
+            for f in agent_files
+        )
         if not wired:
             fail(
                 Path("agents") / "<unwired>",
@@ -355,18 +404,20 @@ def main():
     print("Validating swe-workbench plugin files...")
     print()
 
+    cache = _build_cache()
+
     plugin_data = check_plugin_json()
     check_marketplace_json(plugin_data)
     check_hooks_json()
-    check_skills()
+    check_skills(cache=cache)
     check_skill_trigger_fixtures()
-    check_agents()
+    check_agents(cache=cache)
     check_commands()
-    check_agent_skill_refs()
+    check_agent_skill_refs(cache=cache)
     check_command_skill_refs()
-    check_catalog_completeness()
-    check_template_placeholders()
-    check_unwired_principle_skills()
+    check_catalog_completeness(cache=cache)
+    check_template_placeholders(cache=cache)
+    check_unwired_principle_skills(cache=cache)
     check_examples()
 
     if FAILURES:
