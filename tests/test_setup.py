@@ -84,7 +84,7 @@ class TestSetupShPreservation:
         assert result.returncode != 0
         assert not hook.is_symlink(), "hook must not have been replaced"
         assert str(hook) in result.stderr
-        assert not (hooks_dir / "commit-msg").exists(), "no hooks should be installed after a conflict"
+        assert not (hooks_dir / "commit-msg").exists(), "Apply section must not run if preflight found conflicts"
 
     def test_refuses_to_clobber_foreign_symlink(self, repo_with_worktree):
         repo, _ = repo_with_worktree

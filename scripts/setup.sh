@@ -6,11 +6,11 @@ for arg in "$@"; do
   case "$arg" in
     --force|-f) FORCE=1 ;;
     --help|-h)
-      echo "Usage: $0 [--force]"
-      echo
-      echo "Installs symlinks in .git/hooks/ -> .githooks/."
-      echo "Pre-existing hooks and a non-default repo-local core.hooksPath"
-      echo "are preserved unless --force is passed."
+      printf 'Usage: %s [--force]\n' "$0"
+      printf '\n'
+      printf 'Installs symlinks in .git/hooks/ -> .githooks/.\n'
+      printf 'Pre-existing hooks and a non-default repo-local core.hooksPath\n'
+      printf 'are preserved unless --force is passed.\n'
       exit 0 ;;
     *) printf 'Error: unknown argument: %s\n' "$arg" >&2; exit 2 ;;
   esac
@@ -60,9 +60,7 @@ if [ -n "$conflicts" ]; then
 fi
 
 # --- Apply -----------------------------------------------------------------
-existing_hp_final="$(git -C "$ROOT" config --local --get core.hooksPath 2>/dev/null || true)"
-existing_hp_final="${existing_hp_final%/}"
-case "$existing_hp_final" in
+case "$existing_hp" in
   ""|.githooks|"$ROOT/.githooks") ;;   # unset or already correct — leave it alone
   *) git -C "$ROOT" config --local --unset core.hooksPath ;;
 esac
