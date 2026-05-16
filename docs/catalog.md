@@ -14,6 +14,7 @@
 | `/swe-workbench:test <target>` | Write focused, behavioural tests in the target language's idiom. |
 | `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `workflow-development` lifecycle. |
 | `/swe-workbench:capture <one-line thought>` | Capture an idea, bug, or improvement as a well-framed GitHub issue via the `product-manager` subagent. Auth + repo detection, product framing, duplicate scan, draft preview, and user-confirm gate before filing. |
+| `/swe-workbench:report-issue [<one-line thought>]` | File a plugin bug or feature request directly into `lugassawan/swe-workbench` from any working directory. Mirrors `/capture`'s flow but hardcodes the target repo, auto-attaches plugin + Claude Code versions, and drafts from conversation/memory when invoked with no argument. |
 | `/swe-workbench:extend <sub-idea>` | Capture a mid-PR sub-idea and implement it onto the open PR's branch — no new branch, no new PR. Preserves Verify → Review → Deliver. |
 | `/swe-workbench:address-feedback <PR number>` | Help the PR owner address review feedback — per-thread ADDRESSED/CLARIFIED/DEFERRED triage, fix application, commit, REST reply posting, and GraphQL thread resolution. |
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
