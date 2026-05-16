@@ -38,6 +38,13 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
    - **No templates found:** note "No issue templates found in this repo; using default body shape." Proceed to draft with default body.
    - **Discovery fails (no `.github/` dir, permission error):** fall through to default body shape with a one-line note.
 
+   After classifying the template, run `gh label list --json name -q '.[].name'`. If the command fails or returns empty output, treat the label list as empty and proceed directly to chain step 4 (no match → omit `--label`). Otherwise select a label using this chain:
+
+   1. **Template frontmatter:** if the chosen template's `labels:` field value exists verbatim in the repo's label list, use it.
+   2. **Fallback — substring match (case-insensitive):** if not present verbatim, pick the first repo label whose name contains (or is contained by) the template value.
+   3. **No template:** map commit-tag → label (`[feat]` → `enhancement`, `[bug]` → `bug`, `[chore]` → `documentation`) and apply the same chain.
+   4. **No match:** record "no label" and omit `--label` from the command.
+
 5. **Dup-scan.** Extract 2–3 keywords from the thought. Strip each keyword to `[a-zA-Z0-9_-]` only (drop shell metacharacters, quotes, and flags) and single-quote them when building the search string. Run `gh issue list --search '<sanitized keywords>' --state open --limit 5`. Surface any matches inline. If a match looks duplicative, ask before continuing.
 
 6. **Draft.**
@@ -51,29 +58,31 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
      ## Additional context
      ```
 
-7. **Write temp file.** Derive `<repo-slug>` from the `nameWithOwner` value, replacing `/` with `-` and stripping any character outside `[a-zA-Z0-9_-]`. Obtain a Unix timestamp once via `date +%s` and store it — reuse the same value for both filenames below; never re-derive or re-glob. Write the drafted body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (never via Bash heredoc). Also write a one-line command file to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool, containing the exact `gh issue create --title "..." --body-file <absolute-path>` command (title double-quoted, path absolute and matching the body file written above). Do NOT run `gh issue create` yet.
+7. **Write temp file.** Derive `<repo-slug>` from the `nameWithOwner` value, replacing `/` with `-` and stripping any character outside `[a-zA-Z0-9_-]`. Obtain a Unix timestamp once via `date +%s` and store it — reuse the same value for both filenames below; never re-derive or re-glob. Write the drafted body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (never via Bash heredoc). Also write a one-line command file to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool, containing the exact `gh issue create --title "..." --body-file <absolute-path> --label "<chosen-label>"` command (title double-quoted, path absolute and matching the body file written above). Omit the `--label` segment when no label was matched. Do NOT run `gh issue create` yet.
 
 8. **Preview gate.** Print the following to the user and wait. Do NOT execute on this turn:
    ```
    Filing into: <owner>/<repo>
    Template: <chosen template filename> | none — default body
    Title: <drafted title>
+   Label: <chosen label> | none — no matching label
    Possibly related: <#N list, or "none">
 
    Body:
    <code-fenced rendered body>
 
-   Command: gh issue create --title "<title>" --body-file <path>
+   Command: gh issue create --title "<title>" --body-file <path> --label "<chosen-label>"
 
-   Reply 'confirm' to file, or edit any of the above and I'll redraft.
+   Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
+   When no label was matched, drop the `--label "<chosen-label>"` segment from the `Command:` line and show `Label: none — no matching label` instead.
 
 9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar file written in step 7 and run it exactly as written — do not regenerate the title or path. Return the issue URL. If the user requests edits, revise draft and return to step 7 (overwrite both temp files, then re-present step 8 preview).
 
 ## Decision boundaries
 
 - Does not assume any template names. Discovers at runtime.
-- Does not edit, close, label, assign, or milestone issues. v1 only files.
+- Does not edit, close, assign, or milestone issues. v1 only files (with the discovered label applied at filing time).
 - Does not score numerically beyond Impact/Effort letters.
 - Does not run any mutating command other than `gh issue create`, and only after explicit `confirm`.
 - Does not pass `--repo` explicitly to `gh issue create` — relies on the current-repo context, which `gh` resolves via the local remote.
@@ -92,8 +101,8 @@ Invoke these skills via the Skill tool when the question directly concerns their
 
 ## Output format
 
-On the preview turn (step 8): one response containing, in order — repo detected, restatement, product framing (4 lenses), classification + reason (or "no templates → default"), dup-scan results, drafted title, drafted body (code-fenced), and the exact `gh issue create` command — followed by `Reply 'confirm' to file, or edit any of the above and I'll redraft.`
+On the preview turn (step 8): one response containing, in order — repo detected, restatement, product framing (4 lenses), classification + reason (or "no templates → default"), dup-scan results, drafted title, chosen label (or "none — no matching label"), drafted body (code-fenced), and the exact `gh issue create --title "..." --body-file <path> --label "<chosen-label>"` command (omitting `--label` when no label was matched) — followed by `Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.`
 
 ## Mutation rule
 
-> **The only mutating command you may run is `gh issue create`, and only after the user replies `confirm` to a rendered preview. Never use `--label`, `--assignee`, or `--milestone` in v1. Never combine `gh issue create` with any other write command. Never pass `--repo` — rely on the detected current-repo context.**
+> **The only mutating command you may run is `gh issue create`, and only after the user replies `confirm` to a rendered preview. Never use `--assignee` or `--milestone` in v1. You MAY pass `--label "<name>"` when the value was discovered via the Step 4 label-selection chain (template frontmatter → repo-label match → omit if no match). Never combine `gh issue create` with any other write command. Never pass `--repo` — rely on the detected current-repo context.**

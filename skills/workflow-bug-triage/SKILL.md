@@ -86,10 +86,12 @@ If the hypothesis fails to explain one symptom, return to Phase 1 with that symp
 Goal: produce a structured GitHub issue that documents the diagnosis.
 
 1. **Discover the issue template.** Read `.github/ISSUE_TEMPLATE/bug_report.md` if it exists. If not, use the default body shape below.
+
+   **Discover labels.** Run `gh label list --json name -q '.[].name'`. Bug-triage defaults to `bug`. If `bug` exists in the repo label list, use it. If not, pick the first label whose name case-insensitively contains "bug" (e.g. `bug-report`, `kind/bug`). If still no match, omit `--label` and warn in the preview ("No bug-like label found; filing without label"). Surface the chosen label (or absence) in the preview so the user can change it before replying `confirm`.
 2. **Augment the template** by prepending the Root-Cause / Pattern-Analysis / Impact sections. **Do NOT use `gh issue create --template`** — that gives the user no in-skill editing. Use `--body-file` instead, mirroring `agents/product-manager.md`.
 3. **Render the body** using the schema below.
 4. **Preview-gate-then-confirm.** Print the body, the title, the target repo, and the `gh issue create` command. Wait for user to reply `confirm`. **Do NOT** run `gh issue create` until the user replies.
-5. **On `confirm`**, run the printed command and return the issue URL.
+5. **On `confirm`**, run the **exact** `gh issue create` command as printed in the preview above — do not regenerate or rephrase it. Return the issue URL.
 
 ## Output: issue body schema
 
@@ -139,12 +141,15 @@ or `/swe-workbench:implement` invocation.>
 ```bash
 gh issue create \
   --title "[bug] <short subject>" \
-  --body-file /tmp/swe-workbench-bug-triage-<repo-slug>-<unix-ts>.md
+  --body-file /tmp/swe-workbench-bug-triage-<repo-slug>-<unix-ts>.md \
+  --label "bug"
 ```
+
+Omit `--label` when no `bug`-like label exists in the repo.
 
 Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST:
 1. Run `gh repo view --json nameWithOwner -q '.nameWithOwner'` to confirm target repo.
-2. Print: filing target, title, body (code-fenced), and the exact command.
+2. Print: filing target, title, **chosen label** (or "none — no matching label"), body (code-fenced), and the exact command. Tell the user they may change the label before replying `confirm`.
 3. Wait for `confirm`. Reject any other reply (re-prompt).
 4. On `confirm`, run the command and return the issue URL.
 
