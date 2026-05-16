@@ -300,6 +300,24 @@ def check_catalog_completeness():
                  " — add: '> See @./shared/skills.md for the full skill catalog.'")
 
 
+def check_examples():
+    """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
+    skills_dir = ROOT / "skills"
+    for example in sorted(skills_dir.glob("*/examples/**/*.md")):
+        try:
+            text = example.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(example.relative_to(ROOT), f"could not read file: {e}")
+            continue
+        line_count = len(text.splitlines())
+        if line_count > 120:
+            fail(
+                example.relative_to(ROOT),
+                f"exceeds 120-line example cap ({line_count} lines); "
+                "split into multiple files or trim the example",
+            )
+
+
 def check_unwired_principle_skills():
     """Every skills/principle-*/ must be referenced by at least one agent.
 
@@ -349,6 +367,7 @@ def main():
     check_catalog_completeness()
     check_template_placeholders()
     check_unwired_principle_skills()
+    check_examples()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

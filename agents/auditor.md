@@ -85,6 +85,7 @@ Every finding must include all 11 fields. **Omit any finding you cannot fill all
 
 Invoke these skills via the Skill tool when a finding surfaces a concern in their domain:
 
+- `swe-workbench:principle-code-review` — review heuristics: four-axis lens, confidence-based filtering, tone, nitpick filtering
 - `swe-workbench:principle-security` — trust boundaries, input validation, secrets handling
 - `swe-workbench:principle-performance` — latency, throughput, N+1, allocation pressure
 - `swe-workbench:principle-resiliency` — reliability findings: failure domains, bulkheads, graceful degradation, retry patterns

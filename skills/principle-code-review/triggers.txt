@@ -1,0 +1,7 @@
+# Representative trigger prompts for principle-code-review
+code review checklist for this pull request
+PR review heuristics for finding real issues versus noise
+how should I phrase this review comment without sounding accusatory
+is this finding worth surfacing or is it just a nitpick
+reviewing a diff for correctness and missing edge cases
+nitpick filtering — how do I decide which comments to drop

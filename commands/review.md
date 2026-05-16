@@ -1,6 +1,6 @@
 ---
-description: Review the current git diff — auditor selected by --mode (general, security, a11y, deps, perf) or auto-inferred from the diff when omitted. Pass a PR number to review a specific PR; omit for local diff.
-argument-hint: "[--mode <general|security|a11y|deps|perf>] [PR number — optional]"
+description: Review the current git diff — auditor selected by --mode (general, security, a11y, deps, perf) or auto-inferred from the diff when omitted. Pass a PR number to review a specific PR; use --check-followup <N> to re-check a PR after the owner has addressed feedback.
+argument-hint: "[--mode <general|security|a11y|deps|perf>] [PR number — optional] [--check-followup <PR number>]"
 ---
 
 Review code with senior-engineer depth. Two dimensions — fully orthogonal:
@@ -11,6 +11,8 @@ Review code with senior-engineer depth. Two dimensions — fully orthogonal:
 ## Step 1 — Argument resolution
 
 Parse `$ARGUMENTS` left-to-right:
+
+0. If `--check-followup <N>` is present (where `N` is a PR number), strip it and enter **Followup mode** — see `## Followup mode` below. All other flags and argument parsing are skipped.
 
 1. If a `--mode <value>` flag is present, extract it and normalize the alias:
 
@@ -81,3 +83,13 @@ The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `
 **When `--mode` is set to a non-general value (security, accessibility, dependency, performance) with a PR number:** fetch the PR diff via `gh pr diff <N>` and run the specialist auditor against it in local-diff style. **Inline-comment posting and APPROVE/COMMENT submission are skipped** — output is severity-organized findings only (same format as local-diff mode above). This avoids re-architecting `workflow-pr-review` to accept an auditor parameter; the full PR-review flow is reserved for the general reviewer.
 
 If the PR number was obtained via auto-detect (user replied `yes` to the prompt in Step 1) rather than an explicit argument, the same branching applies: `--mode general` (or no `--mode`) delegates to `swe-workbench:workflow-pr-review`; non-general modes fetch `gh pr diff <N>` and run the specialist in local-diff style.
+
+## Followup mode
+
+**Trigger:** `--check-followup <N>` where `N` is a PR number (with or without leading `#`).
+
+**Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings, posts only truly-new inline comments, and submits APPROVE or COMMENT.
+
+Invoke `swe-workbench:workflow-pr-review-followup` via the `Skill` tool, passing the resolved PR number.
+
+The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), posts only truly-new inline comments, and submits an APPROVE or COMMENT review event. See `skills/workflow-pr-review-followup/SKILL.md` for the full 7-step contract.

@@ -8,6 +8,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:principle-api-design` — API design: contract-first, versioning, idempotency, REST/RPC/event trade-offs.
 - `swe-workbench:principle-clean-architecture` — Clean Architecture: dependency rule, ports and adapters, domain-centric layering.
 - `swe-workbench:principle-clean-code` — Clean code: DRY, KISS, YAGNI, naming, function length, abstraction level.
+- `swe-workbench:principle-code-review` — Code review: four-axis lens (correctness, security, design, tests), confidence-based filtering, comment tone, nitpick filtering.
 - `swe-workbench:principle-concurrency` — Concurrency: race conditions, deadlock, structured concurrency, cancellation, backpressure.
 - `swe-workbench:principle-cost-awareness` — Cost awareness: FinOps mindset, egress, right-sizing, scale-to-zero, cost-per-request, storage tiers, observability cost.
 - `swe-workbench:principle-data-modeling` — Data modeling: storage paradigm selection, normalization depth, indexing strategy, hot-key avoidance, schema evolution, query-first design, retention.
@@ -19,6 +20,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:principle-i18n` — Internationalization & localization: locale-aware formatting, time zones, plural rules, message catalogs, RTL layout, ISO 8601, currency.
 - `swe-workbench:principle-observability` — Observability: logs vs metrics vs traces, structured logging, OpenTelemetry, SLI/SLO.
 - `swe-workbench:principle-performance` — Performance: latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries.
+- `swe-workbench:principle-refactoring` — Refactoring discipline: Fowler's catalog, smell→move mapping, rule of three, characterization-tests-first, small behavior-preserving steps with green between.
 - `swe-workbench:principle-resiliency` — Resiliency: failure domains, bulkheads, graceful degradation, fail-fast vs fail-soft, health checks, blast radius containment.
 - `swe-workbench:principle-security` — Security: trust boundaries, input validation, secrets handling, secure defaults, threat modeling.
 - `swe-workbench:principle-solid` — SOLID principles: SRP, OCP, LSP, ISP, DIP — responsibility, coupling, abstractions.
@@ -34,6 +36,7 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:language-kotlin` — Kotlin idioms: null safety, coroutines, sealed interfaces, scope functions, Flow.
 - `swe-workbench:language-python` — Python idioms: PEP 8, type hints, dataclasses, asyncio, generators, pytest.
 - `swe-workbench:language-rust` — Rust idioms: ownership, borrowing, lifetimes, traits, iterators, error handling.
+- `swe-workbench:language-sql` — SQL idioms: query optimization, EXPLAIN plans, schema design, transactions, deadlock avoidance, window functions, CTEs, and pagination.
 - `swe-workbench:language-swift` — Swift idioms: optionals, value types, actors, async/await, protocols, Result builders.
 - `swe-workbench:language-typescript` — TypeScript/JavaScript idioms: strict mode, discriminated unions, async patterns, Node.
 
@@ -44,9 +47,12 @@ All `swe-workbench` skills available in this plugin. Use the `Skill` tool to inv
 - `swe-workbench:workflow-codebase-audit` — Cold-start, time-boxed, multi-axis audit sweep with ranked findings, reasoning chains, and counter-evidence calibration.
 - `swe-workbench:workflow-commit-and-pr` — Pre-merge half: enforces [type] commit format, branch-naming, [no ci] for docs, draft/ready prompt, PR template detection, and post-create /review CTA.
 - `swe-workbench:workflow-development` — Full development lifecycle: Branch → Implement → Verify → Review → Deliver. Phase 1 uses `rimba add` when rimba is available; falls back to `superpowers:using-git-worktrees`.
+- `swe-workbench:workflow-extend` — Mid-PR sub-idea capture and implementation onto the existing branch. Skips Phase 1 (Branch), preserves Verify → Review → Deliver, updates the existing PR via workflow-commit-and-pr.
+- `swe-workbench:workflow-address-feedback` — PR-owner feedback loop: fetch open review threads, per-thread ADDRESSED/CLARIFIED/DEFERRED triage, Edit-tool fixes, workflow-commit-and-pr commit, REST reply posting, and GraphQL resolveReviewThread. Invoked by `/address-feedback`.
 - `swe-workbench:workflow-pr-review` — Remote-PR review orchestration: ephemeral worktree + reviewer agent + GraphQL thread dedup + REST inline-comment post + APPROVE/COMMENT submit. Invoked by `/review` PR mode.
+- `swe-workbench:workflow-pr-review-followup` — Reviewer follow-up re-check: re-runs reviewer agent against the updated diff, deduplicates against existing threads (Jaccard ±5-line), posts only truly-new inline comments, and submits APPROVE/COMMENT. Invoked by `/review --check-followup <N>`.
 - `swe-workbench:workflow-worktree-session` — Start, switch, or end a worktree-bound session via `EnterWorktree` / `ExitWorktree`. No claude restart.
 
-## Other
+## Integration
 
 - `swe-workbench:ticket-context` — Fetch structured context from Jira, Confluence, and GitHub issues/PRs before starting work.

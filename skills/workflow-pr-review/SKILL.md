@@ -37,24 +37,24 @@ This skill orchestrates; analysis is delegated to:
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,headRefOid,title,body \
+gh pr view "$PR" --json state,number,headRefName,baseRefName,headRepository,headRefOid,title,body,author \
   > "/tmp/swe-workbench-pr-review/${PR}.json"
 [ -s "/tmp/swe-workbench-pr-review/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
 ```
 
-Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO` from the JSON for downstream steps.
+Extract `BASE`, `HEAD_SHA`, `OWNER`, `REPO`, and `AUTHOR_LOGIN` (from `author.login`) from the JSON for downstream steps.
 
 ### Step 2 — Ephemeral worktree
 
 **When rimba is available** (preferred — handles cross-fork remotes automatically and skips dep installation):
 
 ```bash
-RIMBA_OUT=$(rimba add pr:$PR --skip-deps --skip-hooks 2>&1)
+RIMBA_OUT=$(rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks 2>&1)
 WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
-rimba derives the task name as `review/<PR>-<slug>` and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
+rimba registers the task as `pr-review-<PR>` (overriding its default `review/<N>-<slug>` derivation) and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
 
 **When rimba is absent** (fallback — direct git, NOT `superpowers:using-git-worktrees` which is consent-gated for durable feature work):
 
@@ -64,8 +64,8 @@ if [ -d "$WT" ]; then
   git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"
 fi
 mkdir -p "$(dirname "$WT")"
-git fetch origin "pull/${PR}/head:pr-review/${PR}" --force
-git worktree add --detach "$WT" "pr-review/${PR}"
+git fetch origin "pull/${PR}/head:pr-review-${PR}" --force
+git worktree add --detach "$WT" "pr-review-${PR}"
 ```
 
 ### Step 3 — Ticket-context chain
@@ -81,7 +81,11 @@ Pass the agent:
   > "Emit **repo-relative** paths in every finding (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments."
 - Footer instruction (load-bearing — opt-in per the agent's `## Decision footer (when instructed)` block):
   > "End the review with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**` on its own line, no prefix or trailing text. Never `REQUEST_CHANGES`."
+- Narrative instruction (load-bearing — opt-in per the agent's `## Review Summary (when instructed)` block):
+  > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. When the reviewer is not the PR author, the orchestrator uses these paragraphs as the top-level PR review body; otherwise the narrative is shown in the Claude session only and not posted to GitHub. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
 - Ticket-context prelude (if Step 3 produced one).
+
+Store the agent's complete text response as `REVIEWER_OUTPUT` before Step 7 runs — in practice the orchestrator assigns the subagent's full text reply to this variable. Step 7's awk block reads from it via `<<< "$REVIEWER_OUTPUT"`.
 
 ### Step 5 — Parse decision footer
 
@@ -114,7 +118,7 @@ Do NOT clean up the worktree on abort — leave it for inspection.
                  nodes {
                    id databaseId body
                    author { login }
-                   reactions(first: 5, content: THUMBS_UP) {
+                   reactions(first: 20, content: THUMBS_UP) {
                      nodes { user { login } }
                    }
                  }
@@ -159,23 +163,63 @@ Do NOT clean up the worktree on abort — leave it for inspection.
 
 ### Step 7 — Submit + cleanup
 
-Body summary:
-```
-Reviewed by `reviewer` (swe-workbench). Posted N inline comments, deduped M.
+Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
+
+```bash
+NARRATIVE=$(awk '
+  /^[[:space:]]*(Critical|High|Medium|Low|Severity)[[:space:]]*\|/ { exit }
+  /^###[[:space:]]+(Critical|High|Medium|Low)\b/ { exit }
+  /^\*\*Review Decision:/ { exit }
+  { print }
+' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
+HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true || echo false)"
+if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
+  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author." >&2
+  IS_SELF_REVIEW=false
+elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then
+  IS_SELF_REVIEW=true
+else
+  IS_SELF_REVIEW=false
+fi
+
+# $posted and $deduped are set in Step 6.
+BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
+
+if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
+  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
+    "$NARRATIVE" "$DECISION" "$BYLINE")
+elif [ "$IS_SELF_REVIEW" = false ]; then
+  # No narrative but cross-author: post just the byline.
+  SUMMARY="$BYLINE"
+else
+  # Self-review: nothing posted to GitHub; inline comments speak for themselves.
+  SUMMARY=""
+fi
 ```
 
-Submit per the parsed decision:
+Submit only when `IS_SELF_REVIEW = false` — GitHub blocks self-approval, and for self-review the Step 6 inline comments are sufficient without a review-event body:
 - `APPROVE` → `gh pr review "$PR" --approve --body "$SUMMARY"`
 - `COMMENT` → `gh pr review "$PR" --comment --body "$SUMMARY"`
 
+When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
+
 **Never** use `--request-changes`.
+
+**Address-feedback CTA (conditional):** After the submit call succeeds, if `CURRENT_USER != AUTHOR_LOGIN` (i.e., the reviewer is not also the PR author), append:
+
+> "Want me to help the PR owner address this feedback? Reply `yes` to start `/address-feedback <N>`."
+
+Suppress this CTA silently when `CURRENT_USER == AUTHOR_LOGIN` — self-review is a legitimate flow; asking the author if they want to address their own feedback is noise.
 
 Cleanup non-blocking:
 ```bash
-( rimba remove "$(basename "$WT")" --force 2>/dev/null || git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT" ) &
+( rimba remove "pr-review-$PR" --force 2>/dev/null \
+  || { git worktree remove --force "$WT" 2>/dev/null; \
+       git branch -D "pr-review-$PR" 2>/dev/null; \
+       rm -rf "$WT" 2>/dev/null; } ) &
 ```
 
-`rimba remove` also deletes the local branch; `git worktree remove` is the fallback when rimba is absent.
+`rimba remove` deletes both the worktree and the local `pr-review-<N>` branch (task name pinned via `--task` in Step 2 to keep it consistent). The `git worktree remove` + `git branch -D` group is the defensive fallback for rimba-absent or rimba-failure environments.
 
 ## Footer parsing contract
 
@@ -214,10 +258,13 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 
 | Mistake | Fix |
 |---|---|
-| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
+| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
 | Use `--request-changes` | Never. APPROVE / COMMENT only. The agent footer never produces this value. |
 | Parse threads from REST `pulls/{N}/comments` | REST returns review-comment-by-comment; threading is reconstructed by the GraphQL `reviewThreads` shape. Use GraphQL to fetch, REST to post. |
 | Force-add 👍 to your own existing comment | Check `reactions.nodes[].user.login` first; skip if you've already reacted. |
 | Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
+| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see "Post `## Review Summary` on self-review" row). |
+| Emit the address-feedback CTA when `CURRENT_USER == AUTHOR_LOGIN` | Always suppress for self-review — asking the author if they want to address their own feedback is noise. Only emit the CTA when `CURRENT_USER != AUTHOR_LOGIN`. |
+| Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false` — same policy axis as the address-feedback CTA suppression above. The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |

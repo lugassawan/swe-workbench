@@ -379,6 +379,42 @@ class TestPerformanceTunerAgent:
 
 
 # ──────────────────────────────────────────────
+# principle-code-review skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrincipleCodeReviewSkill:
+    """Integration tests: assert the real skills/principle-code-review/SKILL.md satisfies
+    all acceptance criteria from issue #180 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-code-review" / "SKILL.md"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-code-review/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-code-review" in text
+
+    def test_four_axis_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Four-Axis Review Lens" in text
+
+    def test_confidence_filtering_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Confidence-Based Filtering" in text
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
@@ -495,6 +531,81 @@ class TestCheckCommandSkillRefs:
         )
         validate.check_command_skill_refs()
         assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
+# test-reviewer agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestTestReviewerAgent:
+    """Integration tests: assert the real agents/test-reviewer.md satisfies all
+    acceptance criteria from issue #179 without relying on a synthetic fixture."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "test-reviewer.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/test-reviewer.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: test-reviewer" in fm_text
+        assert "description:" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_principle_code_review_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-code-review`" in text, (
+            "agent must reference swe-workbench:principle-code-review"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/skills.md" in text, (
+            "agent must include @./shared/skills.md catalog reference"
+        )
+
+    def test_boundary_sections_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "## Boundary vs. test-writer" in text, (
+            "## Boundary vs. test-writer section must be present"
+        )
+        assert "## Boundary vs. reviewer" in text, (
+            "## Boundary vs. reviewer section must be present"
+        )
+
+    def test_no_edit_tool(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        tools_line = next(
+            (line for line in fm_text.splitlines() if line.startswith("tools:")),
+            None,
+        )
+        assert tools_line is not None, "tools: line not found in frontmatter"
+        assert "Edit" not in tools_line, "Edit must NOT be in tools (read-only auditor)"
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        val.check_agents()
+        val.check_agent_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
 
 # ──────────────────────────────────────────────

@@ -69,6 +69,7 @@ It checks:
 - `commands/*.md` — required frontmatter (`description`).
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
 - `skills/*/triggers.txt` — every skill must have a sibling `triggers.txt` with ≥2 non-empty non-comment lines (each ≤200 chars).
+- `skills/*/examples/**/*.md` — companion example files must be ≤120 lines each. See `docs/extending.md` for the full `examples/` convention (multi-fence `// file:` header rule, visibility ordering).
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 

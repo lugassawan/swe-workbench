@@ -17,3 +17,14 @@ if [ "$_rimba_branch" = "main" ] || [ "$_rimba_branch" = "master" ]; then
   exit 1
 fi
 # END RIMBA HOOK
+
+# Block commits from placeholder/test identities that leak from test fixtures.
+_email=$(git config user.email 2>/dev/null)
+case "$_email" in
+  test@example.com|t@t)
+    echo "ERROR: Refusing to commit with placeholder email '$_email'."
+    echo "       This identity comes from a test fixture. Fix with:"
+    echo "         git config --unset user.email  # restore global identity"
+    exit 1
+    ;;
+esac
