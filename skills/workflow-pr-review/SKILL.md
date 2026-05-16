@@ -174,14 +174,14 @@ NARRATIVE=$(awk '
 ' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
 
 # $posted and $deduped are set in Step 6.
-BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/${OWNER}/${REPO})). Posted ${posted} inline comments, deduped ${deduped}._"
+BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
 
 if [ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ]; then
   SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
     "$NARRATIVE" "$DECISION" "$BYLINE")
 else
   # Fallback: no prose above the findings table — use the legacy one-liner.
-  SUMMARY="Reviewed by \`reviewer\` (swe-workbench). Posted $posted inline comments, deduped $deduped."
+  SUMMARY="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted $posted inline comments, deduped $deduped._"
 fi
 ```
 
