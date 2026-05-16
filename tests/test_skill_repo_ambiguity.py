@@ -234,7 +234,9 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
     1. Templated URL ${OWNER}/${REPO} is gone — not present anywhere in the file.
     2. No BYLINE= or SUMMARY= assignment contains a bare "(swe-workbench)" without
        a markdown link.
-    3. The canonical markdown link appears at least twice (BYLINE + SUMMARY fallback).
+    3. BYLINE carries the canonical markdown link (at least one occurrence).
+    4. The fallback SUMMARY reuses $BYLINE by variable reference, not by repeating
+       the URL string — i.e. SUMMARY="$BYLINE" is the expected form.
     """
     canonical = "[swe-workbench](https://github.com/lugassawan/swe-workbench)"
     buggy_url = "https://github.com/${OWNER}/${REPO}"
@@ -259,10 +261,15 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
             f"Replace with '[swe-workbench](https://github.com/lugassawan/swe-workbench)'."
         )
 
-        # 3. Canonical link must appear at least twice (primary BYLINE + fallback SUMMARY)
-        count = body.count(canonical)
-        assert count >= 2, (
-            f"{skill_name}/SKILL.md contains {count} occurrence(s) of the canonical "
-            f"link '{canonical}', expected at least 2 (one for BYLINE, one for SUMMARY).\n"
-            f"Both the primary byline and the fallback summary must be clickable links."
+        # 3. Canonical link must appear in BYLINE (at least once in the file)
+        assert canonical in body, (
+            f"{skill_name}/SKILL.md does not contain the canonical link '{canonical}'.\n"
+            f"BYLINE must hardcode the tool URL, not interpolate the review-target repo."
+        )
+
+        # 4. Fallback SUMMARY must delegate to $BYLINE rather than duplicate the URL string
+        assert 'SUMMARY="$BYLINE"' in body, (
+            f"{skill_name}/SKILL.md fallback SUMMARY does not reuse $BYLINE.\n"
+            f"Expected:  SUMMARY=\"$BYLINE\"\n"
+            f"This keeps the two branches in sync automatically — the URL lives in one place."
         )

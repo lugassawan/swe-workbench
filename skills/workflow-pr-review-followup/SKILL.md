@@ -181,7 +181,7 @@ if [ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ]; then
   SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
     "$NARRATIVE" "$DECISION" "$BYLINE")
 else
-  SUMMARY="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted $posted inline comments, deduped $deduped._"
+  SUMMARY="$BYLINE"
 fi
 ```
 
