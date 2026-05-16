@@ -33,6 +33,21 @@ jobs:
             exit 1
           fi
 
+      - name: Validate commit authorship
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BAD=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/commits" \
+            --jq '.[].commit.author.email' \
+            | grep -E '^(test@example\.com|t@t)$' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::PR contains commits from a placeholder test identity: $BAD"
+            echo "Rewrite with: git rebase main --exec 'git commit --amend --reset-author --no-edit'"
+            exit 1
+          fi
+
       - name: Validate issue reference
         # Dependabot cannot inject closing keywords; dependency bumps have no linked issue.
         if: github.actor != 'dependabot[bot]'
