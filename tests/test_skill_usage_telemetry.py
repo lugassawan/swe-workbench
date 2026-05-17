@@ -363,7 +363,11 @@ class TestHooksJson:
         assert result.returncode == 0, result.stdout + result.stderr
 
     def test_rm_rf_blocker_still_present(self):
-        """Regression: the Bash guard command must still block rm -rf /."""
+        """Regression: the Bash guard must still block rm -rf /.
+
+        After extraction to bash_guard.sh the hooks.json command is a path
+        reference; the guard logic lives in the script itself.
+        """
         data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         bash_hooks = [
             entry
@@ -372,8 +376,15 @@ class TestHooksJson:
         ]
         assert bash_hooks, "Bash PreToolUse entry missing"
         cmd = bash_hooks[0]["hooks"][0]["command"]
-        # The guard pattern for destructive rm must be present verbatim
-        assert "rm" in cmd and "exit 2" in cmd
+        # Command must reference the extracted guard script.
+        assert "bash_guard.sh" in cmd, f"Expected bash_guard.sh reference, got: {cmd!r}"
+        # The guard logic must live in bash_guard.sh.
+        guard = ROOT / "hooks" / "bash_guard.sh"
+        assert guard.exists(), f"missing {guard}"
+        content = guard.read_text(encoding="utf-8")
+        assert "rm" in content and "exit 2" in content, (
+            "bash_guard.sh must contain rm-blocker logic with exit 2"
+        )
 
 
 # ---------------------------------------------------------------------------
