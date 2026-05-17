@@ -33,16 +33,18 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 3: Verify
 
-Run in order — stop on first failure, fix, re-run from format:
+Run in order — stop on first failure, fix, re-run from imports:
 
-| Step | Command | Expected |
-|------|---------|----------|
-| Format | `[[detect:format-command]]` | Clean |
-| Lint | `[[detect:lint-command]]` | 0 issues |
-| Test | `[[detect:test-command]]` | All pass |
+| Step    | Command                      | Expected |
+|---------|------------------------------|----------|
+| Imports | `[[detect:imports-command]]` | Clean    |
+| Format  | `[[detect:format-command]]`  | Clean    |
+| Lint    | `[[detect:lint-command]]`    | 0 issues |
+| Test    | `[[detect:test-command]]`    | All pass |
 
 After all pass, state with evidence:
 ```
+Imports: [[detect:imports-command]] — clean
 Format: [[detect:format-command]] — clean
 Lint: [[detect:lint-command]] — 0 issues
 Test: [[detect:test-command]] — N/N pass
