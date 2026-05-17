@@ -26,7 +26,7 @@ Run `superpowers:verification-before-completion` before claiming any phase done.
 Dispatch both reviewers: `superpowers:code-reviewer` (plan-alignment) and the `reviewer` subagent (diff correctness/security/design). Do not advance to Phase 5 until review passes clean or all raised issues are resolved.
 
 **Phase 5 — Deliver**
-Use the PR template path recorded in Project Detection: pass it to `gh pr create --body-file <path>` and substitute the `Closes #` placeholder (with `Closes #123` or `Issue: N/A — <reason>`) before invoking. Only emit the heredoc body shown in Phase 5 of `templates/plan-workflow-section.md` if no template was found — do not re-invoke the template skill as a fallback. Then invoke `swe-workbench:workflow-commit-and-pr` to complete the delivery. After the PR merges, run `/swe-workbench:cleanup-merged <N>` to remove the worktree and local + remote branch.
+Use the PR template path recorded in Project Detection: pass it to `gh pr create --body-file <path>` and substitute the `Closes #` placeholder (with `Closes #123` or `Issue: N/A — <reason>`) before invoking. Only emit the heredoc body shown in Phase 5 of `templates/plan-workflow-section.md` if no template was found — do not re-invoke the template skill as a fallback. Then invoke `swe-workbench:workflow-commit-and-pr` to complete the delivery. After the PR is merged (by you or a reviewer), run `/swe-workbench:cleanup-merged <N>` to remove the worktree and local + remote branch.
 
 Absolute rules:
 - If the ticket lacks acceptance criteria, stop and ask the user — do not invent scope.
