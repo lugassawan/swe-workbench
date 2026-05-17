@@ -1,0 +1,50 @@
+name: Dependabot Lockfile Regen
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+    paths:
+      - tests/requirements.txt
+      - tests/release-requirements.txt
+
+# Default to least-privilege; the one job that writes elevates explicitly.
+permissions:
+  contents: read
+
+jobs:
+  regen-lockfiles:
+    runs-on: ubuntu-latest
+    # Only run for Dependabot PRs. Checking the PR author (user.login) rather than
+    # github.actor ensures the guard holds even when a human pushes a follow-up commit
+    # to a Dependabot branch (as happened manually in #277/#278).
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Checkout the branch tip (not a detached SHA) so git push is a fast-forward.
+          # github.head_ref is safe here: action inputs are not shell-evaluated by the runner.
+          # persist-credentials lets the subsequent git push succeed via GITHUB_TOKEN.
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate pip lockfiles
+        run: bash scripts/lock-pip-requirements.sh
+
+      - name: Commit and push updated lockfiles if changed
+        run: |
+          if git diff --quiet HEAD -- tests/requirements.lock tests/release-requirements.lock; then
+            echo "Lockfiles are already up to date — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tests/requirements.lock tests/release-requirements.lock
+          git commit -m "[chore] Regenerate lockfiles after dependency bump"
+          git push
