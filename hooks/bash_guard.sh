@@ -10,7 +10,7 @@
 # "git". This is the common case (ls, cat, echo, make, npm, …) and removes the
 # per-call grep tax flagged in #233.
 #
-# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal.
+# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal; compound cd (cwd not in hook payload).
 
 set -u
 
@@ -19,13 +19,16 @@ if ! cmd=$(jq -r '.tool_input.command // ""'); then
   exit 2
 fi
 
-case "$cmd" in
+# Normalise shell separators to spaces so rm/git after ; | & are still detected.
+_norm=$(printf '%s' "$cmd" | tr ';|&' '   ')
+
+case "$_norm" in
   rm\ *|*\ rm\ *|*\(*rm\ *|*git*) ;;
   *)                              exit 0 ;;
 esac
 
-# Strip quotes and subshell parens so they cannot mask the rm command or path.
-norm=$(printf '%s' "$cmd" | tr -d "'\"()")
+# Strip quotes and bracket metacharacters that could mask paths.
+norm=$(printf '%s' "$_norm" | tr -d "'\"()[]{}")
 
 # shellcheck disable=SC2016  # $HOME in single quotes is intentional: matches literal text, not the shell variable
 # [rR] covers both -rf and -Rf (BSD/macOS rm accepts -R as synonym for -r).
