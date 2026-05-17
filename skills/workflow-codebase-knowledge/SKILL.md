@@ -29,6 +29,8 @@ Read-only sweep — no subagents dispatched. May delegate file discovery to `Exp
 
 An optional path narrows the scope: `/codebase-knowledge src/` focuses all phases on `src/` and its descendants. Without a path, the sweep covers the entire repo root.
 
+A token is treated as a path if it contains `/`, starts with `.`, or matches an existing directory in the repo; otherwise the entire argument string is treated as natural-language context with no path scoping.
+
 ## Phases
 
 ### Phase 1 — Scope & entry-points

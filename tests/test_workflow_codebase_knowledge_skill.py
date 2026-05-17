@@ -71,7 +71,7 @@ def test_description_references_workflow_codebase_audit():
     """
     body = _read()
     assert body.startswith("---"), "SKILL.md must have YAML frontmatter"
-    fm_end = body.index("---", 3)
+    fm_end = body.index("\n---\n", 3) + 1
     frontmatter = body[:fm_end]
     assert "workflow-codebase-audit" in frontmatter, (
         "SKILL.md description: must reference 'workflow-codebase-audit' "
@@ -112,7 +112,7 @@ def test_description_or_not_invoke_references_tech_writer_or_document():
     must reference the /swe-workbench:document command or tech-writer subagent.
     """
     body = _read()
-    fm_end = body.index("---", 3)
+    fm_end = body.index("\n---\n", 3) + 1
     frontmatter = body[:fm_end]
     section = _section(body, "When NOT to invoke")
     combined = frontmatter + section
