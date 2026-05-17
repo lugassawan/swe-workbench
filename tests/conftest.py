@@ -1,6 +1,8 @@
 import os
 import sys
 from pathlib import Path
+from types import MappingProxyType
+from typing import Final
 
 import pytest
 
@@ -12,11 +14,15 @@ import pytest
 # We strip every GIT_* var, then re-add GIT_CONFIG_NOSYSTEM=1 to ignore the
 # system gitconfig for hermeticity.
 #
+# Snapshot: built once from os.environ at pytest collection time. Session-scoped
+# fixtures that mutate GIT_* vars after import will not be reflected here.
+#
 # Usage:
 #   subprocess.run([...], env=_CLEAN_ENV, ...)
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
-_CLEAN_ENV: dict[str, str] = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-_CLEAN_ENV["GIT_CONFIG_NOSYSTEM"] = "1"
+_clean: dict[str, str] = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_clean["GIT_CONFIG_NOSYSTEM"] = "1"
+_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(_clean)
 
 # Ensure scripts/ and tests/ are importable from any working directory.
 _HERE = Path(__file__).parent
