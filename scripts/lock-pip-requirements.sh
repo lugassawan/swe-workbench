@@ -68,6 +68,10 @@ compile() {
       --no-header \
       --output-file "$tmp" \
       "$src")
+    if [[ ! -f "$REPO_ROOT/$out" ]]; then
+      echo "::error::$out does not exist. Run scripts/lock-pip-requirements.sh to generate it." >&2
+      return 1
+    fi
     # Strip header from the existing lockfile for comparison
     grep -v '^#' "$REPO_ROOT/$out" | grep -v '^$' > "$existing_stripped" || true
     grep -v '^#' "$tmp" | grep -v '^$' > "$new_stripped" || true
@@ -75,6 +79,7 @@ compile() {
       echo "::error::$out is out of date. Run scripts/lock-pip-requirements.sh to regenerate." >&2
       return 1
     fi
+    trap - RETURN
     echo "$out is up to date."
   else
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
