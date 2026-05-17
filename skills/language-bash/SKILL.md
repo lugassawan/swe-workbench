@@ -109,6 +109,15 @@ fi
 assert_eq() { [[ "$1" == "$2" ]] || { echo "FAIL: expected '$2', got '$1'" >&2; exit 1; }; }
 ```
 - Mock external commands by prepending a temp dir containing stub scripts to `PATH`.
+- **eval/cwd trap**: when testing `eval "$(script 2>&1)"` patterns, capture the script output FIRST from a valid cwd, THEN `cd` to the eval directory, THEN eval. `$(...)` launches a subshell that inherits the cwd at expansion time — `cd eval_cwd && eval "$(script)"` means the script runs FROM `eval_cwd`, not the original directory, and may exit early.
+```bash
+# Wrong — script inherits eval_cwd as cwd, may exit early if it's not a git repo:
+cd "$eval_cwd" && eval "$(bash script.sh arg 2>&1)"
+
+# Correct — capture first, then move, then eval:
+output="$(bash script.sh arg 2>&1)"; cd "$eval_cwd"; eval "$output"
+```
+  Under `set -e`, use `output=$(…) || handle_error` — `$?` is unreachable because the parent script aborts at the failed assignment before the next line executes. The `||` forms a conditional context that suppresses `set -e` and runs the handler on non-zero exit.
 
 ## Avoid
 - Backtick substitution `` `cmd` `` — use `$(cmd)`.
