@@ -16,7 +16,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from conftest import _CLEAN_ENV
 
 SCRIPT = (
@@ -207,7 +206,9 @@ class TestSyncAndVerifyEvalSafety:
             env=_CLEAN_ENV,
         )
         (clone / "new.txt").write_text("new\n")
-        subprocess.run(["git", "add", "new.txt"], cwd=str(clone), check=True, env=_CLEAN_ENV)
+        subprocess.run(
+            ["git", "add", "new.txt"], cwd=str(clone), check=True, env=_CLEAN_ENV
+        )
         subprocess.run(
             ["git", "commit", "-m", "trigger fetch output"],
             cwd=str(clone),
