@@ -2,7 +2,7 @@
 name: contributor-auditor
 description: Contributor-trust triage specialist — depth-first review of an external PR for author signal, diff shape, repo posture, and cross-PR pattern risk. Invoke when triaging external contributions before merge, especially from first-time contributors. Advisory only — never posts to the PR.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Bash, Skill
 ---
 
 **Reachable via:** `/swe-workbench:review <PR> --mode contributor-trust`
