@@ -167,3 +167,90 @@ class TestSyncAndVerifyNonMainDefaultBranch:
         )
         result = _run_script(git_repo_trunk, BRANCH, default_branch="trunk")
         _assert_contract(result, "1")
+
+
+class TestSyncAndVerifyEvalSafety:
+    """Regression: caller adding `2>&1` to $(...) must not let git output
+    poison eval. Specifically, git's '* branch main -> FETCH_HEAD' tracking
+    line must not parse as a `> FETCH_HEAD` redirect inside eval."""
+
+    def test_eval_with_merged_stderr_does_not_create_stray_files(
+        self, tmp_path, git_repo
+    ):
+        # Push a new commit to origin so the next `git pull --ff-only origin main`
+        # actually transfers refs and prints the `From ... -> FETCH_HEAD` line.
+        clone = tmp_path / "second_clone"
+        no_hooks = tmp_path / ".nohooks"  # created by _build_repo via git_repo fixture
+
+        subprocess.run(
+            ["git", "clone", str(tmp_path / "origin.git"), str(clone)],
+            check=True,
+            capture_output=True,
+            env=_CLEAN_ENV,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "ci@example.com"],
+            cwd=str(clone),
+            check=True,
+            env=_CLEAN_ENV,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "CI"],
+            cwd=str(clone),
+            check=True,
+            env=_CLEAN_ENV,
+        )
+        subprocess.run(
+            ["git", "config", "core.hooksPath", str(no_hooks)],
+            cwd=str(clone),
+            check=True,
+            env=_CLEAN_ENV,
+        )
+        (clone / "new.txt").write_text("new\n")
+        subprocess.run(["git", "add", "new.txt"], cwd=str(clone), check=True, env=_CLEAN_ENV)
+        subprocess.run(
+            ["git", "commit", "-m", "trigger fetch output"],
+            cwd=str(clone),
+            check=True,
+            capture_output=True,
+            env=_CLEAN_ENV,
+        )
+        subprocess.run(
+            ["git", "push", "origin", "main"],
+            cwd=str(clone),
+            check=True,
+            capture_output=True,
+            env=_CLEAN_ENV,
+        )
+
+        # Reproduce the caller-side bug: eval "$(... 2>&1)".
+        # Run inside a clean tempdir so any stray redirect lands somewhere
+        # observable (and out of the test runner's cwd).
+        eval_cwd = tmp_path / "eval_cwd"
+        eval_cwd.mkdir()
+        # Glob target: ensure `*` expands to something so the eval'd `*` token
+        # behaves the same way as in the bug repro (where cwd contained files).
+        (eval_cwd / "decoy").write_text("")
+
+        # Capture the script's output first (from git_repo, a valid git cwd),
+        # THEN cd to eval_cwd before eval-ing it. If we cd first and then run
+        # the script, the script exits early ("could not resolve main repo path")
+        # because eval_cwd is not a git repository — and the bug never triggers.
+        runner = (
+            f'output="$(bash "{SCRIPT}" "{BRANCH}" main 2>&1)"; '
+            f'cd "{eval_cwd}"; '
+            f'eval "$output" 2>/dev/null || true'
+        )
+        subprocess.run(
+            ["bash", "-c", runner],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+
+        assert not (eval_cwd / "FETCH_HEAD").exists(), (
+            f"Stray FETCH_HEAD created in {eval_cwd} — the script's "
+            f"stdout-after-2>&1 still contains a git tracking line that "
+            f"eval parsed as a redirect."
+        )
