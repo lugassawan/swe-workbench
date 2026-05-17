@@ -14,6 +14,25 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
+# Pin gh to the same remote git uses everywhere else in this script.
+# Avoids "No default remote repository has been set" on multi-remote clones
+# (e.g. when `gh repo fork` has added sibling remotes).
+ORIGIN_URL=$(git remote get-url origin 2>/dev/null || true)
+if [[ -z "$ORIGIN_URL" ]]; then
+  echo "Error: 'origin' remote is not configured." >&2
+  exit 1
+fi
+# Normalise SSH (git@github.com:owner/repo[.git]) and HTTPS
+# (https://github.com/owner/repo[.git]) into owner/repo.
+GH_REPO=$(printf '%s\n' "$ORIGIN_URL" \
+  | sed -E 's#^git@github\.com:#https://github.com/#' \
+  | sed -E 's#^https://github\.com/##; s#\.git$##')
+if [[ ! "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "Error: could not derive owner/repo from origin URL '${ORIGIN_URL}'." >&2
+  exit 1
+fi
+export GH_REPO
+
 if ! jq --version &>/dev/null; then
   echo "Error: jq is required. Install with: brew install jq" >&2
   exit 1
@@ -285,4 +304,4 @@ echo ""
 echo "Done!"
 echo "  PR:       ${PR_URL}"
 echo "  Tag:      ${TAG}"
-echo "  Release:  https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/${TAG}"
+echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${TAG}"
