@@ -183,7 +183,9 @@ class TestSyncAndVerifyEvalSafety:
         no_hooks.mkdir(exist_ok=True)  # don't rely on git_repo fixture side-effect
 
         subprocess.run(
-            ["git", "clone", str(tmp_path / "origin.git"), str(clone)],
+            # --branch main: force HEAD checkout regardless of bare repo's default branch
+            # (CI runners may have a bare repo whose HEAD defaults to 'master').
+            ["git", "clone", "--branch", "main", str(tmp_path / "origin.git"), str(clone)],
             check=True,
             capture_output=True,
             env=_CLEAN_ENV,
