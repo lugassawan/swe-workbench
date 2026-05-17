@@ -21,6 +21,7 @@
 | `/swe-workbench:audit-codebase [--time-box <dur>] [--scope <list>] [--depth <quick\|standard\|deep>]` | Cold-start, time-boxed, multi-domain defect sweep — ranked findings with reasoning chains. Use for take-home assessments, post-acquisition reviews, and tech-debt sweeps. |
 | `/swe-workbench:codebase-knowledge [path]` | Present a structured knowledge document (architecture overview, module map, public API surfaces, patterns). Read-only, understanding-oriented. Distinct from `/audit-codebase` (defect detection) and `/document` (prose-doc generation). |
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
+| `/swe-workbench:doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of findings. |
 
 ## Subagents
 
