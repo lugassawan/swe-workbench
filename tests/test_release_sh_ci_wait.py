@@ -9,13 +9,13 @@ Bug B: GitHub's GraphQL mergeCommit.oid is eventually consistent after a squash 
        The original single-shot read can return null, making MERGE_SHA="" and triggering
        a false "tamper" abort — PR merged, version bumped, no tag pushed.
 """
+
 import re
 import subprocess
 import textwrap
 from pathlib import Path
 
 import pytest
-
 from conftest import _CLEAN_ENV
 
 RELEASE_SH = Path(__file__).parent.parent / "scripts" / "release.sh"
@@ -42,7 +42,7 @@ _GUARD_SNIPPET = textwrap.dedent("""\
     set -euo pipefail
     TOTAL=0; PENDING=0; FAILED=0
     set +e
-    CHECKS_JSON=$(gh pr checks "42" --json state,conclusion 2>/dev/null)
+    CHECKS_JSON=$(gh pr checks "42" --json bucket 2>/dev/null)
     CHECKS_RC=$?
     set -e
 
@@ -57,8 +57,8 @@ _GUARD_SNIPPET = textwrap.dedent("""\
     fi
 
     TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
-    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length')
-    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
+    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "pending")] | length')
+    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length')
 
     if [[ "$TOTAL" -eq 0 ]]; then
       exit 2
@@ -117,12 +117,54 @@ class TestBugAStatic:
         # Match lines where `gh pr checks` is part of a command substitution or
         # direct invocation — not a string literal in an echo/log statement.
         calls = [
-            ln for ln in _script_lines()
-            if re.search(r'\$\(gh pr checks\b|^\s*gh pr checks\b', ln)
+            ln
+            for ln in _script_lines()
+            if re.search(r"\$\(gh pr checks\b|^\s*gh pr checks\b", ln)
             and not _is_comment(ln)
         ]
         assert len(calls) == 1, (
             f"Expected exactly 1 'gh pr checks' invocation, found {len(calls)}: {calls}"
+        )
+
+    def test_gh_pr_checks_json_fields_are_gh_recognised(self):
+        """Every --json field passed to 'gh pr checks' must be in gh's documented whitelist.
+
+        gh pr checks --json only accepts: bucket, completedAt, description, event,
+        link, name, startedAt, state, workflow.  Passing an unrecognised field (e.g.
+        'conclusion', which belongs to 'gh pr view --json statusCheckRollup') causes
+        gh to exit rc=1, which the retry wrapper then launders as a transient error,
+        looping until the 20-minute timeout.
+        """
+        _GH_PR_CHECKS_JSON_WHITELIST = {
+            "bucket",
+            "completedAt",
+            "description",
+            "event",
+            "link",
+            "name",
+            "startedAt",
+            "state",
+            "workflow",
+        }
+        matched = False
+        for line in _script_lines():
+            if _is_comment(line):
+                continue
+            m = re.search(r'gh pr checks\b.*?--json\s+([^\s"\']+)', line)
+            if not m:
+                continue
+            matched = True
+            for field in m.group(1).split(","):
+                field = field.strip()
+                assert field in _GH_PR_CHECKS_JSON_WHITELIST, (
+                    f"Invalid --json field {field!r} in 'gh pr checks' call.\n"
+                    f"  Line: {line.strip()!r}\n"
+                    f"  gh pr checks only accepts: {sorted(_GH_PR_CHECKS_JSON_WHITELIST)}"
+                )
+        assert matched, (
+            "No 'gh pr checks --json <fields>' invocation found in release.sh; "
+            "test_gh_pr_checks_called_exactly_once confirms a call exists — "
+            "this regex must also match it (check for line-continuation refactors)"
         )
 
 
@@ -144,48 +186,55 @@ class TestBugADynamic:
         gh.chmod(0o755)
 
     def test_happy_path_clean(self, tmp_path):
-        """rc=0, all SUCCESS → exit 0 (proceed to merge)."""
+        """rc=0, all pass buckets → exit 0 (proceed to merge)."""
         self._make_gh_stub(
             tmp_path,
-            'printf \'[{"state":"COMPLETED","conclusion":"SUCCESS"}]\'; exit 0',
+            'printf \'[{"bucket":"pass"}]\'; exit 0',
         )
         assert self._run(tmp_path).returncode == 0
 
     def test_rc0_pending_yields_pending_branch(self, tmp_path):
-        """rc=0, IN_PROGRESS check → exit 2 (still polling)."""
+        """rc=0, pending bucket → exit 2 (still polling)."""
         self._make_gh_stub(
             tmp_path,
-            'printf \'[{"state":"IN_PROGRESS","conclusion":null}]\'; exit 0',
+            'printf \'[{"bucket":"pending"}]\'; exit 0',
         )
         assert self._run(tmp_path).returncode == 2
 
     def test_rc8_failed_checks_routed_to_failed_branch(self, tmp_path):
-        """rc=8 (gh-documented 'at least one check failed') → exit 1, stderr."""
+        """rc=8 (gh-documented 'at least one check failed') + fail bucket → exit 1, stderr."""
         self._make_gh_stub(
             tmp_path,
-            'printf \'[{"state":"COMPLETED","conclusion":"FAILURE"}]\'; exit 8',
+            'printf \'[{"bucket":"fail"}]\'; exit 8',
         )
         result = self._run(tmp_path)
         assert result.returncode == 1
         assert "CI check(s) failed" in result.stderr
 
     def test_transient_then_recovers(self, tmp_path):
-        """Call 1 rc=1 (transient) → exit 3; call 2 rc=0+SUCCESS → exit 0."""
+        """Call 1 rc=1 (transient) → exit 3; call 2 rc=0+pass bucket → exit 0."""
         count_file = tmp_path / "count"
         count_file.write_text("0")
-        self._make_gh_stub(tmp_path, textwrap.dedent(f"""\
+        self._make_gh_stub(
+            tmp_path,
+            textwrap.dedent(f"""\
             COUNT=$(cat {count_file} 2>/dev/null || echo 0)
             COUNT=$((COUNT + 1))
             printf '%d\\n' "$COUNT" > {count_file}
             if [ "$COUNT" -eq 1 ]; then exit 1; fi
-            printf '[{{"state":"COMPLETED","conclusion":"SUCCESS"}}]'
+            printf '[{{"bucket":"pass"}}]'
             exit 0
-        """))
+        """),
+        )
         r1 = self._run(tmp_path)
-        assert r1.returncode == 3, f"Expected 3 (transient) on call 1, got {r1.returncode}"
+        assert r1.returncode == 3, (
+            f"Expected 3 (transient) on call 1, got {r1.returncode}"
+        )
         assert "transient" in r1.stderr
         r2 = self._run(tmp_path)
-        assert r2.returncode == 0, f"Expected 0 (recovered) on call 2, got {r2.returncode}"
+        assert r2.returncode == 0, (
+            f"Expected 0 (recovered) on call 2, got {r2.returncode}"
+        )
 
     def test_empty_checks_array_treated_as_pending(self, tmp_path):
         """rc=0, empty array [] → TOTAL=0 → exit 2 (still polling, not a green merge)."""
@@ -194,10 +243,43 @@ class TestBugADynamic:
 
     def test_rc8_empty_output_treated_as_transient(self, tmp_path):
         """rc=8 with no stdout → treated as transient (exit 3), not silent-pending."""
-        self._make_gh_stub(tmp_path, 'exit 8')
+        self._make_gh_stub(tmp_path, "exit 8")
         result = self._run(tmp_path)
         assert result.returncode == 3
         assert "transient" in result.stderr
+
+    def test_bucket_fail_routes_to_failure(self, tmp_path):
+        """rc=0 with bucket=fail → exit 1 (CI-failed branch, not transient)."""
+        self._make_gh_stub(
+            tmp_path,
+            'printf \'[{"bucket":"fail"}]\'; exit 0',
+        )
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert "CI check(s) failed" in result.stderr
+
+    def test_bucket_pass_all_green_routes_to_merge(self, tmp_path):
+        """rc=0 with two pass buckets → exit 0 (proceed to merge)."""
+        self._make_gh_stub(
+            tmp_path,
+            'printf \'[{"bucket":"pass"},{"bucket":"pass"}]\'; exit 0',
+        )
+        assert self._run(tmp_path).returncode == 0
+
+    def test_bucket_cancel_routes_to_failure(self, tmp_path):
+        """rc=0 with bucket=cancel → exit 1 (treated as failure, not transient).
+
+        A manually cancelled check is treated conservatively as release-blocking,
+        not as a retriable transient. This prevents silent green merges when a
+        required check was cancelled mid-flight.
+        """
+        self._make_gh_stub(
+            tmp_path,
+            'printf \'[{"bucket":"cancel"}]\'; exit 0',
+        )
+        result = self._run(tmp_path)
+        assert result.returncode == 1
+        assert "CI check(s) failed" in result.stderr
 
 
 # ─── Bug B: static tests ──────────────────────────────────────────────────────
@@ -218,15 +300,17 @@ class TestBugBStatic:
         assert pull_idx is not None, "git pull --ff-only not found in release.sh"
 
         while_idx = next(
-            (i for i, ln in enumerate(lines)
-             if i > pull_idx and re.search(r'while\s+\[\[.*POLL_ELAPSED', ln)),
+            (
+                i
+                for i, ln in enumerate(lines)
+                if i > pull_idx and re.search(r"while\s+\[\[.*POLL_ELAPSED", ln)
+            ),
             None,
         )
         assert while_idx is not None, "POLL_ELAPSED while loop not found after git pull"
 
         done_idx = next(
-            (i for i, ln in enumerate(lines)
-             if i > while_idx and ln.strip() == "done"),
+            (i for i, ln in enumerate(lines) if i > while_idx and ln.strip() == "done"),
             None,
         )
         assert done_idx is not None, "Closing 'done' for POLL_ELAPSED loop not found"
@@ -239,7 +323,9 @@ class TestBugBStatic:
                     f"loop (while={while_idx + 1}, done={done_idx + 1})"
                 )
                 return
-        pytest.fail("No non-comment 'gh pr view ... mergeCommit' line found in release.sh")
+        pytest.fail(
+            "No non-comment 'gh pr view ... mergeCommit' line found in release.sh"
+        )
 
 
 # ─── Bug B: dynamic tests ─────────────────────────────────────────────────────
@@ -248,7 +334,9 @@ class TestBugBStatic:
 class TestBugBDynamic:
     """Dynamic: bounded poll handles empty-then-populated and persistent-empty."""
 
-    def _run_poll(self, stub_dir: Path, timeout: int = 9) -> subprocess.CompletedProcess:
+    def _run_poll(
+        self, stub_dir: Path, timeout: int = 9
+    ) -> subprocess.CompletedProcess:
         # timeout=9: 3 ticks × 3 s/tick — enough for call-3-succeeds tests, fast with stubbed sleep
         sleep_stub = stub_dir / "sleep"
         sleep_stub.write_text("#!/bin/sh\nexit 0\n")
@@ -267,14 +355,16 @@ class TestBugBDynamic:
         count_file = tmp_path / "count"
         count_file.write_text("0")
         gh = tmp_path / "gh"
-        gh.write_text(textwrap.dedent(f"""\
+        gh.write_text(
+            textwrap.dedent(f"""\
             #!/bin/sh
             COUNT=$(cat {count_file} 2>/dev/null || echo 0)
             COUNT=$((COUNT + 1))
             printf '%d\\n' "$COUNT" > {count_file}
             if [ "$COUNT" -ge 3 ]; then printf 'abc123'; fi
             exit 0
-        """))
+        """)
+        )
         gh.chmod(0o755)
         result = self._run_poll(tmp_path, timeout=9)
         assert result.returncode == 0, f"stderr: {result.stderr}"
