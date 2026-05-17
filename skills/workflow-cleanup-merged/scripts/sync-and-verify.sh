@@ -19,8 +19,9 @@ cd "$MAIN_REPO"
 # advance the local ref instead of checkout+pull.
 if git config --get core.bare 2>/dev/null | grep -q '^true$'; then
   # git fetch does not fire post-merge, so WORKTREE_GONE=1 via the hook fast-path
-  # is not achievable in bare-repo layout. Block C will always get WORKTREE_GONE=0
-  # and fall through to the rimba-binary or shell removal strategy.
+  # is not achievable in bare-repo layout. Block C may still yield WORKTREE_GONE=1
+  # if the worktree and branch were already removed by other means; otherwise it
+  # falls through to the rimba-binary or shell removal strategy.
   git fetch --quiet origin "+refs/heads/${DEFAULT_BRANCH}:refs/heads/${DEFAULT_BRANCH}" 2>/dev/null \
     || echo "sync-main: best-effort failed — reconcile ${DEFAULT_BRANCH} manually" >&2
 else
