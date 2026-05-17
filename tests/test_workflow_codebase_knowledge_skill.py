@@ -100,7 +100,6 @@ def test_when_not_to_invoke_references_document_or_tech_writer():
     references_doc = (
         "/swe-workbench:document" in section
         or "tech-writer" in section
-        or "document" in section.lower()
     )
     assert references_doc, (
         "'## When NOT to invoke' must reference '/swe-workbench:document' or "
@@ -120,7 +119,6 @@ def test_description_or_not_invoke_references_tech_writer_or_document():
     assert (
         "tech-writer" in combined
         or "/swe-workbench:document" in combined
-        or "document" in combined.lower()
     ), (
         "SKILL.md must mention '/swe-workbench:document' or 'tech-writer' "
         "in the description or ## When NOT to invoke to complete the differentiation contract"

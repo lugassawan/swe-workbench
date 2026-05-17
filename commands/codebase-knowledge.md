@@ -9,7 +9,7 @@ Produce a structured knowledge document for this codebase.
 
 From `$ARGUMENTS`, extract:
 
-- **Optional path** — any path token (relative or absolute). If present, scope all phases to that path and its descendants. If absent, use the repo root.
+- **Optional path** — a token is treated as a path if it contains `/`, starts with `.`, or matches an existing directory in the repo; otherwise treat the entire argument string as natural-language context with no path scoping. If a path is identified, scope all phases to that path and its descendants; if absent, use the repo root.
 - **Ticket ref** — scan first: any token matching `#\d+`, `[A-Z]+-\d+`, or an `atlassian.net`/GitHub URL is a ticket ref. Collect the first match and remove it from the remaining argument string before further parsing; ignore if none.
 
 ## Step 2 — Ticket context (when a ref is present)
