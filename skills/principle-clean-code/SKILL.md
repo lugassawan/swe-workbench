@@ -51,7 +51,7 @@ The second caller is not required. The boundary is.
 ## Boy Scout Rule — scope-bounded
 *Leave the code slightly better than you found it — within the diff under review.*
 - **Fair game** — rename a poorly named variable, extract a multi-line condition, remove a dead comment — inside files already touched by the PR.
-- **Not fair game** — repo-wide renames or refactors triggered by noticing unrelated code; those belong in a dedicated `principle-refactoring` session.
+- **Not fair game** — repo-wide renames or refactors triggered by noticing unrelated code; those belong in a dedicated refactoring session.
 - **Compound improvements compound reviews** — unbounded cleanup in a feature branch obscures intent and inflates diff size.
 - **Commit granularity** — if the cleanup is significant, isolate it in a separate commit so reviewers can approve or skip it independently.
 
