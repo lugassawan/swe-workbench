@@ -1,16 +1,12 @@
 """
 Tests for scripts/setup.sh — subprocess-based so they exercise the real POSIX sh logic.
 """
-import os
 import subprocess
 from pathlib import Path
 
-SETUP_SH = Path(__file__).parent.parent / "scripts" / "setup.sh"
+from conftest import _CLEAN_ENV
 
-# Strip GIT_* vars so hook-context env doesn't leak into ephemeral test repos.
-# When tests run inside a git pre-push hook, GIT_DIR points to the host repo —
-# setup.sh's `git rev-parse` would then target the host instead of tmp_path.
-_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+SETUP_SH = Path(__file__).parent.parent / "scripts" / "setup.sh"
 
 
 def _run_setup(tmp_path: Path) -> subprocess.CompletedProcess:

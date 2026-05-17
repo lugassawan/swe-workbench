@@ -4,7 +4,6 @@ Regression tests for the GH_REPO export in scripts/release.sh.
 Guards against "No default remote repository has been set" failures
 on multi-remote clones (e.g. after `gh repo fork` adds sibling remotes).
 """
-import os
 import re
 import shlex
 import shutil
@@ -12,6 +11,8 @@ import subprocess
 import tempfile
 import textwrap
 from pathlib import Path
+
+from conftest import _CLEAN_ENV
 
 RELEASE_SH = Path(__file__).parent.parent / "scripts" / "release.sh"
 
@@ -103,7 +104,7 @@ class TestExtractionRoundTrip:
                 f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(fake_url)}\n"
             )
             stub.chmod(0o755)
-            env = {**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"}
+            env = {**_CLEAN_ENV, "PATH": f"{stub_dir}:{_CLEAN_ENV.get('PATH', '')}"}
             result = subprocess.run(
                 ["bash", "-c", self._SNIPPET],
                 capture_output=True,
