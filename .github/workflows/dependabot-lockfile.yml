@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Cancel in-progress runs when Dependabot pushes a new commit — only the
+# latest lockfile state matters, so stale runs are safe to discard.
+concurrency:
+  group: dependabot-lockfile-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   regen-lockfiles:
     runs-on: ubuntu-latest
