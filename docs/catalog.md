@@ -4,7 +4,7 @@
 
 | Command | Purpose |
 |---|---|
-| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests) or auto-inferred from the diff when omitted. PR number arg unchanged. |
+| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests\|contributor-trust>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests, contributor-trust) or auto-inferred from the diff when omitted. PR number arg unchanged. |
 | `/swe-workbench:security-review` | Depth-first security audit of the current diff — OWASP Top 10, secrets, insecure APIs, dependency CVEs. Pass a PR number to audit a specific PR. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:architect <decision>` | Author an ADR, RFC, or cross-service contract via the architect subagent. Use when the output must be a written decision record — service decomposition, multi-system tech selection, cross-team contract — not advice about existing code. |
@@ -29,6 +29,7 @@
 | `accessibility-auditor` | Depth-first WCAG 2.2 AA review of frontend diffs — ARIA misuse, keyboard traps, focus mismanagement, color contrast. Invoked by `/swe-workbench:review --mode a11y`. |
 | `architect` | Authoring ADRs, RFCs, and cross-service contracts for decisions that predate any codebase — service decomposition, multi-system tech selection, cross-team contract. Prefer over `senior-engineer` when the output must be a durable written artifact, not advice about existing code. Invoked by `/swe-workbench:architect`. |
 | `auditor` | Cold-start, time-boxed, multi-domain audit sweep — security, performance, reliability, tooling, testing. Invoked by `/swe-workbench:audit-codebase`. |
+| `contributor-auditor` | Triaging external PRs for author signal, diff-shape coherence, repo posture, and pattern-risk signals before merge. Advisory only — never posts to the PR. Invoked by `/swe-workbench:review --mode contributor-trust`. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
