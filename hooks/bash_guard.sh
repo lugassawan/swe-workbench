@@ -20,12 +20,12 @@ if ! cmd=$(jq -r '.tool_input.command // ""'); then
 fi
 
 case "$cmd" in
-  rm\ *|*\ rm\ *|*\(rm\ *|*git*) ;;
+  rm\ *|*\ rm\ *|*\(*rm\ *|*git*) ;;
   *)                              exit 0 ;;
 esac
 
-# Strip quotes so quoted paths cannot bypass the rm regex.
-norm=$(printf '%s' "$cmd" | tr -d "'\"")
+# Strip quotes and subshell parens so they cannot mask the rm command or path.
+norm=$(printf '%s' "$cmd" | tr -d "'\"()")
 
 # shellcheck disable=SC2016  # $HOME in single quotes is intentional: matches literal text, not the shell variable
 # [rR] covers both -rf and -Rf (BSD/macOS rm accepts -R as synonym for -r).

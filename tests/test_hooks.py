@@ -65,6 +65,8 @@ class TestRmRfBlocker:
         "rm -rf '/home/foo'",
         "rm -Rf /Users/foo",
         "rm -RF /Users/foo",
+        "(rm -rf /)",
+        "((rm -rf /))",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
