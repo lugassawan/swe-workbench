@@ -270,9 +270,11 @@ class TestSyncAndVerifyEvalSafety:
 
         # Guard: eval_cwd and SCRIPT paths must not contain double-quotes,
         # which would break the inline bash string we build below.
-        assert '"' not in str(eval_cwd) and '"' not in str(SCRIPT), (
-            f"Path contains double-quote — inline bash string will break.\n"
-            f"eval_cwd={eval_cwd}, SCRIPT={SCRIPT}"
+        assert (
+            '"' not in str(eval_cwd) and '"' not in str(SCRIPT) and '"' not in BRANCH
+        ), (
+            f"Path or branch contains double-quote — inline bash string will break.\n"
+            f"eval_cwd={eval_cwd}, SCRIPT={SCRIPT}, BRANCH={BRANCH}"
         )
 
         # Capture BEFORE cd-ing to eval_cwd: the script needs a valid git cwd
@@ -282,12 +284,15 @@ class TestSyncAndVerifyEvalSafety:
             f'cd "{eval_cwd}"; '
             f'eval "$output" 2>/dev/null || true'
         )
-        subprocess.run(
+        result = subprocess.run(
             ["bash", "-c", runner],
             cwd=str(git_repo),
             capture_output=True,
             text=True,
             env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, (
+            f"bash runner failed (rc={result.returncode}):\n{result.stderr}"
         )
 
         assert not (eval_cwd / "FETCH_HEAD").exists(), (
