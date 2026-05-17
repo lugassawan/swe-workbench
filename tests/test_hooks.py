@@ -213,8 +213,8 @@ class TestShortCircuit:
                 f'#!/bin/sh\necho "{tool}" >> "{trace}"\nexec "{real}" "$@"\n'
             )
             shim.chmod(0o755)
-        env = os.environ.copy()
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        env = dict(_CLEAN_ENV)
+        env["PATH"] = f"{bin_dir}:{_CLEAN_ENV.get('PATH', '')}"
         run_guard(script, cmd, env=env)
         return trace.read_text() if trace.exists() else ""
 

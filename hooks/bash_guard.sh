@@ -2,7 +2,7 @@
 # PreToolUse:Bash guard — block destructive commands and short-circuit safe ones.
 #
 # Blocks:
-#   - rm -rf against /, ~, $HOME (literal or shell-expanded /Users/*|/home/*)
+#   - rm -rf against /, /*, ~, $HOME, /Users[/<user>], /home[/<user>]
 #   - git push --force / -f to main/master
 #   - git reset --hard on main/master/release/*
 #
@@ -10,15 +10,18 @@
 # "git". This is the common case (ls, cat, echo, make, npm, …) and removes the
 # per-call grep tax flagged in #233.
 #
-# Out of scope: ${HOME} brace-form; path normalization via .. traversal.
+# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal.
 
 set -u
 
-cmd=$(jq -r '.tool_input.command // ""')
+if ! cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null); then
+  echo 'bash_guard: jq parse error — blocking by default' >&2
+  exit 2
+fi
 
 case "$cmd" in
-  *rm*|*git*) ;;
-  *)          exit 0 ;;
+  rm\ *|*\ rm\ *|*git*) ;;
+  *)                    exit 0 ;;
 esac
 
 # Strip quotes so quoted paths cannot bypass the rm regex.
