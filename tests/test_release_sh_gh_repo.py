@@ -7,6 +7,7 @@ on multi-remote clones (e.g. after `gh repo fork` adds sibling remotes).
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -68,10 +69,11 @@ class TestNoOrphanCalls:
         )
         assert export_idx is not None, "export GH_REPO not found in release.sh"
 
+        export_lineno = export_idx + 1
         orphans = [
             (lineno, ln.strip())
             for lineno, ln in _gh_call_lines(lines)
-            if lineno <= export_idx + 1
+            if lineno < export_lineno
         ]
 
         assert orphans == [], (
@@ -111,7 +113,6 @@ class TestExtractionRoundTrip:
             assert result.returncode == 0, f"snippet failed: {result.stderr}"
             return result.stdout.strip()
         finally:
-            import shutil
             shutil.rmtree(stub_dir, ignore_errors=True)
 
     def test_ssh_url_with_git_suffix(self):
