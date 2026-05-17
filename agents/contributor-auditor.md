@@ -60,7 +60,7 @@ Assess whether the repo's protection rules are in place to act as a safety net r
 
 Assess whether this PR fits known low-trust contribution patterns:
 
-- **First PR from this author in this repo** — `gh api "/repos/<O>/<R>/pulls?state=all&per_page=100" | jq '[.[] | select(.user.login == "<login>")] | length'`. Count = 1 (this PR only) → flag as first contribution. If the result contains exactly 100 items (page saturated), paginate with `&page=2` before concluding; a capped result must not be reported as "only 100 PRs" without checking.
+- **First PR from this author in this repo** — fetch the raw page first, check its length against the page cap, then filter: `gh api "/repos/<O>/<R>/pulls?state=all&per_page=100" | jq --arg l "<login>" 'if length == 100 then error("page saturated") else [.[] | select(.user.login == $l)] | length end'`. If the raw page contains exactly 100 items the repo has more PRs than fit on one page — fetch `&page=2` (and beyond) and merge before filtering. The saturation guard must be applied to the raw page length, not to the per-user filtered count, which will almost never reach 100.
 - **Tiny innocuous PR before a larger follow-up** — when prior PR count ≤ 1, note the pattern: a minimal change establishing contributor status can precede a more impactful follow-up.
 - **Contributor's only public activity is this PR** — cross-reference the author signal lens. If `public_repos = 0` AND `author_association = FIRST_TIME_CONTRIBUTOR` AND recent events show only this PR → flag as isolated-activity contributor.
 - **Diff touches supply-chain surfaces** — even small PRs that add a dependency, modify build scripts, or change CI configuration warrant elevated scrutiny regardless of author trust.
