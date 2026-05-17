@@ -70,13 +70,15 @@ Also check CLAUDE.md for project-specific conventions.
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
 | `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
 
+> **`quality-command` fallback** is in the table below — intentionally separate because Quality is multi-tool by nature and a single cell would be unreadably wide.
+
 **Quality stage fallback (multi-tool — wire whichever subset the project enforces):**
 
 | Marker | Tool examples (complexity • duplication • length / maintainability) |
 |--------|---------------------------------------------------------------------|
 | `go.mod` | `gocyclo -over 15 .` • `dupl -t 50 ./...` • `gocognit -over 15 .` |
-| `package.json` | `eslint` with `eslint-plugin-sonarjs` • `jscpd` • `plato` (maintainability index; or use `eslint` `complexity` rule) |
-| `Cargo.toml` | `cargo clippy -- -W clippy::cognitive_complexity` • (duplication: no first-party tool; use `simian` cross-language) • `cargo clippy -- -W clippy::too_many_lines` (per-function length; no file-level enforcer in first-party Rust) |
+| `package.json` | `eslint` with `eslint-plugin-sonarjs` • `jscpd` • `es6-plato` (maintainability index; maintained fork of plato, Node 18+ compatible) |
+| `Cargo.toml` | `cargo clippy -- -W clippy::cognitive_complexity` • (duplication: no OSS first-party tool; `jscpd` covers cross-language including Rust; `simian` is cross-language but commercial) • `cargo clippy -- -W clippy::too_many_lines` (per-function length; no file-level enforcer in first-party Rust) |
 | `pyproject.toml` | `radon cc -n B -s` (grade ≥ B = complexity ≥ 6) and `lizard -CCN 15 -L 50` • `pylint --disable=all --enable=duplicate-code` • `radon mi -n B` |
 | `pom.xml` | `mvn pmd:check` • `mvn pmd:cpd-check` • `checkstyle` (FileLengthCheck, MethodLengthCheck) |
 
