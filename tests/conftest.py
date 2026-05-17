@@ -20,9 +20,10 @@ import pytest
 # Usage:
 #   subprocess.run([...], env=_CLEAN_ENV, ...)
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
-_clean: dict[str, str] = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-_clean["GIT_CONFIG_NOSYSTEM"] = "1"
-_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(_clean)
+_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    | {"GIT_CONFIG_NOSYSTEM": "1"}
+)
 
 # Ensure scripts/ and tests/ are importable from any working directory.
 _HERE = Path(__file__).parent

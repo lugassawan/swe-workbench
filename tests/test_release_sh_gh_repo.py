@@ -104,7 +104,7 @@ class TestExtractionRoundTrip:
                 f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(fake_url)}\n"
             )
             stub.chmod(0o755)
-            env = {**_CLEAN_ENV, "PATH": f"{stub_dir}:{_CLEAN_ENV['PATH']}"}
+            env = {**_CLEAN_ENV, "PATH": f"{stub_dir}:{_CLEAN_ENV.get('PATH', '')}"}
             result = subprocess.run(
                 ["bash", "-c", self._SNIPPET],
                 capture_output=True,
