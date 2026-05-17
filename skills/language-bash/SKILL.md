@@ -117,6 +117,7 @@ cd "$eval_cwd" && eval "$(bash script.sh arg 2>&1)"
 # Correct — capture first, then move, then eval:
 output="$(bash script.sh arg 2>&1)"; cd "$eval_cwd"; eval "$output"
 ```
+  Under `set -e`, check `$?` after the capture step before eval-ing — a non-zero exit from the subshell leaves `$output` empty or partial and `eval "$output"` silently no-ops.
 
 ## Avoid
 - Backtick substitution `` `cmd` `` — use `$(cmd)`.

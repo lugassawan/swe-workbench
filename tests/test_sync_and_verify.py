@@ -218,7 +218,10 @@ class TestSyncAndVerifyEvalSafety:
             env=_CLEAN_ENV,
         )
         subprocess.run(
-            ["git", "push", "origin", "main"],
+            # HEAD:main — robust to CI runners where the bare repo's HEAD
+            # defaults to `master`, leaving the clone without a local `main`
+            # branch; this pushes whatever is checked out to origin/main.
+            ["git", "push", "origin", "HEAD:main"],
             cwd=str(clone),
             check=True,
             capture_output=True,
@@ -240,13 +243,18 @@ class TestSyncAndVerifyEvalSafety:
         # are already in sync, the test would be vacuous.
         # Note: we use ls-remote (not rev-list HEAD..origin/main) because we
         # haven't fetched yet — origin/main tracking ref is stale locally.
-        origin_sha = subprocess.run(
+        ls_remote_out = subprocess.run(
             ["git", "ls-remote", "origin", "refs/heads/main"],
             cwd=str(git_repo),
             capture_output=True,
             text=True,
             env=_CLEAN_ENV,
-        ).stdout.split()[0]
+        ).stdout.split()
+        assert ls_remote_out, (
+            "ls-remote returned no output for refs/heads/main — "
+            "origin has no main branch; fixture setup failed."
+        )
+        origin_sha = ls_remote_out[0]
         local_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(git_repo),
@@ -258,6 +266,13 @@ class TestSyncAndVerifyEvalSafety:
             f"Pre-condition: origin/main ({origin_sha}) must be ahead of "
             f"local HEAD ({local_sha}). git pull won't fetch — the "
             f"'-> FETCH_HEAD' tracking line won't appear and the test is vacuous."
+        )
+
+        # Guard: eval_cwd and SCRIPT paths must not contain double-quotes,
+        # which would break the inline bash string we build below.
+        assert '"' not in str(eval_cwd) and '"' not in str(SCRIPT), (
+            f"Path contains double-quote — inline bash string will break.\n"
+            f"eval_cwd={eval_cwd}, SCRIPT={SCRIPT}"
         )
 
         # Capture BEFORE cd-ing to eval_cwd: the script needs a valid git cwd
