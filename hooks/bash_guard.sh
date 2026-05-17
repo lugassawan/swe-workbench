@@ -14,14 +14,14 @@
 
 set -u
 
-if ! cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null); then
+if ! cmd=$(jq -r '.tool_input.command // ""'); then
   echo 'bash_guard: jq parse error — blocking by default' >&2
   exit 2
 fi
 
 case "$cmd" in
-  rm\ *|*\ rm\ *|*git*) ;;
-  *)                    exit 0 ;;
+  rm\ *|*\ rm\ *|*\(rm\ *|*git*) ;;
+  *)                              exit 0 ;;
 esac
 
 # Strip quotes so quoted paths cannot bypass the rm regex.
