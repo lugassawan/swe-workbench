@@ -210,10 +210,13 @@ else
       continue
     fi
 
+    TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
     PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length')
     FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
 
-    if [[ "$PENDING" -eq 0 ]]; then
+    if [[ "$TOTAL" -eq 0 ]]; then
+      : # No checks registered yet — treat as pending and continue polling
+    elif [[ "$PENDING" -eq 0 ]]; then
       if [[ "$FAILED" -gt 0 ]]; then
         echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
         echo "Fix the failures at: ${PR_URL}" >&2
@@ -282,6 +285,7 @@ POLL_ELAPSED=0
 while [[ $POLL_ELAPSED -lt $POLL_TIMEOUT ]]; do
   MERGE_SHA=$(gh pr view "$PR_NUM" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || true)
   [[ -n "$MERGE_SHA" ]] && break
+  echo "[$(date '+%H:%M:%S')] mergeCommit.oid not yet available (${POLL_ELAPSED}s elapsed); retrying..."
   sleep 3
   POLL_ELAPSED=$((POLL_ELAPSED + 3))
 done

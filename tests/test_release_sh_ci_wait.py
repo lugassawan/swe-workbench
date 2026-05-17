@@ -11,7 +11,6 @@ Bug B: GitHub's GraphQL mergeCommit.oid is eventually consistent after a squash 
 """
 import re
 import subprocess
-import tempfile
 import textwrap
 from pathlib import Path
 
@@ -106,15 +105,15 @@ class TestBugAStatic:
             )
 
     def test_gh_pr_checks_called_exactly_once(self):
-        # Exclude echo/printf lines — those are log messages, not invocations.
+        # Match lines where `gh pr checks` is part of a command substitution or
+        # direct invocation — not a string literal in an echo/log statement.
         calls = [
             ln for ln in _script_lines()
-            if "gh pr checks" in ln
+            if re.search(r'\$\(gh pr checks\b|^\s*gh pr checks\b', ln)
             and not _is_comment(ln)
-            and not ln.lstrip().startswith(("echo ", "printf "))
         ]
         assert len(calls) == 1, (
-            f"Expected exactly 1 non-comment 'gh pr checks' invocation, found {len(calls)}: {calls}"
+            f"Expected exactly 1 'gh pr checks' invocation, found {len(calls)}: {calls}"
         )
 
 
@@ -188,15 +187,33 @@ class TestBugBStatic:
 
     def test_mergecommit_in_poll_loop(self):
         lines = _script_lines()
+
+        # Find the POLL_ELAPSED while-loop boundaries (the first one after git pull)
+        pull_idx = next(
+            (i for i, ln in enumerate(lines) if "git pull --ff-only" in ln), None
+        )
+        assert pull_idx is not None, "git pull --ff-only not found in release.sh"
+
+        while_idx = next(
+            (i for i, ln in enumerate(lines)
+             if i > pull_idx and re.search(r'while\s+\[\[.*POLL_ELAPSED', ln)),
+            None,
+        )
+        assert while_idx is not None, "POLL_ELAPSED while loop not found after git pull"
+
+        done_idx = next(
+            (i for i, ln in enumerate(lines)
+             if i > while_idx and ln.strip() == "done"),
+            None,
+        )
+        assert done_idx is not None, "Closing 'done' for POLL_ELAPSED loop not found"
+
+        # Assert the mergeCommit retrieval falls inside the loop boundaries
         for i, line in enumerate(lines):
             if "mergeCommit" in line and "gh pr view" in line and not _is_comment(line):
-                # The retrieval is inside the while loop, so look slightly before and after
-                window = lines[max(0, i - 5) : i + 10]
-                has_while = any("while" in ln for ln in window)
-                has_sleep = any("sleep" in ln for ln in window)
-                assert has_while and has_sleep, (
-                    f"mergeCommit query at line {i + 1} is not inside a poll loop "
-                    f"(while={has_while}, sleep={has_sleep})"
+                assert while_idx < i < done_idx, (
+                    f"mergeCommit query at line {i + 1} is outside the POLL_ELAPSED "
+                    f"loop (while={while_idx + 1}, done={done_idx + 1})"
                 )
                 return
         pytest.fail("No non-comment 'gh pr view ... mergeCommit' line found in release.sh")
