@@ -201,7 +201,7 @@ else
     fi
 
     set +e
-    CHECKS_JSON=$(gh pr checks "$PR_NUM" --json state,conclusion 2>/dev/null)
+    CHECKS_JSON=$(gh pr checks "$PR_NUM" --json bucket 2>/dev/null)
     CHECKS_RC=$?
     set -e
 
@@ -220,8 +220,8 @@ else
     fi
 
     TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
-    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length')
-    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
+    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "pending")] | length')
+    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length')
 
     if [[ "$TOTAL" -eq 0 ]]; then
       : # No checks registered yet — treat as pending and continue polling
