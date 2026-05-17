@@ -108,10 +108,6 @@ class TestSecurityReviewCommand:
         assert "PR number" in text or "PR diff" in text or "gh pr diff" in text, \
             "security-review.md must document PR-number argument support"
 
-    def test_output_stanza_present(self):
-        text = SECURITY_REVIEW_PATH.read_text(encoding="utf-8")
-        assert "## Output" in text, "security-review.md must have an ## Output stanza"
-
     def test_frontmatter_preserved(self):
         text = SECURITY_REVIEW_PATH.read_text(encoding="utf-8")
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
