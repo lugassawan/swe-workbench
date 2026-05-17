@@ -6,7 +6,9 @@ on multi-remote clones (e.g. after `gh repo fork` adds sibling remotes).
 """
 import os
 import re
+import shlex
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -48,8 +50,9 @@ class TestExportOrdering:
         assert gh_calls, "No non-comment 'gh pr' or 'gh repo' call found in release.sh"
 
         first_gh_lineno, _ = gh_calls[0]
-        assert export_idx + 1 < first_gh_lineno, (
-            f"export GH_REPO (line {export_idx + 1}) must come before "
+        export_lineno = export_idx + 1
+        assert export_lineno < first_gh_lineno, (
+            f"export GH_REPO (line {export_lineno}) must come before "
             f"first 'gh pr/repo' call (line {first_gh_lineno})"
         )
 
@@ -91,22 +94,25 @@ class TestExtractionRoundTrip:
 
     def _run(self, fake_url: str) -> str:
         """Stub `git` on PATH to return fake_url, then run the extraction snippet."""
-        stub_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "gh_repo_stub"
-        stub_dir.mkdir(exist_ok=True)
-        stub = stub_dir / "git"
-        stub.write_text(
-            f"#!/bin/sh\necho '{fake_url}'\n"
-        )
-        stub.chmod(0o755)
-        env = {**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"}
-        result = subprocess.run(
-            ["bash", "-c", self._SNIPPET],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        assert result.returncode == 0, f"snippet failed: {result.stderr}"
-        return result.stdout.strip()
+        stub_dir = Path(tempfile.mkdtemp(prefix="gh_repo_stub_"))
+        try:
+            stub = stub_dir / "git"
+            stub.write_text(
+                f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(fake_url)}\n"
+            )
+            stub.chmod(0o755)
+            env = {**os.environ, "PATH": f"{stub_dir}:{os.environ['PATH']}"}
+            result = subprocess.run(
+                ["bash", "-c", self._SNIPPET],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            assert result.returncode == 0, f"snippet failed: {result.stderr}"
+            return result.stdout.strip()
+        finally:
+            import shutil
+            shutil.rmtree(stub_dir, ignore_errors=True)
 
     def test_ssh_url_with_git_suffix(self):
         assert self._run("git@github.com:lugassawan/swe-workbench.git") == "lugassawan/swe-workbench"
