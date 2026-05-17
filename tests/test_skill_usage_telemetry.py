@@ -299,7 +299,7 @@ class TestFlushHook:
 
     def test_path_traversal_agent_type_is_noop(self, plugin_root, cache_dir):
         """Flush rejects agent_type values with path-traversal characters."""
-        for malicious in ["../../etc/passwd", "../sensitive", "foo/bar"]:
+        for malicious in ["../../etc/passwd", "../sensitive", "foo/bar", "foo bar"]:
             result = _run_flush(
                 {"agent_id": "trav-001", "agent_type": malicious},
                 plugin_root,
