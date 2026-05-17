@@ -86,6 +86,6 @@ compile() {
 }
 
 compile tests/requirements.txt tests/requirements.lock
-compile tests/release-requirements.in tests/release-requirements.lock
+compile tests/release-requirements.txt tests/release-requirements.lock
 
 echo "Done."

@@ -5,6 +5,9 @@ on:
     types: [opened, edited, synchronize]
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   validate-pr:
     runs-on: ubuntu-latest
@@ -120,6 +123,18 @@ jobs:
           python-version: '3.12'
       - run: pip install --require-hashes -r tests/requirements.lock
       - run: pytest tests/ -v
+
+  lockfile-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify lockfiles are up to date
+        run: bash scripts/lock-pip-requirements.sh --check
 
   markdown-links:
     name: Markdown link check
