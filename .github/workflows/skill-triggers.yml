@@ -65,6 +65,7 @@ jobs:
           existing=$(gh issue list \
             --label skill-trigger-drift \
             --state open \
+            --limit 1 \
             --json number \
             --jq '.[0].number // empty')
 
