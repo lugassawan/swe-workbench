@@ -43,44 +43,46 @@ fi
 
 # ── Venv + pip-tools ───────────────────────────────────────────
 
-VENV_DIR="/tmp/pip-lock-venv"
+VENV_DIR="$(mktemp -d)"
+trap 'rm -rf "$VENV_DIR"' EXIT
 "$PYTHON" -m venv "$VENV_DIR"
-"$VENV_DIR/bin/pip" install --quiet pip-tools
+# version-pinned; hash-pinning omitted (build tool, not runtime dep)
+"$VENV_DIR/bin/pip" install --quiet "pip-tools==7.5.3"
 
 # ── Compile ────────────────────────────────────────────────────
 
 compile() {
   local src="$1" out="$2"
+  local tmp="" existing_stripped="" new_stripped=""
   if [[ "$CHECK" -eq 1 ]]; then
-    local tmp
+    # Set trap before mktemp so partial failures don't leak files.
+    trap 'rm -f ${tmp:+"$tmp"} ${existing_stripped:+"$existing_stripped"} ${new_stripped:+"$new_stripped"}' RETURN
     tmp=$(mktemp)
-    "$VENV_DIR/bin/pip-compile" \
+    existing_stripped=$(mktemp)
+    new_stripped=$(mktemp)
+    # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
       --resolver=backtracking \
       --quiet \
       --no-header \
       --output-file "$tmp" \
-      "$REPO_ROOT/$src"
+      "$src")
     # Strip header from the existing lockfile for comparison
-    local existing_stripped
-    existing_stripped=$(mktemp)
     grep -v '^#' "$REPO_ROOT/$out" | grep -v '^$' > "$existing_stripped" || true
-    local new_stripped
-    new_stripped=$(mktemp)
     grep -v '^#' "$tmp" | grep -v '^$' > "$new_stripped" || true
     if ! diff -q --ignore-blank-lines "$existing_stripped" "$new_stripped" >/dev/null 2>&1; then
       echo "::error::$out is out of date. Run scripts/lock-pip-requirements.sh to regenerate." >&2
-      rm -f "$tmp" "$existing_stripped" "$new_stripped"
       return 1
     fi
-    rm -f "$tmp" "$existing_stripped" "$new_stripped"
     echo "$out is up to date."
   else
-    "$VENV_DIR/bin/pip-compile" \
+    # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
       --resolver=backtracking \
-      --output-file "$REPO_ROOT/$out" \
-      "$REPO_ROOT/$src"
+      --output-file "$out" \
+      "$src")
     echo "Generated $out"
   fi
 }
