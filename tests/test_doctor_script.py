@@ -1,5 +1,7 @@
 """End-to-end tests for scripts/doctor.sh (closes #238)."""
 
+from __future__ import annotations
+
 import os
 import subprocess
 import textwrap
@@ -108,6 +110,9 @@ def test_gh_auth_status_surfaced(tmp_path):
     assert result.returncode == 0
     assert "gh auth" in result.stdout, (
         "Output must include 'gh auth' annotation on the gh row"
+    )
+    assert "logged in as mockuser" in result.stdout, (
+        "gh row must display the authenticated username"
     )
 
 

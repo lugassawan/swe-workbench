@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Read-only preflight probe for swe-workbench runtime dependencies.
 # Prints a green/red table to stdout. Writes no files. Exits 0 always.
-set -uo pipefail  # -e intentionally omitted: exit 0 is required even when probes fail
+set -uo pipefail  # -e omitted: exit 0 required even when probes fail
+                  # -u active: all variables must be initialized before use
 
 MISSING=0
 
@@ -58,7 +59,9 @@ fi
 if [[ -n "${rimba_bin}" ]]; then
   # Try --version; cobra CLIs may not support it, so suppress stderr and fall back.
   rimba_ver=$("${rimba_bin}" --version 2>/dev/null | head -1) || true
-  [[ -z "${rimba_ver}" ]] && rimba_ver=$("${rimba_bin}" version 2>/dev/null | head -1) || true
+  if [[ -z "${rimba_ver}" ]]; then
+    rimba_ver=$("${rimba_bin}" version 2>/dev/null | head -1) || true
+  fi
   [[ -z "${rimba_ver}" ]] && rimba_ver="installed (version unknown)"
   printf "✓  %-10s %s\n" "rimba" "${rimba_ver}"
 else
