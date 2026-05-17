@@ -198,13 +198,22 @@ else
       exit 1
     fi
 
-    PENDING=$(gh pr checks "$PR_NUM" --json state \
-      --jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length' 2>/dev/null || echo "0")
+    set +e
+    CHECKS_JSON=$(gh pr checks "$PR_NUM" --json state,conclusion 2>/dev/null)
+    CHECKS_RC=$?
+    set -e
+
+    if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
+      echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}); retrying in 10s..."
+      sleep 10
+      ELAPSED=$((ELAPSED + 10))
+      continue
+    fi
+
+    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length')
+    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
 
     if [[ "$PENDING" -eq 0 ]]; then
-      FAILED=$(gh pr checks "$PR_NUM" --json conclusion \
-        --jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length' 2>/dev/null || echo "0")
-
       if [[ "$FAILED" -gt 0 ]]; then
         echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
         echo "Fix the failures at: ${PR_URL}" >&2
@@ -267,7 +276,22 @@ fi
 git checkout main
 git pull --ff-only origin main
 
-MERGE_SHA=$(gh pr view "$PR_NUM" --json mergeCommit -q '.mergeCommit.oid')
+MERGE_SHA=""
+POLL_TIMEOUT=60
+POLL_ELAPSED=0
+while [[ $POLL_ELAPSED -lt $POLL_TIMEOUT ]]; do
+  MERGE_SHA=$(gh pr view "$PR_NUM" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || true)
+  [[ -n "$MERGE_SHA" ]] && break
+  sleep 3
+  POLL_ELAPSED=$((POLL_ELAPSED + 3))
+done
+
+if [[ -z "$MERGE_SHA" ]]; then
+  echo "Error: GitHub did not return mergeCommit.oid for PR #${PR_NUM} within ${POLL_TIMEOUT}s." >&2
+  echo "PR is merged; tagging skipped. Re-run this script — it is safe and idempotent." >&2
+  exit 1
+fi
+
 LOCAL_SHA=$(git rev-parse HEAD)
 
 if [[ "$LOCAL_SHA" != "$MERGE_SHA" ]]; then
