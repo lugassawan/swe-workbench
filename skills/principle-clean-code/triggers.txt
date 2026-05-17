@@ -3,3 +3,5 @@ this function is 80 lines long, how should I break it up for clarity
 should I extract a shared helper or keep these two similar functions separate to avoid premature abstraction
 what is the right level of abstraction for this naming and function design
 how do I balance DRY with YAGNI when refactoring this module
+my function takes five parameters should I reduce the argument count using a parameter object following clean code principles
+can I improve this code while I'm already in the file under the Boy Scout Rule scope-bounded to the current diff
