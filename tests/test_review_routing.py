@@ -21,18 +21,20 @@ class TestReviewModeRouting:
 
     def test_all_modes_present(self):
         text = REVIEW_PATH.read_text(encoding="utf-8")
-        for mode in ("general", "security", "accessibility", "dependency", "performance", "tests"):
+        for mode in ("general", "security", "accessibility", "dependency", "performance", "tests",
+                     "contributor-trust"):
             assert mode in text, f"--mode {mode} must be documented"
 
     def test_short_aliases_present(self):
         text = REVIEW_PATH.read_text(encoding="utf-8")
-        for alias in ("a11y", "deps", "perf", "sec"):
+        for alias in ("a11y", "deps", "perf", "sec", "trust"):
             assert alias in text, f"alias '{alias}' must be documented"
 
     def test_all_auditors_referenced(self):
         text = REVIEW_PATH.read_text(encoding="utf-8")
         for agent in ("reviewer", "security-auditor", "accessibility-auditor",
-                      "dependency-auditor", "performance-tuner", "test-reviewer"):
+                      "dependency-auditor", "performance-tuner", "test-reviewer",
+                      "contributor-auditor"):
             assert agent in text, f"auditor '{agent}' must be referenced"
 
     def test_auto_inference_output_format(self):
@@ -126,6 +128,87 @@ class TestCommandOutputStanzas:
     def test_short_command_has_output_stanza(self, cmd):
         text = (COMMANDS_DIR / cmd).read_text(encoding="utf-8")
         assert "## Output" in text, f"{cmd} must have an ## Output stanza"
+
+
+class TestContributorTrustMode:
+    """Assert /review.md and agents/contributor-auditor.md satisfy issue #243 requirements."""
+
+    CONTRIBUTOR_AUDITOR_PATH = AGENTS_DIR / "contributor-auditor.md"
+
+    def test_contributor_trust_in_routing_table(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        assert "contributor-trust" in text, \
+            "commands/review.md routing table must include contributor-trust mode"
+
+    def test_trust_alias_in_routing_table(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        assert "`trust`" in text, \
+            "commands/review.md must document 'trust' as a backtick-formatted alias in the routing table"
+
+    def test_contributor_auditor_agent_referenced(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        assert "contributor-auditor" in text, \
+            "commands/review.md must reference the contributor-auditor agent"
+
+    def test_contributor_trust_not_in_auto_inference(self):
+        """contributor-trust is explicit-only — same posture as tests mode.
+
+        The auto-inference numbered rules (1-5) must not include contributor-trust.
+        It may appear in the explanatory note that follows the rules.
+        """
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        rules_start = text.find("Apply these inference rules")
+        rules_end = text.find("> **Note:**")
+        assert rules_start != -1, "inference rules block not found"
+        assert rules_end != -1, "> **Note:** block not found"
+        inference_rules = text[rules_start:rules_end]
+        assert "contributor-trust" not in inference_rules, \
+            "contributor-trust must not appear in the numbered auto-inference rules (explicit-only mode)"
+
+    def test_contributor_auditor_agent_file_exists(self):
+        assert self.CONTRIBUTOR_AUDITOR_PATH.exists(), \
+            "agents/contributor-auditor.md must exist"
+
+    @pytest.mark.parametrize("field,value", [
+        ("name", "contributor-auditor"),
+        ("model", "sonnet"),
+    ])
+    def test_contributor_auditor_frontmatter(self, field, value):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "agents/contributor-auditor.md must have frontmatter"
+        assert f"{field}: {value}" in match.group(1), \
+            f"frontmatter must contain '{field}: {value}'"
+
+    def test_contributor_auditor_reachable_via(self):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        assert "**Reachable via:**" in text, \
+            "contributor-auditor.md must declare **Reachable via:**"
+        assert "contributor-trust" in text, \
+            "contributor-auditor.md Reachable via must reference --mode contributor-trust"
+
+    def test_contributor_auditor_four_lenses(self):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        for lens in ("Author signal", "Diff signal", "Repo posture", "Pattern risk"):
+            assert lens in text, \
+                f"contributor-auditor.md must document the '{lens}' lens"
+
+    def test_contributor_auditor_merge_confidence_footer(self):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        assert "Merge confidence" in text, \
+            "contributor-auditor.md must describe the Merge confidence footer"
+
+    def test_contributor_auditor_read_only_enforcement(self):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        assert "Read-only" in text or "read-only" in text, \
+            "contributor-auditor.md must have a read-only enforcement section"
+
+    def test_contributor_auditor_advisory_only(self):
+        text = self.CONTRIBUTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+        lower = text.lower()
+        assert "no comment" in lower or "advisory" in lower or "never post" in lower or \
+               "does not post" in lower or "never comments" in lower, \
+            "contributor-auditor.md must state it never posts to the PR"
 
 
 class TestAgentReachableVia:
