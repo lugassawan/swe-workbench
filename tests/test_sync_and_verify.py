@@ -179,7 +179,8 @@ class TestSyncAndVerifyEvalSafety:
         # Push a new commit to origin so the next `git pull --ff-only origin main`
         # actually transfers refs and prints the `From ... -> FETCH_HEAD` line.
         clone = tmp_path / "second_clone"
-        no_hooks = tmp_path / ".nohooks"  # created by _build_repo via git_repo fixture
+        no_hooks = tmp_path / ".nohooks"
+        no_hooks.mkdir(exist_ok=True)  # don't rely on git_repo fixture side-effect
 
         subprocess.run(
             ["git", "clone", str(tmp_path / "origin.git"), str(clone)],
@@ -233,10 +234,34 @@ class TestSyncAndVerifyEvalSafety:
         # behaves the same way as in the bug repro (where cwd contained files).
         (eval_cwd / "decoy").write_text("")
 
-        # Capture the script's output first (from git_repo, a valid git cwd),
-        # THEN cd to eval_cwd before eval-ing it. If we cd first and then run
-        # the script, the script exits early ("could not resolve main repo path")
-        # because eval_cwd is not a git repository — and the bug never triggers.
+        # Pre-condition: origin must be ahead of local so git pull actually
+        # fetches new refs. The `* branch main -> FETCH_HEAD` tracking line
+        # only appears when git pull fetches something new. If origin and local
+        # are already in sync, the test would be vacuous.
+        # Note: we use ls-remote (not rev-list HEAD..origin/main) because we
+        # haven't fetched yet — origin/main tracking ref is stale locally.
+        origin_sha = subprocess.run(
+            ["git", "ls-remote", "origin", "refs/heads/main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        ).stdout.split()[0]
+        local_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        ).stdout.strip()
+        assert origin_sha != local_sha, (
+            f"Pre-condition: origin/main ({origin_sha}) must be ahead of "
+            f"local HEAD ({local_sha}). git pull won't fetch — the "
+            f"'-> FETCH_HEAD' tracking line won't appear and the test is vacuous."
+        )
+
+        # Capture BEFORE cd-ing to eval_cwd: the script needs a valid git cwd
+        # to resolve MAIN_REPO. If we cd first, the script exits early.
         runner = (
             f'output="$(bash "{SCRIPT}" "{BRANCH}" main 2>&1)"; '
             f'cd "{eval_cwd}"; '
@@ -252,6 +277,6 @@ class TestSyncAndVerifyEvalSafety:
 
         assert not (eval_cwd / "FETCH_HEAD").exists(), (
             f"Stray FETCH_HEAD created in {eval_cwd} — the script's "
-            f"stdout-after-2>&1 still contains a git tracking line that "
-            f"eval parsed as a redirect."
+            f"combined stdout+stderr still contains a git tracking line that "
+            f"eval parsed as a `> FETCH_HEAD` redirect."
         )
