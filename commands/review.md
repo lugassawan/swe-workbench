@@ -23,7 +23,7 @@ Parse `$ARGUMENTS` left-to-right:
    | `accessibility`, `a11y` | `accessibility` | `accessibility-auditor` |
    | `dependency`, `deps` | `dependency` | `dependency-auditor` |
    | `performance`, `perf` | `performance` | `performance-tuner` |
-   | `tests` | `tests` | `test-reviewer` |
+   | `tests` *(no short alias — keyword is already short)* | `tests` | `test-reviewer` |
 
    Strip `--mode <value>` from `$ARGUMENTS`. Store the normalized mode. If the value is unrecognized, print an error listing valid values and stop.
 

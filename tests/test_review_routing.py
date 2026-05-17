@@ -1,10 +1,13 @@
 """Structural tests for /review mode-routing (issue #172)."""
 import re
 from pathlib import Path
+import pytest
 
 
 REVIEW_PATH = Path(__file__).parent.parent / "commands" / "review.md"
 SECURITY_REVIEW_PATH = Path(__file__).parent.parent / "commands" / "security-review.md"
+COMMANDS_DIR = Path(__file__).parent.parent / "commands"
+AGENTS_DIR = Path(__file__).parent.parent / "agents"
 
 
 class TestReviewModeRouting:
@@ -114,3 +117,26 @@ class TestSecurityReviewCommand:
         match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
         assert match
         assert "description:" in match.group(1)
+
+
+class TestCommandOutputStanzas:
+    """Assert every short command documented in issue #234 has an ## Output stanza."""
+
+    @pytest.mark.parametrize("cmd", [
+        "security-review.md",
+        "cleanup-merged.md",
+        "audit-codebase.md",
+    ])
+    def test_short_command_has_output_stanza(self, cmd):
+        text = (COMMANDS_DIR / cmd).read_text(encoding="utf-8")
+        assert "## Output" in text, f"{cmd} must have an ## Output stanza"
+
+
+class TestAgentReachableVia:
+    """Assert every agent file declares its entry-point via **Reachable via:** annotation."""
+
+    def test_all_agents_have_reachable_via(self):
+        for agent_file in sorted(AGENTS_DIR.glob("*.md")):
+            text = agent_file.read_text(encoding="utf-8")
+            assert "**Reachable via:**" in text, \
+                f"{agent_file.name} must have a '**Reachable via:**' annotation"

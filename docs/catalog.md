@@ -26,21 +26,21 @@
 
 | Agent | When to invoke |
 |---|---|
-| `reviewer` | PR review, diff audit, post-feature sanity check. |
-| `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
 | `accessibility-auditor` | Depth-first WCAG 2.2 AA review of frontend diffs — ARIA misuse, keyboard traps, focus mismanagement, color contrast. Invoked by `/swe-workbench:review --mode a11y`. |
-| `auditor` | Cold-start, time-boxed, multi-domain audit sweep — security, performance, reliability, tooling, testing. Invoked by `/swe-workbench:audit-codebase`. |
-| `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
-| `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `architect` | Authoring ADRs, RFCs, and cross-service contracts for decisions that predate any codebase — service decomposition, multi-system tech selection, cross-team contract. Prefer over `senior-engineer` when the output must be a durable written artifact, not advice about existing code. Invoked by `/swe-workbench:architect`. |
-| `refactorer` | Cleaning up smells before adding a feature. |
+| `auditor` | Cold-start, time-boxed, multi-domain audit sweep — security, performance, reliability, tooling, testing. Invoked by `/swe-workbench:audit-codebase`. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
-| `test-writer` | Authoring tests for an existing function, module, or change set. |
-| `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. Invoked by `/swe-workbench:review --mode tests`. |
-| `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
-| `tech-writer` | Generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments — style-aware, reads existing docs first. Invoked by `/swe-workbench:document`. |
+| `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
 | `performance-tuner` | Profile-driven hotspot triage — ranks bottlenecks from a flame graph or benchmark and recommends targeted optimizations. Refuses speculative optimization without profiling evidence. |
+| `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
+| `refactorer` | Cleaning up smells before adding a feature. |
+| `reviewer` | PR review, diff audit, post-feature sanity check. |
+| `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
+| `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
+| `tech-writer` | Generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments — style-aware, reads existing docs first. Invoked by `/swe-workbench:document`. |
+| `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. Invoked by `/swe-workbench:review --mode tests`. |
+| `test-writer` | Authoring tests for an existing function, module, or change set. |
 
 ## Skills
 
