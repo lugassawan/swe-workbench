@@ -57,6 +57,7 @@ Also check CLAUDE.md for project-specific conventions.
 - `format-command` — from Makefile `format` target or language-marker fallback below
 - `lint-command` — from Makefile `lint` target or language-marker fallback below
 - `test-command` — from Makefile `test` target or language-marker fallback below
+- `quality-command` — from Makefile `quality` target, project-script, or language-marker fallback below. Optional — if absent and no config is detected, skip the Quality stage with a note.
 - `pr-template-path` — absolute path of the detected PR template, or `"none — use default format"`
 
 **Language marker fallback (if no Makefile):**
@@ -68,6 +69,16 @@ Also check CLAUDE.md for project-specific conventions.
 | `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports — review output before staging); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
 | `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
+
+**Quality stage fallback (multi-tool — wire whichever subset the project enforces):**
+
+| Marker | Tool examples (complexity • duplication • length / maintainability) |
+|--------|---------------------------------------------------------------------|
+| `go.mod` | `gocyclo -over 15 .` • `dupl -t 50 ./...` • `gocognit -over 15 .` |
+| `package.json` | `eslint` with `eslint-plugin-sonarjs` • `jscpd` • `plato` (maintainability index; or use `eslint` `complexity` rule) |
+| `Cargo.toml` | `cargo clippy -- -W clippy::cognitive_complexity` • (duplication: no first-party tool; use `simian` cross-language) • `cargo clippy -- -W clippy::too_many_lines` (per-function length; no file-level enforcer in first-party Rust) |
+| `pyproject.toml` | `radon cc -n B -s` (grade ≥ B = complexity ≥ 6) and `lizard -CCN 15 -L 50` • `pylint --disable=all --enable=duplicate-code` • `radon mi -n B` |
+| `pom.xml` | `mvn pmd:check` • `mvn pmd:cpd-check` • `checkstyle` (FileLengthCheck, MethodLengthCheck) |
 
 **PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `Issue: N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
@@ -147,15 +158,19 @@ Commit logically grouped changes as you go. Never bundle unrelated changes.
 
 ### Phase 3: Verify
 
-**Goal:** Confirm imports, format, lint, and test all pass with evidence.
+**Goal:** Confirm imports, format, quality, lint, and test all pass with evidence.
 
-Run in order — **Imports → Format → Lint → Test**. Imports come first because organizers
+Run in order — **Imports → Format → Quality → Lint → Test**. Imports come first because organizers
 (`goimports`, `ruff check --select I --fix`, `organize-imports-cli`, `spotless`) reshape lines that
 the formatter then normalises; reversing the order causes spurious rewrites on the next pass.
+Quality runs after Format so metrics evaluate normalised code, and before Lint so threshold violations
+surface as a distinct signal rather than mixed into lint noise. **Quality is optional** — if no
+`quality-command` is detected and the project has no complexity/duplication/length config, skip the
+stage with a note in the evidence block.
 
 Invoke `superpowers:verification-before-completion`.
 
-**Skip condition:** If Phase 2 sub-skill already ran full verification (imports + format + lint + test) with evidence, mark as "completed by sub-skill" and proceed.
+**Skip condition:** If Phase 2 sub-skill already ran full verification (imports + format + quality + lint + test) with evidence, mark as "completed by sub-skill" and proceed.
 
 ---
 
@@ -222,7 +237,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | Mistake | Fix |
 |---------|-----|
 | Skip verification, go straight to review | Always verify first (Phase 3 before 4) |
-| Run only tests (skip imports/format/lint) | Run all four, in order |
+| Run only tests (skip imports/format/quality/lint) | Run all five, in order |
 | Single giant commit | Group by logical change |
 | Guess at branch/commit conventions | Detect from `git branch -a` and `git log` first |
 | Plan that introduces file edits without Workflow section | Always add the Workflow section (Mode A) — skip only for pure design / analysis output |
@@ -241,7 +256,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 
 | Thought | Action |
 |---------|--------|
-| "Tests passed, good enough" | Run format AND lint too |
+| "Tests passed, good enough" | Run imports, format, quality, and lint too |
 | "Review is overkill for this" | Small changes have bugs too. Review. |
 | "I'll just commit everything together" | Split into logical commits |
 | "Phase 2 sub-skill did everything" | Verify it provided evidence for Phases 3-4 |

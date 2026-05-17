@@ -9,7 +9,7 @@ description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction 
 
 | Rule | Guideline |
 |------|-----------|
-| **Function length** | Prefer under 20 lines. Extract when doing two things. |
+| **Function length** | Prefer under 20 lines. Extract when doing two things. *Objective thresholds: see the Quality stage in `workflow-development`.* |
 | **Naming** | Name reveals intent. No abbreviations except universal ones (ctx, err, id). |
 | **Abstraction level** | One level per function. Don't mix SQL strings with business logic. |
 | **Comments** | Explain WHY, not WHAT. If code needs WHAT comments, rename or extract. |
@@ -18,6 +18,8 @@ description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction 
 ## DRY — Rule of Three
 
 Don't abstract on first duplication. Extract on the third occurrence. Two is coincidence; three is pattern.
+
+*Duplication detectors (`jscpd`, `dupl`, `mvn pmd:cpd-check`) give an objective signal — see the Quality stage in `workflow-development`.*
 
 ## KISS
 

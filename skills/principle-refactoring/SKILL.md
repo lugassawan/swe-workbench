@@ -20,8 +20,8 @@ Four non-negotiable rules:
 
 | Smell | Triggering move(s) |
 |---|---|
-| Long Method | Extract Function, Decompose Conditional, Replace Temp with Query |
-| Large Class | Extract Class, Extract Interface, Move Function |
+| Long Method | Extract Function, Decompose Conditional, Replace Temp with Query — *Quality stage (`workflow-development`) gives the objective trigger via cyclomatic / cognitive complexity thresholds* |
+| Large Class | Extract Class, Extract Interface, Move Function — *Quality stage (`workflow-development`) gives the objective trigger via file / class length* |
 | Feature Envy | Move Function, Move Field |
 | Data Clumps | Introduce Parameter Object, Extract Class |
 | Primitive Obsession | Replace Primitive with Object, Introduce Parameter Object |

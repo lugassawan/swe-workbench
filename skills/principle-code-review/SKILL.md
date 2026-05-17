@@ -14,6 +14,7 @@ Every review covers four axes:
 - **Correctness** — off-by-ones, null paths, concurrency races, lost errors, unhandled edge cases.
 - **Security** — injection, auth/authz gaps, secrets in code, unsafe deserialization, SSRF, missing input validation at trust boundaries.
 - **Design integrity** — SOLID violations, leaky abstractions, tight coupling, circular deps, domain logic bleeding into infrastructure.
+  *For complexity / duplication / length, prefer Quality-stage output over subjective comments — see `workflow-development`.*
 - **Tests** — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior.
 
 ## What's Not a Finding

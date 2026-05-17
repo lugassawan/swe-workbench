@@ -39,6 +39,7 @@ Run in order — stop on first failure, fix, re-run from imports (or invoke `sup
 |---------|------------------------------|----------|
 | Imports | `[[detect:imports-command]]` | Clean    |
 | Format  | `[[detect:format-command]]`  | Clean    |
+| Quality | `[[detect:quality-command]]` | Within thresholds (or "not configured — skipped") |
 | Lint    | `[[detect:lint-command]]`    | 0 issues |
 | Test    | `[[detect:test-command]]`    | All pass |
 
@@ -46,6 +47,7 @@ After all pass, state with evidence:
 ```
 Imports: [[detect:imports-command]] — clean
 Format: [[detect:format-command]] — clean
+Quality: [[detect:quality-command]] — within thresholds (or "Quality: not configured — skipped")
 Lint: [[detect:lint-command]] — 0 issues
 Test: [[detect:test-command]] — N/N pass
 ```
