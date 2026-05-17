@@ -14,11 +14,9 @@ from pathlib import Path
 
 import pytest
 
-GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
+from conftest import _CLEAN_ENV
 
-# When tests run inside a git pre-push hook, GIT_DIR points to the hook's repo.
-# Strip GIT_* so subprocess git calls use normal cwd-based repo detection.
-_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
 
 
 @pytest.fixture(scope="module")

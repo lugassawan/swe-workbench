@@ -19,6 +19,32 @@ pytest tests/ -v
 Tests are hermetic: `conftest.py` redirects `validate.ROOT` to a `tmp_path` so
 no test reads or writes outside of pytest's temporary directory.
 
+## Test fixtures
+
+### `_CLEAN_ENV` (from `conftest.py`)
+
+`swe-workbench` is a bare git repository (`core.bare = true`). When tests run
+inside a git hook (e.g. a `pre-push` hook), Git exports `GIT_DIR` pointing at
+the bare repo. Any subprocess that calls `git` inherits `GIT_DIR` and Git
+mistakenly treats the temp test directory as a bare repo too — causing
+hard-to-diagnose test failures.
+
+`_CLEAN_ENV` strips every `GIT_*` environment variable and re-adds
+`GIT_CONFIG_NOSYSTEM=1` for system-gitconfig hermeticity. Use it whenever a
+test spawns a subprocess that runs `git` or a shell script that calls `git`:
+
+```python
+# Pass the clean env directly:
+subprocess.run(["git", "init", str(tmp_path)], env=_CLEAN_ENV, check=True)
+
+# Extend it with extra vars (PATH stub, CLAUDE_PROJECT_DIR, etc.):
+subprocess.run(cmd, env={**_CLEAN_ENV, "MY_VAR": "value"}, check=True)
+```
+
+Do **not** pass `env=os.environ` (or omit `env=`) for subprocess sites that
+call `git` — the hook-context `GIT_DIR` will leak through and target the
+wrong repository.
+
 ## Deliberate-break proof (required by issue #76)
 
 To verify that a bug in `validate.py` causes at least one test to fail:

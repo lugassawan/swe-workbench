@@ -11,17 +11,13 @@ Both were eval'd by the caller, causing "command not found" errors.
 This test pins the contract: stdout must be exactly one line.
 """
 
-import os
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
-# Strip GIT_* env vars for all subprocess calls so tests running inside a git
-# hook or worktree context cannot cross-contaminate the parent repository.
-_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-_CLEAN_ENV["GIT_CONFIG_NOSYSTEM"] = "1"
+from conftest import _CLEAN_ENV
 
 SCRIPT = (
     Path(__file__).parent.parent

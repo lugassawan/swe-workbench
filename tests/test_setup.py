@@ -8,11 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from conftest import _CLEAN_ENV
+
 REPO_ROOT = Path(__file__).parent.parent
 SETUP_SH = REPO_ROOT / "scripts" / "setup.sh"
-
-# Strip GIT_* vars so hook-context env doesn't leak into ephemeral test repos.
-_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def _git(*args, cwd):
