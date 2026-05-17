@@ -383,6 +383,28 @@ class TestPerformanceTunerAgent:
             "agents/shared/agent-boundaries.md must exist as canonical source (O7, issue #235)"
         )
 
+    def test_boundaries_table_content_parity(self):
+        """Every agent-name cell in agent-boundaries.md must appear in performance-tuner.md.
+
+        Since @./ is pointer-only (not runtime-transclusion), the inline table in
+        performance-tuner.md is the source the model sees. This test detects silent drift
+        between the canonical shared doc and its inline copy.
+        """
+        import re
+        shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
+        shared_text = shared.read_text(encoding="utf-8")
+        perf_text = self.AGENT_PATH.read_text(encoding="utf-8")
+        # Extract the first cell (agent name) of each data row in the shared table.
+        # Table rows look like: | `agent-name` | ... | ... |
+        agent_cells = re.findall(r'^\|\s*(`[^`]+`)\s*\|', shared_text, re.MULTILINE)
+        assert agent_cells, "agent-boundaries.md must contain at least one table row"
+        missing = [cell for cell in agent_cells if cell not in perf_text]
+        assert not missing, (
+            f"performance-tuner.md is missing boundary rows for: {missing}. "
+            "Update the inline '## Boundaries vs. other agents' table to match "
+            "agents/shared/agent-boundaries.md (canonical source)."
+        )
+
     def test_profile_first_rule_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
         assert "## Refusal protocol" in text, "Refusal protocol section must be present"
@@ -1127,12 +1149,13 @@ class TestFileReadCaching:
             f"Expected a failure entry for unreadable {rel!r}, got: {validate.FAILURES}"
         )
 
-    def test_unreadable_catalog_cached_as_failure(self, reset_validate, monkeypatch):
+    @pytest.mark.parametrize("slice_name", ["principles.md", "languages.md", "workflows.md"])
+    def test_unreadable_catalog_cached_as_failure(self, reset_validate, monkeypatch, slice_name):
         root = reset_validate
         _make_full_valid_tree(root)
 
-        # Target the principles slice (O3: skills.md replaced by 3 slice files)
-        catalog = root / "agents" / "shared" / "principles.md"
+        # O3: skills.md replaced by 3 slice files — test all three slices
+        catalog = root / "agents" / "shared" / slice_name
 
         original = Path.read_text
         read_count = {"n": 0}
@@ -1150,7 +1173,7 @@ class TestFileReadCaching:
             pass
 
         assert read_count["n"] == 1, (
-            f"Catalog slice should be attempted exactly once (cache build only), "
+            f"Catalog slice '{slice_name}' should be attempted exactly once (cache build only), "
             f"got {read_count['n']} — check_catalog_completeness may bypass the None sentinel"
         )
         rel = str(catalog.relative_to(root))
