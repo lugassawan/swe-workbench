@@ -17,13 +17,16 @@ PR_REVIEW_FOLLOWUP_SKILL = ROOT / "skills" / "workflow-pr-review-followup" / "SK
 
 def _suppression_block(text: str) -> str:
     """Extract the paragraph(s) immediately following the CTA quote block."""
-    # Grab text from the CTA header through to the next ## section or end
     match = re.search(
         r"Address-feedback CTA \(conditional\):.*?(?=\n## |\Z)",
         text,
         re.DOTALL,
     )
-    return match.group(0) if match else ""
+    assert match is not None, (
+        "Could not locate 'Address-feedback CTA (conditional):' section. "
+        "The CTA section header was renamed or removed — update the regex in _suppression_block."
+    )
+    return match.group(0)
 
 
 # ── workflow-pr-review/SKILL.md ───────────────────────────────────────────────
