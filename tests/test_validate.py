@@ -974,7 +974,7 @@ class TestCheckUnwiredPrincipleSkills:
     def _agent_body(self, extra=""):
         return (
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
-            "\n> See @./shared/skills.md for the full skill catalog.\n"
+            "\n> See @./shared/principles.md for the skill catalog.\n"
             + extra
         )
 
@@ -1025,8 +1025,8 @@ class TestCheckUnwiredPrincipleSkills:
         make_plugin_tree(
             root,
             skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
-            # No agents written — the auto-generated catalog at agents/shared/skills.md
-            # will contain the skill id, but that must not count as a wiring reference.
+            # No agents written — the auto-generated slices (principles.md, languages.md,
+            # workflows.md) will contain the skill id, but that must not count as a wiring reference.
         )
         validate.check_unwired_principle_skills()
         assert any("principle-foo" in f for f in validate.FAILURES)
