@@ -65,9 +65,9 @@ Also check CLAUDE.md for project-specific conventions.
 |--------|---------|--------|------|------|
 | `go.mod` | `goimports -w .` | `gofmt -w .` | `golangci-lint run` | `go test ./...` |
 | `package.json` | `npx organize-imports-cli` (always works); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` configured | check `scripts.format`/`prettier` | check `scripts.lint`/`eslint` | check `scripts.test` |
-| `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
+| `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports — review output before staging); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
-| `pom.xml` | `mvn spotless:apply` (Gradle: `./gradlew spotlessApply`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
+| `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
 
 **PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `Issue: N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
@@ -150,7 +150,7 @@ Commit logically grouped changes as you go. Never bundle unrelated changes.
 **Goal:** Confirm imports, format, lint, and test all pass with evidence.
 
 Run in order — **Imports → Format → Lint → Test**. Imports come first because organizers
-(`goimports`, `ruff check --select I --fix`, `eslint --fix`, `spotless`) reshape lines that
+(`goimports`, `ruff check --select I --fix`, `organize-imports-cli`, `spotless`) reshape lines that
 the formatter then normalises; reversing the order causes spurious rewrites on the next pass.
 
 Invoke `superpowers:verification-before-completion`.
