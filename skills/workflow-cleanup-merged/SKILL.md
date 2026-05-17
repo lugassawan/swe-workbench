@@ -73,9 +73,9 @@ _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflo
 eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>" "$DEFAULT_BRANCH")"
 ```
 
-The script: derives `MAIN_REPO=` (main worktree root via `git worktree list --porcelain`), anchors the shell there so the rimba hook cannot strand a deleted cwd, then runs `git checkout "$DEFAULT_BRANCH" && git pull --ff-only origin "$DEFAULT_BRANCH"` (best-effort — sync failure warns to stderr but does not abort), then checks whether the hook already removed the worktree and local branch. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
+The script: derives `MAIN_REPO=` (main worktree root via `git worktree list --porcelain`), anchors the shell there so the rimba hook cannot strand a deleted cwd, then syncs the default branch — **non-bare repos:** `git checkout "$DEFAULT_BRANCH" && git pull --ff-only origin "$DEFAULT_BRANCH"` (`--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence); **bare repos (rimba layout):** `git fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/heads/$DEFAULT_BRANCH"` (bare repos have no working tree; `git fetch` advances the local ref directly). Both paths are best-effort — sync failure warns to stderr but does not abort.
 
-When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
+When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. **This applies to non-bare repos only** — in bare-repo layout `git fetch` is used instead, which does not fire `post-merge`; Block C will therefore always yield `WORKTREE_GONE=0` and fall through to the rimba-binary or shell strategy. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
 
 ### Step 4 — Remove Worktree
 
