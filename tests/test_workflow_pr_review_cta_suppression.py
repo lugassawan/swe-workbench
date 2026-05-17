@@ -119,3 +119,38 @@ def test_pr_review_followup_cta_clean_approval_suppression_preserved():
     assert "APPROVE" in block, "CTA block (followup) must still suppress on clean APPROVE"
     assert "posted = 0" in block, "CTA block (followup) must still reference posted = 0"
     assert "deduped = 0" in block, "CTA block (followup) must still reference deduped = 0"
+
+
+# ── AskUserQuestion contract ──────────────────────────────────────────────────
+
+
+def test_pr_review_cta_uses_ask_user_question():
+    """The CTA section must call AskUserQuestion with a valid schema, not free-text prose."""
+    import json as _json
+    text = PR_REVIEW_SKILL.read_text()
+    block = _suppression_block(text)
+    assert "AskUserQuestion" in block, (
+        "CTA section must reference the AskUserQuestion tool — not a free-text 'reply yes' prompt."
+    )
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", block, re.DOTALL)
+    assert json_match, "CTA section must contain a fenced JSON block for AskUserQuestion"
+    parsed = _json.loads(json_match.group(1))
+    assert "questions" in parsed and parsed["questions"], (
+        "AskUserQuestion JSON block must have a non-empty 'questions' array"
+    )
+
+
+def test_pr_review_followup_cta_uses_ask_user_question():
+    """The CTA section (followup) must call AskUserQuestion with a valid schema."""
+    import json as _json
+    text = PR_REVIEW_FOLLOWUP_SKILL.read_text()
+    block = _suppression_block(text)
+    assert "AskUserQuestion" in block, (
+        "CTA section (followup) must reference AskUserQuestion — not a free-text prompt."
+    )
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", block, re.DOTALL)
+    assert json_match, "CTA section (followup) must contain a fenced JSON block for AskUserQuestion"
+    parsed = _json.loads(json_match.group(1))
+    assert "questions" in parsed and parsed["questions"], (
+        "AskUserQuestion JSON block (followup) must have a non-empty 'questions' array"
+    )
