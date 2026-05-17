@@ -50,10 +50,13 @@ _GUARD_SNIPPET = textwrap.dedent("""\
       exit 3
     fi
 
+    TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
     PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length')
     FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
 
-    if [[ "$PENDING" -eq 0 ]]; then
+    if [[ "$TOTAL" -eq 0 ]]; then
+      exit 2
+    elif [[ "$PENDING" -eq 0 ]]; then
       if [[ "$FAILED" -gt 0 ]]; then
         echo "CI check(s) failed" >&2
         exit 1
@@ -178,6 +181,11 @@ class TestBugADynamic:
         r2 = self._run(tmp_path)
         assert r2.returncode == 0, f"Expected 0 (recovered) on call 2, got {r2.returncode}"
 
+    def test_empty_checks_array_treated_as_pending(self, tmp_path):
+        """rc=0, empty array [] → TOTAL=0 → exit 2 (still polling, not a green merge)."""
+        self._make_gh_stub(tmp_path, 'printf "[]"; exit 0')
+        assert self._run(tmp_path).returncode == 2
+
 
 # ─── Bug B: static tests ──────────────────────────────────────────────────────
 
@@ -188,10 +196,12 @@ class TestBugBStatic:
     def test_mergecommit_in_poll_loop(self):
         lines = _script_lines()
 
-        # Find the POLL_ELAPSED while-loop boundaries (the first one after git pull)
-        pull_idx = next(
-            (i for i, ln in enumerate(lines) if "git pull --ff-only" in ln), None
-        )
+        # Find the POLL_ELAPSED while-loop boundaries — anchor on the last git pull
+        # (the post-merge sync at ~line 280, not the initial sync at ~line 61).
+        pull_idx = None
+        for i, ln in enumerate(lines):
+            if "git pull --ff-only" in ln:
+                pull_idx = i
         assert pull_idx is not None, "git pull --ff-only not found in release.sh"
 
         while_idx = next(
