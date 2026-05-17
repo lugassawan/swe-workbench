@@ -35,7 +35,7 @@ Duplication triggers refactor on the third occurrence. Two is coincidence; three
 - **Spy** — records calls for post-hoc assertion.
 - **Mock** — pre-programmed expectations; fails on unexpected calls — strictest, most brittle.
 
-Use the cheapest double that still proves the behavior. See `principle-testing` for the full taxonomy and seam rules.
+Use the cheapest double that still proves the behavior.
 
 ## Mocking pain is design feedback
 *A mock that is hard to build signals a bad seam, not a bad mock.*
@@ -46,7 +46,7 @@ Use the cheapest double that still proves the behavior. See `principle-testing` 
 
 ## Outside-in vs inside-out
 *Pick by which end has more unknowns.*
-- **Outside-in** — start with an acceptance test; let it fail; discover collaborators via mocks; fill in implementations inward. Best when the external interface is settled but internals are uncertain.
+- **Outside-in** — start with an acceptance test; let it fail; discover collaborators via mocks; fill in implementations inward. Best for discovering internal collaborators when the integration boundary is known.
 - **Inside-out** — start at the domain core; build units independently; compose outward. Best when domain logic is rich and invariant-heavy, regardless of interface stability.
 
 ## What to test

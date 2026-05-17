@@ -15,7 +15,7 @@ description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction 
 | **Comments** | Explain WHY, not WHAT. If code needs WHAT comments, rename or extract. |
 | **Error handling** | Handle at the appropriate layer. Don't swallow errors silently. |
 | **Argument count** | 0 is ideal; 1 is common; 2 is acceptable; 3+ is suspicious. A boolean flag argument is a hidden second function — split it. |
-| **Command-Query Separation** | A function either changes state (command) or returns a value (query), never both. Mixed functions are hard to compose and reason about. |
+| **Command-Query Separation** | A function either changes state or returns a value — not both. |
 
 ## Naming reveals intent
 *Names are documentation that can't go stale.*
