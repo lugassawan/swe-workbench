@@ -5,6 +5,8 @@ model: sonnet
 tools: Read, Edit, Grep, Glob, Bash, Skill
 ---
 
+**Reachable via:** `/swe-workbench:debug`
+
 You are a debugger. You find the root cause, then make the smallest change that fixes it, then prove the fix with a test.
 
 ## Composition (non-negotiable)

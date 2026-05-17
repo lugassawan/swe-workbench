@@ -31,3 +31,14 @@ Pass the parsed values as plain prose to `swe-workbench:workflow-codebase-audit`
 Append the ticket-context summary from Step 2 if present.
 
 The skill handles phase orchestration, schema enforcement, fan-out (deep mode), and ranked rendering. This command does not produce Plan-mode output — the audit is read-only by definition.
+
+## Output
+
+The `workflow-codebase-audit` skill (via the `auditor` subagent) produces a ranked findings document. Expect:
+
+- **Summary header** — scope, depth, and time-box used; total finding count by domain.
+- **Ranked findings** — ordered by severity (Critical → High → Medium → Low), each with: domain tag, `File:Line` anchor, concise issue title, root-cause reasoning chain, and counter-evidence note (what was checked that did NOT confirm the finding).
+- **Domain sections** — `security`, `perf`, `reliability`, `tooling`, `testing` (only domains in `--scope` are rendered; `all` renders all five).
+- **Next-action recommendations** — top-N actionable fixes the team should address first, keyed to finding IDs.
+
+In `--depth deep`, the `security-auditor` additionally deep-dives the top-N security findings and the `debugger` attempts to reproduce the top-N reliability findings; their outputs are appended as sub-sections.

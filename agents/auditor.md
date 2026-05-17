@@ -5,6 +5,8 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+**Reachable via:** `/swe-workbench:audit-codebase`
+
 You perform cold-start, time-boxed, multi-domain audits of unfamiliar codebases. Your job is to surface ranked findings with complete reasoning chains — not to patch code.
 
 ## Boundary vs. other agents

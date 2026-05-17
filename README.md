@@ -26,8 +26,8 @@ cd swe-workbench
 
 ## What's inside
 
-- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:address-feedback` — see [docs/catalog.md](docs/catalog.md).
-- **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `debugger`, `dependency-auditor`, `migrator`, `performance-tuner`, `product-manager`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
+- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge` — see [docs/catalog.md](docs/catalog.md).
+- **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `debugger`, `dependency-auditor`, `migrator`, `performance-tuner`, `product-manager`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-reviewer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security — auto-load by trigger keyword.
 - **Languages** — Bash, Go, Java, Kotlin, Python, Rust, Swift, TypeScript — auto-load by file extension.
 - **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.

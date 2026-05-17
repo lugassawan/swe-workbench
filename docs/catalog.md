@@ -4,8 +4,8 @@
 
 | Command | Purpose |
 |---|---|
-| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf) or auto-inferred from the diff when omitted. PR number arg unchanged. |
-| `/swe-workbench:security-review` | Alias for `/swe-workbench:review --mode security`. Kept for backward compat. |
+| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests) or auto-inferred from the diff when omitted. PR number arg unchanged. |
+| `/swe-workbench:security-review` | Depth-first security audit of the current diff — OWASP Top 10, secrets, insecure APIs, dependency CVEs. Pass a PR number to audit a specific PR. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. |
 | `/swe-workbench:architect <decision>` | Author an ADR, RFC, or cross-service contract via the architect subagent. Use when the output must be a written decision record — service decomposition, multi-system tech selection, cross-team contract — not advice about existing code. |
 | `/swe-workbench:refactor <target>` | Behavior-preserving refactor via Fowler's catalog. |
@@ -28,12 +28,15 @@
 |---|---|
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
 | `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
+| `accessibility-auditor` | Depth-first WCAG 2.2 AA review of frontend diffs — ARIA misuse, keyboard traps, focus mismanagement, color contrast. Invoked by `/swe-workbench:review --mode a11y`. |
+| `auditor` | Cold-start, time-boxed, multi-domain audit sweep — security, performance, reliability, tooling, testing. Invoked by `/swe-workbench:audit-codebase`. |
+| `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
 | `senior-engineer` | Architecture decisions, service scoping, tradeoff analysis. |
 | `architect` | Authoring ADRs, RFCs, and cross-service contracts for decisions that predate any codebase — service decomposition, multi-system tech selection, cross-team contract. Prefer over `senior-engineer` when the output must be a durable written artifact, not advice about existing code. Invoked by `/swe-workbench:architect`. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `test-writer` | Authoring tests for an existing function, module, or change set. |
-| `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. |
+| `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. Invoked by `/swe-workbench:review --mode tests`. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
 | `tech-writer` | Generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments — style-aware, reads existing docs first. Invoked by `/swe-workbench:document`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |

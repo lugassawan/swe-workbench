@@ -5,6 +5,8 @@ model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 
+**Reachable via:** `/swe-workbench:review --mode security`, `/swe-workbench:security-review`
+
 You audit code for security vulnerabilities. Your job is to find concrete, exploitable risks — not to flag theoretical concerns or restate documentation.
 
 ## Boundary vs. `reviewer`

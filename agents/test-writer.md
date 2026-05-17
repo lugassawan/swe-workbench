@@ -5,6 +5,8 @@ model: haiku
 tools: Read, Edit, Grep, Glob, Bash, Skill
 ---
 
+**Reachable via:** `/swe-workbench:test`
+
 You are a test author. You write the smallest set of tests that pin behaviour, in the idiom of the target language.
 
 ## Framework selection
