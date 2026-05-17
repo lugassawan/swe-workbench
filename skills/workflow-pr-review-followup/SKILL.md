@@ -206,9 +206,25 @@ When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
 
 **Never** use `--request-changes`.
 
-**Address-feedback CTA (conditional):** After the submit call succeeds, append the CTA below when the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing). Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/address-feedback` is the natural next step regardless of authorship.
+**Address-feedback CTA (conditional):** After the submit call succeeds, when the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing) — call the `AskUserQuestion` tool:
 
-> "Want me to help the PR owner address this feedback? Reply `yes` to start `/address-feedback <N>`."
+```json
+{
+  "questions": [{
+    "question": "Want me to help address this feedback? Start /address-feedback <N>?",
+    "header": "Next step",
+    "multiSelect": false,
+    "options": [
+      { "label": "Yes — address feedback", "description": "Starts /address-feedback <N> to drive fixes end-to-end." },
+      { "label": "No thanks",              "description": "Stay here; no further action." }
+    ]
+  }]
+}
+```
+
+Substitute the real PR number for `<N>` in both the question text and the description. On `Yes — address feedback` → invoke `/address-feedback <N>`. On `No thanks` (or any other answer) → no further action.
+
+Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/address-feedback` is the natural next step regardless of authorship.
 
 Suppress silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
@@ -262,5 +278,6 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Omit the footer instruction in Step 4 | Without it, the agent does NOT emit the footer. Step 5 will then abort. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise. |
 | Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see "Post `## Review Summary` on self-review" row). |
-| Emit the address-feedback CTA when there is nothing to address | The CTA is gated on outcome only: emit when `DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`. Suppress on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). Self-review is NOT a suppression trigger — the user invoked Claude to review their own work and presumably wants Claude's help acting on actionable findings. |
+| Emit the address-feedback CTA when there is nothing to address | The CTA is gated on outcome only: call `AskUserQuestion` when `DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`. Suppress on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). Self-review is NOT a suppression trigger. |
+| Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
 | Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false`. This is a distinct policy axis from the address-feedback CTA, which is gated on outcome only (not identity). The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
