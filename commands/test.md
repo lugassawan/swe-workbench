@@ -5,7 +5,7 @@ argument-hint: <file, function, or module>
 
 Target: $ARGUMENTS
 
-If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first — tests motivated by a ticket need the ticket's acceptance criteria in the delegation context. (Trigger patterns are defined in that skill's "When to invoke" section.)
+If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 Delegate to the `test-writer` subagent. Its output must include:
 

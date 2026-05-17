@@ -5,7 +5,7 @@ argument-hint: <one-line sub-idea>
 
 Sub-idea: $ARGUMENTS
 
-If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the context below. Skip if $ARGUMENTS is free-text with no recognizable ref.
+If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 **PR detection (inline):**
 
