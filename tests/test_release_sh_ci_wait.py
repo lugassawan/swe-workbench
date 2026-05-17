@@ -40,6 +40,7 @@ def _is_comment(line: str) -> bool:
 #
 _GUARD_SNIPPET = textwrap.dedent("""\
     set -euo pipefail
+    TOTAL=0; PENDING=0; FAILED=0
     set +e
     CHECKS_JSON=$(gh pr checks "42" --json state,conclusion 2>/dev/null)
     CHECKS_RC=$?
@@ -47,6 +48,11 @@ _GUARD_SNIPPET = textwrap.dedent("""\
 
     if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
       echo "transient: rc=${CHECKS_RC}" >&2
+      exit 3
+    fi
+
+    if [[ $CHECKS_RC -eq 8 && -z "$CHECKS_JSON" ]]; then
+      echo "transient: rc=8 no output" >&2
       exit 3
     fi
 
@@ -185,6 +191,13 @@ class TestBugADynamic:
         """rc=0, empty array [] → TOTAL=0 → exit 2 (still polling, not a green merge)."""
         self._make_gh_stub(tmp_path, 'printf "[]"; exit 0')
         assert self._run(tmp_path).returncode == 2
+
+    def test_rc8_empty_output_treated_as_transient(self, tmp_path):
+        """rc=8 with no stdout → treated as transient (exit 3), not silent-pending."""
+        self._make_gh_stub(tmp_path, 'exit 8')
+        result = self._run(tmp_path)
+        assert result.returncode == 3
+        assert "transient" in result.stderr
 
 
 # ─── Bug B: static tests ──────────────────────────────────────────────────────

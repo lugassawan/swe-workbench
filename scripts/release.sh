@@ -189,6 +189,8 @@ else
   LAST_HEARTBEAT=0
 
   while true; do
+    TOTAL=0; PENDING=0; FAILED=0
+
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
       echo "Error: timed out waiting for CI on PR #${PR_NUM} after $((TIMEOUT / 60)) minutes." >&2
       echo "Check status at: ${PR_URL}" >&2
@@ -205,6 +207,13 @@ else
 
     if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
       echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}); retrying in 10s..."
+      sleep 10
+      ELAPSED=$((ELAPSED + 10))
+      continue
+    fi
+
+    if [[ $CHECKS_RC -eq 8 && -z "$CHECKS_JSON" ]]; then
+      echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output; retrying in 10s..."
       sleep 10
       ELAPSED=$((ELAPSED + 10))
       continue
