@@ -205,7 +205,7 @@ When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
 
 **Never** use `--request-changes`.
 
-**Address-feedback CTA (conditional):** After the submit call succeeds, when the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing) — call the `AskUserQuestion` tool:
+**Address-feedback CTA (conditional):** At the end of Step 7, when the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing) — call the `AskUserQuestion` tool:
 
 ```json
 {
