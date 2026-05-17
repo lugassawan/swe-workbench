@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -18,4 +19,63 @@ jobs:
           python-version: '3.12'
       - run: pip install -r tests/requirements.txt
       - name: Run skill auto-trigger harness
-        run: pytest tests/test_skill_triggers.py -v
+        run: pytest tests/test_skill_triggers.py -v | tee /tmp/harness.log
+        # pipefail is on by default in GitHub Actions bash; pytest's exit
+        # code is preserved through `tee`.
+
+      - name: Route failure to tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Ensure the tracking label exists (idempotent; fails loud on real errors)
+          if ! gh label list --limit 200 --json name --jq '.[].name' | grep -qx skill-trigger-drift; then
+            gh label create skill-trigger-drift \
+              --color fbca04 \
+              --description 'Nightly BM25 harness detected description drift'
+          fi
+
+          # Extract failing test IDs from pytest output
+          failed_tests=$(grep -E '^FAILED ' /tmp/harness.log | awk '{print $2}' || true)
+          if [ -z "$failed_tests" ]; then
+            failed_tests="(could not parse FAILED lines; see run log)"
+          fi
+
+          date_today=$(date -u +%Y-%m-%d)
+          body=$(cat <<EOF
+          ### Nightly skill-trigger harness failed on ${date_today}
+
+          **Failing tests:**
+          \`\`\`
+          ${failed_tests}
+          \`\`\`
+
+          **Run:** ${RUN_URL}
+
+          ---
+
+          Usually means a skill's description has drifted (BM25 ranks a sibling skill above the target). Edit the relevant \`skills/<name>/SKILL.md\` description and re-run via \`workflow_dispatch\`.
+          EOF
+          )
+
+          # Look up open tracking issue
+          existing=$(gh issue list \
+            --label skill-trigger-drift \
+            --state open \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            echo "Appending to existing tracking issue #${existing}"
+            gh issue comment "$existing" --body "$body"
+          else
+            echo "Creating new tracking issue"
+            gh issue create \
+              --title "Nightly skill-trigger harness failing" \
+              --label skill-trigger-drift \
+              --body "$body"
+          fi
