@@ -16,6 +16,10 @@ import pytest
 
 GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
 
+# When tests run inside a git pre-push hook, GIT_DIR points to the hook's repo.
+# Strip GIT_* so subprocess git calls use normal cwd-based repo detection.
+_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
 
 @pytest.fixture(scope="module")
 def guard_script():
@@ -26,10 +30,13 @@ def guard_script():
 
 def run_guard(script, cmd, *, cwd=None, env=None):
     payload = json.dumps({"tool_input": {"command": cmd}})
+    merged_env = dict(_CLEAN_ENV)
+    if env is not None:
+        merged_env.update(env)
     return subprocess.run(
         [str(script)],
         input=payload, text=True, capture_output=True,
-        cwd=cwd, env=env,
+        cwd=cwd, env=merged_env,
     )
 
 
@@ -139,15 +146,25 @@ class TestForcePushBlocker:
 def repo_on(tmp_path):
     """Factory for temp git repos on a given branch."""
     def _make(branch: str) -> Path:
-        subprocess.run(["git", "init", "-q", "-b", branch], cwd=tmp_path, check=True)
-        (tmp_path / "README").write_text("init")
-        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        # Use a named subdirectory so stale .git dirs from previous pytest
+        # sessions never cause re-init or branch contamination.
+        repo_dir = tmp_path / "repo"
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
+        repo_dir.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", branch], cwd=repo_dir,
+                       env=_CLEAN_ENV, check=True)
+        (repo_dir / "README").write_text("init")
+        subprocess.run(["git", "add", "."], cwd=repo_dir, env=_CLEAN_ENV, check=True)
+        # Disable hooks so the host repo's commit-msg hook (which enforces
+        # [type] format) does not reject the plain "init" fixture message.
         subprocess.run(
-            ["git", "-c", "user.email=t@t.com", "-c", "user.name=T",
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "-c", "user.email=t@t.com", "-c", "user.name=T",
              "commit", "-qm", "init"],
-            cwd=tmp_path, check=True,
+            cwd=repo_dir, env=_CLEAN_ENV, check=True,
         )
-        return tmp_path
+        return repo_dir
     return _make
 
 
