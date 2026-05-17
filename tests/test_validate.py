@@ -291,7 +291,7 @@ class TestCheckAgents:
         agents_dir = root / "agents"
         agents_dir.mkdir(parents=True, exist_ok=True)
         (agents_dir / "bad-agent.md").write_text(
-            "---\nname: bad-agent\n---\n\n> See @./shared/skills.md\n", encoding="utf-8"
+            "---\nname: bad-agent\n---\n\n> See @./shared/principles.md\n", encoding="utf-8"
         )
         validate.check_agents()
         assert any("description" in f for f in validate.FAILURES)
@@ -304,7 +304,7 @@ class TestCheckAgents:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: An agent\ntools: Read, Write\n---\n"
             "\nUse `swe-workbench:foo` to do things.\n"
-            "\n> See @./shared/skills.md\n",
+            "\n> See @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agents()
@@ -317,7 +317,7 @@ class TestCheckAgents:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: An agent\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:foo` to do things.\n"
-            "\n> See @./shared/skills.md\n",
+            "\n> See @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agents()
@@ -357,8 +357,30 @@ class TestPerformanceTunerAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/skills.md" in text, (
-            "agent must include @./shared/skills.md catalog reference"
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md catalog reference (O3)"
+        )
+
+    # O7 — boundary matrix dedup (issue #235)
+    def test_no_individual_boundary_vs_headers(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        import re
+        count = len(re.findall(r"^## Boundary vs\.", text, re.MULTILINE))
+        assert count == 0, (
+            f"Found {count} '## Boundary vs.' headers — should be 0 after O7 dedup. "
+            "Use the consolidated '## Boundaries vs. other agents' table instead."
+        )
+
+    def test_boundaries_table_section_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "## Boundaries vs. other agents" in text, (
+            "agents/performance-tuner.md must have a '## Boundaries vs. other agents' table section (O7)"
+        )
+
+    def test_shared_agent_boundaries_file_exists(self):
+        shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
+        assert shared.exists(), (
+            "agents/shared/agent-boundaries.md must exist as canonical source (O7, issue #235)"
         )
 
     def test_profile_first_rule_present(self):
@@ -458,7 +480,7 @@ class TestCheckAgentSkillRefs:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:foo` skill.\n"
-            "\n> See @./shared/skills.md\n",
+            "\n> See @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
@@ -472,7 +494,7 @@ class TestCheckAgentSkillRefs:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:nonexistent` skill.\n"
-            "\n> See @./shared/skills.md\n",
+            "\n> See @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
@@ -572,8 +594,8 @@ class TestTestReviewerAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/skills.md" in text, (
-            "agent must include @./shared/skills.md catalog reference"
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md catalog reference (O3)"
         )
 
     def test_boundary_sections_present(self):
@@ -616,7 +638,7 @@ class TestCheckCatalogCompleteness:
     def _agent_body(self, name="my-agent"):
         return (
             f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/skills.md for the full skill catalog.\n"
+            "\n> See @./shared/principles.md for the skill catalog.\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -657,22 +679,108 @@ class TestCheckCatalogCompleteness:
         root = reset_validate
         make_plugin_tree(root, skills={"foo": "---\nname: foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
-        # Agent without the @./shared/skills.md include
+        # Agent without any slice catalog reference
         (agents_dir / "bad-agent.md").write_text(
             "---\nname: bad-agent\ndescription: d\ntools: Read\n---\n\nNo include here.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
-        assert any("@./shared/skills.md" in f for f in validate.FAILURES)
+        assert any("slice" in f.lower() for f in validate.FAILURES)
 
     def test_catalog_file_absent_fails(self, reset_validate):
         root = reset_validate
-        make_plugin_tree(root, skills={"foo": "---\nname: foo\ndescription: d\n---\n"})
-        # Remove the catalog
-        catalog_path = root / "agents" / "shared" / "skills.md"
+        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        # Remove the principles slice — validator must report it missing
+        catalog_path = root / "agents" / "shared" / "principles.md"
         catalog_path.unlink()
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
+
+    # O3 — slice-specific tests (issue #235)
+
+    def test_agent_with_principles_only_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/principles.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert len(validate.FAILURES) == 0
+
+    def test_agent_with_principles_and_languages_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "principle-foo": "---\nname: principle-foo\ndescription: d\n---\n",
+                "language-bar": "---\nname: language-bar\ndescription: d\n---\n",
+            },
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert len(validate.FAILURES) == 0
+
+    def test_agent_with_no_slice_reference_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n\nNo catalog ref at all.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert any("slice" in f.lower() for f in validate.FAILURES)
+
+    def test_ticket_context_lands_in_workflows(self, reset_validate):
+        """ticket-context is a _WORKFLOW_EXTRAS member — must land in workflows.md, not principles.md."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"ticket-context": "---\nname: ticket-context\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/workflows.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert len(validate.FAILURES) == 0
+        principles_text = (root / "agents" / "shared" / "principles.md").read_text()
+        assert "ticket-context" not in principles_text, (
+            "ticket-context must not appear in principles.md (belongs in workflows.md)"
+        )
+
+    def test_stale_entry_in_wrong_slice_fails(self, reset_validate):
+        """A language-* skill listed in principles.md (wrong slice) must fail."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"language-python": "---\nname: language-python\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        shared_dir = agents_dir / "shared"
+        # Manually override: put language-python in principles.md instead of languages.md
+        (shared_dir / "principles.md").write_text(
+            "- `swe-workbench:language-python` — python skill\n", encoding="utf-8"
+        )
+        (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        # principles.md has language-python (wrong slice) → "belongs in languages.md"
+        assert any("belongs in" in f for f in validate.FAILURES)
 
 
 # ──────────────────────────────────────────────
@@ -1023,7 +1131,8 @@ class TestFileReadCaching:
         root = reset_validate
         _make_full_valid_tree(root)
 
-        catalog = root / "agents" / "shared" / "skills.md"
+        # Target the principles slice (O3: skills.md replaced by 3 slice files)
+        catalog = root / "agents" / "shared" / "principles.md"
 
         original = Path.read_text
         read_count = {"n": 0}
@@ -1041,10 +1150,137 @@ class TestFileReadCaching:
             pass
 
         assert read_count["n"] == 1, (
-            f"Catalog should be attempted exactly once (cache build only), "
+            f"Catalog slice should be attempted exactly once (cache build only), "
             f"got {read_count['n']} — check_catalog_completeness may bypass the None sentinel"
         )
         rel = str(catalog.relative_to(root))
         assert any(rel in entry for entry in validate.FAILURES), (
-            f"Expected a failure entry for unreadable catalog {rel!r}, got: {validate.FAILURES}"
+            f"Expected a failure entry for unreadable catalog slice {rel!r}, got: {validate.FAILURES}"
+        )
+
+
+# ──────────────────────────────────────────────
+# O6: workflow-commit-and-pr SKILL.md trim (issue #235)
+# ──────────────────────────────────────────────
+
+_WORKFLOW_COMMIT_SKILL = (
+    Path(__file__).parent.parent
+    / "skills" / "workflow-commit-and-pr" / "SKILL.md"
+)
+
+
+class TestWorkflowCommitAndPrTrim:
+    """Integration tests: SKILL.md must stay ≤260 lines and the reference/ sub-doc
+    must exist (O6 dedup — issue #235)."""
+
+    def test_skill_md_within_line_cap(self):
+        lines = len(self._skill_text().splitlines())
+        assert lines <= 260, (
+            f"skills/workflow-commit-and-pr/SKILL.md is {lines} lines; cap is 260 (O6, issue #235). "
+            "Move extracted sections to reference/gh-pr-create.md."
+        )
+
+    def test_reference_gh_pr_create_exists(self):
+        ref = _WORKFLOW_COMMIT_SKILL.parent / "reference" / "gh-pr-create.md"
+        assert ref.exists(), (
+            "skills/workflow-commit-and-pr/reference/gh-pr-create.md must exist (O6 canonical source)"
+        )
+
+    def test_reference_contains_pre_check_section(self):
+        ref = _WORKFLOW_COMMIT_SKILL.parent / "reference" / "gh-pr-create.md"
+        assert ref.exists()
+        text = ref.read_text(encoding="utf-8")
+        assert "## Pre-check: existing PR for this branch" in text, (
+            "reference/gh-pr-create.md must contain the Pre-check section"
+        )
+
+    def test_reference_contains_draft_prompt_section(self):
+        ref = _WORKFLOW_COMMIT_SKILL.parent / "reference" / "gh-pr-create.md"
+        assert ref.exists()
+        text = ref.read_text(encoding="utf-8")
+        assert "## Draft vs ready prompt" in text, (
+            "reference/gh-pr-create.md must contain the Draft vs ready prompt section"
+        )
+
+    def _skill_text(self):
+        assert _WORKFLOW_COMMIT_SKILL.exists(), "SKILL.md not found"
+        return _WORKFLOW_COMMIT_SKILL.read_text(encoding="utf-8")
+
+
+# ──────────────────────────────────────────────
+# O2: severity-output contract dedup (issue #235)
+# ──────────────────────────────────────────────
+
+_AGENTS_DIR = Path(__file__).parent.parent / "agents"
+
+_O2_AGENTS = [
+    "reviewer",
+    "security-auditor",
+    "accessibility-auditor",
+    "performance-tuner",
+    "test-reviewer",
+]
+
+
+class TestSeverityOutputContract:
+    """Integration tests: every auditor agent in _O2_AGENTS must reference the shared
+    severity-output-contract.md (O2 dedup — issue #235)."""
+
+    def test_shared_contract_file_exists(self):
+        shared = _AGENTS_DIR / "shared" / "severity-output-contract.md"
+        assert shared.exists(), "agents/shared/severity-output-contract.md must exist (O2 canonical source)"
+
+    @pytest.mark.parametrize("agent", _O2_AGENTS)
+    def test_agent_references_severity_contract(self, agent):
+        path = _AGENTS_DIR / f"{agent}.md"
+        assert path.exists(), f"agents/{agent}.md not found"
+        text = path.read_text(encoding="utf-8")
+        assert "@./shared/severity-output-contract.md" in text, (
+            f"agents/{agent}.md does not reference @./shared/severity-output-contract.md — "
+            "add a reference in the severity/output-contract section (O2, issue #235)"
+        )
+
+
+# ──────────────────────────────────────────────
+# E3: ticket-context prelude uniformity (issue #235)
+# ──────────────────────────────────────────────
+
+_CANONICAL_PRELUDE = (
+    "If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first "
+    "and prepend its structured summary to the delegation context below. "
+    "Skip if $ARGUMENTS is free-text with no recognizable ref. "
+    "(Trigger patterns are defined in that skill's \"When to invoke\" section.)"
+)
+
+_COMMANDS_DIR = Path(__file__).parent.parent / "commands"
+
+_E3_COMMANDS = [
+    "implement", "debug", "design", "refactor", "test",
+    "migrate", "extend", "architect", "document",
+]
+
+
+class TestTicketContextPreludeUniformity:
+    """Integration tests: every command in _E3_COMMANDS must carry the canonical
+    ticket-context prelude paragraph (E3 dedup — issue #235, Path B)."""
+
+    def test_shared_prelude_file_exists(self):
+        shared = _COMMANDS_DIR / "shared" / "ticket-context-prelude.md"
+        assert shared.exists(), "commands/shared/ticket-context-prelude.md must exist (E3 canonical source)"
+
+    def test_shared_prelude_file_contains_canonical_text(self):
+        shared = _COMMANDS_DIR / "shared" / "ticket-context-prelude.md"
+        assert shared.exists(), "canonical source file missing"
+        assert _CANONICAL_PRELUDE in shared.read_text(encoding="utf-8"), (
+            "commands/shared/ticket-context-prelude.md content does not match canonical prelude"
+        )
+
+    @pytest.mark.parametrize("cmd", _E3_COMMANDS)
+    def test_command_contains_canonical_prelude(self, cmd):
+        path = _COMMANDS_DIR / f"{cmd}.md"
+        assert path.exists(), f"commands/{cmd}.md not found"
+        text = path.read_text(encoding="utf-8")
+        assert _CANONICAL_PRELUDE in text, (
+            f"commands/{cmd}.md does not contain the canonical ticket-context prelude — "
+            "sync from commands/shared/ticket-context-prelude.md (E3, issue #235)"
         )

@@ -63,7 +63,7 @@ Invoke these skills via the Skill tool when the diagnosis surfaces a concern in 
 
 ## Available skills
 
-See @./shared/skills.md for the full skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 ## Absolute rules
 - No fix without a failing test first.

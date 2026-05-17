@@ -83,7 +83,7 @@ Every finding must include all 11 fields. **Omit any finding you cannot fill all
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when a finding surfaces a concern in their domain:
 

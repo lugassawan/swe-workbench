@@ -155,7 +155,7 @@ If asked to apply a fix, refuse and re-emit the recommended action as text in th
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 

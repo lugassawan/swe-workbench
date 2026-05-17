@@ -70,6 +70,6 @@ For each invocation, emit:
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md for the skill catalog.
 
 Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, and the same "no-obvious-WHAT" discipline this agent applies.

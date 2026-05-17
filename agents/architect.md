@@ -51,7 +51,7 @@ You are an architect. You produce formal artifacts — ADRs, RFCs, contract spec
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
 

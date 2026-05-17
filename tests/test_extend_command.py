@@ -13,7 +13,7 @@ WORKFLOW_EXTEND = SKILLS_DIR / "workflow-extend"
 SKILL_MD = WORKFLOW_EXTEND / "SKILL.md"
 TRIGGERS_TXT = WORKFLOW_EXTEND / "triggers.txt"
 TEMPLATE_MD = WORKFLOW_EXTEND / "templates" / "plan-extend-section.md"
-AGENTS_SKILLS = ROOT / "agents" / "shared" / "skills.md"
+AGENTS_SKILLS = ROOT / "agents" / "shared" / "workflows.md"
 DOCS_CATALOG = ROOT / "docs" / "catalog.md"
 README = ROOT / "README.md"
 
@@ -83,15 +83,15 @@ def test_extend_skill_has_triggers():
 
 
 def test_extend_skill_in_catalog():
-    """agents/shared/skills.md must have an em-dash entry for workflow-extend."""
-    assert AGENTS_SKILLS.exists(), "agents/shared/skills.md must exist"
+    """agents/shared/workflows.md must have an em-dash entry for workflow-extend (O3)."""
+    assert AGENTS_SKILLS.exists(), "agents/shared/workflows.md must exist"
     text = AGENTS_SKILLS.read_text()
     entry_re = re.compile(
         r'^-\s+`swe-workbench:workflow-extend`\s+—\s+\S',
         re.MULTILINE,
     )
     assert entry_re.search(text), (
-        "agents/shared/skills.md must contain an em-dash (—) entry for "
+        "agents/shared/workflows.md must contain an em-dash (—) entry for "
         "`swe-workbench:workflow-extend` (required by check_catalog_completeness)"
     )
 

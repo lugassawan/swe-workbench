@@ -329,43 +329,83 @@ def check_skill_trigger_fixtures():
 
 
 def check_catalog_completeness(cache=None):
-    """Catalog at agents/shared/skills.md must list every skill, and every agent must include it."""
-    catalog = ROOT / "agents" / "shared" / "skills.md"
-    skills_dir = ROOT / "skills"
-    agents_dir = ROOT / "agents"
-    agents_cache = cache[0] if cache is not None else None
+    """Per-slice catalogs under agents/shared/ must list every skill in the right slice,
+    and every agent must reference at least one slice catalog.
 
-    if not catalog.is_file():
-        fail(catalog.relative_to(ROOT), "missing — required catalog file")
-        return  # remaining checks require the file; can't continue without it
+    Slice files and their skill-name prefix rules:
+      principles.md  → skill names starting with 'principle-'
+      languages.md   → skill names starting with 'language-'
+      workflows.md   → skill names starting with 'workflow-' plus 'ticket-context'
+
+    Skills with unrecognised prefixes are assigned to principles.md by convention.
+    """
+    _SLICE_FILES = {
+        "principles.md": ("principle-",),
+        "languages.md": ("language-",),
+        "workflows.md": ("workflow-",),
+    }
+    _WORKFLOW_EXTRAS = frozenset({"ticket-context"})
+    _SLICE_REFS = frozenset({
+        "@./shared/principles.md",
+        "@./shared/languages.md",
+        "@./shared/workflows.md",
+    })
+    # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
+    entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
+
+    agents_dir = ROOT / "agents"
+    shared_dir = agents_dir / "shared"
+    skills_dir = ROOT / "skills"
+    agents_cache = cache[0] if cache is not None else None
 
     if not skills_dir.is_dir():
         fail(skills_dir.relative_to(ROOT), "missing — required skills directory")
         return
 
-    if agents_cache is not None and catalog in agents_cache:
-        text = agents_cache[catalog]
-        if text is None:
-            fail(catalog.relative_to(ROOT), "could not read file")
-            return
-    else:
-        try:
-            text = catalog.read_text(encoding="utf-8")
-        except OSError as e:
-            fail(catalog.relative_to(ROOT), f"could not read file: {e}")
-            return
-    # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
-    entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
-    catalog_ids = {sid for sid, _ in entry_re.findall(text)}
     on_disk = {p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file()}
 
-    for sid in sorted(on_disk - catalog_ids):
-        fail(catalog.relative_to(ROOT),
-             f"missing entry for 'swe-workbench:{sid}' (skills/{sid}/SKILL.md exists)")
-    for sid in sorted(catalog_ids - on_disk):
-        fail(catalog.relative_to(ROOT),
-             f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
+    def _expected_slice(sid):
+        for fname, prefixes in _SLICE_FILES.items():
+            if any(sid.startswith(p) for p in prefixes):
+                return fname
+        if sid in _WORKFLOW_EXTRAS:
+            return "workflows.md"
+        return "principles.md"  # safe default for unrecognised prefixes
 
+    # Audit each slice file
+    for slice_file in _SLICE_FILES:
+        slice_path = shared_dir / slice_file
+        if not slice_path.is_file():
+            fail(slice_path.relative_to(ROOT), "missing — required catalog slice file")
+            continue
+
+        if agents_cache is not None and slice_path in agents_cache:
+            text = agents_cache[slice_path]
+            if text is None:
+                fail(slice_path.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = slice_path.read_text(encoding="utf-8")
+            except OSError as e:
+                fail(slice_path.relative_to(ROOT), f"could not read file: {e}")
+                continue
+
+        slice_ids = {sid for sid, _ in entry_re.findall(text)}
+        expected_in_slice = {sid for sid in on_disk if _expected_slice(sid) == slice_file}
+
+        for sid in sorted(expected_in_slice - slice_ids):
+            fail(slice_path.relative_to(ROOT),
+                 f"missing entry for 'swe-workbench:{sid}' (skills/{sid}/SKILL.md exists)")
+        for sid in sorted(slice_ids - on_disk):
+            fail(slice_path.relative_to(ROOT),
+                 f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
+        for sid in sorted(slice_ids & on_disk):
+            if _expected_slice(sid) != slice_file:
+                fail(slice_path.relative_to(ROOT),
+                     f"entry 'swe-workbench:{sid}' belongs in {_expected_slice(sid)}, not {slice_file}")
+
+    # Every agent must reference at least one slice catalog
     for agent_md in sorted(agents_dir.glob("*.md")):
         if agents_cache is not None and agent_md in agents_cache:
             agent_text = agents_cache[agent_md]
@@ -378,10 +418,11 @@ def check_catalog_completeness(cache=None):
             except OSError as e:
                 fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
                 continue
-        if "@./shared/skills.md" not in agent_text:
+        if not any(ref in agent_text for ref in _SLICE_REFS):
             fail(agent_md.relative_to(ROOT),
-                 "missing required '@./shared/skills.md' include"
-                 " — add: '> See @./shared/skills.md for the full skill catalog.'")
+                 "missing required slice catalog reference"
+                 " — add at least one of: '@./shared/principles.md',"
+                 " '@./shared/languages.md', '@./shared/workflows.md'")
 
 
 def check_examples():
@@ -405,12 +446,12 @@ def check_examples():
 def check_unwired_principle_skills(cache=None):
     """Every skills/principle-*/ must be referenced by at least one agent.
 
-    agents/shared/skills.md (the catalog) is explicitly excluded — it lists
+    agents/shared/ (the catalog slice files) are explicitly excluded — they list
     every skill by design and must not count as a wiring reference.
     """
     skills_dir = ROOT / "skills"
     agents_dir = ROOT / "agents"
-    catalog = agents_dir / "shared" / "skills.md"
+    shared_dir = agents_dir / "shared"
     agents_cache = cache[0] if cache is not None else None
 
     principle_skills = sorted(
@@ -420,7 +461,8 @@ def check_unwired_principle_skills(cache=None):
 
     agent_files = [
         f for f in sorted(agents_dir.rglob("*.md"))
-        if f != catalog and (agents_cache is None or agents_cache.get(f) is not None)
+        if f.parent != shared_dir
+        and (agents_cache is None or agents_cache.get(f) is not None)
     ]
 
     for skill_id in principle_skills:
