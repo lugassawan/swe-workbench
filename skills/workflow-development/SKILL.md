@@ -64,8 +64,8 @@ Also check CLAUDE.md for project-specific conventions.
 | Marker | Imports | Format | Lint | Test |
 |--------|---------|--------|------|------|
 | `go.mod` | `goimports -w .` | `gofmt -w .` | `golangci-lint run` | `go test ./...` |
-| `package.json` | `eslint --fix` (with `eslint-plugin-import`) or `npx organize-imports-cli` | check `scripts.format`/`prettier` | check `scripts.lint`/`eslint` | check `scripts.test` |
-| `Cargo.toml` | `cargo fmt` (configure `imports_granularity` in `rustfmt.toml`) | `cargo fmt` | `cargo clippy` | `cargo test` |
+| `package.json` | `npx organize-imports-cli` (always works); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` configured | check `scripts.format`/`prettier` | check `scripts.lint`/`eslint` | check `scripts.test` |
+| `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
 | `pom.xml` | `mvn spotless:apply` (Gradle: `./gradlew spotlessApply`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
 
@@ -222,7 +222,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | Mistake | Fix |
 |---------|-----|
 | Skip verification, go straight to review | Always verify first (Phase 3 before 4) |
-| Run only tests (skip format/lint) | Run all three, in order |
+| Run only tests (skip imports/format/lint) | Run all four, in order |
 | Single giant commit | Group by logical change |
 | Guess at branch/commit conventions | Detect from `git branch -a` and `git log` first |
 | Plan that introduces file edits without Workflow section | Always add the Workflow section (Mode A) — skip only for pure design / analysis output |

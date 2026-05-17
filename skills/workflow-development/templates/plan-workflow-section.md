@@ -33,7 +33,7 @@ Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` m
 
 ### Phase 3: Verify
 
-Run in order — stop on first failure, fix, re-run from imports:
+Run in order — stop on first failure, fix, re-run from imports (or invoke `superpowers:verification-before-completion` which handles the loop):
 
 | Step    | Command                      | Expected |
 |---------|------------------------------|----------|
