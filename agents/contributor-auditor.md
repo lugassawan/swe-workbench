@@ -32,7 +32,7 @@ Assess trust signals from the contributor's public GitHub profile and their rela
 - **Follower / following ratio** — extreme asymmetry (many following, few followers) can indicate a sock-puppet or throwaway account.
 - **Recent activity shape** — inspect `gh api /users/<login>/events?per_page=10`. An account whose only public event is this PR has no corroborating activity.
 - **`author_association`** — `gh pr view <N> --json authorAssociation`. `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR` signal prior repo interaction. `FIRST_TIME_CONTRIBUTOR` or `NONE` warrant closer review.
-- **Commit author email hygiene** — `git log --format='%ae %an'` on the PR branch. `user@hostname` (default git config that was never changed), `noreply@github.com`, or multiple emails across commits in the same PR are worth noting. Verified commits (GPG/SSH) raise confidence.
+- **Commit author email hygiene** — `git log --format='%ae %an'` on the PR branch. `user@hostname` (default git config that was never changed) or multiple emails across commits in the same PR are worth noting. A `@users.noreply.github.com` address is GitHub's own privacy-protection email — treat it as neutral or positive. Verified commits (GPG/SSH) raise confidence.
 - **Co-author email patterns** — `git log --format='%(trailers:key=Co-authored-by)'`. A local-hostname co-author address (`name@MacBook-Pro.local`) is a hygiene note, not a blocker.
 
 ### Diff signal
@@ -60,7 +60,7 @@ Assess whether the repo's protection rules are in place to act as a safety net r
 
 Assess whether this PR fits known low-trust contribution patterns:
 
-- **First PR from this author in this repo** — `gh api /repos/<O>/<R>/issues?creator=<login>&state=all&per_page=100` filtered to items where `pull_request` key is present. Count = 1 (this PR only) → flag as first contribution. If the result contains exactly 100 items (page saturated), paginate with `&page=2` before concluding; a capped result must not be reported as "only 100 PRs" without checking.
+- **First PR from this author in this repo** — `gh api "/repos/<O>/<R>/pulls?state=all&per_page=100" | jq '[.[] | select(.user.login == "<login>")] | length'`. Count = 1 (this PR only) → flag as first contribution. If the result contains exactly 100 items (page saturated), paginate with `&page=2` before concluding; a capped result must not be reported as "only 100 PRs" without checking.
 - **Tiny innocuous PR before a larger follow-up** — when prior PR count ≤ 1, note the pattern: a minimal change establishing contributor status can precede a more impactful follow-up.
 - **Contributor's only public activity is this PR** — cross-reference the author signal lens. If `public_repos = 0` AND `author_association = FIRST_TIME_CONTRIBUTOR` AND recent events show only this PR → flag as isolated-activity contributor.
 - **Diff touches supply-chain surfaces** — even small PRs that add a dependency, modify build scripts, or change CI configuration warrant elevated scrutiny regardless of author trust.
@@ -104,7 +104,7 @@ The final line of every report must be:
 **Downgrade to Medium** (from High) when any single signal above applies in isolation.
 
 **Keep at High** when:
-- `author_association` is `COLLABORATOR`, `MEMBER`, or `OWNER`, OR prior PR history in this repo is ≥ 3 merged PRs.
+- `author_association` is `COLLABORATOR`, `CONTRIBUTOR`, `MEMBER`, or `OWNER`, OR prior PR history in this repo is ≥ 3 merged PRs.
 - Diff scope is coherent with the issue.
 - No new dependencies, no executable-bit changes, no test deletions.
 - All required CI checks pass and branch protection is enabled.
