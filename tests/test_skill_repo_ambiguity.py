@@ -223,6 +223,39 @@ def test_cleanup_merged_resolves_default_branch_dynamically():
     )
 
 
+def test_sync_and_verify_handles_bare_repo():
+    """sync-and-verify.sh must handle bare repos (rimba worktree layout).
+
+    In a rimba-managed bare+worktrees setup, git worktree list returns the
+    bare repo as the first entry.  git checkout and git pull both abort with
+    "this operation must be run in a work tree" in that context.
+
+    The fix: detect core.bare=true and update the local default-branch ref via
+    a force-fetch refspec (git fetch origin +refs/heads/X:refs/heads/X) which
+    works in both bare and non-bare repos.
+
+    Assertions:
+    (a) Script detects core.bare=true (via git config --get core.bare).
+    (b) Bare-repo path uses git fetch with a +refs/heads/ refspec.
+    (c) Non-bare path still uses checkout+pull (both branches must exist).
+    """
+    script_body = SYNC_SCRIPT.read_text()
+
+    assert "core.bare" in script_body, (
+        "sync-and-verify.sh must detect core.bare to handle bare repos (rimba layout). "
+        "Add: git config --get core.bare | grep -q '^true$'"
+    )
+    assert "+refs/heads/" in script_body, (
+        "sync-and-verify.sh bare-repo path must use a +refs/heads/ force-fetch refspec "
+        "to advance the local branch ref without a working tree. "
+        "Plain 'git pull' and 'git checkout' fail in bare repos."
+    )
+    assert "git checkout" in script_body, (
+        "sync-and-verify.sh must still use git checkout for the non-bare path — "
+        "do not remove the existing checkout+pull branch."
+    )
+
+
 def test_pr_review_byline_and_summary_link_to_tool_repo():
     """BYLINE and SUMMARY in both pr-review skills must link to the tool repo.
 

@@ -15,8 +15,15 @@ MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 cd "$MAIN_REPO"
 
 # Block B: sync local default branch (best-effort — failure warns, does not abort)
-(git checkout "$DEFAULT_BRANCH" && git pull --ff-only origin "$DEFAULT_BRANCH") >/dev/null \
-  || echo "sync-main: best-effort failed — reconcile $DEFAULT_BRANCH manually" >&2
+# Bare repos (rimba worktree layout) have no working tree; use a force-fetch refspec to
+# advance the local ref instead of checkout+pull.
+if git config --get core.bare 2>/dev/null | grep -q '^true$'; then
+  git fetch --quiet origin "+refs/heads/${DEFAULT_BRANCH}:refs/heads/${DEFAULT_BRANCH}" 2>/dev/null \
+    || echo "sync-main: best-effort failed — reconcile ${DEFAULT_BRANCH} manually" >&2
+else
+  (git checkout "$DEFAULT_BRANCH" && git pull --ff-only origin "$DEFAULT_BRANCH") >/dev/null \
+    || echo "sync-main: best-effort failed — reconcile $DEFAULT_BRANCH manually" >&2
+fi
 
 # Block C: verification gate — check whether hook already cleaned up
 # Use awk string comparison (-v) to avoid regex metachar injection from HEAD_REF
