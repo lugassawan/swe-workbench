@@ -1,6 +1,6 @@
-# Agent boundaries — performance-tuner scope
+# Shared agent boundary reference
 
-Adjacent agents and when to hand off. Use this table inline in performance-tuner.md.
+Adjacent agents and when to hand off. Currently referenced by performance-tuner.md.
 
 | Agent | Their scope | Hand-off trigger |
 |---|---|---|

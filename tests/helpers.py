@@ -73,8 +73,13 @@ def make_plugin_tree(
     if catalog is not None:
         # Legacy convenience: caller-supplied catalog text goes to principles.md;
         # other slices get empty stubs so the validator sees valid (if empty) files.
-        # IMPORTANT: only pass skills with unrecognised prefixes (not principle-/language-/workflow-)
-        # in catalog= text — otherwise the wrong-slice check in check_catalog_completeness will fire.
+        import re as _re
+        _known = _re.findall(r"`swe-workbench:([\w-]+)`", catalog)
+        _bad = [s for s in _known if any(s.startswith(p) for p in ("principle-", "language-", "workflow-")) or s == "ticket-context"]
+        assert not _bad, (
+            f"catalog= must not contain prefixed skills {_bad}; pass them via skills= so "
+            "make_plugin_tree places them in the correct slice file automatically."
+        )
         (shared_dir / "principles.md").write_text(catalog, encoding="utf-8")
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (shared_dir / "workflows.md").write_text("\n", encoding="utf-8")
