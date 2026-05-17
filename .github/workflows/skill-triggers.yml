@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
 
           # Ensure the tracking label exists (idempotent; fails loud on real errors)
-          if ! gh label list --json name --jq '.[].name' | grep -qx skill-trigger-drift; then
+          if ! gh label list --limit 200 --json name --jq '.[].name' | grep -qx skill-trigger-drift; then
             gh label create skill-trigger-drift \
               --color fbca04 \
               --description 'Nightly BM25 harness detected description drift'
@@ -75,6 +75,6 @@ jobs:
             echo "Creating new tracking issue"
             gh issue create \
               --title "Nightly skill-trigger harness failing" \
-              --label skill-trigger-drift,ci \
+              --label skill-trigger-drift \
               --body "$body"
           fi
