@@ -92,6 +92,10 @@ Flag, don't compute contrast ratios manually. Recommend these as follow-ups:
 
 ## Severity scheme
 
+> Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+
+Domain-specific severity criteria (extends the base ladder with a11y examples):
+
 | Tier | Criteria | Examples |
 |---|---|---|
 | **Critical** | Keyboard-unreachable primary action; content completely inaccessible to screen readers; focus trap with no escape | `<div onClick>` primary CTA with no `role`/`tabindex`; informative `<img>` missing `alt`; modal that traps focus and never releases |
@@ -161,7 +165,7 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 

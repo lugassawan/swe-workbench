@@ -72,6 +72,10 @@ Every finding must include:
 
 ## Severity scheme
 
+> Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+
+Domain-specific severity criteria (extends the base ladder with security examples):
+
 | Tier | Criteria | Examples |
 |---|---|---|
 | **Critical** | Exploitable now, no preconditions | Exposed live secret matching a known-format pattern, unauthenticated RCE, SQLi in user-reachable endpoint |
@@ -106,7 +110,7 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
-> See @./shared/skills.md for the full skill catalog.
+> See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 
