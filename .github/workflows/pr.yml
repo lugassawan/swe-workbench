@@ -8,6 +8,9 @@ on:
 jobs:
   validate-pr:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Validate PR title
         env:
@@ -86,6 +89,8 @@ jobs:
 
   validate-plugin-files:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Validate plugin files
@@ -93,10 +98,12 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Run shellcheck (warning+ on all *.sh + githooks)
-        uses: ludeeus/action-shellcheck@2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         with:
           severity: warning
           additional_files: 'commit-msg pre-commit pre-push'
@@ -104,21 +111,25 @@ jobs:
 
   pytest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install -r tests/requirements.txt
+      - run: pip install --require-hashes -r tests/requirements.lock
       - run: pytest tests/ -v
 
   markdown-links:
     name: Markdown link check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - name: Check markdown links (lychee)
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411  # v2.8.0
         with:
           args: --config .lychee.toml './**/*.md'
           fail: true

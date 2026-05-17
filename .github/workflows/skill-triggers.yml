@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install -r tests/requirements.txt
+      - run: pip install --require-hashes -r tests/requirements.lock
       - name: Run skill auto-trigger harness
         run: pytest tests/test_skill_triggers.py -v | tee /tmp/harness.log
         # pipefail is on by default in GitHub Actions bash; pytest's exit
