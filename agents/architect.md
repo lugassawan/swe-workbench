@@ -49,6 +49,10 @@ You are an architect. You produce formal artifacts — ADRs, RFCs, contract spec
 - Async messaging used to hide synchronous coupling — if service B must respond before service A can proceed, the coupling is synchronous regardless of the transport.
 - Skipping reversibility classification — one-way doors deserve disproportionately more rigor; treating them as two-way doors is how teams get locked in.
 
+## Reading external repos
+
+> See @./shared/external-repo-reading.md.
+
 ## Principle consultation
 
 > See @./shared/principles.md for the skill catalog.

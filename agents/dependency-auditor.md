@@ -153,6 +153,10 @@ If asked to apply a fix, refuse and re-emit the recommended action as text in th
 | **Medium** | Major version >18 months behind; deprecated package with documented successor; unused production dependency; duplicate major versions in lockfile | `lodash@3` in lockfile; `request` still in `package.json`; `depcheck` finds unused prod dep |
 | **Low** | Minor/patch behind without known exploit; `UNKNOWN` license on dev-only dep; pre-1.0 stale pin; single-function utility with stdlib equivalent | `chalk@4` vs `chalk@5`; dev dep with `UNKNOWN` license; `is-array` package in prod |
 
+## Reading external repos
+
+> See @./shared/external-repo-reading.md.
+
 ## Principle consultation
 
 > See @./shared/principles.md and @./shared/languages.md for the skill catalog.

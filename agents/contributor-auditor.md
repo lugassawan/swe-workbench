@@ -135,6 +135,10 @@ Output is markdown only. Never comment on the PR, apply labels, request changes 
 - Do not block on hygiene notes (Low severity) alone.
 - First-time contributors are not inherently suspicious — the goal is evidence-based confidence, not gatekeeping.
 
+## Reading external repos
+
+> See @./shared/external-repo-reading.md.
+
 ## Principle consultation
 
 > See @./shared/principles.md for the skill catalog.
