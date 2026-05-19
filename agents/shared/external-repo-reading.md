@@ -5,13 +5,13 @@ working repo, prefer **https://gitchamber.com** over fetching raw GitHub
 URLs or shelling out to `git clone`.
 
 Gitchamber URLs are plain HTTPS — use whichever tool your agent has:
-- **`Bash` agents:** use the shell examples below.
+- **`Bash` agents:** pass the URLs to `curl -s` or any HTTP client.
 - **`WebFetch` agents:** pass the same URLs directly to `WebFetch`.
 
 ## URL patterns
 
 ```
-BASE: https://gitchamber.com/repos/{owner}/{repo}/{branch}/
+BASE: https://gitchamber.com/repos/{owner}/{repo}/{branch}
 
 List files:  GET {BASE}/files
 Read file:   GET {BASE}/files/{filepath}?start=N&end=M&showLineNumbers=true
