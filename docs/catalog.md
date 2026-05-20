@@ -58,6 +58,7 @@
 | `principle-design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
 | `principle-clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
 | `principle-code-review` | "code review checklist", "PR review heuristics", "review comment", "review finding", "nitpick filtering", "reviewing a diff". |
+| `principle-postmortem` | "postmortem", "blameless", "root cause analysis", "5 whys", "fishbone", "incident review", "MTTD", "MTTR", "action items", "incident report", "blameless postmortem". |
 | `principle-refactoring` | "refactor", "Fowler", "Extract Function", "Inline Variable", "Move Function", "smell", "Long Method", "Feature Envy", "Data Clumps", "Primitive Obsession", "characterization test", "behavior-preserving". |
 | `principle-observability` | "structured logs", "application metrics", "distributed traces", "span", "OpenTelemetry", "SLO", "SLI", "RED method", "USE method", "cardinality", "structured logging". |
 | `principle-api-design` | "api versioning", "idempotency", "idempotency key", "pagination", "cursor pagination", "error shape", "REST vs RPC", "event-driven", "API deprecation", "API contract". |
@@ -66,7 +67,6 @@
 | `principle-cost-awareness` | "cloud cost", "FinOps", "egress", "right-sizing", "scale-to-zero", "cost-per-request", "storage tier", "log volume", "cardinality cost". |
 | `principle-data-modeling` | "schema design", "data model", "normalization", "denormalization", "indexing", "hot key", "hot partition", "schema evolution", "expand contract", "query-first", "storage paradigm", "relational vs document", "TTL", "archival". |
 | `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
-| `principle-postmortem` | "postmortem", "blameless", "root cause analysis", "5 whys", "fishbone", "incident review", "MTTD", "MTTR", "action items", "incident report", "blameless postmortem". |
 | `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
 
 ### Languages — auto-load by file type
