@@ -60,3 +60,4 @@ Invoke these skills via the Skill tool when the question directly concerns their
 - `swe-workbench:principle-observability` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
 - `swe-workbench:principle-cost-awareness` — cost-per-request mental model, scale-to-zero vs cold-start, storage tier selection
 - `swe-workbench:principle-release-engineering` — semver-bump risk, expand-contract sequencing for breaking changes, rollback-vs-rollforward trade-offs, tag-identity invariants
+- `swe-workbench:principle-postmortem` — blameless RCA after incidents, trigger/condition/root-cause decomposition, action-item ownership, MTTD/MTTR trends (completes the prevent→detect→learn triad)

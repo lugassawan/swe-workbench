@@ -516,6 +516,66 @@ class TestPrincipleReleaseEngineeringSkill:
 
 
 # ──────────────────────────────────────────────
+# principle-postmortem skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrinciplePostmortemSkill:
+    """Integration tests: assert the real skills/principle-postmortem/SKILL.md satisfies
+    all acceptance criteria from issue #178 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-postmortem" / "SKILL.md"
+    TRIGGERS_PATH = Path(__file__).parent.parent / "skills" / "principle-postmortem" / "triggers.txt"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-postmortem/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-postmortem" in text
+
+    def test_blameless_culture_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Blameless Culture" in text
+
+    def test_root_cause_analysis_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Root Cause Analysis" in text
+
+    def test_postmortem_document_structure_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Postmortem Document Structure" in text
+
+    def test_action_item_discipline_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Action-Item Discipline" in text
+
+    def test_two_rca_frameworks_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "5 Whys" in text, "RCA section must cover the 5 Whys framework"
+        assert "Fishbone" in text or "Ishikawa" in text, (
+            "RCA section must cover the Fishbone/Ishikawa framework"
+        )
+
+    def test_triggers_has_two_or_more_non_empty_lines(self):
+        assert self.TRIGGERS_PATH.exists(), "triggers.txt must exist"
+        lines = [
+            ln for ln in self.TRIGGERS_PATH.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        assert len(lines) >= 2, f"triggers.txt must have ≥2 non-empty lines, got {len(lines)}"
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 

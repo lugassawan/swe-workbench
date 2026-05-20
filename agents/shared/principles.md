@@ -18,6 +18,7 @@ All `swe-workbench` principle skills available in this plugin. Use the `Skill` t
 - `swe-workbench:principle-i18n` — Internationalization & localization: locale-aware formatting, time zones, plural rules, message catalogs, RTL layout, ISO 8601, currency.
 - `swe-workbench:principle-observability` — Observability: logs vs metrics vs traces, structured logging, OpenTelemetry, SLI/SLO.
 - `swe-workbench:principle-performance` — Performance: latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries.
+- `swe-workbench:principle-postmortem` — Postmortem principles: blameless culture, root cause analysis (5 Whys, Fishbone/Ishikawa), incident document structure, action-item discipline, MTTD/MTTR metrics.
 - `swe-workbench:principle-refactoring` — Refactoring discipline: Fowler's catalog, smell→move mapping, rule of three, characterization-tests-first, small behavior-preserving steps with green between.
 - `swe-workbench:principle-release-engineering` — Release engineering: semver discipline, expand-contract for breaking changes, idempotent release automation, post-release verification, rollback planning, release-notes audience.
 - `swe-workbench:principle-resiliency` — Resiliency: failure domains, bulkheads, graceful degradation, fail-fast vs fail-soft, health checks, blast radius containment.
