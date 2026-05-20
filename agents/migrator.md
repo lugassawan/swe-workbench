@@ -122,6 +122,7 @@ Invoke these skills via the Skill tool when the migration surfaces a concern in 
 - `swe-workbench:principle-data-modeling` — schema evolution, indexing the new column, hot-key avoidance, retention policy during dual-write window
 - `swe-workbench:principle-resiliency` — phased migration as blast-radius reduction; kill-switch flag at Switch phase as graceful-degradation mechanism
 - `swe-workbench:principle-version-control` — atomic per-phase commits ("Phase 2/5: backfill user_email_v2"); conflict resolution on long-running dual-write branches diverging from main
+- `swe-workbench:principle-release-engineering` — semver bump for migrations that cross a compatibility boundary; expand-contract as the per-phase release discipline; rollback path documented before each phase ships
 - `swe-workbench:principle-event-driven` — compatible serializers, parallel consumer groups, DLQ strategy at Switch, idempotent event handlers during Dual-write
 - `swe-workbench:principle-observability` — every advance gate must cite a metric; no metric = blind gate = blocked; structured logs per phase transition
 - `swe-workbench:principle-performance` — backfill cost on a representative replica before production; bounded `ACCESS EXCLUSIVE` lock duration; chunk size tuning

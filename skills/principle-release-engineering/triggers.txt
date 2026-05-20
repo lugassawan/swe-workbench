@@ -1,0 +1,5 @@
+how do I cut a release that I can safely re-run if it fails halfway through
+what's the safest way to ship a breaking API change without breaking callers in flight
+should this be a major bump or a minor bump and what does semver actually mean for a pre-1.0 library
+we need a rollback plan before we tag this release — what should it actually contain
+how do I verify the release actually landed in the registry and not just that CI was green

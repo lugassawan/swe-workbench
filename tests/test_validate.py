@@ -459,6 +459,63 @@ class TestPrincipleCodeReviewSkill:
 
 
 # ──────────────────────────────────────────────
+# principle-release-engineering skill structural assertions
+# ──────────────────────────────────────────────
+
+class TestPrincipleReleaseEngineeringSkill:
+    """Integration tests: assert the real skills/principle-release-engineering/SKILL.md satisfies
+    all acceptance criteria from issue #175 without relying on a synthetic fixture."""
+
+    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-release-engineering" / "SKILL.md"
+    TRIGGERS_PATH = Path(__file__).parent.parent / "skills" / "principle-release-engineering" / "triggers.txt"
+
+    def test_file_exists(self):
+        assert self.SKILL_PATH.exists(), "skills/principle-release-engineering/SKILL.md must exist"
+
+    def test_frontmatter_name(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "name: principle-release-engineering" in text
+
+    def test_semver_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Semver" in text
+
+    def test_expand_contract_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Expand-contract" in text or "## Expand-Contract" in text
+
+    def test_idempotent_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Idempotent" in text
+
+    def test_post_release_verification_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Post-release verification" in text or "## Post-Release Verification" in text
+
+    def test_rollback_section_present(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        assert "## Rollback" in text
+
+    def test_triggers_has_two_or_more_non_empty_lines(self):
+        assert self.TRIGGERS_PATH.exists(), "triggers.txt must exist"
+        lines = [
+            ln for ln in self.TRIGGERS_PATH.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        assert len(lines) >= 2, f"triggers.txt must have ≥2 non-empty lines, got {len(lines)}"
+
+    def test_skill_passes_validate(self, reset_validate, monkeypatch):
+        """The real skill must pass check_skills() and check_unwired_principle_skills()
+        against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        val.FAILURES.clear()
+        val.check_skills()
+        val.check_unwired_principle_skills()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_commands
 # ──────────────────────────────────────────────
 
