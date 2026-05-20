@@ -255,3 +255,29 @@ class TestPrePushHook:
         assert "pytest" in content and "tests/" in content, (
             "pre-push hook must invoke pytest against the tests/ directory"
         )
+
+
+# ──────────────────────────────────────────────
+# worktree permission-grant hook — wiring
+# ──────────────────────────────────────────────
+
+class TestWorktreePermissionHookWiring:
+    """Verify the Read|Edit|Write PreToolUse entry is present and correctly wired."""
+
+    HOOKS_JSON = Path(__file__).parent.parent / "hooks" / "hooks.json"
+
+    def test_rw_entry_present(self):
+        data = json.loads(self.HOOKS_JSON.read_text(encoding="utf-8"))
+        entries = [
+            e for e in data["hooks"]["PreToolUse"]
+            if e.get("matcher") == "Read|Edit|Write"
+        ]
+        assert entries, "Read|Edit|Write PreToolUse entry missing from hooks.json"
+        assert any(
+            "worktree_permission_grant.sh" in e["hooks"][0]["command"] for e in entries
+        ), f"No entry references worktree_permission_grant.sh; entries: {entries}"
+
+    def test_hook_script_exists(self):
+        script = Path(__file__).parent.parent / "hooks" / "worktree_permission_grant.sh"
+        assert script.exists(), f"Missing hook script: {script}"
+        assert os.access(script, os.X_OK), f"Hook script not executable: {script}"

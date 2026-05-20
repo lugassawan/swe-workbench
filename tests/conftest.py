@@ -22,7 +22,13 @@ import pytest
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
 _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
     {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    | {"GIT_CONFIG_NOSYSTEM": "1"}
+    | {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "T",
+        "GIT_AUTHOR_EMAIL": "t@t.com",
+        "GIT_COMMITTER_NAME": "T",
+        "GIT_COMMITTER_EMAIL": "t@t.com",
+    }
 )
 
 # Ensure scripts/ and tests/ are importable from any working directory.

@@ -18,6 +18,15 @@
             "command": "$CLAUDE_PLUGIN_ROOT/hooks/skill_usage_record.sh"
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/worktree_permission_grant.sh"
+          }
+        ]
       }
     ],
     "SubagentStop": [
