@@ -101,7 +101,7 @@ Even then: **tag identity** costs nothing and must never be skipped. One tag = o
 | Flag | Problem |
 |------|---------|
 | Re-pointing a published tag | Silently changes the artifact for all consumers; breaks reproducibility |
-| Force-pushing a release branch | Rewrites history others have pulled; breaks bisect on the release line |
+| Force-pushing a release branch | Consumers who pinned the pre-push SHA now reference a phantom commit; a release tag may point to a ghost commit — for general branch force-push discipline see `swe-workbench:principle-version-control` |
 | "fix bump version" follow-up commit after a tag | Tag and published artifact now diverge; `v1.2.3` is a lie |
 | Rollback plan discovered at incident time | Means time-to-restore measured in hours, not minutes |
 | Changelog written from `git log` without translation | User-facing notes become commit-message archaeology |
