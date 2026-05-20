@@ -52,6 +52,7 @@ esac
 wt_root=$(git -C "$file_dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 # Security: never grant for files outside the worktree root.
+# Strict prefix: file_abs must be a child of wt_root, not wt_root itself.
 case "$file_abs" in
     "$wt_root"/*) ;;
     *) exit 0 ;;
@@ -64,6 +65,7 @@ file_rel="${file_abs#"$wt_root"/}"
 # not available on macOS without coreutils; readlink -f requires the path to
 # exist, which breaks Write on new files).
 file_real=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$file_abs" 2>/dev/null) || exit 0
+# Same strict-prefix requirement: resolved path must also be a child of wt_root.
 case "$file_real" in
     "$wt_root"/*) ;;
     *) exit 0 ;;
