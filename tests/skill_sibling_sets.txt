@@ -20,3 +20,12 @@ principle-clean-architecture, principle-ddd, principle-event-driven
 # belongs to either skill — the distinction (first-pass vs re-check) is determined
 # by context the BM25 ranker cannot resolve.
 workflow-pr-review, workflow-pr-review-followup
+
+# principle-data-modeling and principle-release-engineering both cover the
+# expand-contract pattern, but from different angles: principle-data-modeling owns
+# schema mechanics (column backfills, dual-write windows, index swaps), while
+# principle-release-engineering owns API/code-contract discipline (ship new interface
+# alongside old, migrate callers, remove old). A prompt like "how do I evolve a
+# database schema without breaking existing clients using an expand-contract migration"
+# legitimately belongs to either skill.
+principle-data-modeling, principle-release-engineering
