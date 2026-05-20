@@ -1,6 +1,6 @@
 ---
 name: principle-release-engineering
-description: Release engineering: semver discipline, tag identity, rollout strategy, rollback planning, expand-contract for breaking changes, canary deployments, kill-switch, feature flag, release notes audience, idempotent release automation, post-release verification. Auto-load when cutting a release, planning a breaking API change, writing release notes, choosing a version bump, designing a rollback plan, or building release automation scripts.
+description: Release engineering: semver discipline, tag identity, rollout strategy, rollback planning, expand-contract for breaking changes, kill-switch, feature flag, release notes audience, idempotent release automation, post-release verification. Auto-load when cutting a release, planning a breaking API change, writing release notes, choosing a version bump, designing a rollback plan, using a feature flag as a kill-switch, or building release automation scripts.
 ---
 
 # Release Engineering
@@ -74,6 +74,8 @@ Every release must have a documented rollback path *before* shipping — not dis
 | Breaking change escaped | Revert via expand-contract Phase 1 (old interface was never removed) |
 | Infrastructure regression | Feature-flag disable or blue-green flip to previous slot |
 | Data corruption | Point-in-time restore + dual-write replay (see `migrator` agent) |
+
+A **kill-switch** is a feature flag that disables a feature in production without a redeploy. Gate high-risk features behind a flag before release so the rollback is a config change, not a hotfix deploy. Plan the flag's removal cadence upfront — a kill-switch left in permanently becomes an untested code path and an operational liability.
 
 "We'll figure it out" is not a rollback plan. Write the rollback steps in the release PR before merging.
 
