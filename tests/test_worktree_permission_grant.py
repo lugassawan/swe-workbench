@@ -81,22 +81,9 @@ def wt_env(tmp_path: Path):
     wts.mkdir()
 
     _git("init", "-q", "-b", "main", cwd=main)
-    _git("config", "user.email", "t@t.com", cwd=main)
-    _git("config", "user.name", "T", cwd=main)
     (main / "README").write_text("init")
     _git("add", ".", cwd=main)
-    _git(
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "user.email=t@t.com",
-        "-c",
-        "user.name=T",
-        "commit",
-        "-qm",
-        "[chore] init",
-        cwd=main,
-    )
+    _git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "[chore] init", cwd=main)
 
     current = wts / "current"
     _git("worktree", "add", "-b", "feature/current", str(current), cwd=main)
