@@ -60,6 +60,7 @@ Invoke these skills via the Skill tool when the diagnosis surfaces a concern in 
 - `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency rule
 - `swe-workbench:principle-concurrency` — race conditions, deadlock, missing cancellation propagation, ordering bugs, memory-model surprises
 - `swe-workbench:principle-refactoring` — when the diagnosis surfaces structural debt that the minimal fix should NOT touch (recommend follow-up /refactor)
+- `swe-workbench:principle-postmortem` — when the bug triggered a production incident and the team needs blameless RCA framing, trigger/condition/root-cause decomposition, or action-item structure
 
 ## Available skills
 

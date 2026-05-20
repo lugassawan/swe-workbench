@@ -66,6 +66,7 @@
 | `principle-cost-awareness` | "cloud cost", "FinOps", "egress", "right-sizing", "scale-to-zero", "cost-per-request", "storage tier", "log volume", "cardinality cost". |
 | `principle-data-modeling` | "schema design", "data model", "normalization", "denormalization", "indexing", "hot key", "hot partition", "schema evolution", "expand contract", "query-first", "storage paradigm", "relational vs document", "TTL", "archival". |
 | `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
+| `principle-postmortem` | "postmortem", "blameless", "root cause analysis", "5 whys", "fishbone", "incident review", "MTTD", "MTTR", "action items", "incident report", "blameless postmortem". |
 | `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
 
 ### Languages — auto-load by file type
