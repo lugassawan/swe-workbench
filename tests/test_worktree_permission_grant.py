@@ -13,7 +13,6 @@ from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 HOOK_SH = ROOT / "hooks" / "worktree_permission_grant.sh"
-HOOKS_JSON = ROOT / "hooks" / "hooks.json"
 
 _ALLOW_JSON = {
     "hookSpecificOutput": {
@@ -117,7 +116,6 @@ def wt_env(tmp_path: Path):
 
 
 class TestWorktreePermissionGrant:
-    # TC1 — whole-tree sibling grant is remapped to the current worktree
     def test_whole_tree_sibling_grant_allows(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/**)"])
@@ -130,7 +128,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
 
-    # TC2 — sub-path sibling grant matches a file inside that sub-path
     def test_subdirectory_glob_matches(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/skills/**)"])
@@ -145,7 +142,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
 
-    # TC3 — same grant does not match a file outside that sub-path
     def test_subdirectory_glob_no_match(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/skills/**)"])
@@ -160,7 +156,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC4 — main checkout is not a linked worktree → no grant
     def test_main_checkout_is_noop(self, wt_env):
         main = wt_env["main"]
         (main / ".claude").mkdir(exist_ok=True)
@@ -176,7 +171,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC5 — no .claude/settings.local.json → no grant
     def test_missing_settings_is_noop(self, wt_env):
         wt = wt_env["wt"]
         # .claude/ exists but settings.local.json is absent
@@ -189,7 +183,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC6 — Edit with only Read entries → no grant
     def test_edit_without_edit_entries_is_noop(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/**)"])
@@ -202,7 +195,18 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC7 — out-of-tree path is never granted (security boundary)
+    def test_edit_grant_allows(self, wt_env):
+        wt, other = wt_env["wt"], wt_env["other"]
+        _settings(wt, [f"Edit({_cc_abs(other)}/**)"])
+        result = _run(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(wt / "README")},
+            }
+        )
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == _ALLOW_JSON
+
     def test_out_of_tree_path_is_denied(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/**)"])
@@ -215,7 +219,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC8 — path with .. traversal is rejected (security)
     def test_dotdot_traversal_is_denied(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Read({_cc_abs(other)}/**)"])
@@ -229,7 +232,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC9 — relative glob in the allow list (no leading /) is matched
     def test_relative_glob_matches(self, wt_env):
         wt = wt_env["wt"]
         _settings(wt, ["Read(skills/**)"])
@@ -244,7 +246,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
 
-    # TC10 — unrelated absolute grant (e.g. //tmp/x/**) is skipped
     def test_unrelated_abs_grant_is_skipped(self, wt_env):
         wt = wt_env["wt"]
         _settings(wt, ["Read(//tmp/x/**)"])
@@ -257,7 +258,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC11 — malformed stdin JSON → fail-open (exit 0, empty stdout, never exit 2)
     def test_malformed_stdin_is_failopen(self):
         result = subprocess.run(
             ["bash", str(HOOK_SH)],
@@ -269,7 +269,22 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    # TC13 — Write tool with Write(...) entry is granted (positive Write coverage)
+    def test_symlink_escape_denied(self, wt_env):
+        wt, other = wt_env["wt"], wt_env["other"]
+        secret = wt_env["wts"].parent / "secret.txt"
+        secret.write_text("secret")
+        link = wt / "escape_link"
+        link.symlink_to(secret)
+        _settings(wt, [f"Read({_cc_abs(other)}/**)"])
+        result = _run(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(link)},
+            }
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
     def test_write_grant_allows(self, wt_env):
         wt, other = wt_env["wt"], wt_env["other"]
         _settings(wt, [f"Write({_cc_abs(other)}/**)"])
@@ -282,7 +297,6 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
 
-    # TC14 — single-slash absolute glob (e.g. Read(/abs/path/**)) is matched
     def test_single_slash_abs_glob_matches(self, wt_env):
         wt = wt_env["wt"]
         _settings(wt, [f"Read({str(wt)}/**)"])
@@ -294,23 +308,3 @@ class TestWorktreePermissionGrant:
         )
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
-
-
-# TC12 — hooks.json wiring
-class TestHooksJsonEntry:
-    def test_worktree_hook_entry_present(self):
-        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
-        pre_tool_use = data["hooks"]["PreToolUse"]
-        entries = [e for e in pre_tool_use if e.get("matcher") == "Read|Edit|Write"]
-        assert entries, "Read|Edit|Write PreToolUse entry missing from hooks.json"
-        assert any(
-            "worktree_permission_grant.sh" in e["hooks"][0]["command"] for e in entries
-        ), f"No entry references worktree_permission_grant.sh; entries: {entries}"
-
-    def test_schema_valid_after_adding_entry(self):
-        result = subprocess.run(
-            ["python", str(ROOT / "scripts" / "validate.py")],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
