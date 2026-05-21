@@ -2,6 +2,7 @@
 """Plugin self-validator. Zero dependencies beyond python3 stdlib."""
 
 import json
+import py_compile
 import re
 import sys
 from pathlib import Path
@@ -481,6 +482,19 @@ def check_unwired_principle_skills(cache=None):
 
 
 # ──────────────────────────────────────────────
+# Python hook syntax check
+# ──────────────────────────────────────────────
+
+def check_hook_scripts():
+    hooks_dir = ROOT / "hooks"
+    for py_file in sorted(hooks_dir.glob("*.py")):
+        try:
+            py_compile.compile(str(py_file), doraise=True)
+        except py_compile.PyCompileError as exc:
+            fail(py_file.relative_to(ROOT), str(exc))
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 
@@ -503,6 +517,7 @@ def main():
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
     check_examples()
+    check_hook_scripts()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

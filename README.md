@@ -35,6 +35,15 @@ cd swe-workbench
 
 Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide and philosophy → [docs/extending.md](docs/extending.md). Runtime dependencies → [docs/dependencies.md](docs/dependencies.md).
 
+## Secret detection
+
+Every `Write` and `Edit` tool call is scanned for hardcoded secrets (GitHub
+tokens, AWS keys, `.env`-style assignments) before the file is written.
+Detected secrets are blocked with a `BLOCKED:` message naming the pattern,
+line number, and file. Use `# nosecret` on a line to suppress intentional
+fixtures. See [docs/secret-detection.md](docs/secret-detection.md) for the
+full pattern list, suppression options, and security notes.
+
 ## Skill-usage telemetry
 
 When the orchestrator dispatches a subagent, the skills that subagent invokes are surfaced in the transcript:

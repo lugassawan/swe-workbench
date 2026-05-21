@@ -27,6 +27,15 @@
             "command": "$CLAUDE_PLUGIN_ROOT/hooks/worktree_permission_grant.sh"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/secret_guard.py"
+          }
+        ]
       }
     ],
     "SubagentStop": [
