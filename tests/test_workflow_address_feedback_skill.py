@@ -259,3 +259,25 @@ def test_address_feedback_skill_reuses_existing_worktree_on_main():
         "SKILL.md Phase 2 must set REUSED_WT=1 when an existing worktree is found via "
         "git worktree list, so Phase 6 skips the destructive cleanup"
     )
+
+
+def test_address_feedback_skill_skips_already_clarified_threads():
+    """Phase 3 must skip unresolved threads already replied to by $CURRENT_USER (closes #296)."""
+    text = SKILL_MD.read_text()
+    # Detection must compare comment authorship against the current user.
+    assert re.search(r"author\.login.*CURRENT_USER|CURRENT_USER.*author\.login", text), (
+        "SKILL.md Phase 3 must detect already-clarified threads by comparing "
+        "comments.nodes[*].author.login against $CURRENT_USER"
+    )
+    # The skip must be described as 'already clarified' within the Phase 3 section.
+    phase3_match = re.search(r"### Phase 3.*?(?=###)", text, re.DOTALL)
+    assert phase3_match, "Phase 3 section must exist for this check"
+    phase3_text = phase3_match.group(0)
+    assert "already clarified" in phase3_text.lower(), (
+        "SKILL.md Phase 3 must describe skipping threads the owner already clarified on re-runs"
+    )
+    # The transparency note format must be explicitly stated.
+    assert re.search(r"thread\(s\) skipped", text), (
+        "SKILL.md must include the transparency note format: "
+        "'(N thread(s) skipped — already clarified.)'"
+    )
