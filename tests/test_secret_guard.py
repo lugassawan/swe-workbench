@@ -127,6 +127,7 @@ class TestNeedsContextPatterns:
         (f'aws_secret_access_key = "{_FAKE_AWS_SECRET}"', "aws-secret-access-key"),
         (f'API_KEY={_FAKE_API_KEY_VAL}', "dotenv-api-key"),
         (f'SECRET={_FAKE_SECRET_VAL}', "dotenv-secret"),
+        (f'PASSWD={_FAKE_SECRET_VAL}', "dotenv-passwd"),
         # getenv as substring should NOT suppress detection (word-boundary fix)
         (f'SECRET = "{_FAKE_SECRET_VAL}"  # see getenv_config.py', "getenv substring in comment"),
     ])
@@ -173,6 +174,16 @@ class TestNosecretSuppression:
         result = run_guard(write_payload(content))
         assert result.returncode == 0
 
+    def test_nosecret_no_space_after_hash_allows(self):
+        content = f'{_FAKE_AKIA}  #nosecret'
+        result = run_guard(write_payload(content))
+        assert result.returncode == 0
+
+    def test_nosecrets_plural_does_not_suppress(self):
+        content = f'TOKEN = "{_FAKE_GHP}"  # nosecrets stored here'
+        result = run_guard(write_payload(content))
+        assert result.returncode == 2
+
 
 # ──────────────────────────────────────────────
 # Unit 5: Filename allowlist
@@ -185,7 +196,7 @@ class TestFilenameAllowlist:
         assert result.returncode == 0
 
     def test_test_corpus_allowed(self):
-        content = f'_FAKE_GHP = "ghp_{"A" * 36}"'  # nosecret
+        content = f'_FAKE_GHP = "{_FAKE_GHP}"'  # nosecret
         corpus_path = str(SCRIPT.parent.parent / "tests" / "test_secret_guard.py")
         result = run_guard(write_payload(content, path=corpus_path))
         assert result.returncode == 0

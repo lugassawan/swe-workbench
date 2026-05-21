@@ -14,6 +14,8 @@ Block:  write "BLOCKED: …" to stderr, exit 2.
 Allow:  exit 0, empty stderr.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import sys
@@ -43,6 +45,7 @@ _ALLOWLIST_SUFFIXES = frozenset({
 _REF_PATTERN = re.compile(
     r"os\.environ|os\.getenv|process\.env|ENV\[|\bgetenv\b"
 )
+_NOSECRET_PAT = re.compile(r"#\s*nosecret\b")
 
 _PATTERNS: list[tuple[str, re.Pattern, bool]] = [
     # HIGH – prefixed tokens distinctive enough to block without context
@@ -67,7 +70,7 @@ _PATTERNS: list[tuple[str, re.Pattern, bool]] = [
      re.compile(r"(?i)\b(?:SECRET|PASSWORD|PASSWD|TOKEN)\s*=\s*[\"'][^\"']{8,}[\"']"),
      True),
     ("dotenv-assignment",
-     re.compile(r"^(?:SECRET|API_KEY|TOKEN|PASSWORD)=[^\s]{8,}"),
+     re.compile(r"^(?:SECRET|API_KEY|TOKEN|PASSWORD|PASSWD)=[^\s]{8,}"),
      True),
 ]
 
@@ -88,7 +91,7 @@ def _scan(content: str) -> tuple[str, int] | None:
     """Return (pattern_name, 1-based line_number) for the first match, or None."""
     lines = content.splitlines()
     for lineno, line in enumerate(lines, start=1):
-        if "# nosecret" in line:
+        if _NOSECRET_PAT.search(line):
             continue
         is_ref = bool(_REF_PATTERN.search(line))
         for name, pattern, needs_context in _PATTERNS:
