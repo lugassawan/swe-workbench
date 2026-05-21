@@ -1,0 +1,2 @@
+delegate this multi-module changeset to focused code-impl sub-agents and consume their verification summaries instead of re-reading diffs
+partition the file changes into cohesive groups and dispatch each group to a code-impl sub-agent to keep the orchestrator context lean
