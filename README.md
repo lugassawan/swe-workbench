@@ -44,6 +44,15 @@ line number, and file. Use `# nosecret` on a line to suppress intentional
 fixtures. See [docs/secret-detection.md](docs/secret-detection.md) for the
 full pattern list, suppression options, and security notes.
 
+## Workflow state persistence
+
+When Claude Code auto-compacts a long conversation, any in-progress `workflow-development`,
+`workflow-bug-triage`, or `workflow-pr-review` state is saved to a sidecar JSON file under
+`.claude/cache/workflow-state/`. A `SessionStart` hook detects this file after compaction
+and injects a resume preamble so the workflow continues at the correct phase — no manual
+restart needed. See [docs/workflow-state.md](docs/workflow-state.md) for the schema,
+lifecycle table, and a manual smoke test.
+
 ## Skill-usage telemetry
 
 When the orchestrator dispatches a subagent, the skills that subagent invokes are surfaced in the transcript:

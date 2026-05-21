@@ -6,3 +6,4 @@
 - [cost-audit.md](cost-audit.md) — point-in-time model-tier audit (snapshot at #160).
 - [cost-tiers.md](cost-tiers.md) — forward-looking convention for assigning model tiers to new agents.
 - [secret-detection.md](secret-detection.md) — PreToolUse hook that blocks hardcoded secrets before Write/Edit writes the file.
+- [workflow-state.md](workflow-state.md) — SessionStart hook that persists workflow phase state across auto-compaction and injects a resume preamble.
