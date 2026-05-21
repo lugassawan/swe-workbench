@@ -47,6 +47,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+          }
+        ]
+      }
     ]
   }
 }
