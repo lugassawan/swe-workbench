@@ -70,7 +70,7 @@ _PATTERNS: list[tuple[str, re.Pattern, bool]] = [
      re.compile(r"(?i)\b(?:SECRET|PASSWORD|PASSWD|TOKEN)\s*=\s*[\"'][^\"']{8,}[\"']"),
      True),
     ("dotenv-assignment",
-     re.compile(r"^(?:SECRET|API_KEY|TOKEN|PASSWORD|PASSWD)=[^\s]{8,}"),
+     re.compile(r"^(?:SECRET|API_KEY|TOKEN|PASSWORD|PASSWD)=[^\s]{8,}"),  # ^ anchors on each split line, not full content
      True),
 ]
 
