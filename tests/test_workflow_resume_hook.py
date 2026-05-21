@@ -1,0 +1,277 @@
+"""Tests for hooks/workflow_resume_hint.sh — SessionStart compact hook.
+
+Each test invokes hooks/workflow_resume_hint.sh directly with a JSON payload on
+stdin, mirroring how Claude Code calls the SessionStart hook after auto-compaction.
+Exit 0 always (fail-open). Injection only when a fresh, branch-matching v1 state
+file exists.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from conftest import _CLEAN_ENV
+
+HOOK = Path(__file__).parent.parent / "hooks" / "workflow_resume_hint.sh"
+HOOKS_JSON = Path(__file__).parent.parent / "hooks" / "hooks.json"
+
+_BRANCH = "feature/286-workflow-state-persistence"
+_SAFE_BRANCH = _BRANCH.replace("/", "-")
+
+VALID_STATE: dict = {
+    "version": 1,
+    "skill": "swe-workbench:workflow-development",
+    "mode": "B",
+    "phase": "3",
+    "phase_label": "Verify",
+    "completed_phases": ["1", "2"],
+    "context": {
+        "branch": _BRANCH,
+        "worktree_root": "/abs/path",
+        "pr": None,
+        "base": None,
+        "head_sha": None,
+        "decision": None,
+        "notes": "initial checkpoint",
+    },
+    "updated_at": "2026-05-21T10:30:00Z",
+}
+
+
+@pytest.fixture(scope="module")
+def hook_script():
+    assert HOOK.exists(), f"missing {HOOK}"
+    assert os.access(HOOK, os.X_OK), f"{HOOK} must be executable"
+    return HOOK
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """Temp git repo on branch feature/286-workflow-state-persistence."""
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", _BRANCH],
+        cwd=repo_dir, env=_CLEAN_ENV, check=True,
+    )
+    (repo_dir / "README").write_text("init")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, env=_CLEAN_ENV, check=True)
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null",
+         "-c", "user.email=t@t.com", "-c", "user.name=T",
+         "commit", "-qm", "init"],
+        cwd=repo_dir, env=_CLEAN_ENV, check=True,
+    )
+    return repo_dir
+
+
+def _state_path(repo_dir: Path, branch: str = _BRANCH) -> Path:
+    safe = branch.replace("/", "-")
+    return repo_dir / ".claude" / "cache" / "workflow-state" / f"{safe}.json"
+
+
+def _write_state(repo_dir: Path, state: dict, branch: str = _BRANCH) -> Path:
+    path = _state_path(repo_dir, branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state), encoding="utf-8")
+    return path
+
+
+def _run(script, cwd: str) -> subprocess.CompletedProcess:
+    payload = json.dumps({"cwd": cwd})
+    return subprocess.run(
+        [str(script)],
+        input=payload, text=True, capture_output=True,
+        env=_CLEAN_ENV,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wiring
+# ---------------------------------------------------------------------------
+
+class TestHookWiring:
+    """hooks.json has the right SessionStart entry; script exists and is executable."""
+
+    def test_session_start_entry_present(self):
+        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        entries = data["hooks"].get("SessionStart", [])
+        assert entries, "SessionStart event missing from hooks.json"
+
+    def test_compact_matcher_present(self):
+        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        entries = data["hooks"].get("SessionStart", [])
+        compact = [e for e in entries if e.get("matcher") == "compact"]
+        assert compact, "No SessionStart entry with matcher='compact' in hooks.json"
+
+    def test_hook_script_referenced(self):
+        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        entries = data["hooks"].get("SessionStart", [])
+        compact = [e for e in entries if e.get("matcher") == "compact"]
+        assert any(
+            "workflow_resume_hint.sh" in hook["command"]
+            for e in compact
+            for hook in e.get("hooks", [])
+        ), "workflow_resume_hint.sh not referenced in SessionStart compact entry"
+
+    def test_hook_script_exists_and_executable(self):
+        assert HOOK.exists(), f"Missing hook script: {HOOK}"
+        assert os.access(HOOK, os.X_OK), f"Hook script not executable: {HOOK}"
+
+
+# ---------------------------------------------------------------------------
+# No-op cases — hook must emit nothing and exit 0
+# ---------------------------------------------------------------------------
+
+class TestNoOp:
+    """Hook is silent when there is no state to resume."""
+
+    def test_no_state_file_exits_clean(self, hook_script, git_repo):
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_stale_file_swept_and_no_injection(self, hook_script, git_repo):
+        """State file >24h old is deleted; no preamble injected."""
+        path = _write_state(git_repo, VALID_STATE)
+        old_mtime = os.path.getmtime(path) - 1441 * 60
+        os.utime(path, (old_mtime, old_mtime))
+
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+        assert not path.exists(), "Stale state file should be deleted"
+
+
+# ---------------------------------------------------------------------------
+# Fail-open cases — bad / mismatched state must not inject
+# ---------------------------------------------------------------------------
+
+class TestFailOpen:
+    """Hook degrades to no-op rather than injecting a wrong resume."""
+
+    def test_branch_mismatch_no_injection(self, hook_script, git_repo):
+        state = {**VALID_STATE, "context": {**VALID_STATE["context"], "branch": "feature/other"}}
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_version_not_1_no_injection(self, hook_script, git_repo):
+        state = {**VALID_STATE, "version": 2}
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_malformed_json_no_injection(self, hook_script, git_repo):
+        path = _state_path(git_repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("not valid json }{", encoding="utf-8")
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_missing_version_field_no_injection(self, hook_script, git_repo):
+        state = {k: v for k, v in VALID_STATE.items() if k != "version"}
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# Resume injection — valid fresh branch-matching state must inject
+# ---------------------------------------------------------------------------
+
+class TestResumeInjection:
+    """Hook injects a properly structured preamble for a valid state file."""
+
+    def test_emits_hook_specific_output(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected non-empty stdout for valid state"
+        data = json.loads(result.stdout)
+        assert "hookSpecificOutput" in data
+
+    def test_hook_event_name_is_session_start(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        data = json.loads(result.stdout)
+        assert data["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+
+    def test_additional_context_present(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        data = json.loads(result.stdout)
+        assert "additionalContext" in data["hookSpecificOutput"]
+
+    def test_preamble_contains_skill_name(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "swe-workbench:workflow-development" in ctx
+
+    def test_preamble_contains_phase(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "3" in ctx
+
+    def test_preamble_contains_phase_label(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Verify" in ctx
+
+    def test_preamble_contains_safety_gate(self, hook_script, git_repo):
+        """Preamble must include the 'contradicts current repo reality' safety note."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "contradicts" in ctx or "reality" in ctx
+
+    def test_preamble_contains_completed_phases(self, hook_script, git_repo):
+        """Completed phases list must appear in the preamble (AC#2)."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Completed phases" in ctx or "completed" in ctx.lower()
+        # VALID_STATE.completed_phases = ["1", "2"]
+        assert "1" in ctx and "2" in ctx
+
+    def test_exit_0_on_valid_state(self, hook_script, git_repo):
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+
+    def test_branch_with_percent_character(self, hook_script, tmp_path):
+        """Branch names containing % must not corrupt the JSON envelope."""
+        branch = "feature/100%-done"
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", "-b", branch],
+            cwd=repo_dir, env=_CLEAN_ENV, check=True,
+        )
+        (repo_dir / "README").write_text("init")
+        subprocess.run(["git", "add", "."], cwd=repo_dir, env=_CLEAN_ENV, check=True)
+        subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "-c", "user.email=t@t.com", "-c", "user.name=T",
+             "commit", "-qm", "init"],
+            cwd=repo_dir, env=_CLEAN_ENV, check=True,
+        )
+        state = {**VALID_STATE, "context": {**VALID_STATE["context"], "branch": branch}}
+        _write_state(repo_dir, state, branch)
+        result = _run(hook_script, str(repo_dir))
+        assert result.returncode == 0
+        data = json.loads(result.stdout)  # must be valid JSON — raises if corrupted
+        assert "hookSpecificOutput" in data
