@@ -239,3 +239,23 @@ def test_address_feedback_skill_phase6_skips_cleanup_on_reuse():
         "fires (WT=$(pwd)), rimba remove will fail for an unregistered task, causing "
         "git worktree remove --force / rm -rf to run against the user's live checkout"
     )
+
+
+def test_address_feedback_skill_reuses_existing_worktree_on_main():
+    """Phase 2 must find and reuse an existing worktree for PR_BRANCH when session is not on that branch."""
+    text = SKILL_MD.read_text()
+    # Must use git worktree list --porcelain to locate an existing worktree for the branch.
+    assert "git worktree list --porcelain" in text, (
+        "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
+        "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
+    )
+    # Must look up the branch ref inside the porcelain output (awk escapes the slashes).
+    assert r"refs\/heads\/" in text, (
+        r"SKILL.md Phase 2 must match 'refs\/heads\/$PR_BRANCH' in the awk pattern "
+        "to locate the correct registered worktree in porcelain output"
+    )
+    # Must set REUSED_WT=1 on a match, same as the first guard.
+    assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
+        "SKILL.md Phase 2 must set REUSED_WT=1 when an existing worktree is found via "
+        "git worktree list, so Phase 6 skips the destructive cleanup"
+    )

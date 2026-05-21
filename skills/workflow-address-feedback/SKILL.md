@@ -108,7 +108,21 @@ if [ "$CURRENT_BRANCH" = "$PR_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
 fi
 ```
 
-If `$WT` is set by the check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty, a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree:
+If `$WT` is not yet set, check whether a worktree for `$PR_BRANCH` already exists elsewhere on disk (e.g. the session is on `main` but the branch was checked out previously):
+
+```bash
+if [ -z "$WT" ]; then
+  EXISTING_WT=$(git worktree list --porcelain \
+    | awk 'BEGIN{wt=""} /^worktree /{wt=$2} /^branch refs\/heads\/'"$PR_BRANCH"'/{print wt; exit}')
+  if [ -n "$EXISTING_WT" ] && [ -d "$EXISTING_WT" ]; then
+    WT="$EXISTING_WT"
+    REUSED_WT=1
+    echo "Found existing worktree for '$PR_BRANCH' at $WT (skipping rimba add)."
+  fi
+fi
+```
+
+If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree:
 
 **When rimba is available** (preferred):
 
@@ -238,7 +252,7 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 
 | Mistake | Fix |
 |---|---|
-| Create a new worktree when already on the PR branch | Phase 2 first compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH`; on a match it reuses `$(pwd)` and skips `rimba add`. Only fall through to creation when the branches differ. |
+| Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
 | Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
 | Leave the worktree behind after skill exits | Phase 6 always removes it — skip Phase 6 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
 | Deleting `$PR_BRANCH` directly in Phase 6 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
