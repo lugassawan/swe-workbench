@@ -34,20 +34,28 @@ This skill orchestrates:
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 mkdir -p /tmp/swe-workbench-address-feedback
-gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision,headRepository,state \
+gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision,baseRepository,state \
   > "/tmp/swe-workbench-address-feedback/${PR}.json"
 [ -s "/tmp/swe-workbench-address-feedback/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
 ```
 
 Extract fields from the JSON:
-- `AUTHOR_LOGIN` from `author.login`
-- `OWNER` from `headRepository.nameWithOwner | split("/")[0]`
-- `REPO` from `headRepository.name`
-- `STATE` from `state`
+
+```bash
+JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
+AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
+PR_BRANCH=$(jq -r .headRefName "$JSON")
+OWNER=$(jq -r '.baseRepository.owner.login // (.baseRepository.nameWithOwner // "" | split("/")[0])' "$JSON")
+REPO=$(jq  -r '.baseRepository.name      // (.baseRepository.nameWithOwner // "" | split("/")[1])' "$JSON")
+if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
+  echo "Could not determine base repo owner/name from PR #$PR metadata. Inspect with: gh pr view $PR --json baseRepository" >&2
+  exit 1
+fi
+```
 
 Check that the PR is open before proceeding:
 ```bash
-STATE=$(jq -r .state "/tmp/swe-workbench-address-feedback/${PR}.json")
+STATE=$(jq -r .state "$JSON")
 [ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
 ```
 
@@ -98,7 +106,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 **When rimba is absent** (durable fallback):
 
 ```bash
-PR_BRANCH=$(jq -r .headRefName "/tmp/swe-workbench-address-feedback/${PR}.json")
+PR_BRANCH=$(jq -r .headRefName "$JSON")
 WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
 mkdir -p "$(dirname "$WT")"
 git fetch origin "${PR_BRANCH}"
