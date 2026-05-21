@@ -54,7 +54,7 @@ but different branches never share a checkpoint file.
 - `mode` — optional mode letter (A/B/C for workflow-development; absent for single-mode skills).
 - `phase` / `phase_label` — current phase/step number and human label; `completed_phases` lists all finished phases.
 - `context` — flat free-form bag; `context.branch` is the resume-validation key. Skills pack skill-specific values here (`pr`, `head_sha`, `decision` for pr-review; project-detection values for workflow-development).
-- `updated_at` — ISO-8601 timestamp; the hook uses filesystem mtime for staleness, not this field.
+- `updated_at` — ISO-8601 timestamp (informational — not used for staleness; the hook uses filesystem mtime instead).
 
 ### Lifecycle
 
