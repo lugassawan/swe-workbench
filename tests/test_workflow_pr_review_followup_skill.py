@@ -77,25 +77,25 @@ def test_followup_skill_documents_stale_commit_retry():
     )
 
 
-def test_followup_skill_uses_base_repository_in_json_fields():
-    """Step 1 gh pr view --json must include baseRepository (not headRepository) for OWNER/REPO."""
+def test_followup_skill_owner_repo_from_gh_repo_view():
+    """OWNER and REPO must be derived from 'gh repo view' (not from headRepository or baseRepository)."""
     text = SKILL_MD.read_text()
-    assert "baseRepository" in text, (
-        "SKILL.md Step 1 gh pr view --json field list must include baseRepository "
-        "so that $OWNER and $REPO target the base (receiving) repo, not the fork"
+    assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
+        "SKILL.md must derive OWNER via 'gh repo view --json owner' — "
+        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
+    )
+    assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
+        "SKILL.md must derive REPO via 'gh repo view --json name' — "
+        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
     )
 
 
-def test_followup_skill_owner_repo_extracted_via_jq_from_base():
-    """OWNER and REPO must be extracted from baseRepository via a jq expression."""
+def test_followup_skill_no_invalid_json_field():
+    """Step 1 gh pr view --json must NOT include baseRepository (it is not a valid gh CLI field)."""
     text = SKILL_MD.read_text()
-    assert re.search(r"OWNER\s*=.*\$\(jq[^\n]*baseRepository", text), (
-        "SKILL.md must extract OWNER from baseRepository via jq "
-        "(e.g. jq -r '.baseRepository.owner.login // ...'), not prose or Python"
-    )
-    assert re.search(r"REPO\s*=.*\$\(jq[^\n]*baseRepository", text), (
-        "SKILL.md must extract REPO from baseRepository via jq "
-        "(e.g. jq -r '.baseRepository.name // ...'), not prose or Python"
+    assert not re.search(r"gh pr view[^\n]*--json[^\n]*baseRepository", text), (
+        "SKILL.md must not use baseRepository in gh pr view --json — "
+        "that field is unsupported and causes gh to exit with 'Unknown JSON field'"
     )
 
 
@@ -108,7 +108,7 @@ def test_followup_skill_no_fragile_owner_extraction():
     )
     assert not re.search(r"headRepository[^`\n]*owner[^`\n]*login", text), (
         "SKILL.md must not reference headRepository.owner.login — "
-        "use baseRepository.owner.login instead"
+        "use gh repo view instead"
     )
 
 

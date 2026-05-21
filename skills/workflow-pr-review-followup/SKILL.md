@@ -34,7 +34,7 @@ This skill orchestrates; analysis is delegated to:
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,baseRepository,headRefOid,title,body,author \
+gh pr view "$PR" --json state,number,headRefName,baseRefName,headRefOid,title,body,author \
   > "/tmp/swe-workbench-pr-review/${PR}-followup.json"
 [ -s "/tmp/swe-workbench-pr-review/${PR}-followup.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
 ```
@@ -46,10 +46,10 @@ JSON="/tmp/swe-workbench-pr-review/${PR}-followup.json"
 BASE=$(jq -r .baseRefName "$JSON")
 HEAD_SHA=$(jq -r .headRefOid "$JSON")
 AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
-OWNER=$(jq -r '.baseRepository.owner.login // (.baseRepository.nameWithOwner // "" | split("/")[0])' "$JSON")
-REPO=$(jq  -r '.baseRepository.name      // (.baseRepository.nameWithOwner // "" | split("/")[1])' "$JSON")
+OWNER=$(gh repo view --json owner -q .owner.login)
+REPO=$(gh repo view --json name   -q .name)
 if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
-  echo "Could not determine base repo owner/name from PR #$PR metadata. Inspect with: gh pr view $PR --json baseRepository" >&2
+  echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
   exit 1
 fi
 ```
