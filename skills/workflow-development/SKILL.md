@@ -225,9 +225,10 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 ## Implementation-Time Behavior (Mode B)
 
 1. **Announce transitions**: `Phase N complete — <summary>. Moving to Phase N+1: <name>.`
-2. **Delegate to sub-skills**: don't re-implement what a sub-skill already does.
-3. **Track phase state** — sub-skill completed Phases 3 or 4 with evidence → mark them "completed by sub-skill".
-4. **Handle failures and no phase skipping** combined:
+2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). At Phase 5 success, delete the state file.
+3. **Delegate to sub-skills**: don't re-implement what a sub-skill already does.
+4. **Track phase state** — sub-skill completed Phases 3 or 4 with evidence → mark them "completed by sub-skill".
+5. **Handle failures and no phase skipping** combined:
 
 | Phase | Failure | Skip condition |
 |-------|---------|----------------|
