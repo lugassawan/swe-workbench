@@ -108,6 +108,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
 - **`$RIMBA` non-empty (binary found):** run `$RIMBA add [<service>/]<task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
+- **Promote work already started** — if you began editing on the current branch in the main checkout (not the default branch), `$RIMBA add branch:<current-branch>` moves that work into its own worktree, transferring dirty changes via `git stash`. `--source` is not valid in this mode.
 - **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
 
 **Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
