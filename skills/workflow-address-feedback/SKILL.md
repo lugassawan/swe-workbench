@@ -148,7 +148,7 @@ This worktree is **disposable** — fixes are committed and pushed to the PR bra
 Render outstanding threads, one by one. **Filter out two kinds of thread before presenting:**
 
 1. **Resolved threads** — skip any thread where `isResolved == true`.
-2. **Already-clarified threads** — skip any *unresolved* thread where at least one *reply* comment (`comments.nodes[1:]` onwards — not the thread root at `nodes[0]`, which is always the reviewer's opening comment) has `author.login` equal to `$CURRENT_USER`. This means the owner replied in a prior pass (e.g. a CLARIFIED reply) but left the thread unresolved. It applies whether that reply was posted by this skill or manually by the user. Detecting via reply comments only prevents false-positive skipping when the current user also authored review threads.
+2. **Already-clarified threads** — skip any *unresolved* thread where at least one *reply* comment (`comments.nodes[1:]` onwards — `nodes[0]` is the thread-opening comment, which in the typical reviewer-opened case belongs to the reviewer, not the PR owner) has `author.login` equal to `$CURRENT_USER`. This means the owner replied in a prior pass (e.g. a CLARIFIED reply) but left the thread unresolved. It applies whether that reply was posted by this skill or manually by the user. Detecting via reply comments only prevents false-positive skipping when the current user also authored review threads.
 
 If any threads were skipped under rule 2, print a one-line transparency note before the digest:
 > "(N thread(s) skipped — already clarified.)"

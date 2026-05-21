@@ -270,14 +270,20 @@ def test_address_feedback_skill_skips_already_clarified_threads():
         "comments.nodes[*].author.login against $CURRENT_USER"
     )
     # The skip must be described as 'already clarified' within the Phase 3 section.
-    phase3_match = re.search(r"### Phase 3.*?(?=###)", text, re.DOTALL)
+    phase3_match = re.search(r"### Phase 3.*?(?=###|^##)", text, re.DOTALL | re.MULTILINE)
     assert phase3_match, "Phase 3 section must exist for this check"
     phase3_text = phase3_match.group(0)
     assert "already clarified" in phase3_text.lower(), (
         "SKILL.md Phase 3 must describe skipping threads the owner already clarified on re-runs"
     )
-    # The transparency note format must be explicitly stated.
-    assert re.search(r"thread\(s\) skipped", text), (
-        "SKILL.md must include the transparency note format: "
+    # The transparency note format must appear before the triage digest within Phase 3.
+    idx_skipped = phase3_text.lower().find("thread(s) skipped")
+    idx_digest = phase3_text.find("For each remaining thread")
+    assert idx_skipped != -1, (
+        "SKILL.md Phase 3 must include the transparency note format: "
         "'(N thread(s) skipped — already clarified.)'"
+    )
+    assert idx_digest != -1, "Phase 3 must contain 'For each remaining thread'"
+    assert idx_skipped < idx_digest, (
+        "SKILL.md Phase 3 transparency note must appear before 'For each remaining thread'"
     )
