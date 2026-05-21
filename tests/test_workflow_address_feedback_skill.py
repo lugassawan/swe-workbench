@@ -207,3 +207,36 @@ def test_address_feedback_skill_cleanup_uses_existing_wt():
         "Phase 6 must not re-assign $WT — use the value set in Phase 2 so the fallback "
         "targets the correct worktree directory regardless of which Phase 2 branch (rimba vs. git) ran"
     )
+
+
+def test_address_feedback_skill_reuses_worktree_when_on_pr_branch():
+    """Phase 2 must reuse the current worktree when the branch matches the PR head (closes #295)."""
+    text = SKILL_MD.read_text()
+    # Detection: compare current branch against $PR_BRANCH on one guard line.
+    guard_lines = [
+        ln for ln in text.splitlines()
+        if "rev-parse --abbrev-ref HEAD" in ln and "PR_BRANCH" in ln
+    ]
+    assert guard_lines, (
+        "SKILL.md Phase 2 must compare 'git rev-parse --abbrev-ref HEAD' against "
+        "$PR_BRANCH to detect when the user is already on the PR branch"
+    )
+    # Skip path: reuse the current directory instead of creating a worktree.
+    assert "WT=$(pwd)" in text, (
+        "SKILL.md Phase 2 must set WT=$(pwd) to reuse the current worktree when "
+        "already on the PR branch, skipping 'rimba add'"
+    )
+
+
+def test_address_feedback_skill_phase6_skips_cleanup_on_reuse():
+    """Phase 6 must not run git worktree remove / rm -rf when the worktree was reused (closes #295)."""
+    text = SKILL_MD.read_text()
+    phase6_idx = text.find("### Phase 6")
+    assert phase6_idx != -1, "Phase 6 section must exist"
+    phase6_text = text[phase6_idx:]
+    # Phase 6 must reference REUSED_WT so the cleanup is skipped for the reuse path.
+    assert "REUSED_WT" in phase6_text, (
+        "SKILL.md Phase 6 must guard cleanup with REUSED_WT — when the reuse-guard "
+        "fires (WT=$(pwd)), rimba remove will fail for an unregistered task, causing "
+        "git worktree remove --force / rm -rf to run against the user's live checkout"
+    )
