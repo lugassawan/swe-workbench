@@ -85,7 +85,7 @@ Report format — return exactly:
   status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
   files_changed: [list]
   test_results: <one-line>
-  concerns: <if any>
+  concerns: <required for DONE_WITH_CONCERNS — brief note; omit for DONE>
   blockers: <if NEEDS_CONTEXT or BLOCKED>
 ```
 
