@@ -95,6 +95,35 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 
 ### Phase 2 — Worktree
 
+First, check whether the current branch already matches the PR head — if so, reuse the current worktree instead of creating a new one:
+
+```bash
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" = "$PR_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
+  WT=$(pwd)
+  REUSED_WT=1
+  echo "Already on PR branch '$PR_BRANCH' — reusing the current worktree at $WT (skipping rimba add)."
+  DIRTY=$(git status --porcelain)
+  [ -n "$DIRTY" ] && echo "Note: working tree has uncommitted changes; the user may stash before Phase 4 commits to avoid sweeping unrelated edits into the feedback commit."
+fi
+```
+
+If `$WT` is not yet set, check whether a worktree for `$PR_BRANCH` already exists elsewhere on disk (e.g. the session is on `main` but the branch was checked out previously):
+
+```bash
+if [ -z "$WT" ]; then
+  EXISTING_WT=$(git worktree list --porcelain \
+    | awk 'BEGIN{wt=""} /^worktree /{wt=$2} /^branch refs\/heads\/'"$PR_BRANCH"'/{print wt; exit}')
+  if [ -n "$EXISTING_WT" ] && [ -d "$EXISTING_WT" ]; then
+    WT="$EXISTING_WT"
+    REUSED_WT=1
+    echo "Found existing worktree for '$PR_BRANCH' at $WT (skipping rimba add)."
+  fi
+fi
+```
+
+If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree:
+
 **When rimba is available** (preferred):
 
 ```bash
@@ -187,16 +216,20 @@ Then run **Phase 6 — Cleanup**.
 
 ### Phase 6 — Cleanup (always)
 
-Run on every exit that occurs after a worktree was created in Phase 2 (success, Q-quit, or error). Skip only on Phase 1 early-exits (before any worktree exists).
+Run on every exit that occurs after a worktree was **created** in Phase 2 (success, Q-quit, or error). Skip on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove.
 
 ```bash
-# positional arg matches the --task label set in Phase 2 ("address-feedback-$PR")
-if rimba remove "address-feedback-$PR" --force 2>/dev/null; then
-  echo "Cleaned up worktree address-feedback-$PR."
+if [ "${REUSED_WT:-0}" = "1" ]; then
+  echo "Reused existing worktree at $WT — skipping cleanup (nothing was created)."
 else
-  # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
-  git worktree remove --force "$WT" 2>/dev/null && rm -rf "$WT" 2>/dev/null
-  echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
+  # positional arg matches the --task label set in Phase 2 ("address-feedback-$PR")
+  if rimba remove "address-feedback-$PR" --force 2>/dev/null; then
+    echo "Cleaned up worktree address-feedback-$PR."
+  else
+    # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
+    git worktree remove --force "$WT" 2>/dev/null && rm -rf "$WT" 2>/dev/null
+    echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
+  fi
 fi
 ```
 
@@ -219,8 +252,9 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 
 | Mistake | Fix |
 |---|---|
+| Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
 | Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
-| Leave the worktree behind after skill exits | Phase 6 always removes it — skip Phase 6 only when exiting before Phase 2 (no worktree created yet). |
+| Leave the worktree behind after skill exits | Phase 6 always removes it — skip Phase 6 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
 | Deleting `$PR_BRANCH` directly in Phase 6 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Resolve a CLARIFIED thread | Only resolve ADDRESSED threads. CLARIFIED = reply only, no resolve. |

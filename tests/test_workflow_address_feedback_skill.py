@@ -207,3 +207,55 @@ def test_address_feedback_skill_cleanup_uses_existing_wt():
         "Phase 6 must not re-assign $WT — use the value set in Phase 2 so the fallback "
         "targets the correct worktree directory regardless of which Phase 2 branch (rimba vs. git) ran"
     )
+
+
+def test_address_feedback_skill_reuses_worktree_when_on_pr_branch():
+    """Phase 2 must reuse the current worktree when the branch matches the PR head (closes #295)."""
+    text = SKILL_MD.read_text()
+    # Assignment line must exist in the code block.
+    assert "CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" in text, (
+        "SKILL.md Phase 2 must assign: CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+    )
+    # Comparison must test $CURRENT_BRANCH against $PR_BRANCH in the if-condition.
+    assert re.search(r'"\$CURRENT_BRANCH"\s*=\s*"\$PR_BRANCH"', text), (
+        "SKILL.md Phase 2 must compare $CURRENT_BRANCH against $PR_BRANCH in the if-condition"
+    )
+    # Skip path: reuse the current directory instead of creating a worktree.
+    assert "WT=$(pwd)" in text, (
+        "SKILL.md Phase 2 must set WT=$(pwd) to reuse the current worktree when "
+        "already on the PR branch, skipping 'rimba add'"
+    )
+
+
+def test_address_feedback_skill_phase6_skips_cleanup_on_reuse():
+    """Phase 6 must not run git worktree remove / rm -rf when the worktree was reused (closes #295)."""
+    text = SKILL_MD.read_text()
+    phase6_idx = text.find("### Phase 6")
+    assert phase6_idx != -1, "Phase 6 section must exist"
+    phase6_text = text[phase6_idx:]
+    # Phase 6 must reference REUSED_WT so the cleanup is skipped for the reuse path.
+    assert "REUSED_WT" in phase6_text, (
+        "SKILL.md Phase 6 must guard cleanup with REUSED_WT — when the reuse-guard "
+        "fires (WT=$(pwd)), rimba remove will fail for an unregistered task, causing "
+        "git worktree remove --force / rm -rf to run against the user's live checkout"
+    )
+
+
+def test_address_feedback_skill_reuses_existing_worktree_on_main():
+    """Phase 2 must find and reuse an existing worktree for PR_BRANCH when session is not on that branch."""
+    text = SKILL_MD.read_text()
+    # Must use git worktree list --porcelain to locate an existing worktree for the branch.
+    assert "git worktree list --porcelain" in text, (
+        "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
+        "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
+    )
+    # Must look up the branch ref inside the porcelain output (awk escapes the slashes).
+    assert r"refs\/heads\/" in text, (
+        r"SKILL.md Phase 2 must match 'refs\/heads\/$PR_BRANCH' in the awk pattern "
+        "to locate the correct registered worktree in porcelain output"
+    )
+    # Must set REUSED_WT=1 on a match, same as the first guard.
+    assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
+        "SKILL.md Phase 2 must set REUSED_WT=1 when an existing worktree is found via "
+        "git worktree list, so Phase 6 skips the destructive cleanup"
+    )
