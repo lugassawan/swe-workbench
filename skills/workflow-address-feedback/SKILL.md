@@ -106,7 +106,6 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 **When rimba is absent** (durable fallback):
 
 ```bash
-PR_BRANCH=$(jq -r .headRefName "$JSON")
 WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
 mkdir -p "$(dirname "$WT")"
 git fetch origin "${PR_BRANCH}"
