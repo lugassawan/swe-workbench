@@ -212,14 +212,13 @@ def test_address_feedback_skill_cleanup_uses_existing_wt():
 def test_address_feedback_skill_reuses_worktree_when_on_pr_branch():
     """Phase 2 must reuse the current worktree when the branch matches the PR head (closes #295)."""
     text = SKILL_MD.read_text()
-    # Detection: compare current branch against $PR_BRANCH on one guard line.
-    guard_lines = [
-        ln for ln in text.splitlines()
-        if "rev-parse --abbrev-ref HEAD" in ln and "PR_BRANCH" in ln
-    ]
-    assert guard_lines, (
-        "SKILL.md Phase 2 must compare 'git rev-parse --abbrev-ref HEAD' against "
-        "$PR_BRANCH to detect when the user is already on the PR branch"
+    # Assignment line must exist in the code block.
+    assert "CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" in text, (
+        "SKILL.md Phase 2 must assign: CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+    )
+    # Comparison must test $CURRENT_BRANCH against $PR_BRANCH in the if-condition.
+    assert re.search(r'"\$CURRENT_BRANCH"\s*=\s*"\$PR_BRANCH"', text), (
+        "SKILL.md Phase 2 must compare $CURRENT_BRANCH against $PR_BRANCH in the if-condition"
     )
     # Skip path: reuse the current directory instead of creating a worktree.
     assert "WT=$(pwd)" in text, (

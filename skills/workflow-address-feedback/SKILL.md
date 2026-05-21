@@ -104,11 +104,11 @@ if [ "$CURRENT_BRANCH" = "$PR_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
   REUSED_WT=1
   echo "Already on PR branch '$PR_BRANCH' — reusing the current worktree at $WT (skipping rimba add)."
   DIRTY=$(git status --porcelain)
-  [ -n "$DIRTY" ] && echo "Note: working tree has uncommitted changes; confirm before fixes are committed so unrelated edits aren't swept into the feedback commit."
+  [ -n "$DIRTY" ] && echo "Note: working tree has uncommitted changes; the user may stash before Phase 4 commits to avoid sweeping unrelated edits into the feedback commit."
 fi
 ```
 
-If `$WT` is set by the check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty, a non-blocking warning was already emitted; the user can intervene before Phase 4 commits. Otherwise create a new durable worktree:
+If `$WT` is set by the check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty, a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree:
 
 **When rimba is available** (preferred):
 
