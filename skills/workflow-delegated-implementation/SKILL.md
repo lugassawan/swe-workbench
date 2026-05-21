@@ -1,6 +1,6 @@
 ---
 name: workflow-delegated-implementation
-description: Phase-2 delegation strategy for workflow-development — conditional scope/complexity gate, file-change grouping using the Infrastructure/Core logic/Tests/Wiring commit-taxonomy axes, dispatch to the code-impl sub-agent with a structured brief, summary-only result consumption (no diff re-reads), and sequential-default with opt-in worktree-isolated parallelism. Distinct from superpowers:subagent-driven-development (which orchestrates independent tasks in parallel by default; this skill gates on scope, groups by commit-axis cohesion, and enforces a no-diff-return contract).
+description: Phase-2 delegation protocol for workflow-development — conditional scope/complexity gate, file-change grouping by commit-taxonomy axis (Infrastructure/Core logic/Tests/Wiring), dispatch to code-impl with a structured brief (goal, file_set, verify_cmd), summary-only result consumption (re-read prevention), sequential-default with opt-in worktree-isolated parallelism. Distinct from superpowers:subagent-driven-development, which orchestrates tasks in parallel by default; the delegation protocol gates on scope, groups by commit-axis cohesion, and enforces a diff-free return contract.
 orchestrator: true
 ---
 
