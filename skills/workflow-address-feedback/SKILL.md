@@ -95,7 +95,7 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 
 ### Phase 2 — Worktree
 
-**When rimba is available** (preferred — durable, owner commits land here):
+**When rimba is available** (preferred):
 
 ```bash
 RIMBA_OUT=$(rimba add "pr:$PR" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
@@ -103,7 +103,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
-**When rimba is absent** (durable fallback):
+**When rimba is absent** (fallback):
 
 ```bash
 WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
@@ -112,7 +112,7 @@ git fetch origin "${PR_BRANCH}"
 git worktree add "$WT" "${PR_BRANCH}"
 ```
 
-**This is a durable worktree** — no auto-cleanup. The owner's commits persist here until merged. After merge, run `swe-workbench:workflow-cleanup-merged` to remove it.
+This worktree is **disposable** — fixes are committed and pushed to the PR branch in Phase 4, so the work lives on the remote, not the worktree. Phase 6 removes it on every exit (success, Q-quit, or error). If removal fails, a fallback is attempted; see Phase 6 for details. If the skill exits with an unrecoverable error at any point after this phase, run Phase 6 before stopping.
 
 ### Phase 3 — Triage digest
 
@@ -134,7 +134,7 @@ Parse severity from `Severity: <level>` prefix in comment body if present; other
 
 Capture: `triage[<thread_id>] = A|C|D`.
 
-If the owner replies `Q`, save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json` and exit. Re-invocation resumes from this file.
+If the owner replies `Q`, save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, then run **Phase 6 — Cleanup**, and exit. Re-invocation resumes from this file (Phase 2 re-creates the worktree).
 
 ### Phase 4 — Implement + commit
 
@@ -183,6 +183,25 @@ After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/review --check-followup <N>`."
 
+Then run **Phase 6 — Cleanup**.
+
+### Phase 6 — Cleanup (always)
+
+Run on every exit that occurs after a worktree was created in Phase 2 (success, Q-quit, or error). Skip only on Phase 1 early-exits (before any worktree exists).
+
+```bash
+# positional arg matches the --task label set in Phase 2 ("address-feedback-$PR")
+if rimba remove "address-feedback-$PR" --force 2>/dev/null; then
+  echo "Cleaned up worktree address-feedback-$PR."
+else
+  WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+  git worktree remove --force "$WT" 2>/dev/null && rm -rf "$WT" 2>/dev/null
+  echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback."
+fi
+```
+
+Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a warning and do not block completion. The fallback removes only the worktree directory — never delete `$PR_BRANCH` directly (e.g. via `git branch -D`), which would destroy the owner's actual PR head branch.
+
 ## Failure modes
 
 | Failure | Signal | Action |
@@ -191,7 +210,8 @@ After all replies and resolutions land, emit the follow-up CTA:
 | PR not found | `gh pr view` fails | Abort. |
 | `CURRENT_USER != AUTHOR_LOGIN` | JSON mismatch | Warn + ask to continue. |
 | No outstanding threads | GraphQL returns 0 unresolved | Print "No open threads — nothing to address." Exit. |
-| Owner picks Q mid-triage | Loop exit | Save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`. Exit cleanly. |
+| Owner picks Q mid-triage | Loop exit | Save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, run Phase 6 cleanup, then exit. |
+| Worktree removal fails (rimba absent or busy) | `rimba remove` non-zero | Attempt `git worktree remove --force` fallback; log warning; do not block. |
 | Reply REST fails (404 — comment deleted) | HTTP 404 | Skip that thread, log "skipped (comment deleted)". |
 | Resolve mutation fails | GraphQL error | Reply already posted — log "reply posted but resolve failed". Continue. Do not roll back the reply. |
 
@@ -200,7 +220,8 @@ After all replies and resolutions land, emit the follow-up CTA:
 | Mistake | Fix |
 |---|---|
 | Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
-| Auto-cleanup the worktree after Phase 5 | This is a durable worktree — commits land here. Clean up post-merge via `swe-workbench:workflow-cleanup-merged`. |
+| Leave the worktree behind after skill exits | Phase 6 always removes it — skip Phase 6 only when exiting before Phase 2 (no worktree created yet). |
+| Deleting `$PR_BRANCH` directly in Phase 6 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Resolve a CLARIFIED thread | Only resolve ADDRESSED threads. CLARIFIED = reply only, no resolve. |
 | Try to resolve via REST | Thread resolution is GraphQL-only (`resolveReviewThread` mutation). REST has no equivalent endpoint. |
