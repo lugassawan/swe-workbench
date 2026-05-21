@@ -142,3 +142,68 @@ def test_address_feedback_skill_clarified_no_resolve():
         "SKILL.md must state that CLARIFIED threads get a reply but are NOT resolved "
         "(only ADDRESSED threads trigger resolveReviewThread)"
     )
+
+
+# --- Cleanup (Phase 6) tests — AC#1, AC#2, AC#3 from issue #291 ---
+
+def test_address_feedback_skill_cleans_up_worktree():
+    """Phase 6 must include rimba remove "address-feedback-$PR" --force (AC#1)."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'rimba remove ["\']?address-feedback-\$PR["\']? --force', text), (
+        'SKILL.md Phase 6 must include: rimba remove "address-feedback-$PR" --force — '
+        "the worktree is disposable; fixes are on the remote branch after Phase 4"
+    )
+
+
+def test_address_feedback_skill_cleanup_failure_tolerant():
+    """Phase 6 cleanup must include a git-worktree fallback and must not block on failure (AC#2)."""
+    text = SKILL_MD.read_text()
+    assert "git worktree remove" in text, (
+        "SKILL.md Phase 6 must include a 'git worktree remove' fallback for when rimba is absent"
+    )
+    assert re.search(
+        r"warn|do not block|never block|not block|continue|non.blocking|emit.*notice",
+        text, re.IGNORECASE
+    ), (
+        "SKILL.md Phase 6 must state that cleanup failure is non-blocking (warn, do not block, continue)"
+    )
+
+
+def test_address_feedback_skill_cleanup_preserves_pr_branch():
+    """Phase 6 fallback must NEVER contain git branch -D \"$PR_BRANCH\" — that deletes the real PR head branch."""
+    text = SKILL_MD.read_text()
+    assert not re.search(r'branch\s+-D\s+["\']?\$PR_BRANCH', text), (
+        'SKILL.md must NOT contain: git branch -D "$PR_BRANCH" — '
+        "the git-worktree fallback in Phase 6 only removes the worktree dir; "
+        "deleting $PR_BRANCH would destroy the owner's actual PR head branch"
+    )
+
+
+def test_address_feedback_skill_drops_durable_no_cleanup_claim():
+    """SKILL.md must NOT contain the old 'no auto-cleanup' claim (stance reversal for issue #291)."""
+    text = SKILL_MD.read_text()
+    assert "no auto-cleanup" not in text, (
+        "SKILL.md must not claim 'no auto-cleanup' — issue #291 reversed this stance; "
+        "Phase 6 always removes the worktree on exit"
+    )
+
+
+def test_address_feedback_skill_has_cleanup_phase():
+    """SKILL.md must have a Phase 6 / Cleanup section that runs on every post-Phase-2 exit (AC#3)."""
+    text = SKILL_MD.read_text()
+    assert re.search(r"Phase 6|## Phase 6|### Phase 6", text), (
+        "SKILL.md must include a Phase 6 (Cleanup) section — "
+        "it must run on success, Q-exit, and error paths after a worktree has been created (AC#3)"
+    )
+
+
+def test_address_feedback_skill_cleanup_uses_existing_wt():
+    """Phase 6 fallback must use $WT from Phase 2 — must not re-assign WT= in the else branch."""
+    text = SKILL_MD.read_text()
+    phase6_match = re.search(r"### Phase 6.*", text, re.DOTALL)
+    assert phase6_match, "Phase 6 section must exist for this check"
+    phase6_text = phase6_match.group(0)
+    assert not re.search(r'\bWT\s*=\s*["\'\$]', phase6_text), (
+        "Phase 6 must not re-assign $WT — use the value set in Phase 2 so the fallback "
+        "targets the correct worktree directory regardless of which Phase 2 branch (rimba vs. git) ran"
+    )
