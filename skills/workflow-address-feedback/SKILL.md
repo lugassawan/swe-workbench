@@ -194,9 +194,9 @@ Run on every exit that occurs after a worktree was created in Phase 2 (success, 
 if rimba remove "address-feedback-$PR" --force 2>/dev/null; then
   echo "Cleaned up worktree address-feedback-$PR."
 else
-  WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+  # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
   git worktree remove --force "$WT" 2>/dev/null && rm -rf "$WT" 2>/dev/null
-  echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback."
+  echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
 fi
 ```
 

@@ -195,3 +195,15 @@ def test_address_feedback_skill_has_cleanup_phase():
         "SKILL.md must include a Phase 6 (Cleanup) section — "
         "it must run on success, Q-exit, and error paths after a worktree has been created (AC#3)"
     )
+
+
+def test_address_feedback_skill_cleanup_uses_existing_wt():
+    """Phase 6 fallback must use $WT from Phase 2 — must not re-assign WT= in the else branch."""
+    text = SKILL_MD.read_text()
+    phase6_match = re.search(r"### Phase 6.*", text, re.DOTALL)
+    assert phase6_match, "Phase 6 section must exist for this check"
+    phase6_text = phase6_match.group(0)
+    assert not re.search(r'\bWT\s*=\s*["\'\$]', phase6_text), (
+        "Phase 6 must not re-assign $WT — use the value set in Phase 2 so the fallback "
+        "targets the correct worktree directory regardless of which Phase 2 branch (rimba vs. git) ran"
+    )
