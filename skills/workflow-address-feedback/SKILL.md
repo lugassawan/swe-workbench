@@ -145,7 +145,21 @@ This worktree is **disposable** — fixes are committed and pushed to the PR bra
 
 ### Phase 3 — Triage digest
 
-Render outstanding unresolved threads, one by one. Skip any thread where `isResolved == true` — only present threads where `isResolved == false`. For each remaining thread:
+Render outstanding threads, one by one. **Filter out two kinds of thread before presenting:**
+
+1. **Resolved threads** — skip any thread where `isResolved == true`.
+2. **Already-clarified threads** — skip any *unresolved* thread where at least one *reply* comment (`comments.nodes[1:]` onwards — `nodes[0]` is the thread-opening comment, which in the typical reviewer-opened case belongs to the reviewer, not the PR owner) has `author.login` equal to `$CURRENT_USER`. This means the owner replied in a prior pass (e.g. a CLARIFIED reply) but left the thread unresolved. It applies whether that reply was posted by this skill or manually by the user. Detecting via reply comments only prevents false-positive skipping when the current user also authored review threads.
+
+If any threads were skipped under rule 2, print a one-line transparency note before the digest:
+> "(N thread(s) skipped — already clarified.)"
+
+If no threads remain after filtering:
+- When N ≥ 1 (threads were skipped under rule 2): print "No new threads to triage — N already clarified."
+- When N = 0 (only resolved threads filtered): print "No new threads to triage."
+
+Then run **Phase 6 — Cleanup** and exit cleanly.
+
+For each remaining thread:
 
 ```
 ─────────────────────────────────────────────────
@@ -259,3 +273,4 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Resolve a CLARIFIED thread | Only resolve ADDRESSED threads. CLARIFIED = reply only, no resolve. |
 | Try to resolve via REST | Thread resolution is GraphQL-only (`resolveReviewThread` mutation). REST has no equivalent endpoint. |
+| Re-present a thread the owner already clarified | On re-runs, skip *unresolved* threads that already have a comment authored by `$CURRENT_USER`. Detect via `comments.nodes[*].author.login`. |
