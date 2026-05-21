@@ -29,3 +29,11 @@ workflow-pr-review, workflow-pr-review-followup
 # database schema without breaking existing clients using an expand-contract migration"
 # legitimately belongs to either skill.
 principle-data-modeling, principle-release-engineering
+
+# workflow-development and workflow-delegated-implementation share genuine trigger
+# surface: workflow-delegated-implementation IS the Phase-2 delegation strategy
+# inside workflow-development. A prompt like "drive this feature from plan to
+# delivered pull req" could ambiguously land on either — the full 5-phase lifecycle
+# OR the delegation sub-strategy that keeps Phase 2 lean. BM25 cannot resolve this
+# without runtime context.
+workflow-development, workflow-delegated-implementation
