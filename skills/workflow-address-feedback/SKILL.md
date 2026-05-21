@@ -90,8 +90,7 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 **When rimba is available** (preferred — durable, owner commits land here):
 
 ```bash
-PR_BRANCH=$(jq -r .headRefName "/tmp/swe-workbench-address-feedback/${PR}.json")
-RIMBA_OUT=$(rimba add "$PR_BRANCH" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
+RIMBA_OUT=$(rimba add "pr:$PR" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
 WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```

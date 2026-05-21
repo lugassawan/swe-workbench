@@ -21,4 +21,4 @@ Inspect `$ARGUMENTS` plus `git rev-parse --abbrev-ref HEAD` and `git log --oneli
 
 Invoke `swe-workbench:workflow-address-feedback` with the resolved PR number and any ticket-context prelude from Step 2.
 
-The skill owns: pre-flight (`gh auth`, `gh pr view`), owner-identity check, durable worktree setup via `rimba add <PR headRefName> --task "address-feedback-$PR"`, thread fetch via GraphQL `reviewThreads`, per-thread A/C/D triage, Edit-tool fix application, `swe-workbench:workflow-commit-and-pr` for committing, REST reply posting, and GraphQL `resolveReviewThread` for resolved threads.
+The skill owns: pre-flight (`gh auth`, `gh pr view`), owner-identity check, durable worktree setup via `rimba add pr:$PR --task "address-feedback-$PR"`, thread fetch via GraphQL `reviewThreads`, per-thread A/C/D triage, Edit-tool fix application, `swe-workbench:workflow-commit-and-pr` for committing, REST reply posting, and GraphQL `resolveReviewThread` for resolved threads.
