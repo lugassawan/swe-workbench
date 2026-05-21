@@ -37,3 +37,11 @@ principle-data-modeling, principle-release-engineering
 # OR the delegation sub-strategy that keeps Phase 2 lean. BM25 cannot resolve this
 # without runtime context.
 workflow-development, workflow-delegated-implementation
+
+# language-python and language-rust both have async/concurrent programming content.
+# Rust describes "async Rust" and Python describes "asyncio, generators" — BM25 cannot
+# resolve which language a prompt targets without the import statements or file extension.
+# A prompt like "how do I write an async generator with proper cancellation handling using
+# asyncio" is unambiguously Python at runtime, but BM25 scores both language descriptions
+# similarly on "async" + "generator" tokens; Rust can outrank Python on high-IDF matches.
+language-python, language-rust
