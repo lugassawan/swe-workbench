@@ -43,13 +43,13 @@ Reuse the commit-taxonomy axes from `workflow-development` to define cohesive gr
 | Tests | Test files and test utilities | Tests for the same implementation group |
 | Wiring | Integration, routing, CLI registration | Entry-point wiring for the same feature slice |
 
-**Group shape** (pass to `code-impl` as the brief):
+**Group shape** (conceptual fields — the [Dispatch contract](#dispatch-contract) section below is the authoritative brief format):
 
 ```
-ticket_slice: <one-line description of this group's goal>
-file_set: [explicit, disjoint list of relative file paths]
-verify_cmd: <command to run after implementation>
-expected: <what "passing" looks like>
+ticket_slice: <one-line description of this group's goal>  → maps to Goal:
+file_set: [explicit, disjoint list of relative file paths] → maps to File set:
+verify_cmd: <command to run after implementation>          → maps to Verify command:
+expected: <what "passing" looks like>                      → maps to the expected: line in your prose
 ```
 
 **Worked example — adding a new workflow skill:**
@@ -102,7 +102,7 @@ When `code-impl` returns a summary:
 |---|---|
 | `DONE` | Mark group complete; proceed to next group or Phase 3. |
 | `DONE_WITH_CONCERNS` | Log the concern; decide inline whether to address now or defer. Proceed. |
-| `NEEDS_CONTEXT` | Resolve the missing context; re-dispatch with an augmented brief. |
+| `NEEDS_CONTEXT` | Resolve the missing context; re-dispatch with an augmented brief. After two consecutive `NEEDS_CONTEXT` returns on the same group, stop and surface the ambiguity to the user. |
 | `BLOCKED` | Stop; diagnose the blocker; decide: fix the brief, fix a dependency, or escalate to the user. |
 
 3. After all groups complete, map to `workflow-development`'s existing "completed by sub-skill" phase-state: if `code-impl` ran `verify_cmd` with evidence, mark Phase 3 "completed by sub-skill" and proceed to Phase 4.

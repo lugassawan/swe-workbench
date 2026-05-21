@@ -26,7 +26,7 @@ Return a structured summary with exactly these fields:
 status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
 files_changed: [list of relative paths]
 test_results: <one-line result of verify_cmd — pass/fail + counts>
-concerns: <optional — brief note for DONE_WITH_CONCERNS>
+concerns: <required for DONE_WITH_CONCERNS — brief note; omit for DONE>
 blockers: <required for NEEDS_CONTEXT and BLOCKED — what is missing or blocking>
 ```
 
