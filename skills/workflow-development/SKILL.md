@@ -28,6 +28,7 @@ Mode B — Single Implementation:
   Phase 1 (Branch)    → rimba add <task> (if rimba on PATH) OR superpowers:using-git-worktrees (fallback)
   Phase 2 (Implement) → superpowers:executing-plans OR superpowers:subagent-driven-development
                           └─ swe-workbench:principle-tdd (per unit)
+                          └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
   Phase 3 (Verify)    → superpowers:verification-before-completion
   Phase 4 (Review)    → superpowers:code-reviewer (plan-alignment)
                           └─ swe-workbench:reviewer (diff correctness/security/design)
@@ -146,6 +147,9 @@ Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
 - **No plan / ad-hoc** → implement directly with `swe-workbench:principle-tdd` per unit
+- **Scope/complexity warrants isolation** → invoke `swe-workbench:workflow-delegated-implementation` to group changes and dispatch each cohesive group to a focused `code-impl` sub-agent; consume the summary (not the diff) to stay lean
+
+If a delegated `code-impl` run returns with verification evidence, mark Phase 3 "completed by sub-skill" per the deduplication rule above.
 
 Commit logically grouped changes as you go. Never bundle unrelated changes.
 

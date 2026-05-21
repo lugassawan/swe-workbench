@@ -15,7 +15,7 @@ Isolate this work in a worktree when the scope warrants it (non-trivial changes,
 **Phase 2 — Implement**
 - **Architectural consult (conditional):** If the ticket implies a new service, a boundary or contract change, a technology choice, or any non-trivial design fork — invoke the `senior-engineer` subagent *before* plan-writing for a boundary/trade-off read. Fold its output into the plan.
 - If no written plan exists, draft one via `superpowers:writing-plans`. Before finalizing the plan, activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section per `skills/workflow-development/templates/plan-workflow-section.md`. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/implement` always modifies the codebase, Mode A always applies here.
-- Execute via `superpowers:executing-plans` for sequential work, or `superpowers:subagent-driven-development` for parallelizable units.
+- Execute via `superpowers:executing-plans` for sequential work, `superpowers:subagent-driven-development` for parallelizable units, or `swe-workbench:workflow-delegated-implementation` when scope/complexity warrants grouping changes into focused `code-impl` sub-agent dispatches to keep the orchestrator context lean.
 - Apply `swe-workbench:principle-tdd` per implementation unit: red → green → refactor.
 - **Mid-implementation forks:** If an architectural decision emerges that was not anticipated in the plan, pause and consult `senior-engineer` rather than guessing. Update the plan before continuing.
 
