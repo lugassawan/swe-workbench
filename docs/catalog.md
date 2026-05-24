@@ -78,6 +78,7 @@
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-java` | `.java` files, `pom.xml`, `build.gradle`, keywords: Java, JVM, Spring, Maven, Gradle, records, sealed classes, virtual threads. |
 | `language-kotlin` | `.kt` files, `build.gradle.kts`, keywords: Kotlin, coroutines, suspend, StateFlow, sealed interface, Kotlin DSL. |
+| `language-ruby` | `.rb` files, `Gemfile`, `Rakefile`, gemspecs, keywords: Ruby, Bundler, RSpec, minitest, blocks, procs, lambdas, pattern matching. |
 | `language-rust` | `.rs` files, `Cargo.toml`, keywords: Rust, cargo, ownership, borrow checker, trait, lifetime. |
 | `language-swift` | `.swift` files, `Package.swift`, keywords: Swift, SwiftUI, actors, async/await, Sendable, Result builders, Swift Package Manager. |
 | `language-typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
