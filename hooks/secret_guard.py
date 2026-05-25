@@ -26,7 +26,9 @@ from pathlib import Path
 # Whole-file exemptions. Keep narrow and explicit; never use broad globs.
 _ALLOWLIST_BASENAMES = frozenset({".gitignore"})
 # Mirrors the CLAUDE_PLUGIN_ROOT fallback in hooks/skill_usage_record.sh:28.
-_PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parent.parent)
+_PLUGIN_ROOT = Path(
+    os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parent.parent
+).resolve()
 _ALLOWLIST_SUFFIXES = frozenset({
     str(_PLUGIN_ROOT / "tests" / "test_secret_guard.py"),
 })

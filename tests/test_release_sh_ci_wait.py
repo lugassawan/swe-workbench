@@ -451,6 +451,28 @@ class TestTransientCap:
             "MAX_TRANSIENT not found in release.sh"
         )
 
+    def test_transient_cap_fires_before_timeout(self):
+        """MAX_TRANSIENT * 10s must be strictly less than TIMEOUT.
+
+        Ensures the transient cap always fires before the outer wall-clock
+        timeout, regardless of future value changes to either constant.
+        """
+        lines = _script_lines()
+        timeout_val = next(
+            int(re.search(r"TIMEOUT=(\d+)", ln).group(1))
+            for ln in lines
+            if not _is_comment(ln) and re.search(r"\bTIMEOUT=\d+\b", ln)
+        )
+        max_transient_val = next(
+            int(re.search(r"MAX_TRANSIENT=(\d+)", ln).group(1))
+            for ln in lines
+            if not _is_comment(ln) and re.search(r"MAX_TRANSIENT=\d+", ln)
+        )
+        assert max_transient_val * 10 < timeout_val, (
+            f"MAX_TRANSIENT ({max_transient_val}) * 10s = {max_transient_val * 10}s "
+            f">= TIMEOUT ({timeout_val}s) — cap would never fire before timeout"
+        )
+
     def test_persistent_transient_exits_before_timeout(self, tmp_path):
         """A stubbed gh that always returns transient rc causes the loop to exit
         after MAX_TRANSIENT attempts (TIMEOUT=3600), not spin to timeout."""

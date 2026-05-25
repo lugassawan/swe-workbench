@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import _CLEAN_ENV
+
 _PR_YML_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pr.yml"
 try:
     _PR_YML_TEXT: str | None = _PR_YML_PATH.read_text(encoding="utf-8")
@@ -354,7 +356,7 @@ class TestAuthorshipDenylist:
             ["sh", "-c", script],
             capture_output=True,
             text=True,
-            env={**os.environ, "_STUB_EMAIL": email, "_STUB_BRANCH": branch},
+            env={**dict(_CLEAN_ENV), "_STUB_EMAIL": email, "_STUB_BRANCH": branch},
         )
 
     def test_pre_commit_blocks_test_at_example(self):
