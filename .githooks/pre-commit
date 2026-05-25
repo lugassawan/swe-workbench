@@ -8,6 +8,15 @@ if [ "$_branch" = "main" ] || [ "$_branch" = "master" ]; then
     exit 1
 fi
 
+# BEGIN RIMBA HOOK
+# Installed by rimba — do not edit this block manually
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if echo "$CURRENT_BRANCH" | grep -qE "^(main|master)$"; then
+  echo "ERROR: Direct commits to $CURRENT_BRANCH are not allowed."
+  exit 1
+fi
+# END RIMBA HOOK
+
 # Block commits from placeholder/test identities that leak from test fixtures.
 _email=$(git config user.email 2>/dev/null)
 case "$_email" in
