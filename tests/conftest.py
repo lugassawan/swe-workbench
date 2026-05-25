@@ -1,6 +1,4 @@
 import os
-import sys
-from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
@@ -31,16 +29,20 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
     }
 )
 
-# Ensure scripts/ and tests/ are importable from any working directory.
-_HERE = Path(__file__).parent
-sys.path.insert(0, str(_HERE))
-sys.path.insert(0, str(_HERE.parent / "scripts"))
-import validate  # noqa: E402
+# scripts/ and tests/ are on sys.path via pyproject.toml [tool.pytest.ini_options] pythonpath.
+import validate  # noqa: E402  (available via pyproject.toml pythonpath)
 
 
 @pytest.fixture(autouse=True)
 def reset_validate(monkeypatch, tmp_path):
-    """Clear FAILURES and redirect ROOT to a temp directory before each test."""
+    """Clear FAILURES and redirect ROOT to a temp directory before each test.
+
+    Both setup and teardown clear FAILURES so the fixture is safe under
+    pytest-xdist: each worker process gets its own copy of the validate module
+    (xdist is process-based, not thread-based), but within a worker the fixture
+    still prevents cross-test contamination regardless of execution order.
+    """
     validate.FAILURES.clear()
     monkeypatch.setattr(validate, "ROOT", tmp_path)
     yield tmp_path
+    validate.FAILURES.clear()

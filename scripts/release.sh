@@ -187,6 +187,8 @@ else
   ELAPSED=0
   HEARTBEAT=60
   LAST_HEARTBEAT=0
+  MAX_TRANSIENT=10
+  TRANSIENT_COUNT=0
 
   while true; do
     TOTAL=0; PENDING=0; FAILED=0
@@ -206,18 +208,38 @@ else
     set -e
 
     if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
-      echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}); retrying in 10s..."
+      TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+      if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+        echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
+        echo "Check status at: ${PR_URL}" >&2
+        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        exit 1
+      fi
+      echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}, attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
       sleep 10
       ELAPSED=$((ELAPSED + 10))
       continue
     fi
 
     if [[ $CHECKS_RC -eq 8 && -z "$CHECKS_JSON" ]]; then
-      echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output; retrying in 10s..."
+      TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+      if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+        echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
+        echo "Check status at: ${PR_URL}" >&2
+        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        exit 1
+      fi
+      echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output (attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
       sleep 10
       ELAPSED=$((ELAPSED + 10))
       continue
     fi
+
+    TRANSIENT_COUNT=0
 
     TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
     PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "pending")] | length')

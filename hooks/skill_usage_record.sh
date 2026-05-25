@@ -43,6 +43,6 @@ printf '%s\n' "$skill" >>"$buffer" 2>>"$cache_dir/.errors.log" || true
 
 # Opportunistic sweep: drop buffers older than 24h (-mmin +1440 is portable to
 # both GNU and BSD find and gives a true 24h sliding window).
-find "$cache_dir" -maxdepth 1 -name '*-*.txt' -mmin +1440 -delete 2>/dev/null || true
+find "$cache_dir" -maxdepth 1 \( -name '*-*.txt' -o -name '.errors.log' \) -mmin +1440 -delete 2>/dev/null || true
 
 exit 0

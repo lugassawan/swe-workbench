@@ -219,6 +219,47 @@ class TestRecordHook:
         )
         assert not old_file.exists(), "Old buffer should have been swept"
 
+    def test_sweep_removes_old_errors_log(self, plugin_root, cache_dir):
+        """Stale .errors.log older than 24h is swept alongside old buffer files."""
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        errors_log = skill_cache / ".errors.log"
+        errors_log.write_text("some error\n")
+        old_mtime = time.time() - 48 * 3600
+        os.utime(errors_log, (old_mtime, old_mtime))
+
+        _run_record(
+            {
+                "agent_id": "new-456",
+                "agent_type": "reviewer",
+                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+            },
+            plugin_root,
+            cache_dir,
+        )
+        assert not errors_log.exists(), "Stale .errors.log should have been swept"
+
+    def test_sweep_retains_fresh_errors_log(self, plugin_root, cache_dir):
+        """A recent .errors.log (< 24h old) must NOT be swept."""
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        errors_log = skill_cache / ".errors.log"
+        errors_log.write_text("recent error\n")
+        # mtime = 1h ago (well within 24h window)
+        recent_mtime = time.time() - 3600
+        os.utime(errors_log, (recent_mtime, recent_mtime))
+
+        _run_record(
+            {
+                "agent_id": "new-789",
+                "agent_type": "reviewer",
+                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+            },
+            plugin_root,
+            cache_dir,
+        )
+        assert errors_log.exists(), "Fresh .errors.log must be retained"
+
 
 # ---------------------------------------------------------------------------
 # flush hook — tests 7–11

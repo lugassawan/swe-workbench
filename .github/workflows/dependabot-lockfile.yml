@@ -7,6 +7,7 @@ on:
     paths:
       - tests/requirements.txt
       - tests/release-requirements.txt
+      - tests/build-requirements.txt
 
 # Default to least-privilege; the one job that writes elevates explicitly.
 permissions:
@@ -45,12 +46,12 @@ jobs:
 
       - name: Commit and push updated lockfiles if changed
         run: |
-          if git diff --quiet HEAD -- tests/requirements.lock tests/release-requirements.lock; then
+          if git diff --quiet HEAD -- tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock; then
             echo "Lockfiles are already up to date — nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add tests/requirements.lock tests/release-requirements.lock
+          git add tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
           git commit -m "[chore] Regenerate lockfiles after dependency bump"
           git push

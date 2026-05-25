@@ -137,6 +137,14 @@ assert _FIXTURES, (
 )
 
 
+# Minimum BM25 score gap between #1 and the nearest non-sibling when target ranks top.
+# Tunable: lower to suppress noise, raise to catch closer near-ties earlier.
+# Calibrated at 0.1 against the current fixture set; all top-1 skills scored ≥ 0.35
+# margin at time of writing.  Lower if a legitimate top-1 fixture produces a false alarm;
+# raise to detect IDF drift earlier.
+_SCORE_MARGIN = 0.1
+
+
 @pytest.mark.parametrize(
     "skill_name,prompt",
     _FIXTURES,
@@ -146,18 +154,36 @@ def test_prompt_ranks_target_skill_top1(
     skill_name, prompt, real_corpus, real_index, sibling_sets
 ):
     ranked = _rank_skills(prompt, real_corpus, real_index)
+    top3_summary = ", ".join(
+        f"`{n}` ({sc:.2f})" for n, sc in ranked[:3]
+    )
     target_rank = next(
         (i for i, (n, _) in enumerate(ranked) if n == skill_name), None
     )
     assert target_rank is not None, f"skill `{skill_name}` not found in corpus"
 
-    if target_rank == 0:
-        return  # top-1 globally; pass
-
-    # Sibling-set escape hatch: all outrankers must be documented siblings.
     my_siblings = next(
         (s for s in sibling_sets if skill_name in s), {skill_name}
     )
+
+    if target_rank == 0:
+        # Score-margin guard: catch near-ties from IDF drift before they flip.
+        target_score = ranked[0][1]
+        non_siblings_below = [
+            (n, sc) for n, sc in ranked[1:] if n not in my_siblings
+        ]
+        if non_siblings_below:
+            next_name, next_score = non_siblings_below[0]
+            margin = target_score - next_score
+            assert margin >= _SCORE_MARGIN, (
+                f"prompt for `{skill_name}` ranks #1 but margin over next non-sibling "
+                f"`{next_name}` is only {margin:.3f} (< {_SCORE_MARGIN}). "
+                f"Top-3: [{top3_summary}]. "
+                f"IDF drift may flip this ranking — tighten the description or raise _SCORE_MARGIN."
+            )
+        return
+
+    # Sibling-set escape hatch: all outrankers must be documented siblings.
     outrankers = [n for n, _ in ranked[:target_rank]]
     if all(n in my_siblings for n in outrankers):
         return
@@ -165,7 +191,8 @@ def test_prompt_ranks_target_skill_top1(
     non_sibling = [(n, sc) for n, sc in ranked[:target_rank] if n not in my_siblings]
     pytest.fail(
         f"prompt for `{skill_name}` ranked #{target_rank + 1}; "
-        f"outranked by: "
+        f"top-3: [{top3_summary}]; "
+        f"outranked by non-siblings: "
         + ", ".join(f"`{n}` (score {sc:.2f})" for n, sc in non_sibling)
         + f". Refine skills/{skill_name}/SKILL.md description "
         f"or add a sibling-set entry to tests/skill_sibling_sets.txt."

@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# Add tests/ and scripts/ to sys.path so imports like `from validate import …`
+# and `from conftest import …` resolve correctly from any working directory.
+# This replaces the sys.path.insert calls that were in tests/conftest.py.
+pythonpath = ["tests", "scripts"]

@@ -47,7 +47,7 @@ jobs:
         run: |
           BAD=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/commits" \
             --jq '.[].commit.author.email' \
-            | grep -E '^(test@example\.com|t@t)$' || true)
+            | grep -E '^(test@example\.com|t@t(\.com)?)$' || true)
           if [ -n "$BAD" ]; then
             echo "::error::PR contains commits from a placeholder test identity: $BAD"
             echo "Rewrite with: git rebase main --exec 'git commit --amend --reset-author --no-edit'"
