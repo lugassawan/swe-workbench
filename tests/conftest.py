@@ -6,9 +6,9 @@ import pytest
 
 # _CLEAN_ENV: subprocess-safe environment for tests that spawn git or bash.
 #
-# swe-workbench is a bare git repo (core.bare=true). When tests run inside a
-# git hook (e.g. pre-push), GIT_DIR is exported and inherited by subprocess
-# children — Git then treats temp test repos as bare too, causing failures.
+# When tests run inside a git hook (e.g. pre-push), GIT_DIR is exported and
+# inherited by subprocess children — Git then treats temp test repos as if
+# they share the host repo's git context, causing failures.
 # We strip every GIT_* var, then re-add GIT_CONFIG_NOSYSTEM=1 to ignore the
 # system gitconfig for hermeticity.
 #
