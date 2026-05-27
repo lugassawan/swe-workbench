@@ -67,8 +67,6 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
-rimba registers the task as `pr-review-<PR>` (overriding its default `review/<N>-<slug>` derivation) and places the worktree in the configured worktrees base directory. `--skip-deps` suppresses dep installation; `--skip-hooks` suppresses post-create hooks — both unnecessary for a read-only diff review.
-
 **When rimba is absent** (fallback — direct git, NOT `superpowers:using-git-worktrees` which is consent-gated for durable feature work):
 
 ```bash
@@ -90,17 +88,13 @@ Read `title` and `body` from the saved JSON. Match `[A-Z]+-\d+`, atlassian/Confl
 Pass the agent:
 - Working-directory hint: absolute path of the worktree (`$WT`).
 - Diff: `git -C "$WT" diff "$BASE"..HEAD`.
-- Repo-relative-path instruction (load-bearing — strip the `$WT/` prefix before the colon):
-  > "Emit **repo-relative** paths in every finding (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments."
-- Footer instruction (load-bearing — opt-in per the agent's `## Decision footer (when instructed)` block):
-  > "End the review with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**` on its own line, no prefix or trailing text. Never `REQUEST_CHANGES`."
-- Narrative instruction (load-bearing — opt-in per the agent's `## Review Summary (when instructed)` block):
-  > "Begin the review with a `## Review Summary` section: 2–4 sentences capturing overall posture, the strongest positives, and the most important concerns. When the reviewer is not the PR author, the orchestrator uses these paragraphs as the top-level PR review body; otherwise the narrative is shown in the Claude session only and not posted to GitHub. Do not repeat per-finding detail there — that goes in the severity-grouped findings below."
+- Repo-relative-path instruction (load-bearing): emit **repo-relative** paths (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments.
+- Footer instruction (opt-in per `## Decision footer`): end with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**`. Never `REQUEST_CHANGES`.
+- Blocking-scope instruction (opt-in per `## Blocking-scope verdict`): classify each Critical/High as in-diff (`+` lines) or out-of-diff; mark out-of-diff with `**Informational (out-of-diff):** `; emit `**Blocking Scope: NONE|OUT-OF-DIFF-ONLY|IN-DIFF**` before the footer. APPROVE/COMMENT rule unchanged.
+- Narrative instruction (opt-in per `## Review Summary`): begin with `## Review Summary` (2–4 sentences: posture, positives, concerns); used as PR review body for cross-author reviews.
 - Ticket-context prelude (if Step 3 produced one).
 
-Store the agent's complete text response as `REVIEWER_OUTPUT` before Step 7 runs — in practice the orchestrator assigns the subagent's full text reply to this variable. Step 7's awk block reads from it via `<<< "$REVIEWER_OUTPUT"`.
-
-### Step 5 — Parse decision footer
+### Step 5 — Parse decision footer + blocking-scope verdict
 
 Scan ALL non-blank lines for the footer pattern:
 
@@ -114,6 +108,8 @@ Abort with "reviewer agent did not emit a valid Review Decision footer (APPROVE|
 - `REQUEST_CHANGES` appears anywhere in the agent output.
 
 Do NOT clean up the worktree on abort — leave it for inspection.
+
+Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; parse into `$BLOCKING_SCOPE`. Zero or >1 matches → `BLOCKING_SCOPE=IN-DIFF` (fail-safe). Log warning; do **not** abort — footer is the only hard-required contract.
 
 ### Step 6 — Dedup + post inline comments
 
@@ -172,51 +168,52 @@ Do NOT clean up the worktree on abort — leave it for inspection.
        -F commit_id="$HEAD_SHA"
      ```
 
-3. Track counts: `posted=N`, `deduped=M`.
+3. Track counts: `posted=N`, `deduped=M`. Initialise `DEFERRED_INFORMATIONAL=""` before the loop. On HTTP 422: out-of-diff informational findings → `DEFERRED_INFORMATIONAL` (not stale-SHA; expected for context-line refs); in-diff findings on 422 → skip/log, stale-SHA counted.
 
 ### Step 7 — Submit + cleanup
 
 Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
 
 ```bash
+if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
+  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author." >&2
+  IS_SELF_REVIEW=false
+elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then IS_SELF_REVIEW=true
+else IS_SELF_REVIEW=false; fi
+
+IDENTITY_KNOWN=$([ -n "$CURRENT_USER" ] && [ -n "$AUTHOR_LOGIN" ] && echo true || echo false)
+if [ "$DECISION" = "COMMENT" ] && [ "$BLOCKING_SCOPE" = "OUT-OF-DIFF-ONLY" ] \
+   && [ "$IS_SELF_REVIEW" = false ] && [ "$IDENTITY_KNOWN" = true ]; then
+  DECISION=APPROVE
+fi
+
 NARRATIVE=$(awk '
   /^[[:space:]]*(Critical|High|Medium|Low|Severity)[[:space:]]*\|/ { exit }
   /^###[[:space:]]+(Critical|High|Medium|Low)\b/ { exit }
+  /^\*\*Blocking Scope:/ { exit }
   /^\*\*Review Decision:/ { exit }
   { print }
 ' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
 HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true || echo false)"
-if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
-  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author." >&2
-  IS_SELF_REVIEW=false
-elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then
-  IS_SELF_REVIEW=true
-else
-  IS_SELF_REVIEW=false
-fi
 
-# $posted and $deduped are set in Step 6.
 BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
-
+INFORMATIONAL_SECTION=""
+[ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
 if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s\n' \
-    "$NARRATIVE" "$DECISION" "$BYLINE")
+  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s%s\n' \
+    "$NARRATIVE" "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
 elif [ "$IS_SELF_REVIEW" = false ]; then
-  # No narrative but cross-author: post just the byline.
-  SUMMARY="$BYLINE"
+  SUMMARY="$BYLINE"; [ -n "$INFORMATIONAL_SECTION" ] && SUMMARY="${SUMMARY}${INFORMATIONAL_SECTION}"
 else
-  # Self-review: nothing posted to GitHub; inline comments speak for themselves.
   SUMMARY=""
 fi
 ```
 
-Submit only when `IS_SELF_REVIEW = false` — GitHub blocks self-approval, and for self-review the Step 6 inline comments are sufficient without a review-event body:
+Submit when `IS_SELF_REVIEW = false` (GitHub blocks self-approval):
 - `APPROVE` → `gh pr review "$PR" --approve --body "$SUMMARY"`
 - `COMMENT` → `gh pr review "$PR" --comment --body "$SUMMARY"`
 
-When `IS_SELF_REVIEW = true`, skip the review-event submission entirely.
-
-**Never** use `--request-changes`.
+Skip when `IS_SELF_REVIEW = true`. **Never** use `--request-changes`.
 
 **Address-feedback CTA (conditional):** At the end of Step 7, when the review produced something actionable — i.e. `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (existing open threads were re-confirmed; they still need addressing) — call the `AskUserQuestion` tool:
 
@@ -240,15 +237,12 @@ Identity does not gate the CTA — when the user has invoked Claude to review th
 
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
-Cleanup non-blocking:
 ```bash
 ( rimba remove "pr-review-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-review-$PR" 2>/dev/null; \
        rm -rf "$WT" 2>/dev/null; } ) &
 ```
-
-`rimba remove` deletes both the worktree and the local `pr-review-<N>` branch (task name pinned via `--task` in Step 2 to keep it consistent). The `git worktree remove` + `git branch -D` group is the defensive fallback for rimba-absent or rimba-failure environments.
 
 ## Footer parsing contract
 
@@ -258,6 +252,10 @@ Cleanup non-blocking:
   - Zero matches.
   - More than one matching line.
   - `REQUEST_CHANGES` appears anywhere in the agent output.
+
+## Diff-scoping flip contract
+
+Fires only when `DECISION=COMMENT` ∧ `BLOCKING_SCOPE=OUT-OF-DIFF-ONLY` ∧ `IS_SELF_REVIEW=false` ∧ `IDENTITY_KNOWN=true`. Self-review (AC#4): no flip when `IS_SELF_REVIEW=true`. Identity unknown: `IDENTITY_KNOWN=false` → no flip. Out-of-diff 422s → `DEFERRED_INFORMATIONAL` → `### Informational (out-of-diff)` in summary.
 
 ## Dedup contract
 
@@ -278,8 +276,8 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | `git fetch pull/N/head` fails | Non-zero exit | Abort. Do not create worktree. |
 | Reviewer aborts mid-scan | Agent error | Skip submit. **Leave worktree** for inspection (do not remove). |
 | Decision footer missing or malformed | Regex no-match | Abort with explicit message. Worktree preserved. |
-| Comment-post returns 422 (line out of range) | HTTP 422 | Skip that finding, log "skipped (line out of range)", continue. |
-| All POSTs returned 422 (stale `commit_id` — PR head advanced between Step 1 and Step 6) | `posted == 0` AND every finding skipped with 422 | The cached `$HEAD_SHA` (from Step 1) is provably stale here — 422 on every POST means the PR head advanced. Re-fetch a fresh SHA via `gh pr view "$PR" --json headRefOid -q .headRefOid` and retry once. If still failing, abort with "HEAD_SHA mismatch — PR updated mid-review". |
+| Comment-post returns 422 (line out of range) | HTTP 422 | In-diff finding: skip, log "skipped (line out of range)", count toward stale-SHA. Out-of-diff informational: append to `DEFERRED_INFORMATIONAL`; do **not** count toward stale-SHA. |
+| All in-diff POSTs returned 422 (stale `commit_id` — PR head advanced between Step 1 and Step 6) | `posted == 0` AND every **in-diff** finding skipped with 422 | Re-fetch `HEAD_SHA` via `gh pr view "$PR" --json headRefOid -q .headRefOid` and retry once. If still failing, abort with "HEAD_SHA mismatch — PR updated mid-review". Out-of-diff 422s do NOT trigger this path. |
 | All findings dedup-matched | `posted == 0` | Submit with body "no new findings — all previously raised". Decision footer still respected. |
 | GraphQL pagination needed (PR > 100 threads) | `hasNextPage == true` | Loop with `after: endCursor`. Document as known limit if not implemented in v1. |
 
@@ -298,3 +296,5 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Emit the address-feedback CTA when there is nothing to address | The CTA is gated on outcome only: call `AskUserQuestion` when `DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`. Suppress on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). Self-review is NOT a suppression trigger. |
 | Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
 | Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false`. This is a distinct policy axis from the address-feedback CTA, which is gated on outcome only (not identity). The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
+| Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. |
+| Count out-of-diff 422s toward stale-SHA | Only in-diff 422s count. Out-of-diff 422s → `DEFERRED_INFORMATIONAL`. Counting them falsely triggers stale-SHA re-fetch. |
