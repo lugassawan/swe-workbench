@@ -4,6 +4,7 @@ Subprocess-driven so they exercise real POSIX sh logic.  Each test gets an
 isolated cache dir via tmp_path + CLAUDE_PROJECT_DIR, and a minimal agents/
 tree via CLAUDE_PLUGIN_ROOT.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -361,8 +362,6 @@ class TestFlushHook:
 
     def test_midnight_straddle(self, plugin_root, cache_dir):
         """Buffers from both today and yesterday contribute to the flush line."""
-        import datetime
-
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         today = datetime.date.today().strftime("%Y%m%d")
@@ -388,8 +387,6 @@ class TestFlushHook:
 
     def test_sibling_agent_buffer_not_flushed(self, plugin_root, cache_dir):
         """agent 'foo' flush must not touch sibling agent 'bar-foo' whose id ends in '-foo'."""
-        import datetime
-
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         today = datetime.date.today().strftime("%Y%m%d")
@@ -413,8 +410,6 @@ class TestFlushHook:
 
     def test_date_anchor_rejects_non_date_prefix(self, plugin_root, cache_dir):
         """Glob must only match <8-digit-date>-<id>.txt; non-date prefix must be ignored."""
-        import datetime
-
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         today = datetime.date.today().strftime("%Y%m%d")
