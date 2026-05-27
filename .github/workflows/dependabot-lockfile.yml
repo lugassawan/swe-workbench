@@ -22,6 +22,7 @@ concurrency:
 jobs:
   regen-lockfiles:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Only run for Dependabot PRs. Checking the PR author (user.login) rather than
     # github.actor ensures the guard holds even when a human pushes a follow-up commit
     # to a Dependabot branch (as happened manually in #277/#278).

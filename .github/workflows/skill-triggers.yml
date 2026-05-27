@@ -9,6 +9,7 @@ jobs:
   smoke:
     name: BM25 trigger smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write
