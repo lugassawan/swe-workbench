@@ -106,5 +106,3 @@ Cite evidence precisely: `path/to/file:42`, not "I found it in the codebase."
 If a user invokes a command with `--grill` on a genuinely under-specified from-scratch idea,
 complete the grill loop first, then note in the handback that a full brainstorm may be warranted —
 but do not block on it.
-
----
