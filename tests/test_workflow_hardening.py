@@ -5,6 +5,7 @@ consuming GitHub Actions quota up to the 6-hour default, and ensures stale in-pr
 runs are cancelled when a new push arrives on an open PR.
 """
 
+import glob
 import re
 from pathlib import Path
 
@@ -13,10 +14,8 @@ import pytest
 ROOT = Path(__file__).parent.parent
 
 WORKFLOW_FILES = [
-    "pr.yml",
-    "release.yml",
-    "skill-triggers.yml",
-    "dependabot-lockfile.yml",
+    Path(p).name
+    for p in sorted(glob.glob(str(ROOT / ".github" / "workflows" / "*.yml")))
 ]
 
 # Anchors to the start of the jobs: section; everything else (on:, permissions:) is ignored.
@@ -26,7 +25,8 @@ JOBS_SECTION_RE = re.compile(r"^jobs:\s*$", re.MULTILINE)
 JOB_KEY_RE = re.compile(r"^  (\S[^:]*):\s*$", re.MULTILINE)
 
 # Matches timeout-minutes at exactly 4-space indent (direct job property), e.g. "    timeout-minutes: 15"
-TIMEOUT_RE = re.compile(r"^    timeout-minutes:\s*\d+\s*$", re.MULTILINE)
+# [1-9]\d* requires a positive integer — rejects 0 which disables the timeout on GitHub Actions.
+TIMEOUT_RE = re.compile(r"^    timeout-minutes:\s*[1-9]\d*\s*$", re.MULTILINE)
 
 
 @pytest.mark.parametrize("filename", WORKFLOW_FILES)
