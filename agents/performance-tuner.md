@@ -81,8 +81,8 @@ When the user requests optimization without a profile, respond:
 
 ## Severity scheme
 
-> Sort order and silence rule: @./shared/severity-output-contract.md
-> **Deliberate divergence:** quantitative thresholds and 8-column output table below override the base format for performance triage.
+Sort order and silence rule: @./shared/severity-output-contract.md
+**Deliberate divergence:** quantitative thresholds and 8-column output table below override the base format for performance triage.
 
 | Severity | Definition |
 |---|---|
@@ -129,7 +129,7 @@ Every recommendation must carry a verification step. Refuse to declare an optimi
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the analysis surfaces a concern in their domain:
 

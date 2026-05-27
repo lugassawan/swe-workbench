@@ -777,7 +777,7 @@ class TestCheckCatalogCompleteness:
     def _agent_body(self, name="my-agent"):
         return (
             f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -843,7 +843,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n",
+            "\nSee @./shared/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -861,7 +861,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -888,7 +888,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/workflows.md for the skill catalog.\n",
+            "\nSee @./shared/workflows.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -914,12 +914,60 @@ class TestCheckCatalogCompleteness:
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md\n",
+            "\nSee @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         # principles.md has language-python (wrong slice) → "belongs in languages.md"
         assert any("belongs in" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_shared_includes_not_blockquoted
+# ──────────────────────────────────────────────
+
+class TestCheckSharedIncludesNotBlockquoted:
+    def test_blockquoted_principles_include_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/principles.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
+
+    def test_blockquoted_severity_contract_include_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> Base format, sort order, and silence rule: @./shared/severity-output-contract.md\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
+
+    def test_plain_include_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        validate.check_shared_includes_not_blockquoted()
+        assert len(validate.FAILURES) == 0
+
+    def test_shared_catalog_files_not_scanned(self, reset_validate):
+        """agents/shared/*.md catalog slices use glob("*.md") — not rglob — so they are excluded."""
+        root = reset_validate
+        # An agent with a plain include ensures the check actually runs (non-vacuous).
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        # Overwrite principles.md with a hypothetical blockquoted line; check must not flag it.
+        (root / "agents" / "shared" / "principles.md").write_text(
+            "- `swe-workbench:foo` — foo skill\n"
+            "> Hypothetical blockquoted @./shared/principles.md reference\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -1091,7 +1139,7 @@ class TestCheckUnwiredPrincipleSkills:
     def _agent_body(self, extra=""):
         return (
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n"
             + extra
         )
 
@@ -1423,4 +1471,61 @@ class TestTicketContextPreludeUniformity:
         assert _CANONICAL_PRELUDE in text, (
             f"commands/{cmd}.md does not contain the canonical ticket-context prelude — "
             "sync from commands/shared/ticket-context-prelude.md (E3, issue #235)"
+        )
+
+
+# ──────────────────────────────────────────────
+# E312: interrogation-prelude uniformity (issue #312)
+# ──────────────────────────────────────────────
+
+_CANONICAL_INTERROGATION_PRELUDE = (
+    "**Interrogation mode.** Before producing anything, resolve the mode:\n"
+    "\n"
+    "- **Explicit signal in the invocation is honored without asking.** "
+    "grill-me = `--grill`, \"grill me\", or \"grill-me mode\". "
+    "standard = `--standard`, \"standard\", or \"quick\". "
+    "Strip the signal from $ARGUMENTS and record the resolved mode.\n"
+    "- **No explicit signal:** ask via `AskUserQuestion` — one question, header \"Mode\", "
+    "options **Standard** (recommended, listed first) and **Grill me**. "
+    "Standard description: \"Lightweight clarify — a restatement and at most one question, then proceed.\" "
+    "Grill-me description: \"Relentlessly walk the decision tree one question at a time, each with a "
+    "recommended answer, self-answering from the codebase where possible.\" Use the user's choice.\n"
+    "\n"
+    "**Standard mode:** proceed with the command's existing lightweight clarify "
+    "(a restatement and at most one clarifying question) — do not ask the mode question again.\n"
+    "\n"
+    "**Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to "
+    "completion (exit on shared understanding or when the user says \"proceed\"). Then thread the emitted "
+    "`## Resolved decisions` block into the command's normal artifact/delegation step below — the same way "
+    "a ticket-context summary is prepended — and continue as in standard mode."
+)
+
+_E312_COMMANDS = ["capture", "design", "implement", "architect", "extend", "debug"]
+
+
+class TestInterrogationPreludeUniformity:
+    """Integration tests: every command in _E312_COMMANDS must carry the canonical
+    interrogation prelude block (E312 — issue #312)."""
+
+    def test_shared_prelude_file_exists(self):
+        shared = _COMMANDS_DIR / "shared" / "interrogation-prelude.md"
+        assert shared.exists(), (
+            "commands/shared/interrogation-prelude.md must exist (E312 canonical source)"
+        )
+
+    def test_shared_prelude_file_contains_canonical_text(self):
+        shared = _COMMANDS_DIR / "shared" / "interrogation-prelude.md"
+        assert shared.exists(), "canonical source file missing"
+        assert _CANONICAL_INTERROGATION_PRELUDE in shared.read_text(encoding="utf-8"), (
+            "commands/shared/interrogation-prelude.md content does not match canonical prelude"
+        )
+
+    @pytest.mark.parametrize("cmd", _E312_COMMANDS)
+    def test_command_contains_canonical_interrogation_prelude(self, cmd):
+        path = _COMMANDS_DIR / f"{cmd}.md"
+        assert path.exists(), f"commands/{cmd}.md not found"
+        text = path.read_text(encoding="utf-8")
+        assert _CANONICAL_INTERROGATION_PRELUDE in text, (
+            f"commands/{cmd}.md does not contain the canonical interrogation prelude — "
+            "sync from commands/shared/interrogation-prelude.md (E312, issue #312)"
         )

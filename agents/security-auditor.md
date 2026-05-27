@@ -72,7 +72,7 @@ Every finding must include:
 
 ## Severity scheme
 
-> Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+Base format, sort order, and silence rule: @./shared/severity-output-contract.md
 
 Domain-specific severity criteria (extends the base ladder with security examples):
 
@@ -110,7 +110,7 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 

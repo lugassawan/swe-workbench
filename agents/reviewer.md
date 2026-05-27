@@ -51,6 +51,34 @@ When the invoker (e.g. `/review` PR mode) explicitly asks for a Review Decision 
 
 **When NOT instructed** (e.g. local-diff mode, ad-hoc invocation), do not emit this footer — keep output to severity-grouped findings only.
 
+## Blocking-scope verdict (when instructed)
+
+When the invoker explicitly asks for a Review Decision footer, also classify the *scope* of each
+Critical/High finding and emit a single aggregate verdict line immediately before the footer.
+
+**Scope classification** — read `+` vs context lines in the unified diff:
+
+- **in-diff**: the finding's target line is a `+` line — added or modified by this PR.
+- **out-of-diff**: the finding's target line is a context (unchanged) or pre-existing line that this PR merely referenced; it was not added or modified by this PR.
+
+**Per-finding action** — for each Critical/High finding that is out-of-diff, prefix its `Issue`
+field with `**Informational (out-of-diff):** ` (keep the true severity label). In-diff findings
+are left unchanged. Medium/Low findings are never affected.
+
+**Aggregate verdict** — immediately before the `**Review Decision: …**` footer line, emit
+EXACTLY ONE of (always emit, even on a clean review with zero Critical/High findings):
+
+- `**Blocking Scope: NONE**` — no Critical or High findings at all.
+- `**Blocking Scope: OUT-OF-DIFF-ONLY**` — every Critical/High finding is out-of-diff.
+- `**Blocking Scope: IN-DIFF**` — at least one Critical/High finding is in-diff.
+
+The aggregate verdict MUST agree with the per-finding markers. The `APPROVE`/`COMMENT` footer rule
+is unchanged (COMMENT on any Critical/High regardless of scope) — the authorship-gated decision
+flip from `COMMENT → APPROVE` is the orchestrator's responsibility, not yours.
+
+**When NOT instructed** (e.g. local-diff mode, ad-hoc invocation), do not emit the verdict line —
+this mirrors the footer's opt-in contract.
+
 ## Review Summary (when instructed)
 
 When the invoker (e.g. `workflow-pr-review` Step 4) explicitly asks for a Review Summary, begin the review with a `## Review Summary` section — before any severity-grouped findings. Write 2–4 sentences covering:
@@ -65,7 +93,7 @@ Do **not** repeat per-finding detail in this section — that belongs in the sev
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the review surfaces a concern in their domain:
 
