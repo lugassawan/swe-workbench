@@ -176,7 +176,7 @@ Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
 
 ```bash
 if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
-  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author." >&2
+  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author but diff-scoping flip suppressed (identity unknown)." >&2
   IS_SELF_REVIEW=false
 elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then IS_SELF_REVIEW=true
 else IS_SELF_REVIEW=false; fi
@@ -297,4 +297,4 @@ Match against ANY author (User Decision 2). On match, skip posting AND add 👍 
 | Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
 | Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false`. This is a distinct policy axis from the address-feedback CTA, which is gated on outcome only (not identity). The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. |
-| Count out-of-diff 422s toward stale-SHA | Only in-diff 422s count. Out-of-diff 422s → `DEFERRED_INFORMATIONAL`. Counting them falsely triggers stale-SHA re-fetch. |
+| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/address-feedback` to act on. |

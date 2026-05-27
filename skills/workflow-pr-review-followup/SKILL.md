@@ -177,7 +177,7 @@ Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
 
 ```bash
 if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
-  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author." >&2
+  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author but diff-scoping flip suppressed (identity unknown)." >&2
   IS_SELF_REVIEW=false
 elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then IS_SELF_REVIEW=true
 else IS_SELF_REVIEW=false; fi
@@ -199,7 +199,7 @@ HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true 
 
 BYLINE="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
 INFORMATIONAL_SECTION=""
-[ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
+[ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
 if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
   SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s%s\n' \
     "$NARRATIVE" "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
@@ -297,4 +297,4 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. See [Diff-scoping flip contract](#diff-scoping-flip-contract). |
 | Apply the diff-scoping flip when identity is unknown | `IDENTITY_KNOWN = false` when `$CURRENT_USER` or `$AUTHOR_LOGIN` is empty. The flip does NOT fire — stay COMMENT. Never auto-approve when you can't verify the authorship axis. |
 | Count out-of-diff 422s toward stale-SHA detection | Only in-diff 422s count. Out-of-diff 422s go to `DEFERRED_INFORMATIONAL`. Counting them would falsely trigger a stale-SHA re-fetch. |
-| Drop out-of-diff findings that 422 | Append to `DEFERRED_INFORMATIONAL`; surface under `### Informational (out-of-diff)` in the summary. No finding is silently lost. |
+| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/address-feedback` to act on. |
