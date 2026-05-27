@@ -386,6 +386,56 @@ class TestFlushHook:
         assert not buf_today.exists()
         assert not buf_yesterday.exists()
 
+    def test_sibling_agent_buffer_not_flushed(self, plugin_root, cache_dir):
+        """agent 'foo' flush must not touch sibling agent 'bar-foo' whose id ends in '-foo'."""
+        import datetime
+
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        today = datetime.date.today().strftime("%Y%m%d")
+        buf_foo = skill_cache / f"{today}-foo.txt"
+        buf_sibling = skill_cache / f"{today}-bar-foo.txt"
+        buf_foo.write_text("skill-foo\n")
+        buf_sibling.write_text("skill-sibling\n")
+
+        result = _run_flush(
+            {"agent_id": "foo", "agent_type": "reviewer"},
+            plugin_root,
+            cache_dir,
+        )
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        msg = out.get("systemMessage", "")
+        assert "skill-foo" in msg, "foo's own skill must appear in the flush message"
+        assert "skill-sibling" not in msg, "sibling bar-foo's skill must NOT appear"
+        assert not buf_foo.exists(), "foo's buffer should be deleted after flush"
+        assert buf_sibling.exists(), "bar-foo's buffer must survive foo's flush"
+
+    def test_date_anchor_rejects_non_date_prefix(self, plugin_root, cache_dir):
+        """Glob must only match <8-digit-date>-<id>.txt; non-date prefix must be ignored."""
+        import datetime
+
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        today = datetime.date.today().strftime("%Y%m%d")
+        buf_valid = skill_cache / f"{today}-foo.txt"
+        buf_bad = skill_cache / "notadate-foo.txt"
+        buf_valid.write_text("skill-valid\n")
+        buf_bad.write_text("skill-bad\n")
+
+        result = _run_flush(
+            {"agent_id": "foo", "agent_type": "reviewer"},
+            plugin_root,
+            cache_dir,
+        )
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        msg = out.get("systemMessage", "")
+        assert "skill-valid" in msg, "date-prefixed buffer must be included"
+        assert "skill-bad" not in msg, "non-date-prefixed buffer must be excluded"
+        assert not buf_valid.exists(), "valid buffer should be deleted after flush"
+        assert buf_bad.exists(), "non-date-prefixed file must survive"
+
 
 # ---------------------------------------------------------------------------
 # hooks.json schema — tests 12–13
