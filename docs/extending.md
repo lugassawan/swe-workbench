@@ -36,6 +36,17 @@ skills/principle-clean-architecture/
 
 **Multi-component examples use multiple fenced blocks, not one mega-blob.** When a pattern involves several files (Model + View + Controller), use a separate fence per file, each prefixed with a `// file: path/to/file.ext` (or `# file:` for Python) comment header. Anti-pattern: a single 200-line fence containing all three components.
 
+## Adding an interactive command with interrogation mode
+
+Interactive commands (those that delegate to a subagent to produce an artifact) support `standard` vs `grill-me` interrogation mode via a shared prelude convention. When adding such a command:
+
+1. Copy the content of `commands/shared/interrogation-prelude.md` verbatim into the new command file, positioned **after** any ticket-context prelude and **before** the subagent delegation or skill activation instruction.
+2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py`. The `TestInterrogationPreludeUniformity` class enforces byte-identical parity between the shared file and every command in the list.
+3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
+4. Add a `workflow-grill` trigger row note to the command's entry in `docs/catalog.md`.
+
+**Orchestrator-only rule:** the mode gate (`AskUserQuestion`) and the `swe-workbench:workflow-grill` loop run in the command body (orchestrator). Never embed them in a shared subagent — it would bleed the mode prompt into flows that reuse the same agent (e.g. `product-manager` is shared with `/report-issue`; `senior-engineer` is consulted by `/implement`).
+
 **Member visibility ordering: `public > protected > private`.** Public API surface reads first so consumers can scan the contract without scrolling past implementation details. Per-language translation:
 
 | Language | Ordering rule |

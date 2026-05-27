@@ -113,6 +113,17 @@ Run the release script from a clean `main`:
 
 It bumps both manifests, opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
 
+## Adding a new interactive command
+
+When creating a new interactive command that supports interrogation mode (i.e. one that delegates to a subagent to produce an artifact), inline the canonical interrogation prelude verbatim from `commands/shared/interrogation-prelude.md`:
+
+1. Copy the file content exactly into the new command, positioned after any ticket-context prelude and before the subagent delegation or skill activation instruction.
+2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py` — the `TestInterrogationPreludeUniformity` class will then enforce that the prelude stays in sync.
+3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
+4. Add the command name to the `argument-hint` note in `docs/catalog.md`.
+
+**Important:** the mode gate (`AskUserQuestion`) and the grill loop (`swe-workbench:workflow-grill`) run in the **orchestrator** (command body), never in a shared subagent. Embedding it in a shared subagent (e.g. `product-manager`, `senior-engineer`) would leak the mode gate into other flows that reuse the same agent.
+
 ## `.githooks/` vs `hooks/hooks.json`
 
 These two directories share the same depth but serve different runtimes:
