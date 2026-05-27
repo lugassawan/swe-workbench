@@ -81,6 +81,8 @@ def _make_repo(tmp_path: Path) -> dict:
         "    esac",
         "done",
         'lock="${src%.txt}.lock"',
+        # lock resolves correctly only when CWD is the repo root — the real
+        # script guarantees this via (cd "$REPO_ROOT" && pip-compile ...).
         "grep -v '^#' \"$lock\" | grep -v '^$' > \"$output\" || true",
         "if [[ \"${DRIFT_TEST:-0}\" == '1' ]]; then",
         "    printf '%s\\n' 'driftpkg==9.9.9 \\\\' >> \"$output\"",
@@ -217,7 +219,7 @@ class TestCheckDriftGate:
             **_CLEAN_ENV,
             "PATH": f"{paths['stub_dir']}:{_CLEAN_ENV['PATH']}",
             "STUB_DIR": str(paths["stub_dir"]),
-            **({"DRIFT_TEST": "1"} if drift else {}),
+            "DRIFT_TEST": "1" if drift else "0",
         }
 
     def test_check_exits_zero_when_in_sync(self, tmp_path):
@@ -231,6 +233,7 @@ class TestCheckDriftGate:
         )
         assert result.returncode == 0, result.stderr
         assert "up to date" in result.stdout
+        assert result.stdout.count("up to date") == 3
 
     def test_check_exits_nonzero_on_drift(self, tmp_path):
         """Fresh compile has an extra dependency line → exit non-zero."""
@@ -241,7 +244,7 @@ class TestCheckDriftGate:
             text=True,
             env=self._env(paths, drift=True),
         )
-        assert result.returncode != 0
+        assert result.returncode == 1
         assert "out of date" in result.stderr
 
     def test_check_ignores_header_and_blank_diffs(self, tmp_path):
