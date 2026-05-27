@@ -51,7 +51,7 @@ blockers: <required for NEEDS_CONTEXT and BLOCKED — what is missing or blockin
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when relevant:
 

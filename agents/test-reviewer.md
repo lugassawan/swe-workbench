@@ -11,7 +11,7 @@ You are a test reviewer. Your job is to audit existing tests and report concrete
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool before auditing:
 
@@ -42,8 +42,8 @@ If the suite is clean, say so explicitly: "No high-confidence findings in this s
 
 ## Output contract
 
-> Base format, sort order, and silence rule: @./shared/severity-output-contract.md
-> **Extension:** a `Category` column is added between `File:Line` and `Issue` to classify test failure modes.
+Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+**Extension:** a `Category` column is added between `File:Line` and `Issue` to classify test failure modes.
 
 Group findings by severity, highest first (Critical → High → Medium → Low). Use this extended pipe format:
 

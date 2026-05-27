@@ -93,7 +93,7 @@ Do **not** repeat per-finding detail in this section — that belongs in the sev
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the review surfaces a concern in their domain:
 

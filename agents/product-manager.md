@@ -93,7 +93,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
 

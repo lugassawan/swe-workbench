@@ -777,7 +777,7 @@ class TestCheckCatalogCompleteness:
     def _agent_body(self, name="my-agent"):
         return (
             f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -843,7 +843,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n",
+            "\nSee @./shared/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -861,7 +861,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -888,7 +888,7 @@ class TestCheckCatalogCompleteness:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/workflows.md for the skill catalog.\n",
+            "\nSee @./shared/workflows.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -914,12 +914,60 @@ class TestCheckCatalogCompleteness:
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md\n",
+            "\nSee @./shared/principles.md\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         # principles.md has language-python (wrong slice) → "belongs in languages.md"
         assert any("belongs in" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_shared_includes_not_blockquoted
+# ──────────────────────────────────────────────
+
+class TestCheckSharedIncludesNotBlockquoted:
+    def test_blockquoted_principles_include_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> See @./shared/principles.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
+
+    def test_blockquoted_severity_contract_include_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\n> Base format, sort order, and silence rule: @./shared/severity-output-contract.md\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
+
+    def test_plain_include_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        validate.check_shared_includes_not_blockquoted()
+        assert len(validate.FAILURES) == 0
+
+    def test_shared_catalog_files_not_scanned(self, reset_validate):
+        """agents/shared/*.md catalog slices use glob("*.md") — not rglob — so they are excluded."""
+        root = reset_validate
+        # An agent with a plain include ensures the check actually runs (non-vacuous).
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        # Overwrite principles.md with a hypothetical blockquoted line; check must not flag it.
+        (root / "agents" / "shared" / "principles.md").write_text(
+            "- `swe-workbench:foo` — foo skill\n"
+            "> Hypothetical blockquoted @./shared/principles.md reference\n",
+            encoding="utf-8",
+        )
+        validate.check_shared_includes_not_blockquoted()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -1091,7 +1139,7 @@ class TestCheckUnwiredPrincipleSkills:
     def _agent_body(self, extra=""):
         return (
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n"
             + extra
         )
 

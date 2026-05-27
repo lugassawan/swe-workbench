@@ -22,7 +22,7 @@ Read at least one existing test file before writing — match the repo's style, 
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke `swe-workbench:principle-tdd` via the Skill tool before writing any test for the full red-green-refactor discipline and "What to test" checklist.
 

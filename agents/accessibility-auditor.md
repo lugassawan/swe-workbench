@@ -92,7 +92,7 @@ Flag, don't compute contrast ratios manually. Recommend these as follow-ups:
 
 ## Severity scheme
 
-> Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+Base format, sort order, and silence rule: @./shared/severity-output-contract.md
 
 Domain-specific severity criteria (extends the base ladder with a11y examples):
 
@@ -165,7 +165,7 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
-> See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
 
