@@ -38,7 +38,7 @@ Drop: `a/an/the`, conjunctions where meaning holds, filler phrases. Use short sy
 ### ultra
 Abbreviate common prose words. Strip conjunctions. Arrows for causality. One word when one word suffices.
 
-Abbreviate: `DB`, `auth`, `config`, `req`, `res`, `fn`, `impl`, `arg`, `msg`, `ctx`. Use `→` for causality. Drop all conjunctions and prepositions where meaning is clear.
+Abbreviate in prose: `DB`, `auth`, `config`, `req`, `res`, `fn`, `impl`, `arg`, `msg`, `ctx`. Use `→` for causality. Drop all conjunctions and prepositions where meaning is clear. Never abbreviate identifiers inside code blocks or inline backtick spans.
 
 **Example — "Why does this React component re-render?"**
 > Inline obj prop → new ref → re-render. `useMemo`.
