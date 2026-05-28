@@ -1,6 +1,6 @@
 ---
 name: language-ruby
-description: Ruby idioms - Ruby 3.x pattern matching, blocks, procs, lambdas, Enumerable, Comparable, frozen string literals, error handling, and testing. Auto-load when working with .rb files, Gemfile, Rakefile, gemspecs, or when the user mentions Ruby, Bundler, RSpec, minitest, blocks, procs, lambdas, or pattern matching.
+description: Ruby idioms — Ruby 3.x pattern matching, blocks, procs, lambdas, Enumerable, Comparable, frozen string literals, error handling, and testing. Auto-load when working with .rb files, Gemfile, Rakefile, gemspecs, or when the user mentions Ruby, Bundler, RSpec, minitest, blocks, procs, lambdas, or pattern matching.
 ---
 
 # Ruby
@@ -63,7 +63,7 @@ end
 ## Error handling
 - Rescue the narrowest exception class you can actually handle.
 - Keep `begin`/`rescue` scopes small so unrelated failures are not swallowed.
-- Avoid bare `rescue`; it catches `StandardError`, hides intent, and often masks bugs.
+- Avoid bare `rescue` (no class specified); the implicit `StandardError` scope hides intent and can silently swallow subclasses you did not anticipate. Always name the class explicitly.
 - Re-raise with context when crossing a boundary; preserve the original exception when useful.
 
 ```ruby
