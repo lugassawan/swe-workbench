@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -47,7 +52,7 @@ jobs:
         run: |
           BAD=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/commits" \
             --jq '.[].commit.author.email' \
-            | grep -E '^(test@example\.com|t@t)$' || true)
+            | grep -E '^(test@example\.com|t@t(\.com)?)$' || true)
           if [ -n "$BAD" ]; then
             echo "::error::PR contains commits from a placeholder test identity: $BAD"
             echo "Rewrite with: git rebase main --exec 'git commit --amend --reset-author --no-edit'"
@@ -92,6 +97,7 @@ jobs:
 
   validate-plugin-files:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -101,6 +107,7 @@ jobs:
 
   shellcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -114,6 +121,7 @@ jobs:
 
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -126,6 +134,7 @@ jobs:
 
   lockfile-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -139,6 +148,7 @@ jobs:
   markdown-links:
     name: Markdown link check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

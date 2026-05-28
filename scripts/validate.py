@@ -426,6 +426,39 @@ def check_catalog_completeness(cache=None):
                  " '@./shared/languages.md', '@./shared/workflows.md'")
 
 
+_BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\./shared/')
+
+
+def check_shared_includes_not_blockquoted(cache=None):
+    """`@./shared/*.md` includes must be plain paragraphs, not blockquotes.
+
+    A leading '> ' suppresses include resolution so the shared catalog/contract
+    is never injected into the agent (issue #309). Convergent plain form:
+    `See @./shared/principles.md for the skill catalog.`
+    """
+    agents_dir = ROOT / "agents"
+    agents_cache = cache[0] if cache is not None else None
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError as e:
+                fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
+                continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if _BLOCKQUOTED_SHARED_RE.match(line):
+                fail(
+                    agent_md.relative_to(ROOT),
+                    f"line {i}: '@./shared/' include is blockquoted — drop the leading "
+                    f"'> ' so the include resolves (issue #309): {line.strip()[:60]!r}",
+                )
+
+
 def check_examples():
     """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
     skills_dir = ROOT / "skills"
@@ -514,6 +547,7 @@ def main():
     check_agent_skill_refs(cache=cache)
     check_command_skill_refs()
     check_catalog_completeness(cache=cache)
+    check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
     check_examples()

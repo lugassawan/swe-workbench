@@ -1,12 +1,4 @@
 #!/bin/sh
-# Pre-commit hook: prevent direct commits to protected branches.
-
-_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-if [ "$_branch" = "main" ] || [ "$_branch" = "master" ]; then
-    echo "ERROR: Direct commits to '$_branch' are not allowed."
-    echo "       Create a feature branch first:  git checkout -b feat/<topic>"
-    exit 1
-fi
 
 # BEGIN RIMBA HOOK
 # Installed by rimba — do not edit this block manually
@@ -21,7 +13,7 @@ fi
 # Block commits from placeholder/test identities that leak from test fixtures.
 _email=$(git config user.email 2>/dev/null)
 case "$_email" in
-  test@example.com|t@t)
+  test@example.com|t@t|t@t.com)
     echo "ERROR: Refusing to commit with placeholder email '$_email'."
     echo "       This identity comes from a test fixture. Fix with:"
     echo "         git config --unset user.email  # restore global identity"

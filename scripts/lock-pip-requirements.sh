@@ -10,9 +10,9 @@ for arg in "$@"; do
     --help|-h)
       echo "Usage: $0 [--check]"
       echo ""
-      echo "  Regenerates tests/requirements.lock and tests/release-requirements.lock"
-      echo "  from their source files using pip-compile --generate-hashes, targeting"
-      echo "  Python 3.12 (matching CI)."
+      echo "  Regenerates tests/requirements.lock, tests/release-requirements.lock,"
+      echo "  and tests/build-requirements.lock from their source files using"
+      echo "  pip-compile --generate-hashes, targeting Python 3.12 (matching CI)."
       echo ""
       echo "  --check  Verify lockfiles are up-to-date (CI-friendly, exits 1 if drift)."
       exit 0
@@ -46,8 +46,8 @@ fi
 VENV_DIR="$(mktemp -d)"
 trap 'rm -rf "$VENV_DIR"' EXIT
 "$PYTHON" -m venv "$VENV_DIR"
-# version-pinned; hash-pinning omitted (build tool, not runtime dep)
-"$VENV_DIR/bin/pip" install --quiet "pip-tools==7.5.3"
+# Bootstrap pip-tools from its own hashed lock for supply-chain integrity.
+"$VENV_DIR/bin/pip" install --quiet --require-hashes -r "$REPO_ROOT/tests/build-requirements.lock"
 
 # ── Compile ────────────────────────────────────────────────────
 
@@ -63,6 +63,7 @@ compile() {
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
+      --allow-unsafe \
       --resolver=backtracking \
       --quiet \
       --no-header \
@@ -85,6 +86,7 @@ compile() {
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
+      --allow-unsafe \
       --resolver=backtracking \
       --output-file "$out" \
       "$src")
@@ -94,5 +96,6 @@ compile() {
 
 compile tests/requirements.txt tests/requirements.lock
 compile tests/release-requirements.txt tests/release-requirements.lock
+compile tests/build-requirements.txt tests/build-requirements.lock
 
 echo "Done."

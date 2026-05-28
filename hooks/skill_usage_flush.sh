@@ -27,9 +27,13 @@ fi
 cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
 
 # Buffer may span today's and yesterday's date-stamped file (straddle midnight).
-# Use a glob loop so paths with spaces are handled correctly (compatible with bash 3.2+).
+# The 8-digit bracket prefix is intentional: without it, "*-foo.txt" greedily
+# matches a sibling agent "bar-foo"'s "<date>-bar-foo.txt" (id allows hyphens).
+# The suffix -"$agent_id".txt is an exact match, so a longer id ("bar-foo") never
+# matches a shorter one's glob ("foo") either. Compatible with bash 3.2+ (POSIX
+# bracket classes, no extglob required).
 buffers=()
-for f in "$cache_dir"/*-"$agent_id".txt; do
+for f in "$cache_dir"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-"$agent_id".txt; do
   [ -f "$f" ] && buffers+=("$f")
 done
 [ "${#buffers[@]}" -eq 0 ] && { printf '{}'; exit 0; }

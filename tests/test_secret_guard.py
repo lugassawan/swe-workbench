@@ -159,30 +159,54 @@ class TestNeedsContextPatterns:
 # ──────────────────────────────────────────────
 
 class TestNosecretSuppression:
-    def test_nosecret_on_same_line_allows(self):
-        content = f'TOKEN = "{_FAKE_GHP}"  # nosecret'
+    def test_high_tier_nosecret_does_not_suppress(self):
+        """ghp_ token + # nosecret must still be BLOCKED — HIGH-tier is un-suppressible."""
+        content = f'token = "{_FAKE_GHP}"  # nosecret'  # nosecret
         result = run_guard(write_payload(content))
-        assert result.returncode == 0
+        assert result.returncode == 2, f"Expected BLOCKED for HIGH-tier + nosecret: {result.stderr!r}"
+        assert "BLOCKED" in result.stderr
 
-    def test_secret_on_adjacent_line_still_blocked(self):
-        content = f'x = 1  # nosecret\nTOKEN = "{_FAKE_GHP}"\n'
-        result = run_guard(write_payload(content))
-        assert result.returncode == 2
-
-    def test_nosecret_inline_comment_allows(self):
+    def test_high_tier_akia_nosecret_does_not_suppress(self):
+        """AKIA token + # nosecret must still be BLOCKED — HIGH-tier is un-suppressible."""
         content = f'{_FAKE_AKIA}  # nosecret'
         result = run_guard(write_payload(content))
-        assert result.returncode == 0
+        assert result.returncode == 2
 
-    def test_nosecret_no_space_after_hash_allows(self):
+    def test_high_tier_nosecret_no_space_does_not_suppress(self):
+        """#nosecret (no space) on HIGH-tier still blocks."""
         content = f'{_FAKE_AKIA}  #nosecret'
         result = run_guard(write_payload(content))
-        assert result.returncode == 0
+        assert result.returncode == 2
 
-    def test_nosecrets_plural_does_not_suppress(self):
-        content = f'TOKEN = "{_FAKE_GHP}"  # nosecrets stored here'
+    def test_needs_context_nosecret_stays_allowed(self):
+        """NEEDS-CONTEXT match with # nosecret remains allowed (regression guard)."""
+        content = f'TOKEN = "{_FAKE_SECRET_VAL}"  # nosecret'  # nosecret
+        result = run_guard(write_payload(content))
+        assert result.returncode == 0, f"Expected ALLOWED for NEEDS-CONTEXT + nosecret: {result.stderr!r}"
+
+    def test_secret_on_adjacent_line_still_blocked(self):
+        content = f'x = 1  # nosecret\nTOKEN = "{_FAKE_GHP}"\n'  # nosecret
         result = run_guard(write_payload(content))
         assert result.returncode == 2
+
+    def test_nosecrets_plural_does_not_suppress(self):
+        content = f'TOKEN = "{_FAKE_GHP}"  # nosecrets stored here'  # nosecret
+        result = run_guard(write_payload(content))
+        assert result.returncode == 2
+
+    def test_nosecret_hint_absent_for_high_tier(self):
+        """Blocked HIGH-tier error must NOT advertise # nosecret (it won't work)."""
+        content = f'token = "{_FAKE_GHP}"'  # nosecret
+        result = run_guard(write_payload(content))
+        assert result.returncode == 2
+        assert "nosecret" not in result.stderr
+
+    def test_nosecret_hint_present_for_needs_context_block(self):
+        """Blocked NEEDS-CONTEXT error SHOULD advertise # nosecret as a valid escape."""
+        content = f'TOKEN = "{_FAKE_SECRET_VAL}"'  # nosecret
+        result = run_guard(write_payload(content))
+        assert result.returncode == 2
+        assert "nosecret" in result.stderr
 
 
 # ──────────────────────────────────────────────
@@ -202,9 +226,24 @@ class TestFilenameAllowlist:
         assert result.returncode == 0
 
     def test_arbitrary_test_file_not_in_allowlist(self):
-        content = f'token = "{_FAKE_GHP}"'
+        content = f'token = "{_FAKE_GHP}"'  # nosecret
         result = run_guard(write_payload(content, path="/project/tests/other_test.py"))
         assert result.returncode == 2
+
+    def test_claude_plugin_root_env_redirects_allowlist(self, tmp_path):
+        """With CLAUDE_PLUGIN_ROOT set, allowlist resolves test_secret_guard.py from that root."""
+        (tmp_path / "tests").mkdir()
+        corpus = tmp_path / "tests" / "test_secret_guard.py"
+        corpus.touch()
+        content = f'_FAKE_GHP = "{_FAKE_GHP}"'  # nosecret
+        result = subprocess.run(
+            [str(SCRIPT)],
+            input=json.dumps(write_payload(content, path=str(corpus))),
+            text=True,
+            capture_output=True,
+            env={**dict(_CLEAN_ENV), "CLAUDE_PLUGIN_ROOT": str(tmp_path)},
+        )
+        assert result.returncode == 0, f"Expected ALLOWED via CLAUDE_PLUGIN_ROOT: {result.stderr!r}"
 
 
 # ──────────────────────────────────────────────

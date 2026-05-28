@@ -130,4 +130,4 @@ Invoke these skills via the Skill tool when the migration surfaces a concern in 
 
 ## Available skills
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.

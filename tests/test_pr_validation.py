@@ -4,10 +4,15 @@ Regression tests for the validate-pr CI issue-reference check.
 These tests replicate the strip-then-match pipeline from
 .github/workflows/pr.yml so the logic is verifiable without CI.
 """
+import os
 import re
+import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
+
+from conftest import _CLEAN_ENV
 
 _PR_YML_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pr.yml"
 try:
@@ -293,3 +298,82 @@ class TestPrYamlSync:
             assert not title_re.match(title), (
                 f"Expected {title!r} NOT to match PR title pattern"
             )
+
+
+_PRE_COMMIT_HOOK = Path(__file__).parent.parent / ".githooks" / "pre-commit"
+
+
+class TestAuthorshipDenylist:
+    """Email denylist in pr.yml and .githooks/pre-commit must cover t@t.com."""
+
+    def _denylist_re(self) -> re.Pattern:
+        """Extract the authorship-denylist grep pattern from pr.yml."""
+        if _PR_YML_TEXT is None:
+            pytest.skip("pr.yml not found")
+        m = re.search(
+            r"Validate commit authorship.*?grep -E '([^']+)' \|\| true",
+            _PR_YML_TEXT,
+            re.DOTALL,
+        )
+        assert m, "Authorship denylist grep pattern not found under 'Validate commit authorship' in pr.yml"
+        return re.compile(m.group(1))
+
+    def test_pr_yml_denylist_rejects_test_at_example(self):
+        pat = self._denylist_re()
+        assert pat.fullmatch("test@example.com"), "test@example.com must be denied"
+
+    def test_pr_yml_denylist_rejects_t_at_t(self):
+        pat = self._denylist_re()
+        assert pat.fullmatch("t@t"), "t@t must be denied"
+
+    def test_pr_yml_denylist_rejects_t_at_t_dot_com(self):
+        """t@t.com (form used by _CLEAN_ENV in conftest.py) must be denied."""
+        pat = self._denylist_re()
+        assert pat.fullmatch("t@t.com"), "t@t.com must be denied by pr.yml denylist"
+
+    def test_pr_yml_denylist_allows_real_email(self):
+        pat = self._denylist_re()
+        assert not pat.fullmatch("real@example.org"), "real email must be allowed"
+
+    def _run_pre_commit(self, email: str, branch: str = "feature/test") -> subprocess.CompletedProcess:
+        """Run the pre-commit hook with a stubbed git identity.
+
+        Values are passed via environment variables to avoid shell injection.
+        """
+        hook = _PRE_COMMIT_HOOK.read_text()
+        script = textwrap.dedent(f"""\
+            #!/bin/sh
+            git() {{
+                case "$*" in
+                    "rev-parse --abbrev-ref HEAD") printf '%s\\n' "$_STUB_BRANCH" ;;
+                    "config user.email")           printf '%s\\n' "$_STUB_EMAIL" ;;
+                    *) command git "$@" ;;
+                esac
+            }}
+            {hook}
+        """)
+        return subprocess.run(
+            ["sh", "-c", script],
+            capture_output=True,
+            text=True,
+            env={**dict(_CLEAN_ENV), "_STUB_EMAIL": email, "_STUB_BRANCH": branch},
+        )
+
+    def test_pre_commit_blocks_test_at_example(self):
+        result = self._run_pre_commit("test@example.com")
+        assert result.returncode == 1
+
+    def test_pre_commit_blocks_t_at_t(self):
+        result = self._run_pre_commit("t@t")
+        assert result.returncode == 1
+
+    def test_pre_commit_blocks_t_at_t_dot_com(self):
+        """t@t.com must be blocked by the pre-commit hook (currently passes through)."""
+        result = self._run_pre_commit("t@t.com")
+        assert result.returncode == 1, (
+            "pre-commit hook must block t@t.com but allowed it through"
+        )
+
+    def test_pre_commit_allows_real_email(self):
+        result = self._run_pre_commit("dev@example.org")
+        assert result.returncode == 0

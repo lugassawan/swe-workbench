@@ -378,3 +378,153 @@ class TestBugBDynamic:
         result = self._run_poll(tmp_path, timeout=9)
         assert result.returncode == 1
         assert "Re-run this script" in result.stderr
+
+
+# ─── Bug C: transient-cap tests ──────────────────────────────────────────────
+
+# Loop snippet that mirrors the CI wait loop's transient-cap logic.
+# EXIT codes: 0 = all green, 1 = CI-failed or transient-cap hit, 2 = timed out.
+_TRANSIENT_LOOP_SNIPPET = textwrap.dedent("""\
+    set -euo pipefail
+    MAX_TRANSIENT=10
+    TRANSIENT_COUNT=0
+    TIMEOUT=3600
+    ELAPSED=0
+
+    while true; do
+        if [[ $ELAPSED -ge $TIMEOUT ]]; then
+            echo "Error: timed out" >&2
+            exit 2
+        fi
+
+        set +e
+        CHECKS_JSON=$(gh pr checks "42" --json bucket 2>/dev/null)
+        CHECKS_RC=$?
+        set -e
+
+        if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
+            TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+            if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+                echo "Error: too many transient gh failures (${TRANSIENT_COUNT})" >&2
+                exit 1
+            fi
+            sleep 10; ELAPSED=$((ELAPSED + 10))
+            continue
+        fi
+
+        if [[ $CHECKS_RC -eq 8 && -z "$CHECKS_JSON" ]]; then
+            TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+            if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+                echo "Error: too many transient gh failures (${TRANSIENT_COUNT})" >&2
+                exit 1
+            fi
+            sleep 10; ELAPSED=$((ELAPSED + 10))
+            continue
+        fi
+
+        TRANSIENT_COUNT=0
+        TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
+        PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "pending")] | length')
+        FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length')
+
+        if [[ "$TOTAL" -eq 0 ]]; then
+            sleep 60; ELAPSED=$((ELAPSED + 60))
+        elif [[ "$PENDING" -eq 0 ]]; then
+            if [[ "$FAILED" -gt 0 ]]; then
+                echo "CI check(s) failed" >&2; exit 1
+            fi
+            exit 0
+        else
+            sleep 60; ELAPSED=$((ELAPSED + 60))
+        fi
+    done
+""")
+
+
+class TestTransientCap:
+    """Bug C: persistent transient gh failures must cap out, not spin to TIMEOUT."""
+
+    def test_max_transient_defined_in_script(self):
+        """release.sh must declare MAX_TRANSIENT before the CI wait loop."""
+        lines = _script_lines()
+        assert any(re.search(r"MAX_TRANSIENT=\d+", ln) for ln in lines if not _is_comment(ln)), (
+            "MAX_TRANSIENT not found in release.sh"
+        )
+
+    def test_transient_cap_fires_before_timeout(self):
+        """MAX_TRANSIENT * 10s must be strictly less than TIMEOUT.
+
+        Ensures the transient cap always fires before the outer wall-clock
+        timeout, regardless of future value changes to either constant.
+        """
+        lines = _script_lines()
+        timeout_val = next(
+            int(re.search(r"TIMEOUT=(\d+)", ln).group(1))
+            for ln in lines
+            if not _is_comment(ln) and re.search(r"\bTIMEOUT=\d+\b", ln)
+        )
+        max_transient_val = next(
+            int(re.search(r"MAX_TRANSIENT=(\d+)", ln).group(1))
+            for ln in lines
+            if not _is_comment(ln) and re.search(r"MAX_TRANSIENT=\d+", ln)
+        )
+        assert max_transient_val * 10 < timeout_val, (
+            f"MAX_TRANSIENT ({max_transient_val}) * 10s = {max_transient_val * 10}s "
+            f">= TIMEOUT ({timeout_val}s) — cap would never fire before timeout"
+        )
+
+    def test_persistent_transient_exits_before_timeout(self, tmp_path):
+        """A stubbed gh that always returns transient rc causes the loop to exit
+        after MAX_TRANSIENT attempts (TIMEOUT=3600), not spin to timeout."""
+        sleep_stub = tmp_path / "sleep"
+        sleep_stub.write_text("#!/bin/sh\nexit 0\n")
+        sleep_stub.chmod(0o755)
+        gh_stub = tmp_path / "gh"
+        gh_stub.write_text("#!/bin/sh\nexit 1\n")
+        gh_stub.chmod(0o755)
+        env = {**_CLEAN_ENV, "PATH": f"{tmp_path}:{_CLEAN_ENV.get('PATH', '')}"}
+        result = subprocess.run(
+            ["bash", "-c", _TRANSIENT_LOOP_SNIPPET],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=5,  # must complete well before the 3600s TIMEOUT
+        )
+        assert result.returncode == 1, (
+            f"Expected exit 1 (transient cap); got {result.returncode}\nstderr: {result.stderr}"
+        )
+        assert "transient" in result.stderr.lower(), (
+            f"Expected 'transient' in stderr: {result.stderr!r}"
+        )
+
+    def test_transient_count_resets_on_success(self, tmp_path):
+        """A transient followed by a clean response resets the counter; N transients
+        then a clean response must succeed, not trip the cap."""
+        sleep_stub = tmp_path / "sleep"
+        sleep_stub.write_text("#!/bin/sh\nexit 0\n")
+        sleep_stub.chmod(0o755)
+        count_file = tmp_path / "count"
+        count_file.write_text("0")
+        gh_stub = tmp_path / "gh"
+        gh_stub.write_text(textwrap.dedent(f"""\
+            #!/bin/sh
+            COUNT=$(cat {count_file} 2>/dev/null || echo 0)
+            COUNT=$((COUNT + 1))
+            printf '%d\\n' "$COUNT" > {count_file}
+            # First 5 calls: transient; call 6: clean pass
+            if [ "$COUNT" -le 5 ]; then exit 1; fi
+            printf '[{{"bucket":"pass"}}]'
+            exit 0
+        """))
+        gh_stub.chmod(0o755)
+        env = {**_CLEAN_ENV, "PATH": f"{tmp_path}:{_CLEAN_ENV.get('PATH', '')}"}
+        result = subprocess.run(
+            ["bash", "-c", _TRANSIENT_LOOP_SNIPPET],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=5,
+        )
+        assert result.returncode == 0, (
+            f"Expected exit 0 (recovered after transients); got {result.returncode}\nstderr: {result.stderr}"
+        )

@@ -39,11 +39,11 @@ Be honest. If the existing code is fine, say so and stop.
 
 ## Reading external repos
 
-> See @./shared/external-repo-reading.md.
+See @./shared/external-repo-reading.md.
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
 

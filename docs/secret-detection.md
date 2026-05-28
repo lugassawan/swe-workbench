@@ -18,7 +18,7 @@ the git `pre-commit` hook is absent or bypassed.
 
 ### Pattern tiers
 
-**HIGH confidence** — block anywhere in a non-suppressed line:
+**HIGH confidence** — block on any line, regardless of suppression:
 
 | Pattern name | Regex |
 |---|---|
@@ -28,26 +28,31 @@ the git `pre-commit` hook is absent or bypassed.
 
 **NEEDS-CONTEXT** — block only when a key name is adjacent to a literal value;
 skipped automatically on lines that contain an environment-variable reference
-(`os.environ`, `os.getenv`, `process.env`, `ENV[`, `getenv`):
+(`os.environ`, `os.getenv`, `process.env`, `ENV[`, `getenv`) or a `# nosecret` comment:
 
 | Pattern name | What it matches |
 |---|---|
-| `aws-secret-access-key` | `aws_secret… = "…40-char…"` |
-| `generic-api-key` | `API_KEY = "…≥16 chars…"` |
-| `generic-secret` | `SECRET / PASSWORD / PASSWD / TOKEN = "…≥8 chars…"` |
+| `aws-secret-access-key` | `aws_secret… = …40-char value…` |
+| `generic-api-key` | `API_KEY = …≥16 chars…` |
+| `generic-secret` | `SECRET / PASSWORD / PASSWD / TOKEN = …≥8 chars…` |
 | `dotenv-assignment` | `SECRET=…` / `TOKEN=…` etc. at line start (`.env` style) |
 
 ## Suppression & allowlist
 
 ### Per-line suppression
 
-Add `# nosecret` anywhere on the line to skip all pattern checks for that line:
+Add `# nosecret` anywhere on the line to skip **NEEDS-CONTEXT** pattern checks for that line:
 
 ```python
 BOOTSTRAP_TOKEN = "<placeholder>"  # nosecret
 ```
 
 Only that exact line is suppressed. Adjacent lines are checked normally.
+
+> **Note:** `# nosecret` has **no effect** on HIGH-confidence patterns (`github-pat`,
+> `github-fine-grained-pat`, `aws-access-key-id`). Those patterns are always blocked.
+> If you have a genuine fixture that looks like a GitHub PAT or AWS key, add the file
+> path to `_ALLOWLIST_SUFFIXES` instead.
 
 ### Filename allowlist
 
@@ -73,8 +78,9 @@ to extend `_REF_PATTERN` in `hooks/secret_guard.py`.
 
 **The hook is blocking a test fixture**
 
-Add `# nosecret` on each fixture line, or add the file's absolute path to
-`_ALLOWLIST_SUFFIXES`.
+For NEEDS-CONTEXT patterns: add `# nosecret` on each fixture line.
+For HIGH-confidence patterns (GitHub PAT, AWS key ID): `# nosecret` has no effect —
+add the file's absolute path to `_ALLOWLIST_SUFFIXES` instead.
 
 **The hook seems to do nothing**
 

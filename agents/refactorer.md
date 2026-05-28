@@ -30,7 +30,7 @@ You are a refactoring specialist. You improve structure without changing observa
 
 ## Principle consultation
 
-> See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the skill catalog.
 
 Invoke these skills via the Skill tool when the refactoring touches their domain:
 

@@ -17,6 +17,7 @@ Allow:  exit 0, empty stderr.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -24,8 +25,12 @@ from pathlib import Path
 # ── Filename allowlist ────────────────────────────────────────────────────────
 # Whole-file exemptions. Keep narrow and explicit; never use broad globs.
 _ALLOWLIST_BASENAMES = frozenset({".gitignore"})
+# Mirrors the CLAUDE_PLUGIN_ROOT fallback in hooks/skill_usage_record.sh:28.
+_PLUGIN_ROOT = Path(
+    os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parent.parent
+).resolve()
 _ALLOWLIST_SUFFIXES = frozenset({
-    str(Path(__file__).resolve().parent.parent / "tests" / "test_secret_guard.py"),
+    str(_PLUGIN_ROOT / "tests" / "test_secret_guard.py"),
 })
 
 # ── Pattern definitions ───────────────────────────────────────────────────────
@@ -87,18 +92,22 @@ def _is_allowlisted(file_path: str) -> bool:
     return False
 
 
-def _scan(content: str) -> tuple[str, int] | None:
-    """Return (pattern_name, 1-based line_number) for the first match, or None."""
+def _scan(content: str) -> tuple[str, int, bool] | None:
+    """Return (pattern_name, 1-based line_number, needs_context) for the first match, or None.
+
+    HIGH-tier patterns (needs_context=False) are un-suppressible — # nosecret has no effect.
+    NEEDS-CONTEXT patterns (needs_context=True) are skipped when # nosecret is present or when
+    an environment-variable reference is detected on the same line.
+    """
     lines = content.splitlines()
     for lineno, line in enumerate(lines, start=1):
-        if _NOSECRET_PAT.search(line):
-            continue
+        is_suppressed = bool(_NOSECRET_PAT.search(line))
         is_ref = bool(_REF_PATTERN.search(line))
         for name, pattern, needs_context in _PATTERNS:
-            if needs_context and is_ref:
+            if needs_context and (is_ref or is_suppressed):
                 continue
             if pattern.search(line):
-                return name, lineno
+                return name, lineno, needs_context
     return None
 
 
@@ -133,13 +142,18 @@ def main() -> None:
     if match is None:
         sys.exit(0)
 
-    pattern_name, lineno = match
+    pattern_name, lineno, needs_context = match
+    suppression_hint = (
+        "\nTo suppress: add `# nosecret` on that line if this is an intentional fixture/example."
+        if needs_context
+        else ""
+    )
     print(
         f"BLOCKED: hardcoded secret detected (pattern: {pattern_name}, "
         f"line {lineno}, file: {file_path or '<unknown>'})\n"
         f"Replace the literal with an environment-variable reference "
-        f"(e.g. os.environ[...]), or add `# nosecret` on that line "
-        f"if this is an intentional fixture/example.",
+        f"(e.g. os.environ[...])."
+        f"{suppression_hint}",
         file=sys.stderr,
     )
     sys.exit(2)
