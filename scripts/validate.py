@@ -518,6 +518,33 @@ def check_unwired_principle_skills(cache=None):
 # Python hook syntax check
 # ──────────────────────────────────────────────
 
+_TEST_ENV_LEAK_RE = re.compile(r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|os\.environ)\b')
+
+
+def check_test_subprocess_env():
+    """tests/*.py subprocess sites must not pass the raw parent env.
+    Use env=dict(_CLEAN_ENV) or env={**_CLEAN_ENV, ...}. See tests/README.md.
+    conftest.py is exempt (defines _CLEAN_ENV and the runtime guard)."""
+    tests_dir = ROOT / "tests"
+    for py_file in sorted(tests_dir.glob("*.py")):
+        if py_file.name == "conftest.py":
+            continue
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(py_file.relative_to(ROOT), f"could not read file: {e}")
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if _TEST_ENV_LEAK_RE.search(line):
+                fail(
+                    py_file.relative_to(ROOT),
+                    f"line {i}: subprocess env= leaks the parent environment "
+                    f"(GIT_DIR leaks into git children under the pre-push hook). "
+                    f"Use env=dict(_CLEAN_ENV) or env={{**_CLEAN_ENV, ...}}. "
+                    f"See tests/README.md.",
+                )
+
+
 def check_hook_scripts():
     hooks_dir = ROOT / "hooks"
     for py_file in sorted(hooks_dir.glob("*.py")):
@@ -552,6 +579,7 @@ def main():
     check_unwired_principle_skills(cache=cache)
     check_examples()
     check_hook_scripts()
+    check_test_subprocess_env()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
