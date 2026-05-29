@@ -1,6 +1,6 @@
 ---
 name: principle-data-modeling
-description: Data modeling: relational vs document vs KV vs graph selection, normalization depth, indexing strategy, hot-key avoidance, schema evolution via expand–contract, query-first design, retention and archival.
+description: Data modeling: relational vs document vs KV vs graph selection, normalization depth, indexing strategy, hot-key avoidance, schema evolution via expand–contract, query-first design, retention and archival. Auto-load when designing schemas, choosing a storage paradigm, discussing normalization or denormalization, schema evolution, indexing strategy, hot-key avoidance, query-first design, or data retention.
 ---
 
 # Data Modeling

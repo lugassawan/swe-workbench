@@ -93,7 +93,9 @@ Do **not** repeat per-finding detail in this section — that belongs in the sev
 
 ## Principle consultation
 
-See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+
+**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
 Invoke these skills via the Skill tool when the review surfaces a concern in their domain:
 

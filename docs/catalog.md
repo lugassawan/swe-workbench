@@ -71,7 +71,7 @@
 | `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
 | `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
 
-### Languages — auto-load by file type
+### Languages — auto-hint by file type (subagents load deterministically)
 
 | Skill | Triggers |
 |---|---|
@@ -86,7 +86,7 @@
 | `language-swift` | `.swift` files, `Package.swift`, keywords: Swift, SwiftUI, actors, async/await, Sendable, Result builders, Swift Package Manager. |
 | `language-typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
 
-### Workflows — auto-load during implementation
+### Workflows — auto-hint during implementation
 
 | Skill | Triggers | Delegation model |
 |---|---|---|
@@ -102,7 +102,7 @@
 
 This skill is an orchestrator — it coordinates other skills rather than restating their content.
 
-### Integrations — auto-load on ticket references
+### Integrations — auto-hint on ticket references
 
 | Skill | Triggers | Delegation model |
 |---|---|---|
