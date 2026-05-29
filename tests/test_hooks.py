@@ -281,3 +281,124 @@ class TestWorktreePermissionHookWiring:
         script = Path(__file__).parent.parent / "hooks" / "worktree_permission_grant.sh"
         assert script.exists(), f"Missing hook script: {script}"
         assert os.access(script, os.X_OK), f"Hook script not executable: {script}"
+
+
+# ──────────────────────────────────────────────
+# skill autoload hint hook — wiring (T3)
+# ──────────────────────────────────────────────
+
+
+class TestSkillAutoloadHookWiring:
+    """T3 — PostToolUse Read|Edit|Write skill-autoload hint hook is registered
+    and non-blocking (always exit 0).
+    """
+
+    HOOKS_JSON = Path(__file__).parent.parent / "hooks" / "hooks.json"
+    SCRIPT = Path(__file__).parent.parent / "hooks" / "skill_autoload_hint.sh"
+
+    def test_posttooluse_entry_present(self):
+        data = json.loads(self.HOOKS_JSON.read_text(encoding="utf-8"))
+        post_entries = data["hooks"].get("PostToolUse", [])
+        entries = [
+            e for e in post_entries
+            if e.get("matcher") == "Read|Edit|Write"
+        ]
+        assert entries, (
+            "PostToolUse Read|Edit|Write entry missing from hooks.json — "
+            "skill_autoload_hint.sh must be registered there."
+        )
+        assert any(
+            "skill_autoload_hint.sh" in e["hooks"][0]["command"] for e in entries
+        ), f"No entry references skill_autoload_hint.sh; entries: {entries}"
+
+    def test_hook_script_exists_and_executable(self):
+        assert self.SCRIPT.exists(), f"Missing hook script: {self.SCRIPT}"
+        assert os.access(self.SCRIPT, os.X_OK), (
+            f"Hook script not executable: {self.SCRIPT}"
+        )
+
+    def test_hook_is_nonblocking(self):
+        """Script must exit 0 for well-formed input with a session_id."""
+        import subprocess
+        from conftest import _CLEAN_ENV
+
+        result = subprocess.run(
+            [str(self.SCRIPT)],
+            input='{"session_id": "test-session-abc-123", "tool_input": {"file_path": "/tmp/foo.py"}}',
+            text=True,
+            capture_output=True,
+            env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode == 0, (
+            f"skill_autoload_hint.sh exited {result.returncode} — must be "
+            f"non-blocking (exit 0 always). stderr: {result.stderr!r}"
+        )
+
+    @pytest.mark.parametrize("payload", [
+        "",                                                # empty stdin
+        "not json at all",                                 # malformed JSON
+        '{"tool_input": {}}',                              # missing file_path
+        '{"tool_input": {"file_path": "/tmp/noext"}}',     # no extension
+        '{"tool_input": {"file_path": "/tmp/.hidden"}}',   # dotfile (no real ext)
+    ])
+    def test_hook_is_nonblocking_adversarial(self, payload):
+        """Script must exit 0 for any malformed or edge-case input."""
+        import subprocess
+        from conftest import _CLEAN_ENV
+
+        result = subprocess.run(
+            [str(self.SCRIPT)],
+            input=payload,
+            text=True,
+            capture_output=True,
+            env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode == 0, (
+            f"skill_autoload_hint.sh exited {result.returncode} for payload "
+            f"{payload!r}. stderr: {result.stderr!r}"
+        )
+
+    def test_hook_deduplicates_within_session(self, tmp_path):
+        """Same session+extension emits output on first call, silent on second."""
+        import subprocess
+        from conftest import _CLEAN_ENV
+
+        env = dict(_CLEAN_ENV)
+        env["TMPDIR"] = str(tmp_path)  # isolate sentinel dir to this test run
+        payload = '{"session_id": "dedup-test-session", "tool_input": {"file_path": "/src/app.py"}}'
+
+        first = subprocess.run(
+            [str(self.SCRIPT)], input=payload, text=True, capture_output=True, env=env,
+        )
+        second = subprocess.run(
+            [str(self.SCRIPT)], input=payload, text=True, capture_output=True, env=env,
+        )
+        assert first.returncode == 0, f"First call failed: {first.stderr!r}"
+        assert second.returncode == 0, f"Second call failed: {second.stderr!r}"
+        assert first.stdout.strip(), "First call should emit a hint but produced no output"
+        assert not second.stdout.strip(), (
+            "Second call for the same session+skill should be a silent no-op, "
+            f"but produced: {second.stdout!r}"
+        )
+
+    def test_hook_different_skills_both_emit(self, tmp_path):
+        """Different extensions in the same session each get one hint."""
+        import subprocess
+        from conftest import _CLEAN_ENV
+
+        env = dict(_CLEAN_ENV)
+        env["TMPDIR"] = str(tmp_path)
+        py_payload = '{"session_id": "multi-skill-session", "tool_input": {"file_path": "/src/app.py"}}'
+        go_payload = '{"session_id": "multi-skill-session", "tool_input": {"file_path": "/src/main.go"}}'
+
+        py_result = subprocess.run(
+            [str(self.SCRIPT)], input=py_payload, text=True, capture_output=True, env=env,
+        )
+        go_result = subprocess.run(
+            [str(self.SCRIPT)], input=go_payload, text=True, capture_output=True, env=env,
+        )
+        assert py_result.returncode == 0 and go_result.returncode == 0
+        assert py_result.stdout.strip(), "Python hint should have been emitted"
+        assert go_result.stdout.strip(), "Go hint should have been emitted"
+        assert "language-python" in py_result.stdout
+        assert "language-go" in go_result.stdout

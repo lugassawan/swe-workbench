@@ -775,9 +775,10 @@ class TestTestReviewerAgent:
 
 class TestCheckCatalogCompleteness:
     def _agent_body(self, name="my-agent"):
+        # Code-touching agents must reference both catalogs (new invariant).
         return (
             f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md for the skill catalog.\n"
+            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -837,7 +838,21 @@ class TestCheckCatalogCompleteness:
 
     # O3 — slice-specific tests (issue #235)
 
-    def test_agent_with_principles_only_passes(self, reset_validate):
+    def test_non_code_agent_with_principles_only_passes(self, reset_validate):
+        # Non-code agents (product-manager) are whitelisted — principles-only is valid.
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        agents_dir = root / "agents"
+        (agents_dir / "product-manager.md").write_text(
+            "---\nname: product-manager\ndescription: d\ntools: Read\n---\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert len(validate.FAILURES) == 0
+
+    def test_code_touching_agent_with_principles_only_fails(self, reset_validate):
+        # Code-touching agents must reference @./shared/languages.md alongside principles.md.
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
@@ -847,7 +862,10 @@ class TestCheckCatalogCompleteness:
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
-        assert len(validate.FAILURES) == 0
+        assert any("languages.md" in f for f in validate.FAILURES), (
+            "Expected a failure about missing @./shared/languages.md "
+            "for a code-touching agent that only includes principles.md"
+        )
 
     def test_agent_with_principles_and_languages_passes(self, reset_validate):
         root = reset_validate
