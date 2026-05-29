@@ -5,6 +5,12 @@ the pattern used in test_hooks.py for bash_guard.sh.
 
 Exit code 0  + path removed   → allowed removal (registered ephemeral worktree)
 Exit code 1  + path untouched → rejected (not a sanctioned ephemeral path)
+
+Design note: tests that verify the happy path (registered git worktree) create the
+exact file structure that git uses for linked worktrees — a .git FILE containing
+'gitdir: .../.git/worktrees/<name>' — without running `git commit`. This avoids
+GIT_DIR / GIT_WORK_TREE pollution from the hook environment that would otherwise
+redirect temp-repo commits into the main swe-workbench branch.
 """
 
 import os
@@ -31,73 +37,54 @@ def run_script(path: str, *, cwd=None, env=None):
     )
 
 
-# ──────────────────────────────────────────────────────
-# Fixture: real git repo with a linked ephemeral worktree
-# ──────────────────────────────────────────────────────
+def make_linked_worktree(base: Path, name: str) -> Path:
+    """Create a minimal linked-worktree directory structure without running git.
 
-@pytest.fixture()
-def git_repo_with_worktree(tmp_path):
-    """Create a bare-minimum git repo and add an ephemeral linked worktree."""
-    repo = tmp_path / "main-repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "--allow-empty", "--no-verify", "-m", "[test] init"],
-        check=True, capture_output=True,
-        env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@t.com",
-             "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "t@t.com"},
-    )
-    wt_path = tmp_path / "pr-review-1282"
-    subprocess.run(
-        ["git", "-C", str(repo), "worktree", "add", str(wt_path), "HEAD"],
-        check=True, capture_output=True,
-    )
-    return repo, wt_path
+    A real git linked worktree has:
+      <wt>/.git  — a FILE containing: gitdir: <main>/.git/worktrees/<wt-name>
+
+    We replicate that structure in pure Python so no git subprocess is needed
+    and no commits are created in any repo (avoiding hook-environment pollution).
+    """
+    wt = base / name
+    wt.mkdir(parents=True, exist_ok=True)
+    # The worktrees metadata directory inside the (fake) main repo's .git.
+    worktrees_meta = base / "fake-main-repo" / ".git" / "worktrees" / name
+    worktrees_meta.mkdir(parents=True, exist_ok=True)
+    (wt / ".git").write_text(f"gitdir: {worktrees_meta}\n")
+    return wt
 
 
 # ──────────────────────────────────────────────────────
 # Happy path — registered ephemeral worktree is removed
 # ──────────────────────────────────────────────────────
 
-def test_removes_registered_worktree(git_repo_with_worktree):
-    """A path registered as a git worktree with an ephemeral basename is removed (exit 0)."""
-    repo, wt_path = git_repo_with_worktree
-    assert wt_path.exists(), "worktree must exist before the script runs"
-    result = run_script(str(wt_path), cwd=repo)
+def test_removes_registered_worktree(tmp_path):
+    """A path with a proper linked-worktree .git file and ephemeral basename is removed (exit 0)."""
+    wt = make_linked_worktree(tmp_path, "pr-review-1282")
+    assert wt.exists(), "worktree must exist before the script runs"
+    result = run_script(str(wt))
     assert result.returncode == 0, (
-        f"Expected exit 0 for registered worktree {wt_path}\n"
+        f"Expected exit 0 for registered worktree {wt}\n"
         f"stderr: {result.stderr!r}\nstdout: {result.stdout!r}"
     )
-    assert not wt_path.exists(), "worktree directory must be removed after exit 0"
+    assert not wt.exists(), "worktree directory must be removed after exit 0"
 
 
-@pytest.mark.parametrize("suffix", [
+@pytest.mark.parametrize("name", [
     "pr-review-1282",
     "pr-followup-999",       # workflow-pr-review-followup rimba task label
     "address-feedback-42",
     "pr-review-abc.def-1",
 ])
-def test_removes_various_ephemeral_names(tmp_path, suffix):
-    """All three ephemeral prefix patterns are accepted when the path is a registered worktree."""
-    repo = tmp_path / "main-repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "--allow-empty", "--no-verify", "-m", "[test] init"],
-        check=True, capture_output=True,
-        env={**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@t.com",
-             "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t.com"},
-    )
-    wt_path = tmp_path / suffix
-    subprocess.run(
-        ["git", "-C", str(repo), "worktree", "add", str(wt_path), "HEAD"],
-        check=True, capture_output=True,
-    )
-    result = run_script(str(wt_path), cwd=repo)
+def test_removes_various_ephemeral_names(tmp_path, name):
+    """All three ephemeral prefix patterns are accepted when the .git file is present."""
+    wt = make_linked_worktree(tmp_path, name)
+    result = run_script(str(wt))
     assert result.returncode == 0, (
-        f"Expected exit 0 for {suffix!r}\nstderr: {result.stderr!r}"
+        f"Expected exit 0 for {name!r}\nstderr: {result.stderr!r}"
     )
-    assert not wt_path.exists()
+    assert not wt.exists()
 
 
 # ──────────────────────────────────────────────────────
@@ -105,7 +92,7 @@ def test_removes_various_ephemeral_names(tmp_path, suffix):
 # ──────────────────────────────────────────────────────
 
 def test_refuses_non_ephemeral_home_path(tmp_path):
-    """A path under $HOME that is NOT a registered git worktree and lacks an ephemeral basename is rejected."""
+    """A plain directory without a .git file and non-ephemeral basename is rejected."""
     fake_home_dir = tmp_path / "Documents"
     fake_home_dir.mkdir()
     result = run_script(str(fake_home_dir))
@@ -116,22 +103,15 @@ def test_refuses_non_ephemeral_home_path(tmp_path):
     assert fake_home_dir.exists(), "directory must NOT be deleted when rejected"
 
 
-def test_refuses_non_ephemeral_basename_even_if_worktree(git_repo_with_worktree, tmp_path):
-    """A dir whose basename doesn't match ephemeral prefixes is rejected even if it is a registered worktree."""
-    repo, _ = git_repo_with_worktree
-    # Create a second worktree with a non-ephemeral name
-    other_wt = tmp_path / "feature-my-branch"
-    subprocess.run(
-        ["git", "-C", str(repo), "worktree", "add", str(other_wt), "HEAD"],
-        capture_output=True,  # may fail if HEAD is already checked out; that's fine
-    )
-    # Even if it didn't become a worktree, test the name-rejection path
-    other_wt.mkdir(exist_ok=True)
-    result = run_script(str(other_wt), cwd=repo)
+def test_refuses_non_ephemeral_basename_even_if_worktree(tmp_path):
+    """A dir with a valid .git file but non-ephemeral basename is rejected."""
+    wt = make_linked_worktree(tmp_path, "feature-my-branch")
+    result = run_script(str(wt))
     assert result.returncode != 0, (
         f"Expected non-zero for non-ephemeral basename 'feature-my-branch'\n"
         f"stderr: {result.stderr!r}"
     )
+    assert wt.exists(), "directory must NOT be deleted when rejected"
 
 
 # ──────────────────────────────────────────────────────
@@ -175,7 +155,7 @@ def test_refuses_relative_path():
 # ──────────────────────────────────────────────────────
 
 def test_refuses_unregistered_dir_with_wrong_name(tmp_path):
-    """A directory that exists but has a non-ephemeral basename (and is not a git worktree) is rejected."""
+    """A plain directory with a non-ephemeral basename (no .git file) is rejected."""
     bad_dir = tmp_path / "my-project"
     bad_dir.mkdir()
     result = run_script(str(bad_dir))
@@ -186,8 +166,7 @@ def test_refuses_unregistered_dir_with_wrong_name(tmp_path):
 
 
 def test_refuses_unregistered_ephemeral_name(tmp_path):
-    """An ephemeral-named dir that exists but is NOT a registered git worktree is also rejected."""
-    # Correct basename but not registered in any git repo
+    """An ephemeral-named dir without a .git file is rejected (not a registered worktree)."""
     wt_dir = tmp_path / "pr-review-9999"
     wt_dir.mkdir()
     result = run_script(str(wt_dir))
@@ -199,10 +178,9 @@ def test_refuses_unregistered_ephemeral_name(tmp_path):
 
 
 def test_refuses_submodule_style_git_file(tmp_path):
-    """A .git file pointing to .git/modules/... (submodule style) must NOT be accepted as a worktree."""
+    """A .git file pointing to .git/modules/... (submodule style) must NOT be accepted."""
     fake_wt = tmp_path / "pr-review-sub"
     fake_wt.mkdir()
-    # Submodule .git file: gitdir points to <parent>/.git/modules/sub, NOT .git/worktrees/
     (fake_wt / ".git").write_text("gitdir: /some/repo/.git/modules/pr-review-sub\n")
     result = run_script(str(fake_wt))
     assert result.returncode != 0, (
@@ -212,7 +190,7 @@ def test_refuses_submodule_style_git_file(tmp_path):
 
 
 # ──────────────────────────────────────────────────────
-# Idempotency — already-removed path exits cleanly
+# Script existence check
 # ──────────────────────────────────────────────────────
 
 def test_script_exists_and_is_executable():
