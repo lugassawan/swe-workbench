@@ -406,7 +406,16 @@ def check_catalog_completeness(cache=None):
                 fail(slice_path.relative_to(ROOT),
                      f"entry 'swe-workbench:{sid}' belongs in {_expected_slice(sid)}, not {slice_file}")
 
-    # Every agent must reference at least one slice catalog
+    # Agents that reference @./shared/principles.md but are not code-touching
+    # (e.g. product-manager files GitHub issues and never reads source).
+    # These are explicitly exempt from the languages.md co-requirement below.
+    _NON_CODE_AGENTS = frozenset({
+        "product-manager",
+    })
+
+    # Every agent must reference at least one slice catalog, and every
+    # code-touching agent (one that includes principles.md) must ALSO include
+    # languages.md so language-specific skills are always in scope.
     for agent_md in sorted(agents_dir.glob("*.md")):
         if agents_cache is not None and agent_md in agents_cache:
             agent_text = agents_cache[agent_md]
@@ -424,6 +433,16 @@ def check_catalog_completeness(cache=None):
                  "missing required slice catalog reference"
                  " — add at least one of: '@./shared/principles.md',"
                  " '@./shared/languages.md', '@./shared/workflows.md'")
+            continue
+        # Code-touching agents must include both catalogs.
+        if (agent_md.stem not in _NON_CODE_AGENTS
+                and "@./shared/principles.md" in agent_text
+                and "@./shared/languages.md" not in agent_text):
+            fail(agent_md.relative_to(ROOT),
+                 "code-touching agent includes '@./shared/principles.md' but is missing"
+                 " '@./shared/languages.md' — add it so language-* skills are in scope."
+                 " If this agent never touches source code, add its stem to"
+                 " _NON_CODE_AGENTS in check_catalog_completeness().")
 
 
 _BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\./shared/')
