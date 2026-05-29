@@ -42,7 +42,7 @@ def git_repo_with_worktree(tmp_path):
     repo.mkdir()
     subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
     subprocess.run(
-        ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(repo), "commit", "--allow-empty", "--no-verify", "-m", "[test] init"],
         check=True, capture_output=True,
         env={**os.environ, "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "t@t.com",
              "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "t@t.com"},
@@ -83,7 +83,7 @@ def test_removes_various_ephemeral_names(tmp_path, suffix):
     repo.mkdir()
     subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
     subprocess.run(
-        ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(repo), "commit", "--allow-empty", "--no-verify", "-m", "[test] init"],
         check=True, capture_output=True,
         env={**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@t.com",
              "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@t.com"},

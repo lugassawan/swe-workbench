@@ -75,7 +75,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}-followup"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"
+  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-followup-${PR}" --force
@@ -242,7 +242,7 @@ Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `dedup
 ( rimba remove "pr-followup-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-followup-$PR" 2>/dev/null; \
-       rm -rf "$WT" 2>/dev/null; } ) &
+       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
 ```
 
 ## Footer parsing contract
