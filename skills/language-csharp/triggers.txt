@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-csharp
+how should I structure a modern C# .NET 8 project with nullable reference types enabled
+review this C# async method for .Result ConfigureAwait and CancellationToken usage
+when should I use records pattern matching and value semantics in C#
+should this hot path use LINQ or a for loop in .NET after profiling allocations

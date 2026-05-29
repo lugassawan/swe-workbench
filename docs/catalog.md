@@ -75,12 +75,13 @@
 
 | Skill | Triggers |
 |---|---|
-| `language-sql` | `.sql` files, migration files; keywords: SQL, SELECT, JOIN, EXPLAIN, CTE, window function, transaction isolation, deadlock, pagination. |
+| `language-csharp` | `.cs` files, `.csproj`, `.sln`, `Directory.Build.props`, keywords: C#, .NET, dotnet, nullable reference types, records, pattern matching, async/await, cancellation tokens, ConfigureAwait, IOptions, LINQ. |
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-java` | `.java` files, `pom.xml`, `build.gradle`, keywords: Java, JVM, Spring, Maven, Gradle, records, sealed classes, virtual threads. |
 | `language-kotlin` | `.kt` files, `build.gradle.kts`, keywords: Kotlin, coroutines, suspend, StateFlow, sealed interface, Kotlin DSL. |
 | `language-ruby` | `.rb` files, `Gemfile`, `Rakefile`, gemspecs, keywords: Ruby, Bundler, RSpec, minitest, blocks, procs, lambdas, pattern matching. |
 | `language-rust` | `.rs` files, `Cargo.toml`, keywords: Rust, cargo, ownership, borrow checker, trait, lifetime. |
+| `language-sql` | `.sql` files, migration files; keywords: SQL, SELECT, JOIN, EXPLAIN, CTE, window function, transaction isolation, deadlock, pagination. |
 | `language-swift` | `.swift` files, `Package.swift`, keywords: Swift, SwiftUI, actors, async/await, Sendable, Result builders, Swift Package Manager. |
 | `language-typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
 | `language-python` | `.py` files, `pyproject.toml`, `requirements.txt`, keywords: Python, pytest, asyncio, dataclass, type hints, virtualenv. |
