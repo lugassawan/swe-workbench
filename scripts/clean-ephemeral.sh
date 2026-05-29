@@ -8,7 +8,7 @@
 #   1. Argument is non-empty, absolute, and contains no ".." segment.
 #   2. Path is not "/", not "$HOME", and is at least two levels deep.
 #   3. Basename matches the ephemeral-task prefix regex used by the three flows:
-#        ^(pr-review|pr-review-followup|address-feedback)-[A-Za-z0-9._-]+$
+#        ^(pr-review|pr-followup|address-feedback)-[A-Za-z0-9._-]+$
 #   4. The path is a registered git worktree (appears in `git worktree list`),
 #      OR lives under one of the known tmp dirs:
 #        /tmp/swe-workbench-pr-review/
@@ -39,7 +39,7 @@ case "$TARGET" in
 esac
 
 # Must not contain ".." segments (e.g. /foo/../bar, or a bare ../ prefix).
-if echo "$TARGET" | grep -qE '(^|/)\.\.(\/|$)'; then
+if printf '%s' "$TARGET" | grep -qE '(^|/)\.\.(\/|$)'; then
   reject "path contains '..' traversal: $TARGET"
 fi
 

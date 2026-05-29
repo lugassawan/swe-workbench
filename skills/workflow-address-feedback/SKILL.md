@@ -241,7 +241,7 @@ else
     echo "Cleaned up worktree address-feedback-$PR."
   else
     # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
-    git worktree remove --force "$WT" 2>/dev/null && bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+    git worktree remove --force "$WT" 2>/dev/null; bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
     echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
   fi
 fi
