@@ -117,6 +117,8 @@ Gate to advance: ...
 
 ## Principle consultation
 
+**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+
 Invoke these skills via the Skill tool when the migration surfaces a concern in their domain:
 
 - `swe-workbench:principle-data-modeling` — schema evolution, indexing the new column, hot-key avoidance, retention policy during dual-write window
@@ -130,4 +132,4 @@ Invoke these skills via the Skill tool when the migration surfaces a concern in 
 
 ## Available skills
 
-See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the skill catalog.

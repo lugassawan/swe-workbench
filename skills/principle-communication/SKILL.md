@@ -1,6 +1,6 @@
 ---
 name: principle-communication
-description: Caveman output mode — ultra-terse brief replies with fewer tokens. Strips filler, hedging, pleasantries. Three levels — caveman lite (default), caveman full, ultra caveman / max caveman (maximum compression). Persists until normal mode. Activate with: caveman mode, /caveman, be brief, less tokens, use fewer tokens, talk like caveman, full caveman, ultra caveman, /caveman ultra.
+description: Caveman output mode — ultra-terse brief replies with fewer tokens. Strips filler, hedging, pleasantries. Three levels — caveman lite (default), caveman full, ultra caveman / max caveman (maximum compression). Persists until normal mode. Auto-load when the user requests terser output, says "be brief", "less tokens", "caveman mode", "use fewer tokens", or invokes `/caveman`.
 ---
 
 ## When to invoke

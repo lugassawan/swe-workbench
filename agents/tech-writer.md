@@ -70,7 +70,9 @@ For each invocation, emit:
 
 ## Principle consultation
 
-See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+
+**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
 Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, and the same "no-obvious-WHAT" discipline this agent applies.
 
