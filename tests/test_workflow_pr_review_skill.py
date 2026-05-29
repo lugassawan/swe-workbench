@@ -67,3 +67,35 @@ def test_pr_review_skill_has_owner_repo_guard_clause():
         "SKILL.md must include the guard-clause error message for missing OWNER/REPO "
         "so failures produce an actionable error rather than silently misrouting API calls"
     )
+
+
+# --- Cleanup call-site assertions (guard bypass fix) ---
+
+def test_pr_review_skill_cleanup_uses_clean_ephemeral_script():
+    """Step 7 background cleanup and pre-flight stale removal must use clean-ephemeral.sh, not bare rm -rf."""
+    text = SKILL_MD.read_text()
+    assert "clean-ephemeral.sh" in text, (
+        "SKILL.md cleanup blocks must invoke scripts/clean-ephemeral.sh — "
+        "bare 'rm -rf $WT' under /Users/... is blocked by the bash guard (exit 2)"
+    )
+
+
+def test_pr_review_skill_no_bare_rm_rf_wt():
+    """SKILL.md must not contain a bare 'rm -rf \"$WT\"' that the bash guard would block."""
+    text = SKILL_MD.read_text()
+    assert not re.search(r'rm\s+-[rR][fF]\s+"?\$WT"?(?!\s*2>)', text) or \
+           not re.search(r'rm\s+-[rR][fF]\s+"?\$WT"?\s*(?:2>/dev/null\s*)?(?:;|\))', text), (
+        "SKILL.md must not use 'rm -rf \"$WT\"' directly — "
+        "route through clean-ephemeral.sh to avoid the bash guard blocking home-tree paths"
+    )
+    # Stricter: no standalone rm -rf "$WT" outside of clean-ephemeral.sh invocations
+    lines_with_rm = [
+        line for line in text.splitlines()
+        if re.search(r'rm\s+-[a-zA-Z]*[rR][a-zA-Z]*[fF]', line)
+        and '"$WT"' in line
+        and "clean-ephemeral" not in line
+    ]
+    assert not lines_with_rm, (
+        f"Found bare rm -rf \"$WT\" lines (should use clean-ephemeral.sh):\n"
+        + "\n".join(lines_with_rm)
+    )
