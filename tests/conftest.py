@@ -37,7 +37,10 @@ _GIT_DIR_GUARD_SENTINEL: Final[str] = "/tmp/fake-git-dir-guard"
 def _git_dir_leak_guard():
     """Fail loudly if any subprocess.run receives GIT_DIR in its env.
     Injects a sentinel GIT_DIR so the guard fires standalone (not just under the hook).
-    See tests/README.md for the _CLEAN_ENV pattern."""
+    See tests/README.md for the _CLEAN_ENV pattern.
+    Coverage note: patching subprocess.run also covers subprocess.check_output (which
+    delegates to run internally). subprocess.call / check_call go directly to Popen and
+    are NOT covered — avoid them in tests."""
     _orig_run = subprocess.run
 
     def _guarded_run(*args, **kwargs):
