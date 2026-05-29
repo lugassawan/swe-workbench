@@ -1,4 +1,5 @@
 import os
+import subprocess
 from types import MappingProxyType
 from typing import Final
 
@@ -28,6 +29,36 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
         "GIT_COMMITTER_EMAIL": "t@t.com",
     }
 )
+
+_GIT_DIR_GUARD_SENTINEL: Final[str] = "/tmp/fake-git-dir-guard"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _git_dir_leak_guard():
+    """Fail loudly if any subprocess.run receives GIT_DIR in its env.
+    Injects a sentinel GIT_DIR so the guard fires standalone (not just under the hook).
+    See tests/README.md for the _CLEAN_ENV pattern."""
+    _orig_run = subprocess.run
+
+    def _guarded_run(*args, **kwargs):
+        if "env" in kwargs and kwargs["env"] is not None:
+            effective = kwargs["env"]
+        else:
+            effective = os.environ
+        if "GIT_DIR" in effective:
+            raise AssertionError(
+                "subprocess.run was called with GIT_DIR in its environment. "
+                "This leaks the bare repo's git context into git children. "
+                "Use env=dict(_CLEAN_ENV) or env={**_CLEAN_ENV, ...}. "
+                "See tests/README.md."
+            )
+        return _orig_run(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("GIT_DIR", _GIT_DIR_GUARD_SENTINEL)
+        mp.setattr(subprocess, "run", _guarded_run)
+        yield
+
 
 # scripts/ and tests/ are on sys.path via pyproject.toml [tool.pytest.ini_options] pythonpath.
 import validate  # noqa: E402  (available via pyproject.toml pythonpath)
