@@ -1529,3 +1529,106 @@ class TestInterrogationPreludeUniformity:
             f"commands/{cmd}.md does not contain the canonical interrogation prelude — "
             "sync from commands/shared/interrogation-prelude.md (E312, issue #312)"
         )
+
+
+# ──────────────────────────────────────────────
+# check_test_subprocess_env
+# ──────────────────────────────────────────────
+
+class TestCheckTestSubprocessEnv:
+    """validate.check_test_subprocess_env() must flag env=os.environ / env={**os.environ
+    in tests/*.py (excluding conftest.py) and must NOT flag clean usages or
+    non-subprocess os.environ references."""
+
+    def _make_tests_dir(self, root):
+        d = root / "tests"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def test_env_os_environ_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_bad.py").write_text(
+            'subprocess.run(["git", "status"], env=os.environ)\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 1
+        assert "_CLEAN_ENV" in validate.FAILURES[0]
+        assert "test_bad.py" in validate.FAILURES[0]
+
+    def test_env_splat_os_environ_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_bad2.py").write_text(
+            'subprocess.run(["git", "log"], env={**os.environ, "K": "v"})\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 1
+        assert "_CLEAN_ENV" in validate.FAILURES[0]
+
+    def test_env_dict_os_environ_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_bad3.py").write_text(
+            'subprocess.run(["git", "status"], env=dict(os.environ))\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 1
+        assert "_CLEAN_ENV" in validate.FAILURES[0]
+
+    def test_clean_env_not_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_good.py").write_text(
+            'subprocess.run(["git", "status"], env=dict(_CLEAN_ENV))\n'
+            'subprocess.run(["git", "log"], env={**_CLEAN_ENV, "K": "v"})\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
+
+    def test_env_method_call_not_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_method_calls.py").write_text(
+            'subprocess.run(["x"], env=os.environ.copy())\n'
+            'for k, v in os.environ.items(): pass\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
+
+    def test_string_literal_not_false_positive(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_secret_guard.py").write_text(
+            'SECRET = os.environ["S"]\n'
+            'VALUE = os.environ.get("KEY", "default")\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
+
+    def test_conftest_excluded(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "conftest.py").write_text(
+            "_CLEAN_ENV = {k: v for k, v in os.environ.items()}\n"
+            'subprocess.run(["x"], env=os.environ)\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
+
+    def test_test_validate_excluded(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_validate.py").write_text(
+            '(d / "bad.py").write_text(\'subprocess.run([], env=os.environ)\')\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
