@@ -38,6 +38,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/skill_autoload_hint.sh"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [
