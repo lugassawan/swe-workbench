@@ -2,7 +2,7 @@ name: Auto-assign reviewer
 
 on:
   pull_request_target:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, reopened]
 
 # Least privilege: only what's needed to request a reviewer.
 permissions:
@@ -12,7 +12,7 @@ permissions:
 # Avoid duplicate assignment runs on rapid re-triggers.
 concurrency:
   group: auto-assign-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   assign:
