@@ -443,7 +443,7 @@ def check_catalog_completeness(cache=None):
                  "code-touching agent includes '@./shared/principles.md' but is missing"
                  " '@./shared/languages.md' — add it so language-* skills are in scope."
                  " If this agent never touches source code, add its stem to"
-                 " _NON_CODE_AGENTS in check_catalog_completeness().")
+                 " _NON_CODE_AGENTS at the top of validate.py.")
 
 
 _BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\./shared/')

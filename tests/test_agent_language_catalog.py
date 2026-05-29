@@ -88,6 +88,8 @@ def test_agent_has_mandatory_language_gate(agent_name):
 
 
 def _skill_dirs_with_prefix(prefix: str):
+    if not SKILLS_DIR.is_dir():
+        return []
     return [p for p in SKILLS_DIR.iterdir() if p.is_dir() and p.name.startswith(prefix)]
 
 
