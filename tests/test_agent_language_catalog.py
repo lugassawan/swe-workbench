@@ -97,14 +97,19 @@ def _skill_dirs_with_prefix(prefix: str):
     ids=lambda p: p.name,
 )
 def test_skill_description_has_autoload_clause(skill_dir):
-    """T4: every principle-*/language-* SKILL.md description must contain 'Auto-load when'."""
+    """T4: every principle-*/language-* SKILL.md frontmatter description must contain 'Auto-load when'.
+
+    Scans only the YAML frontmatter (between the first two '---' delimiters) so
+    that a body-only occurrence does not produce a false pass — the harness reads
+    the `description:` field, not the body, for auto-triggering.
+    """
     skill_md = skill_dir / "SKILL.md"
     assert skill_md.exists(), f"{skill_dir.name}/SKILL.md does not exist"
     text = skill_md.read_text(encoding="utf-8")
-    # The 'Auto-load when' clause lives in the YAML frontmatter description field.
-    # Match it case-insensitively to tolerate minor capitalisation variation.
-    assert re.search(r"auto-load when", text, re.IGNORECASE), (
-        f"skills/{skill_dir.name}/SKILL.md description is missing an "
-        "'Auto-load when ...' clause. Add it to the description: field in the "
-        "YAML frontmatter so users and agents know when the skill activates."
+    parts = text.split("---", 2)
+    frontmatter = parts[1] if len(parts) >= 3 else ""
+    assert re.search(r"auto-load when", frontmatter, re.IGNORECASE), (
+        f"skills/{skill_dir.name}/SKILL.md description: field is missing an "
+        "'Auto-load when ...' clause. Add it to the YAML frontmatter description "
+        "field (not just the body) so the harness can discover the skill."
     )

@@ -62,7 +62,7 @@ main() {
 
     # Already hinted this session for this skill → silent no-op
     [ -f "$sentinel" ] && exit 0
-    touch "$sentinel" 2>/dev/null || true
+    touch "$sentinel" 2>/dev/null || exit 0
 
     # Emit hint via hookSpecificOutput
     local hint="Consider \`swe-workbench:${skill}\` for .${ext} work — invoke it via the Skill tool to apply language-specific idioms."

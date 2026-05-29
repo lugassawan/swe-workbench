@@ -15,6 +15,14 @@ FAILURES = []
 # must carry a "matcher" field. Only true lifecycle events belong in this set.
 _LIFECYCLE_HOOK_EVENTS = frozenset({"SubagentStop", "PreCompact", "Stop", "Notification"})
 
+# Agents that reference @./shared/principles.md but are NOT code-touching and
+# are therefore exempt from the languages.md co-requirement enforced by
+# check_catalog_completeness(). Add an agent's stem here when it genuinely
+# never reads or writes source code (e.g. it only files GitHub issues).
+_NON_CODE_AGENTS = frozenset({
+    "product-manager",
+})
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -405,13 +413,6 @@ def check_catalog_completeness(cache=None):
             if _expected_slice(sid) != slice_file:
                 fail(slice_path.relative_to(ROOT),
                      f"entry 'swe-workbench:{sid}' belongs in {_expected_slice(sid)}, not {slice_file}")
-
-    # Agents that reference @./shared/principles.md but are not code-touching
-    # (e.g. product-manager files GitHub issues and never reads source).
-    # These are explicitly exempt from the languages.md co-requirement below.
-    _NON_CODE_AGENTS = frozenset({
-        "product-manager",
-    })
 
     # Every agent must reference at least one slice catalog, and every
     # code-touching agent (one that includes principles.md) must ALSO include

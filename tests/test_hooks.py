@@ -317,17 +317,19 @@ class TestSkillAutoloadHookWiring:
             f"Hook script not executable: {self.SCRIPT}"
         )
 
-    def test_hook_is_nonblocking(self):
+    def test_hook_is_nonblocking(self, tmp_path):
         """Script must exit 0 for well-formed input with a session_id."""
         import subprocess
         from conftest import _CLEAN_ENV
 
+        env = dict(_CLEAN_ENV)
+        env["TMPDIR"] = str(tmp_path)  # isolate sentinel to this test run
         result = subprocess.run(
             [str(self.SCRIPT)],
             input='{"session_id": "test-session-abc-123", "tool_input": {"file_path": "/tmp/foo.py"}}',
             text=True,
             capture_output=True,
-            env=dict(_CLEAN_ENV),
+            env=env,
         )
         assert result.returncode == 0, (
             f"skill_autoload_hint.sh exited {result.returncode} — must be "
