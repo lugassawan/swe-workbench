@@ -287,3 +287,29 @@ def test_address_feedback_skill_skips_already_clarified_threads():
     assert idx_skipped < idx_digest, (
         "SKILL.md Phase 3 transparency note must appear before 'For each remaining thread'"
     )
+
+
+# --- Cleanup call-site assertions (guard bypass fix) ---
+
+def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
+    """Phase 6 fallback must invoke clean-ephemeral.sh, not bare rm -rf "$WT"."""
+    text = SKILL_MD.read_text()
+    assert "clean-ephemeral.sh" in text, (
+        "SKILL.md Phase 6 fallback must use scripts/clean-ephemeral.sh — "
+        "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
+    )
+
+
+def test_address_feedback_skill_no_bare_rm_rf_wt():
+    """Phase 6 must not contain a bare 'rm -rf \"$WT\"' that the bash guard would block."""
+    text = SKILL_MD.read_text()
+    lines_with_rm = [
+        line for line in text.splitlines()
+        if re.search(r'rm\s+-[a-zA-Z]*[rR][a-zA-Z]*[fF]', line)
+        and '"$WT"' in line
+        and "clean-ephemeral" not in line
+    ]
+    assert not lines_with_rm, (
+        f"Found bare rm -rf \"$WT\" lines in Phase 6 (should use clean-ephemeral.sh):\n"
+        + "\n".join(lines_with_rm)
+    )
