@@ -1,0 +1,31 @@
+name: Auto-assign reviewer
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review, reopened]
+
+# Least privilege: only what's needed to request a reviewer.
+permissions:
+  contents: none
+  pull-requests: write
+
+# Avoid duplicate assignment runs on rapid re-triggers.
+concurrency:
+  group: auto-assign-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # GitHub rejects requesting a review from the PR author. Skip owner-authored
+    # PRs so this is a clean no-op rather than a failing job.
+    if: ${{ github.event.pull_request.user.login != github.repository_owner }}
+    steps:
+      - name: Request review from repo owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: gh pr edit "$PR" --repo "$REPO" --add-reviewer "$OWNER"
