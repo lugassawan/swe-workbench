@@ -1600,3 +1600,13 @@ class TestCheckTestSubprocessEnv:
         )
         validate.check_test_subprocess_env()
         assert len(validate.FAILURES) == 0
+
+    def test_test_validate_excluded(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_validate.py").write_text(
+            '(d / "bad.py").write_text(\'subprocess.run([], env=os.environ)\')\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0

@@ -444,6 +444,7 @@ class TestHooksJson:
             ["python", str(ROOT / "scripts" / "validate.py")],
             capture_output=True,
             text=True,
+            env=dict(_CLEAN_ENV),
         )
         assert result.returncode == 0, result.stdout + result.stderr
 

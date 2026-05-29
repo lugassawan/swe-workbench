@@ -521,13 +521,17 @@ def check_unwired_principle_skills(cache=None):
 _TEST_ENV_LEAK_RE = re.compile(r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|os\.environ)\b')
 
 
+_TEST_ENV_EXEMPT = frozenset({"conftest.py", "test_validate.py"})
+
+
 def check_test_subprocess_env():
     """tests/*.py subprocess sites must not pass the raw parent env.
     Use env=dict(_CLEAN_ENV) or env={**_CLEAN_ENV, ...}. See tests/README.md.
-    conftest.py is exempt (defines _CLEAN_ENV and the runtime guard)."""
+    conftest.py is exempt (defines _CLEAN_ENV and the runtime guard).
+    test_validate.py is exempt (contains bad-pattern strings as test fixture data)."""
     tests_dir = ROOT / "tests"
     for py_file in sorted(tests_dir.glob("*.py")):
-        if py_file.name == "conftest.py":
+        if py_file.name in _TEST_ENV_EXEMPT:
             continue
         try:
             text = py_file.read_text(encoding="utf-8")
