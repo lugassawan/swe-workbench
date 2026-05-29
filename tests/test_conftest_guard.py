@@ -24,6 +24,11 @@ class TestGitDirLeakGuard:
         result = subprocess.run(["true"], env=dict(_CLEAN_ENV), capture_output=True)
         assert result.returncode == 0
 
+    def test_guard_allows_arbitrary_clean_env(self):
+        """Guard does not over-block envs that simply lack GIT_DIR."""
+        result = subprocess.run(["true"], env={"PATH": "/usr/bin"}, capture_output=True)
+        assert result.returncode == 0
+
     def test_sentinel_present(self):
         """The GIT_DIR sentinel is injected into os.environ during the test session."""
         assert os.environ.get("GIT_DIR") == _GIT_DIR_GUARD_SENTINEL

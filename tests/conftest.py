@@ -30,7 +30,7 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
     }
 )
 
-_GIT_DIR_GUARD_SENTINEL: Final[str] = "/tmp/fake-git-dir-guard"
+_GIT_DIR_GUARD_SENTINEL: Final[str] = "__pytest_git_dir_sentinel__"
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -39,8 +39,8 @@ def _git_dir_leak_guard():
     Injects a sentinel GIT_DIR so the guard fires standalone (not just under the hook).
     See tests/README.md for the _CLEAN_ENV pattern.
     Coverage note: patching subprocess.run also covers subprocess.check_output (which
-    delegates to run internally). subprocess.call / check_call go directly to Popen and
-    are NOT covered — avoid them in tests."""
+    delegates to run on CPython — implementation detail, not guaranteed by the stdlib spec).
+    subprocess.call / check_call go directly to Popen and are NOT covered — avoid them in tests."""
     _orig_run = subprocess.run
 
     def _guarded_run(*args, **kwargs):

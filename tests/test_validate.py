@@ -1568,6 +1568,17 @@ class TestCheckTestSubprocessEnv:
         assert len(validate.FAILURES) == 1
         assert "_CLEAN_ENV" in validate.FAILURES[0]
 
+    def test_env_dict_os_environ_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_bad3.py").write_text(
+            'subprocess.run(["git", "status"], env=dict(os.environ))\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 1
+        assert "_CLEAN_ENV" in validate.FAILURES[0]
+
     def test_clean_env_not_flagged(self, reset_validate):
         root = reset_validate
         d = self._make_tests_dir(root)

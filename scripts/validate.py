@@ -518,7 +518,9 @@ def check_unwired_principle_skills(cache=None):
 # Python hook syntax check
 # ──────────────────────────────────────────────
 
-_TEST_ENV_LEAK_RE = re.compile(r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|os\.environ)\b')
+_TEST_ENV_LEAK_RE = re.compile(
+    r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|dict\s*\(\s*os\.environ\s*\)|os\.environ\b)'
+)
 
 
 _TEST_ENV_EXEMPT = frozenset({"conftest.py", "test_validate.py"})
@@ -530,7 +532,7 @@ def check_test_subprocess_env():
     conftest.py is exempt (defines _CLEAN_ENV and the runtime guard).
     test_validate.py is exempt (contains bad-pattern strings as test fixture data)."""
     tests_dir = ROOT / "tests"
-    for py_file in sorted(tests_dir.glob("*.py")):
+    for py_file in sorted(tests_dir.glob("*.py")):  # intentionally flat — subdirs not scanned
         if py_file.name in _TEST_ENV_EXEMPT:
             continue
         try:
