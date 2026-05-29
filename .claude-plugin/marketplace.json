@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "swe-workbench",
-      "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Bash, Go, Java, Kotlin, Python, Rust, Swift, TypeScript), and pragmatic workflows.",
+      "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Bash, Go, Java, Kotlin, Python, Ruby, Rust, Swift, TypeScript), and pragmatic workflows.",
       "version": "0.1.15",
       "source": "./",
       "author": {
