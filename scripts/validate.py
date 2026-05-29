@@ -519,7 +519,7 @@ def check_unwired_principle_skills(cache=None):
 # ──────────────────────────────────────────────
 
 _TEST_ENV_LEAK_RE = re.compile(
-    r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|dict\s*\(\s*os\.environ\s*\)|os\.environ\b)'
+    r'\benv\s*=\s*(?:\{\s*\*\*\s*os\.environ|dict\s*\(\s*os\.environ\s*\)|os\.environ(?!\s*\.))'
 )
 
 

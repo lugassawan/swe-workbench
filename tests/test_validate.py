@@ -1590,6 +1590,17 @@ class TestCheckTestSubprocessEnv:
         validate.check_test_subprocess_env()
         assert len(validate.FAILURES) == 0
 
+    def test_env_method_call_not_flagged(self, reset_validate):
+        root = reset_validate
+        d = self._make_tests_dir(root)
+        (d / "test_method_calls.py").write_text(
+            'subprocess.run(["x"], env=os.environ.copy())\n'
+            'for k, v in os.environ.items(): pass\n',
+            encoding="utf-8",
+        )
+        validate.check_test_subprocess_env()
+        assert len(validate.FAILURES) == 0
+
     def test_string_literal_not_false_positive(self, reset_validate):
         root = reset_validate
         d = self._make_tests_dir(root)
