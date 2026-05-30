@@ -3,7 +3,7 @@
 #
 # Blocks:
 #   - rm -rf against /, /*, ~, $HOME, /Users[/<user>], /home[/<user>]
-#   - git push --force / -f to main/master
+#   - git push --force / -f to main/master/release/*
 #   - git reset --hard on main/master/release/*
 #
 # Short-circuits (exit 0, no greps) for commands that contain neither "rm" nor
@@ -39,8 +39,8 @@ if echo "$norm" | grep -Eq \
 fi
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))' \
-   && echo "$norm" | grep -Eq '(^|[[:space:]]|:)(main|master)([[:space:]]|:|$)'; then
-  echo 'BLOCKED: force push to main/master' >&2
+   && echo "$norm" | grep -Eq '(^|[[:space:]]|:)(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
+  echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
   exit 2
 fi
 
