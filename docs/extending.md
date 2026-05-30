@@ -17,6 +17,29 @@ Skills are intentionally small — each under 150 lines. A sharp, well-triggered
 
 Orchestrator skills that compose many sub-skills (see the `development` workflow) may exceed 150 lines. When they do, extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
 
+## Dependency flow
+
+Three artifact kinds — commands, skills, and agents — form a strict layering:
+
+```
+command ──► skill ──► skill
+   │         │
+   │         ▼
+   └───────► agent ──► skill
+```
+
+**Commands** are orchestrators (top layer). A command pulls in whatever skills and subagents a workflow needs. Commands may activate skills and agents.
+
+**Skills** may activate other skills. Composing a workflow from smaller skills is encouraged; it keeps any single skill under the 150-line cap (see `## Philosophy`). Skills must not activate commands.
+
+**Agents** may activate skills. An agent is a leaf worker dispatched *by* a command, never the reverse. Naming the entry command in a `**Reachable via:**` breadcrumb is documentation, not a dependency, and does not count as an activation.
+
+**Async handoffs:** a skill may suggest running a command as a human-driven next step (e.g. "run `/swe-workbench:review` next"). This is an asynchronous handoff — the user decides whether to follow up — not a synchronous activation, and does not form a loading cycle.
+
+**No back-edges:** nothing that a command activates may synchronously activate that command (or its skills) in turn. Cycles in the activation graph break Claude Code's loading behavior and are forbidden at all layers.
+
+`scripts/validate.py` (`check_no_cycles`) machine-enforces the no-cycle rule by scanning action-cued `` `swe-workbench:<id>` `` activations. Slash-command handoffs (`/swe-workbench:cmd`) and prose cross-references (`` See `swe-workbench:X` ``) are intentionally excluded from the graph — they are pointers, not activations.
+
 ## Adding worked examples to a skill
 
 For skills that describe patterns (e.g. `principle-*`), add language-specific implementations as companion files in an `examples/` subdirectory inside the skill's directory:
