@@ -445,7 +445,8 @@ class TestFlushHook:
         # Inject a jq shim that exits 1 when called with -Rs (the encode flag).
         fake_bin = tmp_path / "fake-bin"
         fake_bin.mkdir()
-        real_jq = shutil.which("jq") or "jq"
+        real_jq = shutil.which("jq")
+        assert real_jq is not None, "jq must be installed for this test"
         shim = fake_bin / "jq"
         shim.write_text(
             f"#!/usr/bin/env bash\n"

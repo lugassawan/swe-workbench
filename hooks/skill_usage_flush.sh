@@ -44,7 +44,7 @@ skills=$(cat "${buffers[@]}" 2>/dev/null | awk '!seen[$0]++ { out = (out ? out "
 
 # Safely JSON-encode the message. On encode failure emit a clean {} and leave the
 # buffers in place so a later flush can retry — never emit malformed JSON.
-msg=$(printf 'Skills used by %s: %s' "$agent_type" "$skills" | jq -Rs .) || { printf '{}'; exit 0; }
+msg=$(printf 'Skills used by %s: %s' "$agent_type" "$skills" | jq -Rs .) || { printf '{}\n'; exit 0; }
 printf '{"systemMessage": %s, "suppressOutput": true}\n' "$msg"
 
 # Clean up the buffers only after a successful emit.
