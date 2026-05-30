@@ -22,7 +22,7 @@ Orchestrator skills that compose many sub-skills (see the `development` workflow
 Three artifact kinds — commands, skills, and agents — form a strict layering:
 
 ```
-command ──► skill
+command ──► skill ──► skill
    │         │
    │         ▼
    └───────► agent ──► skill

@@ -627,14 +627,16 @@ def _build_dep_graph(cache):
             # Skip @-include lines — pure file composition, not activations.
             if line.lstrip().startswith('@'):
                 continue
-            # Skip lines with slash-command refs — async handoffs, not activations.
-            if _SLASH_CMD_RE.search(line):
+            # Strip slash-command tokens (async handoffs) before checking for
+            # action cues and swe-workbench refs. Stripping rather than skipping
+            # the whole line preserves real activation edges that co-occur with
+            # a slash hint (e.g. "invoke `swe-workbench:x` (then run `/review`)").
+            clean = _SLASH_CMD_RE.sub('', line)
+            if not _ACTION_RE.search(clean):
                 continue
-            if not _ACTION_RE.search(line):
+            if _POINTER_RE.search(clean):
                 continue
-            if _POINTER_RE.search(line):
-                continue
-            for mid in _CYCLE_MENTION_RE.findall(line):
+            for mid in _CYCLE_MENTION_RE.findall(clean):
                 dst_node = resolvable.get(mid)
                 if dst_node is None or dst_node == src_node:
                     continue
