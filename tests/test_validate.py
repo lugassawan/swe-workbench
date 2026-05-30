@@ -1650,3 +1650,114 @@ class TestCheckTestSubprocessEnv:
         )
         validate.check_test_subprocess_env()
         assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
+# check_no_cycles
+# ──────────────────────────────────────────────
+
+def _make_cycle_tree(root):
+    """Create the minimum required directories for check_no_cycles tests."""
+    (root / "agents" / "shared").mkdir(parents=True, exist_ok=True)
+    (root / "commands").mkdir(exist_ok=True)
+    (root / "skills").mkdir(exist_ok=True)
+
+
+class TestCheckNoCycles:
+    """Dependency-flow cycle detection (issue #371)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    def test_green_baseline_live_repo(self, reset_validate, monkeypatch):
+        """Live repo activation graph must have zero cycles."""
+        monkeypatch.setattr(validate, "ROOT", self.REAL_ROOT)
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_skill_to_skill_cycle_detected(self, reset_validate):
+        """skill A action-invokes skill B and B action-invokes A → cycle reported."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:b`\n",
+            encoding="utf-8",
+        )
+        (root / "skills" / "b").mkdir()
+        (root / "skills" / "b" / "SKILL.md").write_text(
+            "---\nname: b\ndescription: d\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert len(validate.FAILURES) >= 1
+        combined = " ".join(validate.FAILURES)
+        assert "a" in combined and "b" in combined
+
+    def test_prose_cross_ref_no_cycle(self, reset_validate):
+        """See `swe-workbench:X` lines are pointer cues, not activations — no edge emitted."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\nSee `swe-workbench:b` for details.\n",
+            encoding="utf-8",
+        )
+        (root / "skills" / "b").mkdir()
+        (root / "skills" / "b" / "SKILL.md").write_text(
+            "---\nname: b\ndescription: d\n---\nSee `swe-workbench:a` for details.\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_slash_handoff_no_cycle(self, reset_validate):
+        """Slash-command handoffs in skills are excluded; command→skill edge alone is not a cycle."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\nWhen done, run `/review` next.\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "review.md").write_text(
+            "---\ndescription: review\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_self_mention_no_edge(self, reset_validate):
+        """A skill action-invoking its own id must not produce a self-edge or cycle."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:a` directly.\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_agent_mediated_cycle_detected(self, reset_validate):
+        """skill A → agent X → skill A is a cycle and must be reported."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:x`\n",
+            encoding="utf-8",
+        )
+        (root / "agents" / "x.md").write_text(
+            "---\nname: x\ndescription: d\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert len(validate.FAILURES) >= 1
+        combined = " ".join(validate.FAILURES)
+        assert "a" in combined and "x" in combined

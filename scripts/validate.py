@@ -581,6 +581,136 @@ def check_hook_scripts():
 
 
 # ──────────────────────────────────────────────
+# Dependency-flow cycle checker
+# ──────────────────────────────────────────────
+
+_CYCLE_MENTION_RE = re.compile(r'`swe-workbench:([\w-]+)`')
+# Backtick-delimited slash-command refs are async handoffs, not activations.
+# Both backticks are required to avoid matching Unix paths (e.g. scripts/validate.py).
+_SLASH_CMD_RE = re.compile(r'`/(?:swe-workbench:)?[\w-]+`')
+# Action words that signal an activation (case-insensitive).
+_ACTION_RE = re.compile(
+    r'\b(invoke|activate|apply|execute via|dispatch|delegate|compose|consult|run)\b',
+    re.IGNORECASE,
+)
+# Pointer/reference words that exclude a line from being an edge.
+_POINTER_RE = re.compile(
+    r'\b(see|defer to|recommend|like|per |unlike|e\.g\.|cf\.|analogous|mirror|'
+    r'follows the|precedent|such as|similar to|counterpart|note them)\b',
+    re.IGNORECASE,
+)
+
+
+def _build_dep_graph(cache):
+    """Return adjacency dict: {(kind, id): set of (kind, id)} for action-cued activations."""
+    root = ROOT
+    agents_cache, skills_cache = cache[0], cache[1]
+
+    skills_dir = root / "skills"
+    agents_dir = root / "agents"
+    commands_dir = root / "commands"
+
+    # Pre-build resolution index: id -> (kind, id)
+    resolvable = {}
+    for p in skills_dir.glob("*/SKILL.md"):
+        resolvable[p.parent.name] = ("skill", p.parent.name)
+    for p in agents_dir.glob("*.md"):
+        if p.parent.name == "shared":
+            continue
+        if p.stem not in resolvable:
+            resolvable[p.stem] = ("agent", p.stem)
+
+    graph = {}
+
+    def _scan(src_node, text):
+        for line in text.splitlines():
+            # Skip @-include lines — pure file composition, not activations.
+            if line.lstrip().startswith('@'):
+                continue
+            # Skip lines with slash-command refs — async handoffs, not activations.
+            if _SLASH_CMD_RE.search(line):
+                continue
+            if not _ACTION_RE.search(line):
+                continue
+            if _POINTER_RE.search(line):
+                continue
+            for mid in _CYCLE_MENTION_RE.findall(line):
+                dst_node = resolvable.get(mid)
+                if dst_node is None or dst_node == src_node:
+                    continue
+                graph.setdefault(src_node, set()).add(dst_node)
+
+    # Commands
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        src = ("command", cmd_md.stem)
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _scan(src, text)
+
+    # Skills
+    for skill_md, text in skills_cache.items():
+        if skill_md.parent.parent != skills_dir:
+            continue
+        if text is None:
+            continue
+        src = ("skill", skill_md.parent.name)
+        _scan(src, text)
+
+    # Agents (non-shared)
+    for agent_md, text in agents_cache.items():
+        if agent_md.parent.name == "shared":
+            continue
+        if text is None:
+            continue
+        src = ("agent", agent_md.stem)
+        _scan(src, text)
+
+    return graph
+
+
+def check_no_cycles(cache=None):
+    """Fail if the action-cued activation graph contains a cycle."""
+    if cache is None:
+        cache = _build_cache()
+    graph = _build_dep_graph(cache)
+
+    # DFS with white/gray/black coloring.
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {}
+    stack = []
+    reported = set()
+
+    def dfs(node):
+        color[node] = GRAY
+        stack.append(node)
+        for neighbor in sorted(graph.get(node, set())):
+            if color.get(neighbor) == GRAY:
+                # Back-edge found — extract cycle from stack.
+                cycle_start = stack.index(neighbor)
+                cycle = stack[cycle_start:] + [neighbor]
+                key = tuple(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    path = " -> ".join(f"{k}:{i}" for k, i in cycle)
+                    fail(
+                        Path("(dependency graph)"),
+                        f"dependency cycle: {path} — break the back-edge "
+                        f"(an activated artifact must not activate its activator)",
+                    )
+            elif color.get(neighbor, WHITE) == WHITE:
+                dfs(neighbor)
+        stack.pop()
+        color[node] = BLACK
+
+    all_nodes = set(graph.keys()) | {n for nbrs in graph.values() for n in nbrs}
+    for node in sorted(all_nodes):
+        if color.get(node, WHITE) == WHITE:
+            dfs(node)
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 
@@ -606,6 +736,7 @@ def main():
     check_examples()
     check_hook_scripts()
     check_test_subprocess_env()
+    check_no_cycles(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
