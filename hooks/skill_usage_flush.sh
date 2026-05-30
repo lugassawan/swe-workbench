@@ -42,10 +42,11 @@ done
 skills=$(cat "${buffers[@]}" 2>/dev/null | awk '!seen[$0]++ { out = (out ? out ", " : "") $0 } END { print out }')
 [ -z "$skills" ] && { printf '{}'; exit 0; }
 
-# Clean up all matching buffers regardless of whether the emit succeeds below.
-rm -f "${buffers[@]}" 2>/dev/null || true
-
-# Safely JSON-encode the message.
-msg=$(printf 'Skills used by %s: %s' "$agent_type" "$skills" | jq -Rs .)
+# Safely JSON-encode the message. On encode failure emit a clean {} and leave the
+# buffers in place so a later flush can retry — never emit malformed JSON.
+msg=$(printf 'Skills used by %s: %s' "$agent_type" "$skills" | jq -Rs .) || { printf '{}'; exit 0; }
 printf '{"systemMessage": %s, "suppressOutput": true}\n' "$msg"
+
+# Clean up the buffers only after a successful emit.
+rm -f "${buffers[@]}" 2>/dev/null || true
 exit 0
