@@ -115,3 +115,42 @@ def test_skill_description_has_autoload_clause(skill_dir):
         "'Auto-load when ...' clause. Add it to the YAML frontmatter description "
         "field (not just the body) so the harness can discover the skill."
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# T5 — language-* skills registered in catalog.md and skill_autoload_hint.sh
+# ──────────────────────────────────────────────────────────────
+
+CATALOG_MD = ROOT / "docs" / "catalog.md"
+HOOK_SH = ROOT / "hooks" / "skill_autoload_hint.sh"
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _skill_dirs_with_prefix("language-"),
+    ids=lambda p: p.name,
+)
+def test_language_skill_in_catalog(skill_dir):
+    """T5a: every language-* skill must have a row marker in docs/catalog.md."""
+    skill_name = skill_dir.name
+    catalog_text = CATALOG_MD.read_text(encoding="utf-8")
+    row_marker = f"| `{skill_name}` |"
+    assert row_marker in catalog_text, (
+        f"docs/catalog.md is missing a row for '{skill_name}'. "
+        "Add the skill to the Languages table."
+    )
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _skill_dirs_with_prefix("language-"),
+    ids=lambda p: p.name,
+)
+def test_language_skill_in_hook(skill_dir):
+    """T5b: every language-* skill must appear in hooks/skill_autoload_hint.sh."""
+    skill_name = skill_dir.name
+    hook_text = HOOK_SH.read_text(encoding="utf-8")
+    assert skill_name in hook_text, (
+        f"hooks/skill_autoload_hint.sh is missing '{skill_name}'. "
+        "Add the skill to the ext_to_skill() case map."
+    )
