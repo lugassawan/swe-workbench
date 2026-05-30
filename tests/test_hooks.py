@@ -122,6 +122,7 @@ class TestForcePushBlocker:
         "git push -f origin release/2025-01",
         "git push --force origin HEAD:release/1.2",
         "git push --force origin release/1.2:release/1.2",
+        "git push --force origin release/x:main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
