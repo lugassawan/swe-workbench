@@ -75,6 +75,7 @@
 
 | Skill | Triggers |
 |---|---|
+| `language-bash` | `.sh`, `.bash` files; keywords: bash, shell, sh, shellcheck, set -e, pipefail. |
 | `language-csharp` | `.cs` files, `.csproj`, `.sln`, `Directory.Build.props`, keywords: C#, .NET, dotnet, nullable reference types, records, pattern matching, async/await, cancellation tokens, ConfigureAwait, IOptions, LINQ. |
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-java` | `.java` files, `pom.xml`, `build.gradle`, keywords: Java, JVM, Spring, Maven, Gradle, records, sealed classes, virtual threads. |
