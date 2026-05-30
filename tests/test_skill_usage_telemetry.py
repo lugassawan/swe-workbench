@@ -7,6 +7,7 @@ tree via CLAUDE_PLUGIN_ROOT.
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -430,6 +431,46 @@ class TestFlushHook:
         assert "skill-bad" not in msg, "non-date-prefixed buffer must be excluded"
         assert not buf_valid.exists(), "valid buffer should be deleted after flush"
         assert buf_bad.exists(), "non-date-prefixed file must survive"
+
+    def test_flush_retains_buffer_and_emits_empty_json_on_encode_failure(
+        self, plugin_root, cache_dir, tmp_path
+    ):
+        """On jq encode failure: emit clean {}, retain buffer for retry."""
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        today = datetime.date.today().strftime("%Y%m%d")
+        buf = skill_cache / f"{today}-abc123.txt"
+        buf.write_text("skill-a\n")
+
+        # Inject a jq shim that exits 1 when called with -Rs (the encode flag).
+        fake_bin = tmp_path / "fake-bin"
+        fake_bin.mkdir()
+        real_jq = shutil.which("jq")
+        assert real_jq is not None, "jq must be installed for this test"
+        shim = fake_bin / "jq"
+        shim.write_text(
+            f"#!/usr/bin/env bash\n"
+            f'for arg in "$@"; do [ "$arg" = "-Rs" ] && exit 1; done\n'
+            f'exec {real_jq} "$@"\n'
+        )
+        shim.chmod(0o755)
+
+        env = _env(plugin_root, cache_dir)
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+        result = subprocess.run(
+            ["bash", str(FLUSH_SH)],
+            input=json.dumps({"agent_id": "abc123", "agent_type": "reviewer"}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == {}, (
+            f"Expected clean {{}} on encode failure, got: {result.stdout!r}"
+        )
+        assert buf.exists(), "Buffer must be retained when emit fails"
 
 
 # ---------------------------------------------------------------------------
