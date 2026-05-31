@@ -58,7 +58,7 @@ Test: [[detect:test-command]] — N/N pass
 ### Phase 4: Review
 
 Dispatch both reviewers:
-- `superpowers:code-reviewer` — plan-alignment, standards
+- `superpowers:requesting-code-review` — plan-alignment, standards
 - `swe-workbench:reviewer` subagent — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
 
 Act on feedback:

@@ -30,7 +30,7 @@ Mode B — Single Implementation:
                           └─ swe-workbench:principle-tdd (per unit)
                           └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
   Phase 3 (Verify)    → superpowers:verification-before-completion
-  Phase 4 (Review)    → superpowers:code-reviewer (plan-alignment)
+  Phase 4 (Review)    → superpowers:requesting-code-review (plan-alignment)
                           └─ swe-workbench:reviewer (diff correctness/security/design)
   Phase 5 (Deliver)   → swe-workbench:workflow-commit-and-pr
 
@@ -186,7 +186,7 @@ Invoke `superpowers:verification-before-completion`.
 **Goal:** Catch design and quality issues before delivery.
 
 Dispatch both reviewers — they answer different questions:
-- `superpowers:code-reviewer` — plan-alignment: does this match the plan and meet standards?
+- `superpowers:requesting-code-review` — plan-alignment: does this match the plan and meet standards?
 - `swe-workbench:reviewer` subagent — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
 
 Act on feedback:
