@@ -94,7 +94,6 @@ Pass the agent:
 - Repo-relative-path instruction (load-bearing): emit **repo-relative** paths (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments.
 - Footer instruction (opt-in per `## Decision footer`): end with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**`. Never `REQUEST_CHANGES`.
 - Blocking-scope instruction (opt-in per `## Blocking-scope verdict`): classify each Critical/High as in-diff (`+` lines) or out-of-diff; mark out-of-diff with `**Informational (out-of-diff):** `; emit `**Blocking Scope: NONE|OUT-OF-DIFF-ONLY|IN-DIFF**` before the footer. APPROVE/COMMENT rule unchanged.
-- Narrative instruction (opt-in per `## Review Summary`): begin with `## Review Summary` (2–4 sentences: posture, positives, concerns); used as PR review body for cross-author reviews.
 - Ticket-context prelude (if Step 3 produced one).
 
 ### Step 5 — Parse decision footer + blocking-scope verdict
@@ -188,23 +187,12 @@ if [ "$DECISION" = "COMMENT" ] && [ "$BLOCKING_SCOPE" = "OUT-OF-DIFF-ONLY" ] \
   DECISION=APPROVE
 fi
 
-NARRATIVE=$(awk '
-  /^[[:space:]]*(Critical|High|Medium|Low|Severity)[[:space:]]*\|/ { exit }
-  /^###[[:space:]]+(Critical|High|Medium|Low)\b/ { exit }
-  /^\*\*Blocking Scope:/ { exit }
-  /^\*\*Review Decision:/ { exit }
-  { print }
-' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
-HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true || echo false)"
-
 BYLINE="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
 INFORMATIONAL_SECTION=""
 [ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
-if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s%s\n' \
-    "$NARRATIVE" "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
-elif [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY="$BYLINE"; [ -n "$INFORMATIONAL_SECTION" ] && SUMMARY="${SUMMARY}${INFORMATIONAL_SECTION}"
+if [ "$IS_SELF_REVIEW" = false ]; then
+  SUMMARY=$(printf '**Review Decision: %s**\n\n---\n%s%s\n' \
+    "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
 else
   SUMMARY=""
 fi
@@ -290,10 +278,8 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Use `--task "pr-review-$PR"` for the worktree | Use `--task "pr-followup-$PR"` to avoid colliding with a still-active primary-review worktree. |
 | Omit the footer instruction in Step 4 | Without it, the agent does NOT emit the footer. Step 5 will then abort. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise. |
-| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see "Post `## Review Summary` on self-review" row). |
 | Emit the address-feedback CTA when there is nothing to address | The CTA is gated on outcome only: call `AskUserQuestion` when `DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`. Suppress on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). Self-review is NOT a suppression trigger. |
 | Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
-| Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false`. This is a distinct policy axis from the address-feedback CTA, which is gated on outcome only (not identity). The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. See [Diff-scoping flip contract](#diff-scoping-flip-contract). |
 | Apply the diff-scoping flip when identity is unknown | `IDENTITY_KNOWN = false` when `$CURRENT_USER` or `$AUTHOR_LOGIN` is empty. The flip does NOT fire — stay COMMENT. Never auto-approve when you can't verify the authorship axis. |
 | Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/address-feedback` to act on. |
