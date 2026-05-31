@@ -40,6 +40,16 @@ def _guard_indices(lines: list[str]) -> list[int]:
     ]
 
 
+def _guard_block(lines: list[str], idx: int) -> list[str]:
+    """Return lines from idx up to and including the closing 'fi'."""
+    block = []
+    for ln in lines[idx:]:
+        block.append(ln)
+        if ln.strip() == "fi":
+            break
+    return block
+
+
 class TestCheckoutMainGuarded:
     """Static: every git checkout main must be wrapped in an if ! guard."""
 
@@ -73,14 +83,13 @@ class TestCheckoutMainGuarded:
 
         for idx in guards:
             lineno = idx + 1
-            # Inspect up to 5 lines after the guard opener
-            block = lines[idx : idx + 5]
+            block = _guard_block(lines, idx)
             has_error = any("Error: could not switch to main" in ln for ln in block)
             has_exit = any(ln.strip() == "exit 1" for ln in block)
             assert has_error, (
                 f"Guard at line {lineno} is missing the 'Error: could not switch to main' "
-                f"echo within the next 5 lines"
+                f"echo in the guard block"
             )
             assert has_exit, (
-                f"Guard at line {lineno} is missing 'exit 1' within the next 5 lines"
+                f"Guard at line {lineno} is missing 'exit 1' in the guard block"
             )

@@ -51,6 +51,7 @@ case "$CURRENT_BRANCH" in
     echo "Detected in-progress release branch '${CURRENT_BRANCH}'. Switching to main."
     if ! git checkout main; then
       echo "Error: could not switch to main (checked out in another worktree?)." >&2
+      echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
       exit 1
     fi
     ;;
@@ -312,6 +313,7 @@ fi
 
 if ! git checkout main; then
   echo "Error: could not switch to main (checked out in another worktree?)." >&2
+  echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
   exit 1
 fi
 git pull --ff-only origin main
