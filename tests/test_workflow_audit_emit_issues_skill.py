@@ -262,7 +262,7 @@ def test_readme_contains_name():
 # ── triggers.txt ─────────────────────────────────────────────────────────────
 
 def test_triggers_has_at_least_two_fixtures():
-    lines = [l.strip() for l in TRIGGERS.read_text().splitlines() if l.strip()]
+    lines = [line.strip() for line in TRIGGERS.read_text().splitlines() if line.strip()]
     assert len(lines) >= 2, (
         f"triggers.txt must have ≥2 trigger fixtures; found {len(lines)}"
     )
