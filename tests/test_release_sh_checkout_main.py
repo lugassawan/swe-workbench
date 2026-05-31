@@ -41,7 +41,11 @@ def _guard_indices(lines: list[str]) -> list[int]:
 
 
 def _guard_block(lines: list[str], idx: int) -> list[str]:
-    """Return lines from idx up to and including the closing 'fi'."""
+    """Return lines from idx up to and including the closing 'fi'.
+
+    Assumes the guard body contains no nested if/fi pairs.
+    If guard bodies grow nested conditionals, switch to depth tracking.
+    """
     block = []
     for ln in lines[idx:]:
         block.append(ln)
