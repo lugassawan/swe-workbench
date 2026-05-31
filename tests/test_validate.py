@@ -1761,3 +1761,28 @@ class TestCheckNoCycles:
         assert len(validate.FAILURES) >= 1
         combined = " ".join(validate.FAILURES)
         assert "a" in combined and "x" in combined
+
+
+# ──────────────────────────────────────────────
+# No dead superpowers:code-reviewer references
+# ──────────────────────────────────────────────
+
+class TestNoDeadCodeReviewerRef:
+    """superpowers:code-reviewer does not exist; all sites must use
+    superpowers:requesting-code-review (issue #333)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+    DEAD_REF = "superpowers:code-reviewer"
+
+    def test_dead_ref_absent_from_md_files(self):
+        """No *.md file in the repo may reference the non-existent skill name."""
+        hits = [
+            str(p.relative_to(self.REAL_ROOT))
+            for p in self.REAL_ROOT.rglob("*.md")
+            if ".git" not in p.parts
+            and self.DEAD_REF in p.read_text(encoding="utf-8", errors="replace")
+        ]
+        assert hits == [], (
+            f"Found dead skill ref '{self.DEAD_REF}' in {len(hits)} file(s):\n"
+            + "\n".join(f"  {h}" for h in sorted(hits))
+        )

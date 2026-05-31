@@ -69,7 +69,7 @@ Hand off to `swe-workbench:workflow-development` Mode B starting at **Phase 2 (I
 **Phase 3 (Verify):** Run `superpowers:verification-before-completion`. Do not advance until all format / lint / test steps pass with evidence.
 
 **Phase 4 (Review):** Dispatch both reviewers:
-- `superpowers:code-reviewer` — plan-alignment and standards
+- `superpowers:requesting-code-review` — plan-alignment and standards
 - `swe-workbench:reviewer` — diff correctness/security/design
 
 The reviewer must additionally check: **does the diff scope match the captured AC?** Flag scope creep as `Severity: High | scope-creep | <files>` and ask user to confirm or carve out before proceeding.
