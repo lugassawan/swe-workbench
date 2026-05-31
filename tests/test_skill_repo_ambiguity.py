@@ -267,9 +267,8 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
             f"BYLINE must hardcode the tool URL, not interpolate the review-target repo."
         )
 
-        # 4. Fallback SUMMARY must delegate to $BYLINE rather than duplicate the URL string
-        assert 'SUMMARY="$BYLINE"' in body, (
-            f"{skill_name}/SKILL.md fallback SUMMARY does not reuse $BYLINE.\n"
-            f"Expected:  SUMMARY=\"$BYLINE\"\n"
-            f"This keeps the two branches in sync automatically — the URL lives in one place."
+        # 4. SUMMARY construction must reference "$BYLINE" (not duplicate the URL string)
+        assert re.search(r'SUMMARY=\$\(printf .+"\$BYLINE"', body, re.DOTALL), (
+            f"{skill_name}/SKILL.md SUMMARY construction does not reference \"$BYLINE\" in a printf call.\n"
+            f"Expected: SUMMARY=$(printf '...' ... \"$BYLINE\" ...) so the URL lives in one place."
         )

@@ -228,13 +228,39 @@ def test_step7_deferred_informational_appended_to_summary(skill_path):
 
 
 @pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_awk_excludes_blocking_scope_line_from_narrative(skill_path):
-    """The awk narrative-extraction block must exclude the Blocking Scope verdict line."""
+def test_step7_lean_body_no_narrative(skill_path):
+    """Step 7 non-self-review body must use the lean form: no ## Review Summary, no
+    'Detailed feedback in inline comments.', no NARRATIVE extraction variables."""
     text = skill_path.read_text()
-    assert re.search(r"\*\*Blocking Scope:", text), (
-        f"{skill_path.parent.name}: the awk block that extracts $NARRATIVE must contain "
-        "a guard like '/^\\*\\*Blocking Scope:/ {{ exit }}' so the verdict line is "
-        "never captured into the posted review summary"
+    assert "## Review Summary" not in text, (
+        f"{skill_path.parent.name}: '## Review Summary' must not appear — the narrative "
+        "is fully removed; the review body carries only the decision + byline + informational notes."
+    )
+    assert "Detailed feedback in inline comments." not in text, (
+        f"{skill_path.parent.name}: 'Detailed feedback in inline comments.' must not appear — "
+        "this phrase belonged to the removed narrative branch."
+    )
+    assert "HAS_NARRATIVE" not in text, (
+        f"{skill_path.parent.name}: HAS_NARRATIVE variable must be removed along with the "
+        "NARRATIVE extraction block."
+    )
+    assert "Narrative instruction" not in text, (
+        f"{skill_path.parent.name}: 'Narrative instruction' Step-4 bullet must be removed — "
+        "the reviewer is no longer instructed to emit a narrative section."
+    )
+
+
+def test_reviewer_no_review_summary_section():
+    """agents/reviewer.md must no longer contain the ## Review Summary (when instructed) section."""
+    text = REVIEWER_MD.read_text()
+    assert "## Review Summary" not in text, (
+        "agents/reviewer.md still contains '## Review Summary' — delete the entire "
+        "'## Review Summary (when instructed)' block; the orchestrator no longer requests it."
+    )
+    assert "orchestrator extracts these paragraphs" not in text, (
+        "agents/reviewer.md still contains explanatory prose from the deleted "
+        "'## Review Summary (when instructed)' block — the full section must be removed, "
+        "not just the heading."
     )
 
 
