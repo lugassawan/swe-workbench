@@ -80,7 +80,7 @@ to extend `_REF_PATTERN` in `hooks/secret_guard.py`.
 **The hook is blocking a test fixture**
 
 For NEEDS-CONTEXT patterns: add `# nosecret` on each fixture line.
-For HIGH-confidence patterns (GitHub PAT, AWS key ID): `# nosecret` has no effect —
+For HIGH-confidence patterns (GitHub PAT, AWS key ID, PEM private-key header): `# nosecret` has no effect —
 add the file's absolute path to `_ALLOWLIST_SUFFIXES` instead.
 
 **The hook seems to do nothing**
