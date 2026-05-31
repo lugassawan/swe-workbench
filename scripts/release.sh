@@ -49,7 +49,10 @@ case "$CURRENT_BRANCH" in
   main) ;;
   chore/bump-v*)
     echo "Detected in-progress release branch '${CURRENT_BRANCH}'. Switching to main."
-    git checkout main
+    if ! git checkout main; then
+      echo "Error: could not switch to main (checked out in another worktree?)." >&2
+      exit 1
+    fi
     ;;
   *)
     echo "Error: must run from main or a 'chore/bump-v*' resume branch (currently on '${CURRENT_BRANCH}')." >&2
@@ -307,7 +310,10 @@ fi
 
 # ── Sync main + verify merge SHA ─────────────────────────────
 
-git checkout main
+if ! git checkout main; then
+  echo "Error: could not switch to main (checked out in another worktree?)." >&2
+  exit 1
+fi
 git pull --ff-only origin main
 
 MERGE_SHA=""
