@@ -1776,7 +1776,11 @@ class TestNoDeadCodeReviewerRef:
     DEAD_REF = "superpowers:code-reviewer"
 
     def test_dead_ref_absent_from_md_files(self):
-        """No *.md file in the repo may reference the non-existent skill name."""
+        """No *.md file in the repo may reference the non-existent skill name.
+
+        Scope: *.md files only (where all current skill references live).
+        Skill refs in *.py fixture strings are covered by isolation tests.
+        """
         hits = [
             str(p.relative_to(self.REAL_ROOT))
             for p in self.REAL_ROOT.rglob("*.md")
