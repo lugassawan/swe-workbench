@@ -244,6 +244,10 @@ def test_step7_lean_body_no_narrative(skill_path):
         f"{skill_path.parent.name}: HAS_NARRATIVE variable must be removed along with the "
         "NARRATIVE extraction block."
     )
+    assert "Narrative instruction" not in text, (
+        f"{skill_path.parent.name}: 'Narrative instruction' Step-4 bullet must be removed — "
+        "the reviewer is no longer instructed to emit a narrative section."
+    )
 
 
 def test_reviewer_no_review_summary_section():
@@ -252,6 +256,11 @@ def test_reviewer_no_review_summary_section():
     assert "## Review Summary" not in text, (
         "agents/reviewer.md still contains '## Review Summary' — delete the entire "
         "'## Review Summary (when instructed)' block; the orchestrator no longer requests it."
+    )
+    assert "orchestrator extracts these paragraphs" not in text, (
+        "agents/reviewer.md still contains explanatory prose from the deleted "
+        "'## Review Summary (when instructed)' block — the full section must be removed, "
+        "not just the heading."
     )
 
 
