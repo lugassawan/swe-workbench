@@ -37,8 +37,8 @@ def test_command_invokes_skill():
 def test_command_invokes_skill_on_same_line():
     text = CMD_MD.read_text()
     matching = [
-        l for l in text.splitlines()
-        if "invoke" in l.lower() and "workflow-audit-emit-issues" in l
+        line for line in text.splitlines()
+        if "invoke" in line.lower() and "workflow-audit-emit-issues" in line
     ]
     assert matching, (
         "commands/audit-codebase.md must have 'invoke' and 'workflow-audit-emit-issues' on the same line"

@@ -45,7 +45,8 @@ For each finding derive a **subsystem** from `file_line`:
    - `src/auth/handler.ts` → key `src/auth` → label **`auth`**
    - `commands/audit-codebase.md` → key `commands` → label **`commands`**
    - `scripts/validate.py` → key `scripts` → label **`scripts`**
-4. No path (tool-level or unknown finding) → subsystem **`misc`**.
+4. Root-level file (directory portion is empty, e.g. `README.md`) → subsystem **`root`**.
+5. No path (tool-level or unknown finding) → subsystem **`misc`**.
 
 Within each subsystem, sub-group findings by `domain` (security, perf, reliability,
 tooling, testing) to form sections within the issue body.
@@ -123,8 +124,10 @@ Reply `confirm` to file all · `drop N` to remove group N · `edit N` to revise 
 | `edit N` | Show group N's body; accept revised text; rewrite temp file; re-print preview. |
 | anything else | Re-prompt; do **not** file. |
 
-On `gh issue create` failure: surface the error and print the `.cmd` sidecar path for
-manual retry.
+On `gh issue create` failure: surface the error, print the URLs of successfully-filed
+issues so far, and rewrite the `.cmd` sidecar to contain only the remaining (unfiled)
+lines. Print the updated sidecar path for manual retry — do NOT surface the original
+sidecar, as retrying it would duplicate already-filed issues.
 
 ## Output: grouped issue body schema
 

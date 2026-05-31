@@ -172,6 +172,9 @@ _REF_RE = re.compile(r'`swe-workbench:([\w-]+)`')
 _AUDIT_CHAIN = {"workflow-codebase-audit", "workflow-bug-triage"}
 
 
+_PLAIN_AUDIT_RE = re.compile(r'`(workflow-codebase-audit|workflow-bug-triage)`')
+
+
 def test_no_action_verb_to_audit_chain():
     """The new skill must not action-cue into the audit chain (would create a cycle)."""
     text = SKILL_MD.read_text()
@@ -188,6 +191,21 @@ def test_no_action_verb_to_audit_chain():
                 f"Line contains an action verb targeting audit-chain skill(s) {pytest_fail} — "
                 "this creates a dependency cycle. Use pointer words only (see, mirrors, etc.).\n"
                 f"  Line: {line.strip()}"
+            )
+
+
+def test_no_action_verb_to_audit_chain_plain_refs():
+    """Plain backtick refs (no swe-workbench: prefix) are invisible to _REF_RE but still
+    resolve in validate.py — guard those too."""
+    text = SKILL_MD.read_text()
+    for line in text.splitlines():
+        if line.lstrip().startswith("@"):
+            continue
+        if not _PLAIN_AUDIT_RE.search(line):
+            continue
+        if _ACTION_RE.search(line) and not _POINTER_RE.search(line):
+            assert False, (
+                f"Plain ref with action verb — potential back-edge: {line.strip()}"
             )
 
 
