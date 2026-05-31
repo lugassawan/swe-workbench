@@ -2,6 +2,7 @@
 
 All `swe-workbench` workflow and integration skills available in this plugin. Use the `Skill` tool to invoke any of these.
 
+- `swe-workbench:workflow-audit-emit-issues` — Post-audit filing: groups codebase audit findings by subsystem (path prefix), discovers issue templates and labels, renders a batch preview, and files one GitHub issue per subsystem on `confirm`. Counterpart to `workflow-codebase-audit` (read-only); filing mirrors `workflow-bug-triage` Phase 4.
 - `swe-workbench:workflow-bug-triage` — Investigate-and-file-issue counterpart to /debug. Iron Law (no fix without root cause), 4-phase loop, files structured issue with code-path table and impact assessment.
 - `swe-workbench:workflow-cleanup-merged` — Post-merge cleanup: fast-forward main (which auto-cleans via rimba post-merge hook when active), then verify; falls back to `rimba remove` or `git worktree` shell path; deletes local + remote branch.
 - `swe-workbench:workflow-codebase-audit` — Cold-start, time-boxed, multi-axis audit sweep with ranked findings, reasoning chains, and counter-evidence calibration.

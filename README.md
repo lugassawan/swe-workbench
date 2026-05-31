@@ -31,7 +31,7 @@ cd swe-workbench
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security — auto-hint by trigger keyword.
 - **Languages** — Bash, C#, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript — auto-hint by file extension (subagents load deterministically via catalog injection).
 - **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.
-- **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle.
+- **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle; `workflow-audit-emit-issues` files grouped GitHub issues from codebase audit findings.
 
 Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide and philosophy → [docs/extending.md](docs/extending.md). Runtime dependencies → [docs/dependencies.md](docs/dependencies.md).
 
