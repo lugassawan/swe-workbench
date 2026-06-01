@@ -388,11 +388,20 @@ class TestPerformanceTunerAgent:
         """The inline '## Boundaries vs. other agents' table is the sole source of truth.
 
         agents/shared/agent-boundaries.md was removed in issue #337 (0 @-include consumers).
-        This test asserts the expected boundary agents are present in the inline table so
+        This test asserts the expected boundary agents are present in the table section so
         drift is still caught — without needing a second copy of the data.
         """
         import re
         perf_text = self.AGENT_PATH.read_text(encoding="utf-8")
+        section_match = re.search(
+            r"## Boundaries vs\. other agents\n(.*?)(?=\n## |\Z)",
+            perf_text,
+            re.DOTALL,
+        )
+        assert section_match, (
+            "## Boundaries vs. other agents section not found in performance-tuner.md"
+        )
+        section_text = section_match.group(1)
         expected_agents = [
             "`reviewer`",
             "`auditor`",
@@ -401,7 +410,7 @@ class TestPerformanceTunerAgent:
             "`dependency-auditor`",
             "`refactorer`",
         ]
-        missing = [agent for agent in expected_agents if agent not in perf_text]
+        missing = [agent for agent in expected_agents if agent not in section_text]
         assert not missing, (
             f"performance-tuner.md is missing boundary rows for: {missing}. "
             "The inline '## Boundaries vs. other agents' table is the sole source of truth."
