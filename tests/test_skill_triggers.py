@@ -279,7 +279,7 @@ def test_plan_execution_prompt_prefers_wrapper():
         "Add 'execute a written implementation plan' to the workflow-development "
         "description so the wrapper claims its own trigger surface."
     )
-    margin = scores["workflow-development"] - scores["executing-plans"]
+    margin = scores["workflow-development"] - scores.get("executing-plans", 0.0)
     assert margin >= _SCORE_MARGIN, (
         f"workflow-development ranks #1 but margin over executing-plans is only "
         f"{margin:.3f} (< {_SCORE_MARGIN}). IDF drift may flip this — "
