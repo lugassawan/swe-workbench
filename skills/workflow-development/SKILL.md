@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, and /swe-workbench:test when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
+description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Entry point to execute a written implementation plan end to end: wraps superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, and /swe-workbench:test when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
 orchestrator: true
 ---
 
@@ -17,7 +17,7 @@ Single source of truth for how development work flows. Three modes:
 ## When This Skill Activates
 
 - **Mode A:** Writing or finalizing an implementation plan (before `ExitPlanMode`)
-- **Mode B:** User says "implement this", "build this" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
+- **Mode B:** User says "implement this", "build this", "execute this plan", "run the implementation plan end to end" — any branch → code → deliver flow. **Prefer entering here rather than calling `superpowers:executing-plans` directly** — Phase 2 already delegates to it while adding the surrounding Branch → Verify → Review → Deliver lifecycle. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
 - **Mode C:** User says "orchestrate these issues", "run in parallel", multi-issue campaigns with >3 issues
 
 ## Sub-Skill Integration Map
