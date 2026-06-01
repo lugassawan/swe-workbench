@@ -3,4 +3,4 @@ implement this feature using the full development workflow branch implement veri
 use /swe-workbench:implement to build out this ticket end to end
 start the full implementation lifecycle for this issue including branching and PR
 drive this feature from plan to delivered pull request using the development workflow
-i already have a written implementation plan execute it end to end with branch verify review and pr
+already have a written implementation plan execute it end to end with branch verify review and pr

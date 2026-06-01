@@ -249,7 +249,11 @@ def test_plan_execution_prompt_prefers_wrapper():
     fm = parse_frontmatter(skill_md)
     assert fm and "description" in fm, "workflow-development SKILL.md missing description"
 
+    # Calibration (pre-fix): old description scored wf≈2.26, ep≈4.91 — executing-plans won.
+    # After fix: wf≈4.74, ep≈2.91 — margin ~1.82, well above _SCORE_MARGIN=0.1.
+    #
     # Frozen snapshot — intentionally not read from the vendored cache.
+    # Snapshot taken 2026-06-01. Re-verify if superpowers:executing-plans description changes.
     executing_plans_frozen = (
         "Use when you have a written implementation plan to execute "
         "in a separate session with review checkpoints"
