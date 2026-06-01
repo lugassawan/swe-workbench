@@ -52,8 +52,8 @@ def test_branch_section_uses_3tier_detection():
         "Tier 1 detection must reference 'git branch -a' to infer dominant prefix from history"
     )
 
-    assert re.search(r"commit type.set|type.set|derived? from.{0,30}commit", section, re.IGNORECASE), (
-        "Tier 2 detection must describe deriving branch prefix from detected commit type-set"
+    assert "commit type-set" in section or re.search(r"type.set.*commit|commit.*type.set", section, re.IGNORECASE), (
+        "Tier 2 detection must reference the 'commit type-set' concept explicitly"
     )
 
     assert re.search(r"<type>/<kebab>|type/kebab", section), (

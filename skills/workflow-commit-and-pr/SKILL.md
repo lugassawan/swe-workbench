@@ -45,7 +45,7 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
    - `type(scope): subject` (Conventional Commits)
    - `JIRA-123: subject` (JIRA-prefix style)
    Apply whichever convention the hook enforces for this host repo.
-2. If no commit-msg hook exists, run `git log --oneline -20` and tally leading prefix shapes: `[type]` → swe-workbench; `type(scope):` / `type:` → Conventional Commits; `TICKET-123:` → JIRA-prefix. Pick the **dominant** shape (plurality wins); note **scope** usage. Default to Conventional Commits only when no shape reaches a plurality.
+2. If no commit-msg hook exists, run `git log --oneline -20` and tally leading prefix shapes: `[type]` → swe-workbench; `type(scope):` / `type:` → Conventional Commits; `TICKET-123:` → JIRA-prefix. Pick the **dominant** shape (plurality wins); note **scope** usage (when >50% of Conventional Commits samples carry a `(scope)`, include a scope in generated commit messages, derived from the changed subsystem or file path). Default to Conventional Commits only when no shape reaches a plurality.
 3. If both fail (new repo, empty history), ask the user which convention to follow.
 
 **When the host repo uses the swe-workbench plugin's `[type] Subject` convention**, the enforcing regex is (load-bearing — quote, do not re-derive):
