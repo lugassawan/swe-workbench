@@ -394,7 +394,7 @@ class TestPerformanceTunerAgent:
         import re
         perf_text = self.AGENT_PATH.read_text(encoding="utf-8")
         section_match = re.search(
-            r"## Boundaries vs\. other agents\n(.*?)(?=\n## |\Z)",
+            r"## Boundaries vs\. other agents\n(.*?)(?=\n+## |\Z)",
             perf_text,
             re.DOTALL,
         )
