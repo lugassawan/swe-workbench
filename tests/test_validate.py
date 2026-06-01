@@ -377,32 +377,34 @@ class TestPerformanceTunerAgent:
             "agents/performance-tuner.md must have a '## Boundaries vs. other agents' table section (O7)"
         )
 
-    def test_shared_agent_boundaries_file_exists(self):
+    def test_shared_agent_boundaries_file_absent(self):
         shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
-        assert shared.exists(), (
-            "agents/shared/agent-boundaries.md must exist as canonical source (O7, issue #235)"
+        assert not shared.exists(), (
+            "agents/shared/agent-boundaries.md was an orphan with 0 consumers and has been removed. "
+            "The inline table in performance-tuner.md is the sole source of truth (issue #337)."
         )
 
-    def test_boundaries_table_content_parity(self):
-        """Every agent-name cell in agent-boundaries.md must appear in performance-tuner.md.
+    def test_boundaries_table_completeness(self):
+        """The inline '## Boundaries vs. other agents' table is the sole source of truth.
 
-        Since @./ is pointer-only (not runtime-transclusion), the inline table in
-        performance-tuner.md is the source the model sees. This test detects silent drift
-        between the canonical shared doc and its inline copy.
+        agents/shared/agent-boundaries.md was removed in issue #337 (0 @-include consumers).
+        This test asserts the expected boundary agents are present in the inline table so
+        drift is still caught — without needing a second copy of the data.
         """
         import re
-        shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
-        shared_text = shared.read_text(encoding="utf-8")
         perf_text = self.AGENT_PATH.read_text(encoding="utf-8")
-        # Extract the first cell (agent name) of each data row in the shared table.
-        # Table rows look like: | `agent-name` | ... | ... |
-        agent_cells = re.findall(r'^\|\s*(`[^`]+`)\s*\|', shared_text, re.MULTILINE)
-        assert agent_cells, "agent-boundaries.md must contain at least one table row"
-        missing = [cell for cell in agent_cells if cell not in perf_text]
+        expected_agents = [
+            "`reviewer`",
+            "`auditor`",
+            "`architect`",
+            "`debugger`",
+            "`dependency-auditor`",
+            "`refactorer`",
+        ]
+        missing = [agent for agent in expected_agents if agent not in perf_text]
         assert not missing, (
             f"performance-tuner.md is missing boundary rows for: {missing}. "
-            "Update the inline '## Boundaries vs. other agents' table to match "
-            "agents/shared/agent-boundaries.md (canonical source)."
+            "The inline '## Boundaries vs. other agents' table is the sole source of truth."
         )
 
     def test_profile_first_rule_present(self):
