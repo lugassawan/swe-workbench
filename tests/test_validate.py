@@ -1802,3 +1802,37 @@ class TestNoDeadCodeReviewerRef:
             f"Found dead skill ref '{self.DEAD_REF}' in {len(hits)} file(s):\n"
             + "\n".join(f"  {h}" for h in sorted(hits))
         )
+
+
+class TestNoPhantomSkillsCatalogRef:
+    """agents/shared/skills.md never existed after the catalog was split into
+    principles.md / languages.md / workflows.md (issue #334). No doc may send
+    contributors to it, and the onboarding docs must point at a real slice."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+    PHANTOM_REF = "shared/skills.md"
+    ONBOARDING_DOCS = ("CONTRIBUTING.md", "docs/extending.md")
+    SLICE_FILES = ("principles.md", "languages.md", "workflows.md")
+
+    def test_phantom_ref_absent_from_md_files(self):
+        hits = [
+            str(p.relative_to(self.REAL_ROOT))
+            for p in self.REAL_ROOT.rglob("*.md")
+            if ".git" not in p.parts
+            and self.PHANTOM_REF in p.read_text(encoding="utf-8", errors="replace")
+        ]
+        assert hits == [], (
+            f"Found phantom catalog ref '{self.PHANTOM_REF}' in {len(hits)} file(s):\n"
+            + "\n".join(f"  {h}" for h in sorted(hits))
+        )
+
+    def test_onboarding_docs_point_at_real_slice(self):
+        failures = []
+        for rel in self.ONBOARDING_DOCS:
+            text = (self.REAL_ROOT / rel).read_text(encoding="utf-8")
+            if not any(f"shared/{s}" in text for s in self.SLICE_FILES):
+                failures.append(rel)
+        assert not failures, (
+            f"Missing real catalog slice reference in: {', '.join(failures)}. "
+            f"Expected one of: {', '.join(self.SLICE_FILES)}"
+        )
