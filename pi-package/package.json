@@ -1,0 +1,32 @@
+{
+  "name": "pi-swe-workbench",
+  "version": "0.1.16-pi.0",
+  "description": "Pi package port of swe-workbench: senior-engineer commands, skills, agent-role skills, and safety hooks adapted for pi.",
+  "author": {
+    "name": "Lugas Septiawan",
+    "email": "11341007+lugassawan@users.noreply.github.com",
+    "url": "https://github.com/lugassawan"
+  },
+  "homepage": "https://github.com/lugassawan/swe-workbench",
+  "repository": "https://github.com/lugassawan/swe-workbench",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "swe-workbench",
+    "software-engineering",
+    "clean-architecture",
+    "ddd",
+    "tdd",
+    "solid"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills", "./agent-skills"],
+    "prompts": ["./prompts"]
+  }
+}

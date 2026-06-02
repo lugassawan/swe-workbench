@@ -1,0 +1,62 @@
+{
+  "name": "pi-swe-workbench",
+  "version": "0.1.16-pi.0",
+  "description": "Pi package port of SWE Workbench: senior-engineer prompts, skills, agent-role skills, and safety hooks adapted for pi.",
+  "author": {
+    "name": "Lugas Septiawan",
+    "email": "11341007+lugassawan@users.noreply.github.com",
+    "url": "https://github.com/lugassawan"
+  },
+  "homepage": "https://github.com/lugassawan/swe-workbench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lugassawan/swe-workbench.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "swe-workbench",
+    "software-engineering",
+    "clean-architecture",
+    "ddd",
+    "tdd",
+    "solid",
+    "code-review",
+    "claude-code"
+  ],
+  "files": [
+    "LICENSE",
+    "README.md",
+    "docs/",
+    "skills/",
+    "pi-package/README.md",
+    "pi-package/extensions/",
+    "pi-package/prompts/",
+    "pi-package/agent-skills/"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "validate": "./scripts/validate.sh",
+    "typecheck:pi": "tsc --noEmit --skipLibCheck --moduleResolution node16 --module Node16 --target ES2022 --types node pi-package/extensions/index.ts",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "pi": {
+    "extensions": [
+      "./pi-package/extensions"
+    ],
+    "skills": [
+      "./skills",
+      "./pi-package/agent-skills"
+    ],
+    "prompts": [
+      "./pi-package/prompts"
+    ]
+  }
+}
