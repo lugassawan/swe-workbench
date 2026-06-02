@@ -1,5 +1,5 @@
 {
-  "name": "pi-swe-workbench",
+  "name": "swe-workbench",
   "version": "0.1.16-pi.0",
   "description": "Pi package port of SWE Workbench: senior-engineer prompts, skills, agent-role skills, and safety hooks adapted for pi.",
   "author": {

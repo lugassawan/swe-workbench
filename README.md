@@ -31,7 +31,7 @@ cd swe-workbench
 This repository also contains a publishable pi package manifest aligned with pi package discovery (`package.json` + `pi` resources). After publishing to npm / pi.dev packages, install with:
 
 ```
-pi install npm:pi-swe-workbench
+pi install npm:swe-workbench
 ```
 
 For local development or smoke testing:
