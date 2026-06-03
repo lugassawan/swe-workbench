@@ -249,6 +249,14 @@ def test_process_scans_sibling_files_before_placing_type():
         "(look for 'sibling', or 'Grep'/'Glob' combined with 'package'/'convention') "
         "before placing a new type"
     )
+    # Positional guard: scan mention must precede the placement instruction
+    scan_idx = section.lower().find("sibling") if has_sibling else (
+        section.lower().find("grep") if has_grep_or_glob else -1
+    )
+    place_idx = section.lower().find("place")
+    assert scan_idx != -1 and (place_idx == -1 or scan_idx < place_idx), (
+        "Sibling scan instruction must appear before placement instruction in '## Process'"
+    )
 
 
 def test_output_contract_has_placement_field():

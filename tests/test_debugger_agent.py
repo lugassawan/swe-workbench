@@ -1,6 +1,5 @@
 """Structural tests for agents/debugger.md (closes #404)."""
 
-import re
 from pathlib import Path
 
 import validate
@@ -67,29 +66,33 @@ def test_tools_includes_edit_and_skill():
 
 
 def test_absolute_rules_mention_sibling_convention():
-    """Absolute rules must mention sibling convention for new type placement."""
+    """Absolute rules must mention scanning sibling files for new type placement."""
     body = _read()
     section = _section(body, "Absolute rules")
-    assert (
-        "sibling" in section.lower()
-        or "package" in section.lower()
-        or "convention" in section.lower()
-    ), (
-        "'## Absolute rules' must mention sibling convention for new type placement "
-        "(look for 'sibling', 'package', or 'convention') so the agent follows "
-        "the package structure discipline when a fix introduces a new type"
+    assert "sibling" in section.lower(), (
+        "'## Absolute rules' must mention scanning sibling files for new type placement "
+        "so the agent follows the package structure discipline when a fix introduces a new type"
     )
 
 
 def test_minimal_fix_line_notes_placement_choice():
-    """Output contract must note that placement choice is reported in the minimal-fix line."""
+    """The Minimal-fix output-contract line must mention placement choice."""
     body = _read()
     section = _section(body, "Output contract")
-    assert (
-        "placement" in section.lower()
-        or "note the choice" in section.lower()
-    ), (
-        "'## Output contract' must contain text about noting placement in the "
-        "minimal-fix output line (look for 'placement' or 'note the choice') "
+    lines = section.splitlines()
+    minimal_fix_line = next(
+        (ln for ln in lines if "minimal fix" in ln.lower()), ""
+    )
+    assert "placement" in minimal_fix_line.lower(), (
+        "The 'Minimal fix' output-contract line must mention placement choice "
         "so reviewers know where a new type introduced by the fix was placed"
+    )
+
+
+def test_principle_clean_architecture_referenced():
+    """agents/debugger.md must reference swe-workbench:principle-clean-architecture."""
+    body = _read()
+    assert "swe-workbench:principle-clean-architecture" in body, (
+        "agents/debugger.md must reference 'swe-workbench:principle-clean-architecture' "
+        "for the placement fallback when sibling structure is incoherent"
     )
