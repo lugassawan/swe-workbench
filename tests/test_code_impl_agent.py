@@ -229,3 +229,64 @@ def test_registered_in_readme_subagents_bullet():
     assert "code-impl" in subagents_line, (
         "README.md '- **Subagents**' bullet must include 'code-impl'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Placement guidance
+# ---------------------------------------------------------------------------
+
+
+def test_process_scans_sibling_files_before_placing_type():
+    """Process must instruct the agent to scan sibling files before placing a new type."""
+    body = _read()
+    section = _section(body, "Process")
+    # Look for words indicating sibling-file scanning combined with package/convention context
+    has_sibling = "sibling" in section.lower()
+    has_grep_or_glob = "grep" in section.lower() or "glob" in section.lower()
+    has_package_or_convention = "package" in section.lower() or "convention" in section.lower()
+    assert has_sibling or (has_grep_or_glob and has_package_or_convention), (
+        "'## Process' must instruct the agent to scan/read sibling files "
+        "(look for 'sibling', or 'Grep'/'Glob' combined with 'package'/'convention') "
+        "before placing a new type"
+    )
+    # Positional guard: scan mention must precede the placement instruction.
+    # Use the earliest occurrence of any scan keyword — anchor-agnostic so the
+    # guard stays valid if future prose renames "sibling" but retains Grep/Glob.
+    s = section.lower()
+    scan_idx = min(
+        (i for kw in ("sibling", "grep", "glob") if (i := s.find(kw)) != -1),
+        default=-1,
+    )
+    place_idx = s.find("place")
+    assert scan_idx != -1 and (place_idx == -1 or scan_idx < place_idx), (
+        "Sibling scan instruction must appear before placement instruction in '## Process'"
+    )
+
+
+def test_output_contract_has_placement_field():
+    """The output contract fenced block must include a placement: field."""
+    body = _read()
+    section = _section(body, "Output contract")
+    assert "placement:" in section, (
+        "'## Output contract' fenced code block must include a 'placement:' field "
+        "so the agent records where a new type was placed"
+    )
+
+
+def test_principle_clean_architecture_referenced():
+    """agents/code-impl.md must reference swe-workbench:principle-clean-architecture."""
+    body = _read()
+    assert "swe-workbench:principle-clean-architecture" in body, (
+        "agents/code-impl.md must reference 'swe-workbench:principle-clean-architecture' "
+        "so implementers apply layer/boundary discipline when placing types"
+    )
+
+
+def test_process_covers_nested_and_inner_types():
+    """Process must mention nested or inner type handling."""
+    body = _read()
+    section = _section(body, "Process")
+    assert "nested" in section.lower() or "inner" in section.lower(), (
+        "'## Process' must mention nested or inner types so the agent knows "
+        "how to handle type definitions that belong inside an existing class/module"
+    )
