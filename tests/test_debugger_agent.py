@@ -62,7 +62,7 @@ def test_tools_includes_edit_and_skill():
 
 
 # ---------------------------------------------------------------------------
-# Placement guidance — TDD red phase (new guidance not yet written)
+# Placement guidance
 # ---------------------------------------------------------------------------
 
 

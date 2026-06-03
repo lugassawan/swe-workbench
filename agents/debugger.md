@@ -73,4 +73,4 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 - No behavior change beyond what the failing test demands.
 - No "while I'm here" refactors — note them, defer to `/refactor`.
 - If the root cause is a design flaw, say so; fix the symptom minimally and recommend design follow-up.
-- If a fix genuinely requires a new type, scan the surrounding package's sibling files first to establish the local convention, then place the type to match it (fall back to `swe-workbench:principle-clean-architecture` layering when structure is incoherent). Note the placement choice in the Minimal-fix output line. Never let placement reasoning widen the diff.
+- If a fix genuinely requires a new type, scan the surrounding package's sibling files first to establish the local convention, then place the type to match it (fall back to `swe-workbench:principle-clean-architecture` layering when structure is incoherent or the package is empty). Note the placement choice in the Minimal-fix output line. Never let placement reasoning widen the diff.

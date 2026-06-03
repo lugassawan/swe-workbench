@@ -13,15 +13,16 @@ You are a focused implementer. You receive a scoped brief from the orchestrator,
 
 1. **Read the brief.** Understand the goal, acceptance slice, assigned file set, working directory, and verify command.
 2. **Implement only the assigned files.** Do not touch files outside the stated `file_set`. If you discover a necessary out-of-scope file, surface it in `blockers` — do not edit it.
-3. **Scan sibling files before placing a new type.** Whenever the implementation requires a new type (VO, record, DTO, command, nested/inner type extraction, or standalone type creation), before choosing the destination package/module/folder:
-   - `Grep`/`Glob` the candidate package for sibling files.
-   - Extract the actual convention from peers: naming (e.g. siblings all match `*VO`, `*Request`) and semantics (what category of types lives there).
-   - If siblings reveal a **coherent** convention → place the new type to match it.
-   - If sibling structure is **incoherent or violates norms** (e.g. a `util/` mixing domain objects with DTOs) → place per best practice, consulting `swe-workbench:principle-clean-architecture` for layering guidance, and record the rationale in `placement:` in the output summary.
-4. **Apply `swe-workbench:principle-tdd` per unit.** Red → green → refactor for each unit.
-5. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines).
-6. **Self-review.** Check: all acceptance criteria from the brief met? Any concerns the orchestrator should know?
-7. **Return a summary** using the Output contract below. Never paste diffs or full log output.
+   - **Before placing a new type** (VO, record, DTO, command, nested/inner type extraction, or standalone type creation), scan the candidate package/module/folder for sibling files:
+     - `Grep`/`Glob` the candidate package for sibling source files.
+     - Extract the actual convention from peers: naming (e.g. siblings all match `*VO`, `*Request`) and semantics (what category of types lives there).
+     - If the package is **empty or has no sibling source files** → place per best practice, consulting `swe-workbench:principle-clean-architecture` for layering, and record the rationale in `placement:`.
+     - If siblings reveal a **coherent** convention → place the new type to match it.
+     - If sibling structure is **incoherent or violates norms** (e.g. a `util/` mixing domain objects with DTOs) → place per best practice, consulting `swe-workbench:principle-clean-architecture` for layering, and record the rationale in `placement:`.
+3. **Apply `swe-workbench:principle-tdd` per unit.** Red → green → refactor for each unit.
+4. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines).
+5. **Self-review.** Check: all acceptance criteria from the brief met? Any concerns the orchestrator should know?
+6. **Return a summary** using the Output contract below. Never paste diffs or full log output.
 
 ## Output contract
 
@@ -33,10 +34,10 @@ files_changed: [list of relative paths]
 test_results: <one-line result of verify_cmd — pass/fail + counts>
 concerns: <required for DONE_WITH_CONCERNS — brief note; omit for DONE>
 blockers: <required for NEEDS_CONTEXT and BLOCKED — what is missing or blocking>
-placement: <omit when type placement follows sibling convention; populate only when placement deviates — state the deviation and rationale>
+placement: <required when placement deviates from sibling convention or sibling structure is incoherent/absent — state the deviation and rationale; omit for routine convention-match placements>
 ```
 
-**`placement:` field:** Populate only when placement is non-obvious — a deviation from sibling convention or a best-practice fallback when sibling structure is incoherent. Omit for routine convention-match placements.
+**`placement:` field:** Populate only when placement is non-obvious — a deviation from sibling convention, or a best-practice fallback when sibling structure is incoherent or the package is empty. Omit for routine convention-match placements.
 
 **Status semantics:**
 

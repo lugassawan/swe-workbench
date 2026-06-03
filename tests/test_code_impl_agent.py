@@ -232,7 +232,7 @@ def test_registered_in_readme_subagents_bullet():
 
 
 # ---------------------------------------------------------------------------
-# Placement guidance — TDD red phase (new guidance not yet written)
+# Placement guidance
 # ---------------------------------------------------------------------------
 
 
