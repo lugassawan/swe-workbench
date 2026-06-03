@@ -18,7 +18,7 @@ If `$ARGUMENTS` is **empty**, do NOT error. Instead:
 
 1. **Scan the current conversation** for actionable plugin-related thoughts: frustrations, lessons learned, complaints about plugin behaviour, feature ideas, or pain points. Collect up to 3 candidates with a one-line framing each.
 
-2. If conversation yields fewer than 3, **scan memory** at `~/.claude/projects/<project-slug>/memory/MEMORY.md` (where `<project-slug>` is derived from the current working directory path by replacing each `/` with `-`, then stripping any resulting leading `-`; e.g. `/Users/foo/bar` → `Users-foo-bar`). Follow symlinks to `feedback_*.md` and `project_*.md` entries referenced there. Collect additional candidates until you have up to 3, prioritising entries that mention the plugin, commands, agents, or skills by name.
+2. If conversation yields fewer than 3, inspect pi-accessible project notes or context files that are already available in the current workspace/session. Collect additional candidates until you have up to 3, prioritising entries that mention the plugin, commands, agents, or skills by name. Do not assume Claude Code cache paths exist in pi.
 
 3. Present candidates numbered 1–N (max 3) with a one-line framing each:
    ```
@@ -68,12 +68,12 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
    ```markdown
    ---
-   _Reported via `/swe-workbench:report-issue` — plugin v<version>, Claude Code <cli-version>._
+   _Reported via `/report-issue` — package v<version>, pi <cli-version>._
    ```
 
    **Version capture (run once, before drafting):**
-   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
-   - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
+   - **Plugin/package version:** read the local root `package.json` when available (`python3 -c "import json; print(json.load(open('package.json'))['version'])"`). If unavailable, fall back to the repository's `.claude-plugin/plugin.json` via `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
+   - **pi version:** `pi --version` when available; otherwise record `pi version unavailable`.
 
 8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it. Write the body to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write a one-line command to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path> --label "<matched-label>"`; when no label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path>` (no `--label` segment). Then print:
    ```

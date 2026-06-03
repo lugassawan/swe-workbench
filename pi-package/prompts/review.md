@@ -81,7 +81,7 @@ Ground judgements in SOLID and Clean Architecture principles. Do not nitpick for
 
 ## PR mode
 
-**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool, passing the resolved PR number.
+**When `--mode` is absent or `--mode general`:** load the packaged `workflow-pr-review` skill (for example `/skill:workflow-pr-review <PR>` when skill commands are enabled) with the resolved PR number.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `/tmp/swe-workbench-pr-review/<N>`, ticket-context chain, reviewer invocation with footer instruction, decision-footer parsing, GraphQL thread fetch + dedup + REST inline-comment post, `gh pr review --approve|--comment` submission, non-blocking cleanup. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and failure-mode handling.
 
@@ -95,6 +95,6 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings, posts only truly-new inline comments, and submits APPROVE or COMMENT.
 
-Invoke `swe-workbench:workflow-pr-review-followup` via the `Skill` tool, passing the resolved PR number.
+Load the packaged `workflow-pr-review-followup` skill (for example `/skill:workflow-pr-review-followup <PR>` when skill commands are enabled) with the resolved PR number.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), posts only truly-new inline comments, and submits an APPROVE or COMMENT review event. See `skills/workflow-pr-review-followup/SKILL.md` for the full 7-step contract.

@@ -28,6 +28,7 @@
   "files": [
     "LICENSE",
     "README.md",
+    "tsconfig.pi.json",
     "docs/",
     "skills/",
     "pi-package/README.md",
@@ -40,10 +41,11 @@
   },
   "scripts": {
     "validate": "./scripts/validate.sh",
-    "typecheck:pi": "tsc --noEmit --skipLibCheck --moduleResolution node16 --module Node16 --target ES2022 --types node pi-package/extensions/index.ts",
+    "typecheck:pi": "tsc -p tsconfig.pi.json",
     "pack:dry-run": "npm pack --dry-run"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   },

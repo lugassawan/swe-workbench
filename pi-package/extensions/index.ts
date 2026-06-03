@@ -24,7 +24,7 @@ const LANGUAGE_SKILLS: Record<string, string> = {
   cs: "language-csharp",
 };
 
-const hintedSkills = new Set<string>();
+let hintedSkills = new Set<string>();
 
 function stringField(input: ToolInput, key: string): string {
   const value = input[key];
@@ -32,7 +32,7 @@ function stringField(input: ToolInput, key: string): string {
 }
 
 function normalizeCommand(command: string): string {
-  return command.replace(/[;|&]/g, " ").replace(/[\"'()\[\]{}]/g, "");
+  return command.replace(/[;|&`$]/g, " ").replace(/[\"'()\[\]{}]/g, "");
 }
 
 function protectedBranchReset(command: string): boolean {
@@ -85,7 +85,7 @@ function scanSecret(content: string): { name: string; line: number; needsContext
     const suppressed = noSecretPattern.test(line);
     const isReference = refPattern.test(line);
     for (const item of secretPatterns) {
-      if (item.needsContext && (suppressed || isReference)) continue;
+      if (suppressed || (item.needsContext && isReference)) continue;
       if (item.pattern.test(line)) return { name: item.name, line: index + 1, needsContext: item.needsContext };
     }
   }
@@ -145,7 +145,7 @@ export default function sweWorkbenchPi(pi: ExtensionAPI) {
     }
 
     if (toolName === "write" || toolName === "edit") {
-      const reason = blockReasonForSecret(event.toolName, input);
+      const reason = blockReasonForSecret(toolName, input);
       if (reason) return { block: true, reason };
     }
 
@@ -157,6 +157,7 @@ export default function sweWorkbenchPi(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    hintedSkills = new Set<string>();
     ctx.ui.setStatus("swe-workbench", "loaded");
   });
 }

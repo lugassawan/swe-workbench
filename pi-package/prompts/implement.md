@@ -17,6 +17,9 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
+
+**Pi fallback mapping for Claude-only `superpowers:*` references:** if a referenced `superpowers:*` skill is unavailable in pi, perform the described behavior directly with pi tools and packaged SWE Workbench skills: use git worktrees or the current branch for work isolation, write an explicit plan in the conversation or a requested file, execute the plan step-by-step with tests first where practical, run concrete verification commands before claiming completion, and use packaged `agent-reviewer` / review skills for review.
+
 Activate the `swe-workbench:workflow-development` skill in **Mode B (Implementation-Time Behavior)**. Execute all five phases in order:
 
 **Phase 1 — Branch**
