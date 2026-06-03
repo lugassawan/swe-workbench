@@ -9,7 +9,7 @@ primary constructors (C# 12) eliminate boilerplate for simple injection.
 
 ```cs
 // file: Product.cs
-public sealed record Product(int Id, string Name, string Category, double Price);
+public sealed record Product(int Id, string Name, string Category, decimal Price);
 ```
 
 ```cs
@@ -19,10 +19,8 @@ using System.Linq;
 
 public class ProductModel(IReadOnlyList<Product> products)
 {
-    private readonly IReadOnlyList<Product> _products = products;
-
     public IReadOnlyList<Product> ByCategory(string category) =>
-        _products.Where(p => p.Category == category).ToList().AsReadOnly();
+        products.Where(p => p.Category == category).ToList().AsReadOnly();
 }
 ```
 
