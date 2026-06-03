@@ -13,7 +13,7 @@ struct Product {
     let id: Int
     let name: String
     let category: String
-    let price: Double
+    let price: Double  // Double used for simplicity; production money values prefer Decimal
 }
 ```
 
