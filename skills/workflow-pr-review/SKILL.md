@@ -171,7 +171,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 ### Step 7 — Submit + cleanup
 
-Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
+Build the lean review body `$SUMMARY` — decision line + byline only. Findings are already posted as inline comments in Step 6; do NOT restate them here:
 
 ```bash
 if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then

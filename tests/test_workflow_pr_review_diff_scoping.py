@@ -248,6 +248,11 @@ def test_step7_lean_body_no_narrative(skill_path):
         f"{skill_path.parent.name}: 'Narrative instruction' Step-4 bullet must be removed — "
         "the reviewer is no longer instructed to emit a narrative section."
     )
+    assert "$REVIEWER_OUTPUT" not in text, (
+        f"{skill_path.parent.name}: '$REVIEWER_OUTPUT' is a dangling reference left by the "
+        "narrative removal (#391) — the lean body is built from $DECISION/$BYLINE only, not "
+        "from reviewer output. Remove the stale Step 7 prose that names it."
+    )
 
 
 def test_reviewer_no_review_summary_section():
