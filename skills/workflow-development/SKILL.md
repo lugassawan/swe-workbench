@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end: delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
+description: "Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end — delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C)."
 orchestrator: true
 ---
 
@@ -132,10 +132,18 @@ Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMB
 
 Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land. If two services tie, prefer the service that owns the primary interface changed (e.g. the API layer for a contract change, the UI layer for a rendering change); only omit the scope entirely if no service file is touched at all (e.g. a root-only CI config change).
 
-**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
+**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree. `Path: <abs-path>` is printed **before deps** install begins (after the create + copy steps). Coding may start as soon as `Path:` appears; running the test suite requires installed packages, so wait for `rimba add` to fully complete before running tests.
 
-- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before entering Phase 2. This applies regardless of whether the plan is TDD-first — if the test suite needs installed packages, rimba must finish first.
+- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before running the test suite. This applies regardless of whether the plan is TDD-first — if tests need installed packages, rimba must finish first.
 - **No deps needed:** pass `--skip-deps` and `--skip-hooks` only when the test suite requires no installation step (e.g. pure shell scripts, documentation assertion tests). Never skip deps and then reinstall them manually — rimba's pipeline already handles it correctly.
+
+**Reclaim install time (large/monorepo deps)** — `Path:` is available before deps finish, so on a long install you can implement during the wait:
+1. Run `rimba add`; if install will take a while, let it continue in the **background** (the Bash tool backgrounds long-running commands) so the session is free to code.
+2. As soon as `Path: <abs-path>` appears, enter the worktree and implement the planned changes.
+3. **Do not run the test suite until `rimba add` has fully completed** — RED/GREEN need installed deps.
+4. Reconcile with TDD once rimba finishes: `git stash` your implementation → write the failing test → run (**RED** — fails with implementation stashed, confirming the test exercises the new behaviour) → `git stash pop` → run again (**GREEN**).
+
+Skip this optimisation when install is fast, `--skip-deps`/`--skip-hooks` already apply (no wait), or `post_create` hooks rewrite the files you'd edit (let hooks finish first).
 
 Verify baseline tests pass before writing any code.
 
