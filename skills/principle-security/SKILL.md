@@ -1,6 +1,6 @@
 ---
 name: principle-security
-description: Security design principles — trust boundaries and input validation, authentication vs authorization, secrets handling, secure defaults and defense in depth, lightweight threat modeling, cryptography hygiene, attack-surface minimization. Auto-load when designing auth, discussing authn or authz, handling secrets, defining trust boundaries, validating untrusted input, considering SSRF or CSRF, choosing session or JWT mechanics, configuring TLS, picking an encryption primitive, or weighing least-privilege trade-offs.
+description: Security design principles — trust boundaries and input validation, authentication vs authorization, secrets and credentials handling, secure defaults and defense in depth, lightweight threat modeling, cryptography hygiene, attack-surface minimization, RBAC/ABAC authorization models, OAuth 2.0/OIDC token validation, PII and data privacy, supply-chain integrity (SBOM, provenance). Auto-load when designing auth, discussing authn or authz, handling secrets or credentials, defining trust boundaries, validating untrusted input, considering SSRF or CSRF, choosing session or JWT mechanics, configuring TLS, picking an encryption primitive, weighing least-privilege trade-offs, choosing RBAC or ABAC, validating OAuth or OIDC tokens, handling PII or GDPR data, or pinning deps and generating an SBOM.
 ---
 
 # Security
@@ -61,6 +61,33 @@ Every capability that exists is a capability that can be abused.
 - Prefer short-lived credentials with fast expiry over long-lived tokens with revocation lists.
 - Audit what is reachable from the network vs what the config intends to expose.
 
+## Authorization Models & Tokens
+
+Picking an authz model and validating tokens correctly is where access control actually succeeds or fails.
+- Model policy deliberately: RBAC (roles → permissions) for stable coarse structures; ABAC (attributes/context) when access depends on ownership, time, or location.
+- Prefer ABAC or relationship-based checks when "can user X act on resource Y?" depends on data, not a static role.
+- Validate OIDC ID Tokens fully: verify signature, `iss`, `sub`, `aud`, `exp`, and `iat`; verify `nonce` only if the authorization request included one — never trust an unverified JWT body.
+- Treat scopes/claims as a least-privilege ceiling: re-check resource ownership at the API, not just scope presence.
+- Centralize policy at one decision point so authz logic is auditable, not scattered across handlers.
+
+## Data Privacy is a Security Property
+
+PII is a liability; the safest data is the data you never collected.
+- Identify and classify PII at design time so controls can follow personal data wherever it flows.
+- Minimize by default: collect only what the feature needs, and set retention/deletion windows — unbounded retention is unbounded risk.
+- Establish a lawful basis (GDPR Art. 6) before processing personal data; consent must be specific and withdrawable.
+- Encrypt PII in transit (TLS) and at rest; encrypt the most sensitive fields at the application layer so the datastore never sees plaintext.
+- Support data-subject rights from Day 1 — export and erasure are far cheaper designed-in than retrofitted.
+
+## Supply-Chain Integrity
+
+Your dependencies are your attack surface; a build is only as trustworthy as everything it pulls in.
+- Pin dependencies with a committed lockfile; in CI use a frozen install (`npm ci`, `yarn install --frozen-lockfile`, or `pnpm install --frozen-lockfile`) so every build resolves the exact same graph.
+- Verify integrity: enforce hash pinning and signature/provenance checks (SLSA, Sigstore) before trusting an artifact.
+- Generate an SBOM (CycloneDX/SPDX) per release so you can answer "are we affected?" the day a CVE lands.
+- Minimize the graph: every transitive package is code you ship and trust — prune unused and low-trust deps.
+- Isolate the build: untrusted install/build steps must not have ambient access to secrets or the production network.
+
 ## When Pre-Write Security Thinking is Overkill
 
 - Local-only scripts with no network access and no secrets.
@@ -81,3 +108,6 @@ Every capability that exists is a capability that can be abused.
 | Long-lived all-scope access tokens | Maximum blast radius on compromise; scope to the operation |
 | Verbose error responses to untrusted callers | Leaks internals; production errors should be opaque reference IDs |
 | Encryption scheme chosen by algorithm name only | Algorithm ≠ construction; misuse is the rule, not the exception |
+| Static role check with no resource-ownership test | RBAC role ≠ permission on *this* record; ABAC/ownership check is the real gate |
+| PII written to logs or analytics in plaintext | Personal data leaks through side channels; classify and scrub before emit |
+| Dependencies installed without a committed lockfile | Build pulls a mutable graph; one compromised transitive dep ships to prod |
