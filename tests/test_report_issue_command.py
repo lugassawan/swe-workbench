@@ -95,19 +95,31 @@ def test_report_issue_redaction_has_allowlist():
     assert "Allowlist" in text, (
         "commands/report-issue.md must include an 'Allowlist' section in the redaction instructions"
     )
-    assert "swe-workbench" in text, (
-        "commands/report-issue.md must include 'swe-workbench' as an allowlisted token"
+    assert "NEVER redact" in text, (
+        "commands/report-issue.md must include a 'NEVER redact' directive in the allowlist"
+    )
+    assert "swe-workbench" in text[text.find("NEVER redact"):text.find("NEVER redact") + 400], (
+        "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
     )
 
 
 def test_report_issue_redaction_has_placeholder_vocabulary():
-    """commands/report-issue.md must define placeholder vocabulary for redaction."""
+    """commands/report-issue.md must define placeholder vocabulary for all required categories."""
     text = REPORT_ISSUE_MD.read_text()
     assert "[internal-email]" in text, (
         "commands/report-issue.md must specify '[internal-email]' as a redaction placeholder"
     )
+    assert "[internal-host]" in text, (
+        "commands/report-issue.md must specify '[internal-host]' as a redaction placeholder"
+    )
+    assert "[internal-ip]" in text, (
+        "commands/report-issue.md must specify '[internal-ip]' as a redaction placeholder"
+    )
     assert "an internal service" in text, (
         "commands/report-issue.md must specify 'an internal service' as a redaction placeholder"
+    )
+    assert "[redacted-token]" in text, (
+        "commands/report-issue.md must specify '[redacted-token]' as a placeholder for API keys/tokens"
     )
 
 
@@ -120,16 +132,20 @@ def test_report_issue_preview_shows_redaction_status():
 
 
 def test_report_issue_redaction_before_preview():
-    """commands/report-issue.md: redaction pass must appear before the preview/confirm step."""
+    """commands/report-issue.md: redaction pass → Redacted: line → confirm gate, in that order."""
     text = REPORT_ISSUE_MD.read_text()
     redaction_pos = text.find("Redaction pass")
+    redacted_line_pos = text.find("Redacted:")
     confirm_pos = text.find("Reply 'confirm'")
     assert redaction_pos != -1, (
         "commands/report-issue.md must include a 'Redaction pass' instruction"
     )
+    assert redacted_line_pos != -1, (
+        "commands/report-issue.md must include a 'Redacted:' preview line"
+    )
     assert confirm_pos != -1, (
         "commands/report-issue.md must include a \"Reply 'confirm'\" instruction"
     )
-    assert redaction_pos < confirm_pos, (
-        "The 'Redaction pass' must appear before \"Reply 'confirm'\" in commands/report-issue.md"
+    assert redaction_pos < redacted_line_pos < confirm_pos, (
+        "Order must be: 'Redaction pass' → 'Redacted:' line → \"Reply 'confirm'\""
     )
