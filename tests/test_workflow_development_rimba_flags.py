@@ -267,11 +267,11 @@ def test_skill_documents_parallel_impl_during_install():
     assert "stash pop" in phase1, (
         "SKILL.md Phase 1 must document 'git stash pop' to restore implementation after RED"
     )
-    assert "red" in lower, (
-        "SKILL.md Phase 1 must reference the RED step so agents know verification is preserved"
+    assert "**RED**" in phase1, (
+        "SKILL.md Phase 1 must reference the **RED** step so agents know verification is preserved"
     )
-    assert "green" in lower, (
-        "SKILL.md Phase 1 must reference the GREEN step so agents know verification is preserved"
+    assert "**GREEN**" in phase1, (
+        "SKILL.md Phase 1 must reference the **GREEN** step so agents know verification is preserved"
     )
     assert "background" in lower, (
         "SKILL.md Phase 1 must document backgrounding the rimba call so the session is free to implement"
@@ -287,6 +287,7 @@ def test_template_documents_parallel_impl_during_install():
 
     Mirrors test_skill_documents_parallel_impl_during_install — the template is
     rendered verbatim into every generated plan, so agents need this guidance there.
+    Asserts the same six behavioral tokens as the SKILL.md test.
     """
     body = TEMPLATE.read_text()
     phase1 = _phase1_section(body)
@@ -295,21 +296,18 @@ def test_template_documents_parallel_impl_during_install():
     assert "git stash" in phase1, (
         "plan-workflow-section.md Phase 1 must document 'git stash' as TDD reconciliation mechanic"
     )
+    assert "stash pop" in phase1, (
+        "plan-workflow-section.md Phase 1 must document 'git stash pop' to restore implementation after RED"
+    )
+    assert "**RED**" in phase1, (
+        "plan-workflow-section.md Phase 1 must reference the **RED** step so agents know verification is preserved"
+    )
+    assert "**GREEN**" in phase1, (
+        "plan-workflow-section.md Phase 1 must reference the **GREEN** step so agents know verification is preserved"
+    )
     assert "background" in lower, (
         "plan-workflow-section.md Phase 1 must document backgrounding the rimba call"
     )
-
-
-def test_template_phase1_to_phase2_callout():
-    """plan-workflow-section.md Phase 1 block must include a stash-based callout.
-
-    A concise Phase 1→2 callout at the boundary helps agents understand the
-    transition: implement during install → stash → RED → stash pop → GREEN.
-    """
-    body = TEMPLATE.read_text()
-    phase1 = _phase1_section(body)
-
-    assert "stash" in phase1, (
-        "plan-workflow-section.md Phase 1 must mention stash for the install-time "
-        "TDD reconciliation so agents don't lose the RED/GREEN signal"
+    assert "path:" in lower and "deps" in lower, (
+        "plan-workflow-section.md Phase 1 must state that Path: is available before deps finish"
     )
