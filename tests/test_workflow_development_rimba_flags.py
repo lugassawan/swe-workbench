@@ -276,9 +276,12 @@ def test_skill_documents_parallel_impl_during_install():
     assert "background" in lower, (
         "SKILL.md Phase 1 must document backgrounding the rimba call so the session is free to implement"
     )
-    assert "path:" in lower and "deps" in lower, (
+    assert "path:" in lower, (
         "SKILL.md Phase 1 must state that Path: is available before deps finish "
         "so agents know when coding may begin"
+    )
+    assert "deps" in lower, (
+        "SKILL.md Phase 1 must mention deps so agents know to wait for full completion"
     )
 
 
@@ -308,6 +311,9 @@ def test_template_documents_parallel_impl_during_install():
     assert "background" in lower, (
         "plan-workflow-section.md Phase 1 must document backgrounding the rimba call"
     )
-    assert "path:" in lower and "deps" in lower, (
+    assert "path:" in lower, (
         "plan-workflow-section.md Phase 1 must state that Path: is available before deps finish"
+    )
+    assert "deps" in lower, (
+        "plan-workflow-section.md Phase 1 must mention deps so agents know to wait for full completion"
     )
