@@ -4,3 +4,6 @@ what input validation and sanitization do I need on this trust boundary to preve
 how do I build a lightweight threat model for a new authentication and authorization feature
 what secure defaults and defense in depth strategy should I apply to harden this service
 how should I separate authn and authz in this access control design with least privilege
+how do I choose between RBAC and ABAC and validate OAuth or OIDC tokens for this authorization design
+how should I handle PII and GDPR data privacy with encryption and data minimization in this feature
+how do I secure my software supply chain with dependency pinning, lockfiles, SBOM, and provenance verification
