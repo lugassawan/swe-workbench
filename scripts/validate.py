@@ -293,7 +293,11 @@ def check_skill_skill_refs(cache=None):
                 fail(skill_md.relative_to(ROOT), "could not read file")
                 continue
         else:
-            text = skill_md.read_text(encoding="utf-8")
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
         for artifact_id in set(pattern.findall(text)):
             if not _artifact_exists(artifact_id):
                 fail(
@@ -322,7 +326,9 @@ def check_workflow_development_activation_contract():
     commands_dir = ROOT / "commands"
     declared_pattern = re.compile(r'/swe-workbench:([\w-]+)')
     desc = fm["description"]
-    raw_declared = set(declared_pattern.findall(desc))
+    # Scope to the activation clause (before "when") to avoid matching prose examples
+    activation_clause = desc.split(" when ")[0]
+    raw_declared = set(declared_pattern.findall(activation_clause))
     unknown_commands = sorted(t for t in raw_declared if not (commands_dir / f"{t}.md").is_file())
     if unknown_commands:
         fail(
@@ -333,9 +339,10 @@ def check_workflow_development_activation_contract():
     declared = raw_declared - set(unknown_commands)
 
     actual = set()
+    wf_pattern = re.compile(r'`swe-workbench:workflow-development`')
     for cmd_md in sorted(commands_dir.glob("*.md")):
         # commands are intentionally not cached in _build_cache; read directly
-        if "swe-workbench:workflow-development" in cmd_md.read_text(encoding="utf-8"):
+        if wf_pattern.search(cmd_md.read_text(encoding="utf-8")):
             actual.add(cmd_md.stem)
 
     if declared != actual:
