@@ -141,7 +141,7 @@ Use the service scope whenever the work is clearly contained within one module �
 1. Run `rimba add`; if install will take a while, let it continue in the **background** (the Bash tool backgrounds long-running commands) so the session is free to code.
 2. As soon as `Path: <abs-path>` appears, enter the worktree and implement the planned changes.
 3. **Do not run the test suite until `rimba add` has fully completed** — RED/GREEN need installed deps.
-4. Reconcile with TDD once rimba finishes: `git stash` your implementation → write the failing test → run (**RED** — fails with implementation stashed, confirming the test exercises the new behaviour) → `git stash pop` → run again (**GREEN**).
+4. Once rimba finishes, reconcile with TDD: `git stash` the implementation you wrote in step 2 → write the failing test → run (**RED** — fails with implementation stashed, confirming the test exercises the new behaviour) → `git stash pop` → run again (**GREEN**).
 
 Skip this optimisation when install is fast, `--skip-deps`/`--skip-hooks` already apply (no wait), or `post_create` hooks rewrite the files you'd edit (let hooks finish first).
 
