@@ -2,7 +2,7 @@
 name: Chore / maintenance
 about: Documentation update, CI tweak, dependency bump, config change — no new behaviour
 title: '[chore] '
-labels: documentation
+labels: chore
 assignees: ''
 ---
 
