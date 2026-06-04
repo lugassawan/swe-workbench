@@ -14,7 +14,11 @@ EXPECTED_LABELS = [
 
 
 def _frontmatter_labels(template_path: Path) -> str:
-    """Return the `labels:` value from the YAML frontmatter block."""
+    """Return the scalar labels: value from the YAML frontmatter block.
+
+    Only handles the single-value form (labels: chore), not multi-value
+    YAML lists. Sufficient for all current templates.
+    """
     lines = template_path.read_text(encoding="utf-8").splitlines()
     in_frontmatter = False
     for line in lines:
@@ -34,10 +38,7 @@ def test_issue_template_frontmatter_label(filename: str, expected_label: str) ->
     path = TEMPLATES_DIR / filename
     assert path.exists(), f"Template file missing: {path}"
     actual = _frontmatter_labels(path)
-    if filename == "chore_maintenance.md":
-        assert actual != "documentation", (
-            "chore_maintenance.md must not use 'documentation' label — regression guard for #336"
-        )
     assert actual == expected_label, (
         f"{filename}: expected labels: {expected_label!r}, got {actual!r}"
+        + (" — regression guard for #336" if filename == "chore_maintenance.md" else "")
     )
