@@ -138,14 +138,14 @@ def test_report_issue_redaction_before_preview():
     """commands/report-issue.md: redaction pass → Redacted: line → confirm gate, in that order."""
     text = REPORT_ISSUE_MD.read_text()
     redaction_pos = text.find("Redaction pass")
-    redacted_line_pos = text.find("Redacted:", redaction_pos)
-    confirm_pos = text.find("Reply 'confirm'", redacted_line_pos)
     assert redaction_pos != -1, (
         "commands/report-issue.md must include a 'Redaction pass' instruction"
     )
+    redacted_line_pos = text.find("Redacted:", redaction_pos)
     assert redacted_line_pos != -1, (
         "commands/report-issue.md must include a 'Redacted:' preview line"
     )
+    confirm_pos = text.find("Reply 'confirm'", redacted_line_pos)
     assert confirm_pos != -1, (
         "commands/report-issue.md must include a \"Reply 'confirm'\" instruction"
     )
