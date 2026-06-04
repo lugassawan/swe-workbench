@@ -847,6 +847,143 @@ class TestCheckCatalogCompleteness:
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
 
+
+# ──────────────────────────────────────────────
+# check_skill_skill_refs
+# ──────────────────────────────────────────────
+
+class TestCheckSkillSkillRefs:
+    def test_ref_to_existing_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:target-skill`.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_agent_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:some-agent`.\n"},
+        )
+        (root / "agents" / "some-agent.md").write_text(
+            "---\nname: some-agent\ndescription: d\ntools: Read\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_command_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:some-cmd`.\n"},
+        )
+        (root / "commands" / "some-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nCommand body.\n",
+            encoding="utf-8",
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_nonexistent_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:ghost`.\n"},
+        )
+        validate.check_skill_skill_refs()
+        assert any("ghost" in f and "does not exist" in f for f in validate.FAILURES)
+
+    def test_skill_with_no_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nNo plugin refs here.\n"},
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_skill_skill_refs_live_tree_passes(self, reset_validate, monkeypatch):
+        """All swe-workbench refs in real skills must resolve to skill dirs, agents, or commands."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_skill_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_workflow_development_activation_contract
+# ──────────────────────────────────────────────
+
+class TestCheckWorkflowDevelopmentActivationContract:
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def _make_wf_dev_skill(self, root, activators):
+        """Write a minimal workflow-development SKILL.md listing given activators."""
+        skill_dir = root / "skills" / "workflow-development"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        listed = ", ".join(f"/swe-workbench:{a}" for a in activators)
+        desc = f"Activated by {listed} when the plan modifies the codebase."
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: workflow-development\ndescription: {desc}\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+
+    def test_listed_and_activating_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert len(validate.FAILURES) == 0
+
+    def test_listed_but_not_activating_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo workflow-development mention here.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_activating_but_not_listed_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, [])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_unknown_command_in_description_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["typoedcmd"])
+        validate.check_workflow_development_activation_contract()
+        assert any("typoedcmd" in f and "unknown" in f for f in validate.FAILURES)
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """workflow-development SKILL.md 'Activated by' list must match actual activators in commands/."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.FAILURES.clear()
+        val.check_workflow_development_activation_contract()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
     # O3 — slice-specific tests (issue #235)
 
     def test_non_code_agent_with_principles_only_passes(self, reset_validate):

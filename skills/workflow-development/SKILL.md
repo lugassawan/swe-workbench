@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, and /swe-workbench:test when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end: delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
+description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end: delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
 orchestrator: true
 ---
 
