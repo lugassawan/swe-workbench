@@ -917,6 +917,73 @@ class TestCheckSkillSkillRefs:
         val.check_skill_skill_refs()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
+
+# ──────────────────────────────────────────────
+# check_workflow_development_activation_contract
+# ──────────────────────────────────────────────
+
+class TestCheckWorkflowDevelopmentActivationContract:
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def _make_wf_dev_skill(self, root, activators):
+        """Write a minimal workflow-development SKILL.md listing given activators."""
+        skill_dir = root / "skills" / "workflow-development"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        listed = ", ".join(f"/swe-workbench:{a}" for a in activators)
+        desc = f"Activated by {listed} when the plan modifies the codebase."
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: workflow-development\ndescription: {desc}\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+
+    def test_listed_and_activating_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert len(validate.FAILURES) == 0
+
+    def test_listed_but_not_activating_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo workflow-development mention here.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_activating_but_not_listed_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, [])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_unknown_command_in_description_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["typoedcmd"])
+        validate.check_workflow_development_activation_contract()
+        assert any("typoedcmd" in f and "unknown" in f for f in validate.FAILURES)
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """workflow-development SKILL.md 'Activated by' list must match actual activators in commands/."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.FAILURES.clear()
+        val.check_workflow_development_activation_contract()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
     # O3 — slice-specific tests (issue #235)
 
     def test_non_code_agent_with_principles_only_passes(self, reset_validate):

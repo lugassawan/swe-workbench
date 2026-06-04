@@ -303,6 +303,55 @@ def check_skill_skill_refs(cache=None):
                 )
 
 
+def check_workflow_development_activation_contract():
+    """The '/swe-workbench:<cmd>' tokens in workflow-development's description frontmatter
+    must match exactly the set of commands whose .md files reference
+    'swe-workbench:workflow-development'."""
+    skill_md = ROOT / "skills" / "workflow-development" / "SKILL.md"
+    if not skill_md.is_file():
+        fail(
+            skill_md.relative_to(ROOT),
+            "missing — cannot check workflow-development activation contract",
+        )
+        return
+    fm = parse_frontmatter(skill_md)
+    if fm is None or "description" not in fm:
+        fail(skill_md.relative_to(ROOT), "missing or malformed frontmatter")
+        return
+
+    commands_dir = ROOT / "commands"
+    declared_pattern = re.compile(r'/swe-workbench:([\w-]+)')
+    desc = fm["description"]
+    raw_declared = set(declared_pattern.findall(desc))
+    unknown_commands = sorted(t for t in raw_declared if not (commands_dir / f"{t}.md").is_file())
+    if unknown_commands:
+        fail(
+            skill_md.relative_to(ROOT),
+            f"workflow-development description lists unknown commands: {unknown_commands}",
+        )
+    # Exclude unknown tokens from set-equality to avoid double-reporting
+    declared = raw_declared - set(unknown_commands)
+
+    actual = set()
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        # commands are intentionally not cached in _build_cache; read directly
+        if "swe-workbench:workflow-development" in cmd_md.read_text(encoding="utf-8"):
+            actual.add(cmd_md.stem)
+
+    if declared != actual:
+        listed_not_activating = sorted(declared - actual)
+        activating_not_listed = sorted(actual - declared)
+        parts = []
+        if listed_not_activating:
+            parts.append(f"listed but do not activate: {listed_not_activating}")
+        if activating_not_listed:
+            parts.append(f"activate but are not listed: {activating_not_listed}")
+        fail(
+            skill_md.relative_to(ROOT),
+            "workflow-development activation contract mismatch — " + "; ".join(parts),
+        )
+
+
 TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
 
 
@@ -764,6 +813,7 @@ def main():
     check_agent_skill_refs(cache=cache)
     check_command_skill_refs()
     check_skill_skill_refs(cache=cache)
+    check_workflow_development_activation_contract()
     check_catalog_completeness(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
