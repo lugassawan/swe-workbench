@@ -74,12 +74,25 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
    - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
    - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
 
+   **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
+
+   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and common public tech names (GitHub, Claude Code, gh, Python, pytest, etc.).
+   - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
+     - Email addresses → `[internal-email]`
+     - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`
+     - IP addresses → `[internal-ip]`
+     - Internal service identifiers (`*-api`, `*-service`, `*-svc`, `*-worker`, `*-gateway`) that are not plugin names → `an internal service`
+     - Apparent company / product / org names, and other-repo or monorepo slugs surfaced from conversation → `a downstream consumer` / `the monorepo` / `an internal repository` as fits.
+   - Never redact text the user explicitly typed as their own thought intending it to be public.
+   - Count the replacements made; carry the count into the step 8 preview.
+
 8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it. Write the body to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write a one-line command to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path> --label "<matched-label>"`; when no label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path>` (no `--label` segment). Then print:
    ```
    Filing into: lugassawan/swe-workbench
    Template: <chosen template> | none — default body
    Title: <drafted title>
    Label: <chosen label> | none — no matching label found
+   Redacted: <N internal identifier(s) → placeholders | none detected>
    Possibly related: <#N list, or "none">
 
    Body:
@@ -89,6 +102,6 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
    Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
-   When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
+   When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. When N > 0 from the redaction pass, also render the line `_Automatically redacted N internal identifier(s)._` in the preview prose immediately before the `Body:` block — this note is **preview-only** and must NOT appear in the filed body. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
 9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL.

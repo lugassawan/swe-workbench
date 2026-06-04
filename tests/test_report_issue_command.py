@@ -79,3 +79,57 @@ def test_report_issue_supports_blank_argument():
     assert "MEMORY.md" in text, (
         "commands/report-issue.md must reference MEMORY.md as the memory fallback for blank-arg mode"
     )
+
+
+def test_report_issue_has_redaction_pass():
+    """commands/report-issue.md must include a redaction sub-step in the draft step."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Redaction pass" in text, (
+        "commands/report-issue.md must include a 'Redaction pass' instruction in step 7"
+    )
+
+
+def test_report_issue_redaction_has_allowlist():
+    """commands/report-issue.md must define an allowlist for the redaction pass."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Allowlist" in text, (
+        "commands/report-issue.md must include an 'Allowlist' section in the redaction instructions"
+    )
+    assert "swe-workbench" in text, (
+        "commands/report-issue.md must include 'swe-workbench' as an allowlisted token"
+    )
+
+
+def test_report_issue_redaction_has_placeholder_vocabulary():
+    """commands/report-issue.md must define placeholder vocabulary for redaction."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "[internal-email]" in text, (
+        "commands/report-issue.md must specify '[internal-email]' as a redaction placeholder"
+    )
+    assert "an internal service" in text, (
+        "commands/report-issue.md must specify 'an internal service' as a redaction placeholder"
+    )
+
+
+def test_report_issue_preview_shows_redaction_status():
+    """commands/report-issue.md must include a 'Redacted:' line in the step 8 preview block."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Redacted:" in text, (
+        "commands/report-issue.md must include a 'Redacted:' line in the preview gate block"
+    )
+
+
+def test_report_issue_redaction_before_preview():
+    """commands/report-issue.md: redaction pass must appear before the preview/confirm step."""
+    text = REPORT_ISSUE_MD.read_text()
+    redaction_pos = text.find("Redaction pass")
+    confirm_pos = text.find("Reply 'confirm'")
+    assert redaction_pos != -1, (
+        "commands/report-issue.md must include a 'Redaction pass' instruction"
+    )
+    assert confirm_pos != -1, (
+        "commands/report-issue.md must include a \"Reply 'confirm'\" instruction"
+    )
+    assert redaction_pos < confirm_pos, (
+        "The 'Redaction pass' must appear before \"Reply 'confirm'\" in commands/report-issue.md"
+    )
