@@ -66,7 +66,7 @@ Every capability that exists is a capability that can be abused.
 Picking an authz model and validating tokens correctly is where access control actually succeeds or fails.
 - Model policy deliberately: RBAC (roles → permissions) for stable coarse structures; ABAC (attributes/context) when access depends on ownership, time, or location.
 - Prefer ABAC or relationship-based checks when "can user X act on resource Y?" depends on data, not a static role.
-- Validate OIDC ID Tokens fully: verify signature, `iss`, `sub`, `aud`, `exp`, and `iat`; verify `nonce` only if the authorization request included one; reject tokens where `nbf` is in the future if the claim is present — never trust an unverified JWT body.
+- Validate OIDC ID Tokens fully: verify signature, `iss`, `sub`, `aud`, `exp` (hard reject if past), and `iat` (reject if grossly implausible); verify `nonce` only if the authorization request included one; reject tokens where `nbf` is in the future if the claim is present — never trust an unverified JWT body.
 - Treat scopes/claims as a least-privilege ceiling: re-check resource ownership at the API, not just scope presence.
 - Centralize policy at one decision point so authz logic is auditable, not scattered across handlers.
 
