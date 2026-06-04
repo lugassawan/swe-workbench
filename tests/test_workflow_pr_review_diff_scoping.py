@@ -293,10 +293,11 @@ def test_diff_scoping_contract_subsection_exists(skill_path):
 def test_step4_fetches_base_before_diff(skill_path):
     """Step 4 must fetch origin/$BASE in the worktree context before computing the diff."""
     text = skill_path.read_text()
-    assert re.search(r'git -C "\$WT" fetch origin "\$BASE"', text), (
+    assert re.search(r'git -C "\$WT" fetch origin "\$BASE" --quiet \|\| true', text), (
         f"{skill_path.parent.name}: Step 4 must run "
-        "'git -C \"$WT\" fetch origin \"$BASE\" --quiet || true' (in the worktree) before "
-        "the diff so already-merged commits on the remote base are excluded (fix for #414)"
+        "'git -C \"$WT\" fetch origin \"$BASE\" --quiet || true' (in the worktree, with "
+        "non-fatal guard) before the diff so already-merged commits on the remote base "
+        "are excluded (fix for #414)"
     )
 
 
