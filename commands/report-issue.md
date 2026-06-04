@@ -76,12 +76,12 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
 
-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names exactly: GitHub, Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it.
+   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it.
    - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
      - Email addresses → `[internal-email]`
      - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`
      - IP addresses → `[internal-ip]`
-     - API keys, tokens, and credential strings matching common patterns (e.g. `sk-…`, `ghp_…`, `AKIA…`, `Bearer …`, UUID-format secrets) → `[redacted-token]`
+     - API keys, tokens, and credential strings matching common patterns (e.g. `sk-…`, `ghp_…`, `AKIA…`, `Bearer <token>`) → `[redacted-token]`. Do NOT redact bare UUIDs without surrounding context that identifies them as secrets (e.g., a UUID in a JSON field named `secret`, `key`, or `token`).
      - Internal service identifiers (`*-api`, `*-service`, `*-svc`, `*-worker`, `*-gateway`) that are not plugin names → `an internal service`
      - Apparent company / product / org names, and other-repo or monorepo slugs surfaced from conversation → `a downstream consumer` / `the monorepo` / `an internal repository` as fits.
    - Never redact text the user explicitly typed as their own thought intending it to be public.
@@ -103,6 +103,6 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
    Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
-   When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. When N > 0 from the redaction pass, also render the line `_Automatically redacted N internal identifier(s)._` as a plain Markdown italic line **outside and immediately above the opening triple-backtick of the `Body:` fence** — this note is **preview-only** and must NOT be written into the `.md` body file; write the `.md` file first, then append the note only to the printed preview output. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
+   When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
 9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL.

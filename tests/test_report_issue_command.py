@@ -98,7 +98,10 @@ def test_report_issue_redaction_has_allowlist():
     assert "NEVER redact" in text, (
         "commands/report-issue.md must include a 'NEVER redact' directive in the allowlist"
     )
-    assert "swe-workbench" in text[text.find("NEVER redact"):text.find("NEVER redact") + 400], (
+    never_redact_pos = text.find("NEVER redact")
+    allowlist_end = text.find("Redact when NOT allowlisted", never_redact_pos)
+    allowlist_block = text[never_redact_pos:allowlist_end]
+    assert "swe-workbench" in allowlist_block, (
         "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
     )
 
@@ -135,8 +138,8 @@ def test_report_issue_redaction_before_preview():
     """commands/report-issue.md: redaction pass → Redacted: line → confirm gate, in that order."""
     text = REPORT_ISSUE_MD.read_text()
     redaction_pos = text.find("Redaction pass")
-    redacted_line_pos = text.find("Redacted:")
-    confirm_pos = text.find("Reply 'confirm'")
+    redacted_line_pos = text.find("Redacted:", redaction_pos)
+    confirm_pos = text.find("Reply 'confirm'", redacted_line_pos)
     assert redaction_pos != -1, (
         "commands/report-issue.md must include a 'Redaction pass' instruction"
     )
