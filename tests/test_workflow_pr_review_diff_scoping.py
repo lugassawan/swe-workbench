@@ -253,6 +253,10 @@ def test_step7_lean_body_no_narrative(skill_path):
         "narrative removal (#391) — the lean body is built from $DECISION/$BYLINE only, not "
         "from reviewer output. Remove the stale Step 7 prose that names it."
     )
+    assert "decision line + byline" in text, (
+        f"{skill_path.parent.name}: Step 7 prose must affirm the lean-body intent — "
+        "'decision line + byline' directive is missing. Findings must not be restated in the body."
+    )
 
 
 def test_reviewer_no_review_summary_section():
