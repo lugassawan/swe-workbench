@@ -342,7 +342,12 @@ def check_workflow_development_activation_contract():
     wf_pattern = re.compile(r'`swe-workbench:workflow-development`')
     for cmd_md in sorted(commands_dir.glob("*.md")):
         # commands are intentionally not cached in _build_cache; read directly
-        if wf_pattern.search(cmd_md.read_text(encoding="utf-8")):
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(cmd_md.relative_to(ROOT), "could not read file")
+            continue
+        if wf_pattern.search(text):
             actual.add(cmd_md.stem)
 
     if declared != actual:
