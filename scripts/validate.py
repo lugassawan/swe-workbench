@@ -271,6 +271,38 @@ def check_command_skill_refs():
                 )
 
 
+def _artifact_exists(artifact_id):
+    """Return True if artifact_id resolves to a skill dir, agent file, or command file."""
+    return (
+        (ROOT / "skills" / artifact_id).is_dir()
+        or (ROOT / "agents" / f"{artifact_id}.md").is_file()
+        or (ROOT / "commands" / f"{artifact_id}.md").is_file()
+    )
+
+
+def check_skill_skill_refs(cache=None):
+    """Every `swe-workbench:<id>` in skills/*/SKILL.md must resolve to a skill dir,
+    agent file, or command file on disk."""
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    pattern = re.compile(r'`swe-workbench:([\w-]+)`')
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = skill_md.read_text(encoding="utf-8")
+        for artifact_id in set(pattern.findall(text)):
+            if not _artifact_exists(artifact_id):
+                fail(
+                    skill_md.relative_to(ROOT),
+                    f"references 'swe-workbench:{artifact_id}' but skills/{artifact_id}/ does not exist "
+                    f"and neither does agents/{artifact_id}.md or commands/{artifact_id}.md",
+                )
+
+
 TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
 
 
@@ -731,6 +763,7 @@ def main():
     check_commands()
     check_agent_skill_refs(cache=cache)
     check_command_skill_refs()
+    check_skill_skill_refs(cache=cache)
     check_catalog_completeness(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
