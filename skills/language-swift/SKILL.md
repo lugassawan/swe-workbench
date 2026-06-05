@@ -93,7 +93,7 @@ button.onTap = { [weak self] in
 - One target per logical module. Keep `Sources/` layout mirroring the module name.
 - Pin dependencies via `Package.resolved` in version control for reproducible builds.
 
-## Tests
+## Testing
 - XCTest: `XCTAssertEqual`, `XCTUnwrap` (throws if nil, cleaner than force-unwrap in tests).
 - Swift Testing (`@Test`, `#expect`) for new projects on Swift 6.0+ (Xcode 16+).
 - Async tests: `await fulfillment(of: [expectation], timeout: 1)` in XCTest; `@Test` supports `async` natively.

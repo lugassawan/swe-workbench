@@ -42,7 +42,7 @@ if err := g.Wait(); err != nil { return err }
 - Never store `context.Context` in a struct field.
 - Don't use `context.Value` for required parameters — only cross-cutting concerns like request IDs.
 
-## Tests
+## Testing
 - Table-driven tests are the default.
 - `t.Run(name, ...)` for subtests.
 - `t.Cleanup` beats `defer` for shared fixtures.
