@@ -805,6 +805,38 @@ def check_no_cycles(cache=None):
             dfs(node)
 
 
+def check_plan_mode_workflow_embedding():
+    """Every command that activates workflow-development Mode A must instruct embedding the
+    ## Workflow section covering the ExitPlanMode path — otherwise the section is silently
+    dropped under built-in plan mode (#423).
+
+    Note: gate fires when all three signals appear anywhere in the document. A command that
+    mentions 'Mode A' only in a 'Skip Mode A if …' clause without activating it will produce
+    a false positive if ExitPlanMode is also absent. Today no such command exists; add the
+    clause if one is introduced.
+    """
+    commands_dir = ROOT / "commands"
+    if not commands_dir.is_dir():
+        fail(Path("commands"), "directory missing — cannot check plan-mode workflow embedding (#423)")
+        return
+    wf_ref = re.compile(r'`swe-workbench:workflow-development`')
+    mode_a = re.compile(r'\bMode A\b')
+    clause = "ExitPlanMode"
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(cmd_md.relative_to(ROOT), "could not read file")
+            continue
+        if wf_ref.search(text) and mode_a.search(text) and clause not in text:
+            fail(
+                cmd_md.relative_to(ROOT),
+                "activates workflow-development Mode A but does not mention ExitPlanMode in the "
+                "embedding instruction — under built-in plan mode the ## Workflow section is "
+                "silently dropped (#423). Add the robustness clause covering both authoring paths.",
+            )
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -826,6 +858,7 @@ def main():
     check_command_skill_refs()
     check_skill_skill_refs(cache=cache)
     check_workflow_development_activation_contract()
+    check_plan_mode_workflow_embedding()
     check_catalog_completeness(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)

@@ -1973,3 +1973,60 @@ class TestNoPhantomSkillsCatalogRef:
             f"Missing real catalog slice reference in: {', '.join(failures)}. "
             f"Expected one of: {', '.join(self.SLICE_FILES)}"
         )
+
+
+# ──────────────────────────────────────────────
+# check_plan_mode_workflow_embedding (#423)
+# ──────────────────────────────────────────────
+
+class TestCheckPlanModeWorkflowEmbedding:
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def test_missing_exit_plan_mode_clause_fails(self, reset_validate):
+        """A command that activates workflow-development Mode A without the
+        ExitPlanMode robustness clause must be flagged (#423)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        # Command references workflow-development + Mode A but lacks the clause
+        (root / "commands" / "badcmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in **Mode A** "
+            "before finalizing the plan.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert any("#423" in f for f in validate.FAILURES), (
+            f"Expected a failure mentioning #423 but got: {validate.FAILURES}"
+        )
+
+    def test_with_exit_plan_mode_clause_passes(self, reset_validate):
+        """A command that includes the ExitPlanMode robustness clause must pass."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "goodcmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in **Mode A** "
+            "whether saved to a plan file or passed to `ExitPlanMode`.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert len(validate.FAILURES) == 0
+
+    def test_wf_ref_without_mode_a_no_failure(self, reset_validate):
+        """A command that references workflow-development but contains no 'Mode A' token is not flagged."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "modebtoo.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in Mode B.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert len(validate.FAILURES) == 0
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """All real Mode-A activators must carry the ExitPlanMode robustness clause."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.check_plan_mode_workflow_embedding()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
