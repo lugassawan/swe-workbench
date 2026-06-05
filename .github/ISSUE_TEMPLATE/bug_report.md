@@ -11,7 +11,7 @@ assignees: ''
 <!-- Check all that apply. -->
 - [ ] Skill — `principle-*`
 - [ ] Skill — `language-*`
-- [ ] Skill — `integration-*`
+- [ ] Skill — integration (`ticket-context`)
 - [ ] Skill — `workflow-*`
 - [ ] Subagent
 - [ ] Slash command
