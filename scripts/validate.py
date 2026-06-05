@@ -808,7 +808,13 @@ def check_no_cycles(cache=None):
 def check_plan_mode_workflow_embedding():
     """Every command that activates workflow-development Mode A must instruct embedding the
     ## Workflow section covering the ExitPlanMode path — otherwise the section is silently
-    dropped under built-in plan mode (#423)."""
+    dropped under built-in plan mode (#423).
+
+    Note: gate fires when all three signals appear anywhere in the document. A command that
+    mentions 'Mode A' only in a 'Skip Mode A if …' clause without activating it will produce
+    a false positive if ExitPlanMode is also absent. Today no such command exists; add the
+    clause if one is introduced.
+    """
     commands_dir = ROOT / "commands"
     if not commands_dir.is_dir():
         fail(Path("commands"), "directory missing — cannot check plan-mode workflow embedding (#423)")

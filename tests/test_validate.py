@@ -2012,8 +2012,8 @@ class TestCheckPlanModeWorkflowEmbedding:
         validate.check_plan_mode_workflow_embedding()
         assert len(validate.FAILURES) == 0
 
-    def test_no_mode_a_no_failure(self, reset_validate):
-        """A command referencing workflow-development without Mode A is not flagged."""
+    def test_wf_ref_without_mode_a_no_failure(self, reset_validate):
+        """A command that references workflow-development but contains no 'Mode A' token is not flagged."""
         root = reset_validate
         make_plugin_tree(root)
         (root / "commands" / "modebtoo.md").write_text(
