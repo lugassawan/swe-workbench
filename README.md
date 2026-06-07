@@ -8,6 +8,8 @@
 
 ## Install
 
+### Claude Code
+
 From the marketplace:
 
 ```
@@ -23,6 +25,29 @@ cd swe-workbench
 /plugin marketplace add $(pwd)
 /plugin install swe-workbench
 ```
+
+### pi
+
+This repository also contains a publishable pi package manifest aligned with pi package discovery (`package.json` + `pi` resources). After publishing to npm / pi.dev packages, install with:
+
+```
+pi install npm:swe-workbench
+```
+
+For local development or smoke testing:
+
+```
+pi install ./path/to/swe-workbench
+# or run once without installing
+pi -e ./path/to/swe-workbench
+```
+
+The pi package loads:
+
+- `pi-package/extensions` — pi TypeScript extension porting Claude hook behavior.
+- `skills` — original agnostic Agent Skills resources.
+- `pi-package/agent-skills` — pi-adapted Claude agent roles.
+- `pi-package/prompts` — pi-adapted prompt templates generated from Claude commands.
 
 ## What's inside
 
