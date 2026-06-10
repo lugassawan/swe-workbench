@@ -3,9 +3,10 @@
 ## Problem
 
 Fetch N items concurrently but cap inflight work at K=5 using `errgroup.SetLimit`.
-Pre-allocate `results[i]` so each goroutine writes its own index slot — no mutex needed.
-`errgroup.WithContext` wires cancellation: if any fetch fails the remaining goroutines see
-a cancelled context. Order is preserved by index, not by completion time.
+Pre-allocate `results[i]` and shadow the loop variables so each goroutine captures its own
+`i` and writes exactly one slot — the pre-allocation, the shadow (`i, id := i, id`), and
+the indexed write are three load-bearing parts of the same ordering invariant. `errgroup.WithContext`
+propagates cancellation: a failed fetch signals the remaining goroutines to stop early.
 
 ## Implementation
 
@@ -39,13 +40,13 @@ func main() {
 	g.SetLimit(K) // at most K goroutines running at once
 
 	for i, id := range ids {
-		i, id := i, id
+		i, id := i, id // required for Go <1.22: range vars are shared across iterations
 		g.Go(func() error {
 			val, err := fetch(ctx, id)
 			if err != nil {
 				return err
 			}
-			results[i] = val // safe: each goroutine owns its index
+			results[i] = val // safe: pre-allocated slice + one goroutine per index slot
 			return nil
 		})
 	}

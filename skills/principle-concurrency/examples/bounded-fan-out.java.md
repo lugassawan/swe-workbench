@@ -43,7 +43,7 @@ public class BoundedFanOut {
             }
             System.out.println(results);
         } finally {
-            executor.shutdown();
+            executor.shutdown(); // safe: invokeAll already drained all tasks
         }
     }
 }

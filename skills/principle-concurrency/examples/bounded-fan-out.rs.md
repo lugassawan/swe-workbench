@@ -26,7 +26,7 @@ async fn main() {
     const K: usize = 5;
 
     // Enumerate to carry the original index through the async boundary.
-    let mut pairs: Vec<(usize, String)> = stream::iter(ids.iter().enumerate())
+    let mut pairs: Vec<(usize, String)> = stream::iter(ids.iter().copied().enumerate())
         .map(|(i, id)| async move { (i, fetch(id).await) })
         .buffer_unordered(K) // at most K futures polled at once
         .collect()

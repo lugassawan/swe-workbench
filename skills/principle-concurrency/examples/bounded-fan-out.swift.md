@@ -40,7 +40,7 @@ func boundedFanOut(ids: [String], limit: Int) async throws -> [String] {
             results[idx] = val
         }
     }
-    return (0..<ids.count).map { results[$0]! }
+    return (0..<ids.count).map { results[$0]! } // safe: every index 0..<ids.count is populated by exactly one task
 }
 
 // Usage
