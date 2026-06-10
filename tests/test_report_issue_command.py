@@ -152,3 +152,26 @@ def test_report_issue_redaction_before_preview():
     assert redaction_pos < redacted_line_pos < confirm_pos, (
         "Order must be: 'Redaction pass' → 'Redacted:' line → \"Reply 'confirm'\""
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_report_issue_step9_deletes_temp_files():
+    """commands/report-issue.md step 9 must invoke clean-state-files.sh on success."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "commands/report-issue.md step 9 must call scripts/clean-state-files.sh "
+        "to delete the temp .md and .cmd files after successful issue creation"
+    )
+    assert "/tmp/report-issue-lugassawan-swe-workbench-" in text, (
+        "commands/report-issue.md must reference the /tmp/report-issue-lugassawan-swe-workbench-* "
+        "file pattern in the clean-state-files.sh call"
+    )
+
+
+def test_report_issue_step9_cleanup_on_success_only():
+    """commands/report-issue.md must specify that temp files are left on failure."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "failure" in text.lower() or "on failure" in text.lower() or "retry" in text.lower(), (
+        "commands/report-issue.md must state that temp files are left intact on failure (for retry)"
+    )

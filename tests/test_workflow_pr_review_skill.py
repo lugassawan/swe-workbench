@@ -99,3 +99,39 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
         f"Found bare rm -rf \"$WT\" lines (should use clean-ephemeral.sh):\n"
         + "\n".join(lines_with_rm)
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_pr_review_skill_cleanup_deletes_pr_json():
+    """Step 7 success-path subshell must invoke clean-state-files.sh with the PR state files."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Step 7 must call scripts/clean-state-files.sh to remove per-run state files"
+    )
+    assert "/tmp/swe-workbench-pr-review/${PR}.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-pr-review/${PR}-threads.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-threads.json to clean-state-files.sh"
+    )
+
+
+def test_pr_review_skill_state_cleanup_inside_background_subshell():
+    """clean-state-files.sh must appear inside the background ( ... ) & subshell (success-path only)."""
+    text = SKILL_MD.read_text()
+    # The subshell is opened with '(' and closed with ') &' — find it
+    subshell_match = re.search(r'\(\s*bash.*?clean-state-files\.sh.*?\)\s*&', text, re.DOTALL)
+    assert subshell_match, (
+        "SKILL.md Step 7 clean-state-files.sh call must be inside the background ( ... ) & subshell"
+    )
+
+
+def test_pr_review_skill_state_cleanup_has_or_true_guard():
+    """clean-state-files.sh call must be followed by || true so set -e in the subshell cannot
+    abort rimba remove when the state files are already absent or fail validation."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'clean-state-files\.sh.*?\|\|\s*true', text, re.DOTALL), (
+        "SKILL.md Step 7 clean-state-files.sh call must use '|| true' so a non-zero exit "
+        "does not abort rimba remove via set -e propagation into the background subshell"
+    )

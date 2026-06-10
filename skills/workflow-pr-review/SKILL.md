@@ -227,7 +227,8 @@ Identity does not gate the CTA — when the user has invoked Claude to review th
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
 ```bash
-( rimba remove "pr-review-$PR" --force 2>/dev/null \
+( bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}.json" "/tmp/swe-workbench-pr-review/${PR}-threads.json" 2>/dev/null || true; \
+  rimba remove "pr-review-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-review-$PR" 2>/dev/null; \
        bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
