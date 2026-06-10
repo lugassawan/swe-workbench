@@ -45,7 +45,7 @@ class OrderService:
 
     def place_order(self, item: str, amount_cents: int) -> bool:
         print(f"Placing order for {item!r}")
-        return self._gateway.charge(amount_cents, reference=item)
+        return self._gateway.charge(amount_cents, item)
 ```
 
 ## Common Mistake

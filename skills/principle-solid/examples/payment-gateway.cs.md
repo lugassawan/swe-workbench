@@ -10,6 +10,7 @@ constructor-injected, compatible with any DI container like `Microsoft.Extension
 
 ```csharp
 // file: IPaymentGateway.cs
+#nullable enable
 public interface IPaymentGateway
 {
     bool Charge(int amountCents, string reference);

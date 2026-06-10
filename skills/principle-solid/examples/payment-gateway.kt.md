@@ -49,7 +49,7 @@ class OrderService(private val gateway: PaymentGateway) { // injected (DIP)
 ## Common Mistake
 
 ```kotlin
-// ✗ DIP violation — concrete class constructed inside OrderService
+// ✗ DIP violation — placeOrder dispatches directly to concrete singleton objects
 // ✗ OCP violation — when keyword forces edits for every new provider
 class BadOrderService {
     fun placeOrder(item: String, cents: Int, method: String): Boolean {

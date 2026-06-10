@@ -66,7 +66,7 @@ export class BadOrderService {
 
   public placeOrder(item: string, cents: number, method: string): boolean {
     if (method === "stripe") {          // ✗ switch on payment type
-      this.stripe.charges.create(...);
+      // this.stripe.paymentIntents.create(params);
     } else if (method === "paypal") {   // ✗ edit required for every new provider
       ...
     }
