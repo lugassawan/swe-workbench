@@ -196,7 +196,7 @@ def test_rejects_symlink(tmp_path):
             f"Expected non-zero for symlink {link}\n"
             f"stderr: {result.stderr!r}"
         )
-        assert link.exists(), "symlink must NOT be removed when rejected"
+        assert link.is_symlink(), "symlink link inode must NOT be removed when rejected"
     finally:
         link.unlink(missing_ok=True)
 
