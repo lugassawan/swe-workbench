@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -52,7 +53,7 @@ func main() {
 	}
 
 	if err := g.Wait(); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	fmt.Println(results)
 }

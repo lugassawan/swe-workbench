@@ -5,7 +5,8 @@
 Fetch N items concurrently in Ruby using K=5 worker threads that drain a shared `Queue`.
 Pre-enqueue `[i, id]` pairs so each worker captures the original index alongside the item.
 Sentinel `nil` values (one per worker) signal shutdown. Workers write `results[i] = fetch(id)`
-to their owned index slot — no mutex needed — then `workers.each(&:join)` collects them all.
+to their owned index slot — no mutex needed (CRuby's GVL serializes thread execution; disjoint
+index slots remove any shared-write race) — then `workers.each(&:join)` collects them all.
 
 ## Implementation
 

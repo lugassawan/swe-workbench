@@ -19,7 +19,7 @@ import java.util.concurrent.*;
 public class BoundedFanOut {
 
     static String fetch(String id) throws InterruptedException {
-        Thread.sleep(10);
+        Thread.sleep(10); // InterruptedException propagates up; don't swallow it in callers
         return "result-" + id;
     }
 

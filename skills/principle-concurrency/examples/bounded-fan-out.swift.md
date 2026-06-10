@@ -27,6 +27,7 @@ func boundedFanOut(ids: [String], limit: Int) async throws -> [String] {
         for (i, id) in ids.enumerated() {
             if active == limit {
                 // Drain one before adding the next to stay at limit.
+                // group.next() is non-nil here: exactly `limit` tasks are live.
                 if let (idx, val) = try await group.next() {
                     results[idx] = val
                     active -= 1

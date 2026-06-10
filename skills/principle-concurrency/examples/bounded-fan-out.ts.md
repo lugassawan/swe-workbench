@@ -24,7 +24,7 @@ async function boundedFanOut(ids: string[], K: number): Promise<string[]> {
 
   async function worker(): Promise<void> {
     while (true) {
-      const i = cursor++; // safe: JS is single-threaded; no two workers overlap here
+      const i = cursor++; // safe: cursor++ is synchronous; JS only yields at `await`, so no two workers can read the same index
       if (i >= ids.length) break;
       results[i] = await fetch(ids[i]); // write to owned slot
     }

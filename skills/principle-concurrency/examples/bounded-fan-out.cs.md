@@ -29,7 +29,7 @@ class BoundedFanOut
     {
         var ids = new[] { "a", "b", "c", "d", "e", "f", "g", "h" };
         const int K = 5;
-        var sem = new SemaphoreSlim(K);
+        using var sem = new SemaphoreSlim(K); // IDisposable: using ensures release on scope exit
         var results = new string[ids.Length];
 
         var tasks = ids.Select(async (id, i) =>
