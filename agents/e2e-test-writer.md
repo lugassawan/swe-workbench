@@ -25,12 +25,14 @@ Do not proceed past this point without a live browser MCP connection.
 
 ## Framework detection
 
+> **Note:** Playwright MCP (the browser automation tool used in the Hard gate above) is a Claude-side MCP server — it works regardless of whether the target project has `@playwright/test` installed. Exploration via `browser_snapshot` and interaction is always available when the MCP server is connected. The project runner (e.g. `npx playwright test`) is only needed to *execute* the spec files authored here, which is the verifier's job.
+
 Auto-detect the project's existing E2E suite before writing a single line:
 
 1. Look for `playwright.config.*`, `cypress.config.*`, `e2e/`, `tests/e2e/`, `spec/`, or similar E2E directories.
 2. **Read at least one existing spec file** — match the project's style, not your defaults.
 3. Identify the run command: `npx playwright test`, `npx cypress run`, or whatever `package.json` / `Makefile` specifies.
-4. If no E2E suite exists yet, bootstrap Playwright TypeScript as the default; note this in your output.
+4. If no E2E suite exists yet, bootstrap Playwright TypeScript as the default (create `playwright.config.ts` + install `@playwright/test`); note this in your output. The MCP-side exploration still works immediately — project setup is only required to run the authored specs.
 
 ## Principle consultation
 
