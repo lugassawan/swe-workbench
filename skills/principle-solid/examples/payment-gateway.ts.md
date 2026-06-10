@@ -68,7 +68,7 @@ export class BadOrderService {
     if (method === "stripe") {          // ✗ switch on payment type
       // this.stripe.paymentIntents.create(params);
     } else if (method === "paypal") {   // ✗ edit required for every new provider
-      ...
+      // paypal SDK call here
     }
     return true;
   }

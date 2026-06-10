@@ -69,6 +69,7 @@ impl OrderService {
 // file: main.rs
 mod order_service;
 mod payment_gateway;
+mod paypal_gateway;
 mod stripe_gateway;
 
 use order_service::OrderService;
