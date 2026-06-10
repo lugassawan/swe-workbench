@@ -57,7 +57,10 @@ public class BoundedFanOut {
 // ✗ cached pool creates an unbounded number of threads
 ExecutorService badExecutor = Executors.newCachedThreadPool();
 List<CompletableFuture<String>> futures = ids.stream()
-    .map(id -> CompletableFuture.supplyAsync(() -> fetch(id), badExecutor)) // ✗ all at once
+    .map(id -> CompletableFuture.supplyAsync(() -> {
+        try { return fetch(id); }
+        catch (InterruptedException e) { throw new RuntimeException(e); } // Supplier<T> can't throw checked
+    }, badExecutor)) // ✗ all at once
     .toList();
 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join(); // ✗ no limit
 ```
