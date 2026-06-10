@@ -118,7 +118,7 @@ print(json.dumps(s))
   "phase": "2",
   "phase_label": "Implement",
   "completed_phases": ["1"],
-  "context": { "branch": "BRANCH_PLACEHOLDER", "worktree_root": ".", "notes": "smoke test" },
+  "context": { "branch": "BRANCH_PLACEHOLDER", "worktree_root": null, "notes": "smoke test" },
   "updated_at": "2026-05-21T00:00:00Z"
 }
 EOF
