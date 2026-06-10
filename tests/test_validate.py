@@ -2155,6 +2155,25 @@ class TestCheckBrowserToolGate:
         validate.check_browser_tool_gate()
         assert len(validate.FAILURES) == 0
 
+    def test_cache_none_sentinel_emits_failure(self, reset_validate):
+        """None sentinel in the agent cache (unreadable file) must emit a failure, not silently skip."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        # Write a file that would pass the gate if readable — but the cache marks it unreadable.
+        agent_path.write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\nnpx @playwright/mcp@latest\n",
+            encoding="utf-8",
+        )
+        cache = ({agent_path: None}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        rel = str(agent_path.relative_to(root))
+        assert any("could not read file" in f for f in validate.FAILURES), (
+            f"Expected 'could not read file' failure for None sentinel; got: {validate.FAILURES}"
+        )
+
     def test_live_tree_passes(self, reset_validate, monkeypatch):
         """All real agents/commands referencing browser MCP tools must carry BLOCKED: + install hint."""
         import validate as val

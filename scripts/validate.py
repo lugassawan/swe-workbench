@@ -875,6 +875,7 @@ def check_browser_tool_gate(cache=None):
                 try:
                     text = md.read_text(encoding="utf-8")
                 except OSError:
+                    fail(md.relative_to(ROOT), "could not read file")
                     continue
             if not _BROWSER_MCP_SIGNALS.search(text):
                 continue

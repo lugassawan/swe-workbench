@@ -75,6 +75,3 @@ Invoke `swe-workbench:principle-testing` for the E2E tier of the test pyramid: w
 4. **Run-readiness** — the exact command to run the suite and any prerequisites (dev server, env vars).
 5. **What was NOT covered and why** — e.g., "auth flow requires live OAuth provider", "payment form behind feature flag".
 
-## Available skills
-
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
