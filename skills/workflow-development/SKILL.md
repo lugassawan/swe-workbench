@@ -148,6 +148,8 @@ Use the service scope whenever the work is clearly contained within one module �
 
 Skip this optimisation when install is fast, `--skip-deps`/`--skip-hooks` already apply (no wait), or `post_create` hooks rewrite the files you'd edit (let hooks finish first).
 
+**Enter the worktree:** After `Path: <abs-path>` appears, call `EnterWorktree(path=<abs-path>)` to anchor the session — `cd` only affects a single Bash subprocess and does **not** move the session. On any resumed or continued session, call `EnterWorktree(path=<worktree-path>)` before running commands; if you catch yourself cd-prefixing, that is the signal to re-anchor.
+
 Verify baseline tests pass before writing any code.
 
 ---
@@ -237,7 +239,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 ## Implementation-Time Behavior (Mode B)
 
 1. **Announce transitions**: `Phase N complete — <summary>. Moving to Phase N+1: <name>.`
-2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). At Phase 5 success, delete the state file.
+2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). Populate `context.worktree_root` with `git rev-parse --show-toplevel` at the Phase 1 checkpoint (omit when working in the main checkout). At Phase 5 success, delete the state file.
 3. **Delegate to sub-skills**: don't re-implement what a sub-skill already does.
 4. **Track phase state** — sub-skill completed Phases 3 or 4 with evidence → mark them "completed by sub-skill".
 5. **Handle failures and no phase skipping** combined:

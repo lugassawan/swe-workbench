@@ -31,7 +31,7 @@ VALID_STATE: dict = {
     "completed_phases": ["1", "2"],
     "context": {
         "branch": _BRANCH,
-        "worktree_root": "/abs/path",
+        "worktree_root": None,
         "pr": None,
         "base": None,
         "head_sha": None,
@@ -275,3 +275,91 @@ class TestResumeInjection:
         assert result.returncode == 0
         data = json.loads(result.stdout)  # must be valid JSON — raises if corrupted
         assert "hookSpecificOutput" in data
+
+
+# ---------------------------------------------------------------------------
+# worktree_root re-anchor nudge
+# ---------------------------------------------------------------------------
+
+class TestWorktreeRootReanchor:
+    """Hook must emit a re-anchor nudge when worktree_root differs from live root.
+
+    context.worktree_root records the worktree where the session was doing its
+    work. If the session resumes from a different directory (live root ≠ recorded
+    worktree_root), the hook appends an EnterWorktree(path=…) instruction so the
+    executor moves into the correct worktree before resuming.
+    """
+
+    def test_reanchor_nudge_when_worktree_root_differs(self, hook_script, git_repo, tmp_path):
+        """worktree_root ≠ live root → preamble contains EnterWorktree(path=…)."""
+        # Use a path that exists but differs from git_repo (the live root).
+        foreign_path = str(tmp_path / "some-other-worktree")
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": foreign_path},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected non-empty output for valid state"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "EnterWorktree" in ctx, (
+            "Preamble must contain 'EnterWorktree' when worktree_root differs from live root."
+        )
+        assert foreign_path in ctx, (
+            "Preamble must include the recorded worktree_root path so the executor "
+            "knows where to re-anchor."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_matches_live_root(
+        self, hook_script, git_repo
+    ):
+        """worktree_root == live root → no re-anchor line in the preamble."""
+        # Set worktree_root to the same directory as git_repo (the live root).
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": str(git_repo)},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        # Re-anchor nudge must NOT appear when already in the right place.
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must NOT emit a re-anchor nudge when worktree_root matches "
+            "the live root — the session is already in the correct place."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_absent(self, hook_script, git_repo):
+        """worktree_root absent (null/empty) → no re-anchor nudge."""
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": None},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must not emit a re-anchor nudge when worktree_root is absent."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_empty_string(
+        self, hook_script, git_repo
+    ):
+        """worktree_root empty string → no re-anchor nudge."""
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": ""},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must not emit a re-anchor nudge when worktree_root is empty."
+        )

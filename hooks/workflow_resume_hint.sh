@@ -11,6 +11,7 @@ main() {
     local input cwd root branch safe_branch state_dir state_file stale
     local real_state real_dir version ctx_branch
     local skill mode phase phase_label completed notes preamble
+    local worktree_root real_wt_root real_live_root reanchor_line
 
     input=$(cat)
     cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null) || return 0
@@ -63,6 +64,23 @@ main() {
     completed=$(jq -r 'if (.completed_phases | length) > 0 then .completed_phases | join(", ") else "none" end' \
         "$state_file" 2>/dev/null) || completed="none"
     notes=$(jq -r '.context.notes // ""' "$state_file" 2>/dev/null) || notes=""
+    worktree_root=$(jq -r '.context.worktree_root // ""' "$state_file" 2>/dev/null) || worktree_root=""
+
+    # Worktree re-anchor check: if the checkpoint recorded a worktree path that
+    # differs from the live root, emit a nudge to call EnterWorktree before resuming.
+    # Uses python3 realpath for portability (GNU realpath -m absent on macOS).
+    reanchor_line=""
+    if [ -n "$worktree_root" ]; then
+        real_wt_root=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
+            "$worktree_root" 2>/dev/null) || real_wt_root=""
+        real_live_root=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
+            "$root" 2>/dev/null) || real_live_root=""
+        if [ -n "$real_wt_root" ] && [ -n "$real_live_root" ] \
+           && [ "$real_wt_root" != "$real_live_root" ]; then
+            reanchor_line="
+WORKTREE RE-ANCHOR REQUIRED: Your checkpoint recorded work in a worktree at \`${worktree_root}\`, but this session resumed at \`${root}\`. Call \`EnterWorktree(path=${worktree_root})\` before resuming — do not cd-prefix."
+        fi
+    fi
 
     # Build preamble
     preamble="[Workflow auto-resume after compaction]
@@ -75,7 +93,7 @@ Completed phases: ${completed}
 ${notes:+Notes: ${notes}
 }
 Resume from Phase ${phase}${phase_label:+ (${phase_label})} — do NOT restart from Phase 1 or re-run completed phases.
-
+${reanchor_line}
 If the recorded state contradicts current repo reality (wrong branch, missing files, unexpected git state), stop and ask the user how to proceed before resuming."
 
     # Use jq to build the full JSON envelope — avoids any shell format-string risk

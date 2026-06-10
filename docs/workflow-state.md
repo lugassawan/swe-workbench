@@ -53,8 +53,10 @@ but different branches never share a checkpoint file.
 - `skill` — fully-qualified skill name driving the workflow.
 - `mode` — optional mode letter (A/B/C for workflow-development; absent for single-mode skills).
 - `phase` / `phase_label` — current phase/step number and human label; `completed_phases` lists all finished phases.
-- `context` — flat free-form bag; `context.branch` is the resume-validation key. Skills pack skill-specific values here (`pr`, `head_sha`, `decision` for pr-review; project-detection values for workflow-development).
+- `context` — flat free-form bag; `context.branch` is the resume-validation key. Skills pack skill-specific values here (`pr`, `head_sha`, `decision` for pr-review; project-detection values for workflow-development). `context.worktree_root` records the absolute path of the worktree where the session is doing its work — populate it with `git rev-parse --show-toplevel` at Phase 1 checkpoint, or omit it when working in the main checkout.
 - `updated_at` — ISO-8601 timestamp (informational — not used for staleness; the hook uses filesystem mtime instead).
+
+**Coverage limit for the worktree re-anchor nudge:** The resume hook is compaction-only (`SessionStart` with `matcher: "compact"`) and branch-keyed off the live cwd. It therefore covers the case where a session was compacted on branch X and resumes on branch X but outside the recorded worktree. It **cannot** redirect to a *foreign* worktree it has no checkpoint for (e.g. a session that was always anchored in the wrong dir but never compacted), and it does not fire on a cold fresh launch. The worktree_root nudge is defense-in-depth; the primary guidance lives in `skills/workflow-worktree-session/SKILL.md` and the plan template.
 
 ### Lifecycle
 
