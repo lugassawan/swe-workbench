@@ -22,7 +22,7 @@ def test_product_manager_step9_deletes_temp_files():
     """agents/product-manager.md step 9 must invoke clean-state-files.sh on success."""
     text = AGENT_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "agents/product-manager.md step 9 must call scripts/clean-state-files.sh "
+        "agents/product-manager.md step 9 must call runtime/clean-state-files.sh "
         "to delete the temp .md and .cmd files after successful issue creation"
     )
     assert "/tmp/capture-" in text, (

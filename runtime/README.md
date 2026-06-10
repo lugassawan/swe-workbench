@@ -1,6 +1,6 @@
 # runtime/
 
-Scripts in this directory are **plugin-runtime** artifacts: they ship to end-user machines as part of
+Scripts in this directory are **runtime scripts**: they ship to end-user machines as part of
 the swe-workbench plugin and are invoked at runtime by skills, commands, and agents via
 `$CLAUDE_PLUGIN_ROOT/runtime/<name>.sh`.
 

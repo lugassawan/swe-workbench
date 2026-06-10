@@ -26,6 +26,17 @@ def test_all_runtime_scripts_exist_and_executable():
         assert os.access(path, os.X_OK), f"runtime/{name} must be executable (chmod +x)"
 
 
+def test_all_runtime_sh_files_are_tracked():
+    """Every *.sh in runtime/ must be listed in RUNTIME_SCRIPTS (prevents silent coverage gaps)."""
+    on_disk = {p.name for p in RUNTIME.glob("*.sh")}
+    tracked = set(RUNTIME_SCRIPTS)
+    missing = on_disk - tracked
+    assert not missing, (
+        f"runtime/ contains untracked scripts not in RUNTIME_SCRIPTS: {sorted(missing)}. "
+        "Add them to RUNTIME_SCRIPTS so they get existence, executable, and syntax checks."
+    )
+
+
 def test_runtime_scripts_pass_bash_syntax_check():
     """bash -n must pass for every runtime script (no syntax errors)."""
     for name in RUNTIME_SCRIPTS:

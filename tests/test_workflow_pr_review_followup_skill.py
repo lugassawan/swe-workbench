@@ -127,7 +127,7 @@ def test_followup_skill_cleanup_deletes_followup_json():
     """Step 7 success-path subshell must invoke clean-state-files.sh with the followup state files."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Step 7 must call scripts/clean-state-files.sh to remove per-run followup state files"
+        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove per-run followup state files"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}-followup.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-followup.json to clean-state-files.sh"
