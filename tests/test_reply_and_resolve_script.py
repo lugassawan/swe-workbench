@@ -28,7 +28,7 @@ def _make_recording_gh_stub(stub_dir: Path, log_file: Path) -> None:
     stub = stub_dir / "gh"
     # Record "$1 $2" only: "api <url>" or "api graphql". The GraphQL query arg
     # spans multiple lines so recording $@ would produce extra log lines.
-    stub.write_text(f'#!/bin/sh\nprintf \'%s %s\\n\' "$1" "$2" >> {log_file}\nexit 0\n')
+    stub.write_text(f'#!/bin/sh\nprintf \'%s %s\\n\' "$1" "$2" >> \'{log_file}\'\nexit 0\n')
     stub.chmod(0o755)
 
 

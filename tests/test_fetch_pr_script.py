@@ -27,7 +27,7 @@ def _make_gh_stub(stub_dir: Path, *, exit_code: int, output: str) -> None:
     output_file = stub_dir / "_gh_output"
     output_file.write_text(output)
     stub = stub_dir / "gh"
-    stub.write_text(f"#!/bin/sh\ncat {output_file}\nexit {exit_code}\n")
+    stub.write_text(f"#!/bin/sh\ncat '{output_file}'\nexit {exit_code}\n")
     stub.chmod(0o755)
 
 
