@@ -257,7 +257,7 @@ def test_audit_emit_uses_clean_state_files_for_deletion():
     """SKILL.md Phase 4 confirm path must invoke clean-state-files.sh (not inline rm -f)."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Phase 4 must call scripts/clean-state-files.sh to delete temp files after "
+        "SKILL.md Phase 4 must call runtime/clean-state-files.sh to delete temp files after "
         "successful issue filing — migrated from inline rm for consistency (issue #428)"
     )
 

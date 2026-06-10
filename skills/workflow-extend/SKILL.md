@@ -86,7 +86,7 @@ Push. Then invoke `swe-workbench:workflow-commit-and-pr`. That skill will surfac
 
 Optional: if the user opts in ("append follow-on section"), fetch the current PR body first (`gh pr view --json body -q .body`), append the `## Follow-on` section, write to a tempfile, then `gh pr edit --body-file <tmp>` — this avoids overwriting collaborator edits.
 
-After Phase D delivery succeeds, delete the spec temp file: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/extend-${TS}.md" 2>/dev/null`. The `Ref: extend-${TS}` commit traceability string remains in git history; only the temp file is removed. On abort before delivery, leave the file for inspection.
+After Phase D delivery succeeds, delete the spec temp file: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/extend-${TS}.md" 2>/dev/null`. The `Ref: extend-${TS}` commit traceability string remains in git history; only the temp file is removed. On abort before delivery, leave the file for inspection.
 
 ## Project Detection
 

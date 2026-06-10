@@ -79,7 +79,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
    ```
    When no label was matched, drop the `--label "<chosen-label>"` segment from the `Command:` line and show `Label: none — no matching label` instead.
 
-9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar file written in step 7 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/capture-<repo-slug>-<unix-timestamp>.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 7). On failure, leave the files for retry. If the user requests edits, revise draft and return to step 7 (overwrite both temp files, then re-present step 8 preview).
+9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar file written in step 7 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/capture-<repo-slug>-<unix-timestamp>.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 7). On failure, leave the files for retry. If the user requests edits, revise draft and return to step 7 (overwrite both temp files, then re-present step 8 preview).
 
 ## Decision boundaries
 

@@ -75,7 +75,7 @@ def test_pr_review_skill_cleanup_uses_clean_ephemeral_script():
     """Step 7 background cleanup and pre-flight stale removal must use clean-ephemeral.sh, not bare rm -rf."""
     text = SKILL_MD.read_text()
     assert "clean-ephemeral.sh" in text, (
-        "SKILL.md cleanup blocks must invoke scripts/clean-ephemeral.sh — "
+        "SKILL.md cleanup blocks must invoke runtime/clean-ephemeral.sh — "
         "bare 'rm -rf $WT' under /Users/... is blocked by the bash guard (exit 2)"
     )
 
@@ -107,7 +107,7 @@ def test_pr_review_skill_cleanup_deletes_pr_json():
     """Step 7 success-path subshell must invoke clean-state-files.sh with the PR state files."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Step 7 must call scripts/clean-state-files.sh to remove per-run state files"
+        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove per-run state files"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to clean-state-files.sh"

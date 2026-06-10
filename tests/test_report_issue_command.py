@@ -160,7 +160,7 @@ def test_report_issue_step9_deletes_temp_files():
     """commands/report-issue.md step 9 must invoke clean-state-files.sh on success."""
     text = REPORT_ISSUE_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "commands/report-issue.md step 9 must call scripts/clean-state-files.sh "
+        "commands/report-issue.md step 9 must call runtime/clean-state-files.sh "
         "to delete the temp .md and .cmd files after successful issue creation"
     )
     assert "/tmp/report-issue-lugassawan-swe-workbench-" in text, (

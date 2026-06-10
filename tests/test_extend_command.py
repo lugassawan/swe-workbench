@@ -202,7 +202,7 @@ def test_extend_skill_phase_d_deletes_tmp_file():
     """SKILL.md Phase D must invoke clean-state-files.sh on /tmp/extend-${TS}.md after delivery."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Phase D must call scripts/clean-state-files.sh to remove /tmp/extend-${TS}.md "
+        "SKILL.md Phase D must call runtime/clean-state-files.sh to remove /tmp/extend-${TS}.md "
         "after successful delivery"
     )
     assert "/tmp/extend-${TS}.md" in text, (

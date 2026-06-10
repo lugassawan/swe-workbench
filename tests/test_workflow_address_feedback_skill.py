@@ -40,19 +40,20 @@ def test_address_feedback_triggers_txt():
 
 
 def test_address_feedback_skill_references_reply_rest_endpoint():
-    """SKILL.md must reference the per-thread reply REST endpoint for inline replies."""
+    """SKILL.md must reference the reply REST endpoint directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert re.search(r"pulls/.*comments/.*replies", text), (
-        "SKILL.md must reference the REST reply endpoint pattern: "
-        "pulls/{N}/comments/{id}/replies"
+    assert re.search(r"pulls/.*comments/.*replies", text) or "reply-and-resolve.sh" in text, (
+        "SKILL.md must either reference the REST reply endpoint pattern "
+        "(pulls/{N}/comments/{id}/replies) or invoke runtime/reply-and-resolve.sh"
     )
 
 
 def test_address_feedback_skill_references_resolve_mutation():
-    """SKILL.md must reference the resolveReviewThread GraphQL mutation."""
+    """SKILL.md must reference resolveReviewThread directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert "resolveReviewThread" in text, (
-        "SKILL.md must reference the resolveReviewThread GraphQL mutation"
+    assert "resolveReviewThread" in text or "reply-and-resolve.sh" in text, (
+        "SKILL.md must reference the resolveReviewThread GraphQL mutation "
+        "or delegate to runtime/reply-and-resolve.sh"
     )
 
 
@@ -295,7 +296,7 @@ def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
     """Phase 6 fallback must invoke clean-ephemeral.sh, not bare rm -rf "$WT"."""
     text = SKILL_MD.read_text()
     assert "clean-ephemeral.sh" in text, (
-        "SKILL.md Phase 6 fallback must use scripts/clean-ephemeral.sh — "
+        "SKILL.md Phase 6 fallback must use runtime/clean-ephemeral.sh — "
         "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
     )
 
@@ -321,7 +322,7 @@ def test_address_feedback_skill_deletes_three_state_files():
     """Phase 5 success path must invoke clean-state-files.sh with all three state files."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md must call scripts/clean-state-files.sh to remove address-feedback state files"
+        "SKILL.md must call runtime/clean-state-files.sh to remove address-feedback state files"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to clean-state-files.sh"

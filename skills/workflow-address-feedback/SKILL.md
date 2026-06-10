@@ -33,10 +33,9 @@ This skill orchestrates:
 ```bash
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
-mkdir -p /tmp/swe-workbench-address-feedback
-gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision,state \
-  > "/tmp/swe-workbench-address-feedback/${PR}.json"
-[ -s "/tmp/swe-workbench-address-feedback/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/fetch-pr.sh" \
+  "$PR" "/tmp/swe-workbench-address-feedback/${PR}.json" \
+  "number,title,body,headRefName,baseRefName,author,reviewDecision,state"
 ```
 
 Extract fields from the JSON:
@@ -198,28 +197,16 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each thread, post a reply via REST then conditionally resolve. Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
-
-```bash
-# Post reply
-gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments/${COMMENT_DATABASEID}/replies" \
-  -F body="$REPLY_BODY"
-```
+For each **ADDRESSED** or **CLARIFIED** thread, post a reply via REST then conditionally resolve (DEFERRED threads skip this call entirely). Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
 
 Reply body templates by triage classification:
-- **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."`
-- **CLARIFIED**: free-text owner-authored reply (asked interactively). No resolve.
-- **DEFERRED**: no reply posted, no resolve.
-
-For each `ADDRESSED` thread, resolve via GraphQL after the reply succeeds:
+- **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."` — pass both `$REPLY_BODY` and `$THREAD_ID`.
+- **CLARIFIED**: free-text owner-authored reply (asked interactively) — pass `$REPLY_BODY` with empty `$THREAD_ID` (reply only, no resolve).
+- **DEFERRED**: pass empty `$REPLY_BODY` and empty `$THREAD_ID` (neither reply nor resolve).
 
 ```bash
-gh api graphql -F threadId="$THREAD_ID" -f query='
-  mutation($threadId: ID!) {
-    resolveReviewThread(input: {threadId: $threadId}) {
-      thread { id isResolved }
-    }
-  }'
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/reply-and-resolve.sh" \
+  "$OWNER" "$REPO" "$PR" "$COMMENT_DATABASEID" "$THREAD_ID" "$REPLY_BODY"
 ```
 
 After all replies and resolutions land, emit the follow-up CTA:
@@ -229,7 +216,7 @@ After all replies and resolutions land, emit the follow-up CTA:
 On the Phase 5 success path, delete the address-feedback state files:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/swe-workbench-address-feedback/${PR}.json" "/tmp/swe-workbench-address-feedback/${PR}-threads.json" "/tmp/swe-workbench-address-feedback/${PR}-triage.json" 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/swe-workbench-address-feedback/${PR}.json" "/tmp/swe-workbench-address-feedback/${PR}-threads.json" "/tmp/swe-workbench-address-feedback/${PR}-triage.json" 2>/dev/null
 ```
 
 Then run **Phase 6 — Cleanup**.
@@ -247,7 +234,7 @@ else
     echo "Cleaned up worktree address-feedback-$PR."
   else
     # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
-    git worktree remove --force "$WT" 2>/dev/null; bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+    git worktree remove --force "$WT" 2>/dev/null; bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
     echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
   fi
 fi
