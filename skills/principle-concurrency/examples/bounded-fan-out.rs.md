@@ -47,6 +47,6 @@ use futures::future::join_all;
 
 // ✗ all N futures are polled simultaneously — no cap
 async fn bad_fan_out(ids: &[&str]) -> Vec<String> {
-    join_all(ids.iter().map(|id| fetch(id))).await // ✗ unbounded inflight
+    join_all(ids.iter().copied().map(|id| fetch(id))).await // ✗ unbounded inflight
 }
 ```
