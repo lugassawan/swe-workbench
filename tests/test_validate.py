@@ -2198,6 +2198,32 @@ class TestCheckBrowserToolGate:
         val.check_browser_tool_gate()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
+    def test_claude_in_chrome_only_passes(self, reset_validate):
+        """File referencing only mcp__claude-in-chrome__* is exempt from the install-hint requirement."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages to get logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_claude_in_chrome_plus_browser_snapshot_requires_blocked(self, reset_validate):
+        """File mixing mcp__claude-in-chrome__* with another browser signal must still carry BLOCKED:."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages and also browser_snapshot.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # e2e-test-writer agent structural assertions
@@ -2318,6 +2344,9 @@ class TestE2eTestVerifierAgent:
         text = self.AGENT_PATH.read_text(encoding="utf-8")
         assert "@./shared/principles.md" in text, (
             "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
         )
 
     def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):

@@ -33,7 +33,7 @@ _BROWSER_MCP_SIGNALS = re.compile(
     r'browser_snapshot|read_console_messages|read_network_requests'
     r'|mcp__\S*chrome\S*|@playwright/mcp'
 )
-_CLAUDE_IN_CHROME_ONLY = re.compile(r'mcp__claude-in-chrome__')
+_CLAUDE_IN_CHROME_ONLY = re.compile(r'mcp__claude-in-chrome__\S*')
 _BROWSER_INSTALL_HINTS = re.compile(
     r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
 )
