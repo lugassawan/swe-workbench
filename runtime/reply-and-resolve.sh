@@ -4,6 +4,8 @@
 # Empty reply_body skips the reply (COMMENT_DATABASEID is then ignored); empty thread_id skips the resolve
 # (ADDRESSED -> both, CLARIFIED -> reply only, DEFERRED -> neither).
 set -euo pipefail
+# Fast-exit for DEFERRED: nothing to do when both reply and resolve are suppressed.
+if [ -z "${6:-}" ] && [ -z "${5:-}" ]; then exit 0; fi
 OWNER="${1:?}"; REPO="${2:?}"; PR="${3:?}"
 COMMENT_DATABASEID="${4:-}"; THREAD_ID="${5:-}"; REPLY_BODY="${6:-}"
 if [ -n "$REPLY_BODY" ]; then

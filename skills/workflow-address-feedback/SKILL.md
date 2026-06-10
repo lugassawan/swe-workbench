@@ -197,7 +197,7 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each thread, post a reply via REST then conditionally resolve. Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
+For each **ADDRESSED** or **CLARIFIED** thread, post a reply via REST then conditionally resolve (DEFERRED threads skip this call entirely). Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
 
 Reply body templates by triage classification:
 - **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."` — pass both `$REPLY_BODY` and `$THREAD_ID`.
