@@ -323,6 +323,20 @@ class TestCheckAgents:
         validate.check_agents()
         assert len(validate.FAILURES) == 0
 
+    def test_skill_ref_without_tools_line_passes(self, reset_validate):
+        """Omitting tools: entirely grants all tools (Skill implicitly available) — no failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: An agent\n---\n"
+            "\nUse `swe-workbench:foo` to do things.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agents()
+        assert len(validate.FAILURES) == 0
+
 
 # ──────────────────────────────────────────────
 # performance-tuner agent structural assertions
@@ -2029,4 +2043,318 @@ class TestCheckPlanModeWorkflowEmbedding:
         import validate as val
         monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
         val.check_plan_mode_workflow_embedding()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_browser_tool_gate
+# ──────────────────────────────────────────────
+
+class TestCheckBrowserToolGate:
+    """check_browser_tool_gate: agents/commands referencing browser MCP tools must carry
+    a BLOCKED: sentinel and a per-backend install hint (#364)."""
+
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def test_browser_snapshot_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_browser_snapshot_with_blocked_and_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n\n"
+            "BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_playwright_mcp_ref_in_command_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Requires @playwright/mcp for E2E testing.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_read_console_messages_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call read_console_messages to get browser logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_blocked_with_chrome_devtools_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Capture read_console_messages for diagnostics.\n\n"
+            "BLOCKED: No Chrome backend connected — install with `npx chrome-devtools-mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_blocked_without_install_hint_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Use browser_snapshot to explore the UI.\n\n"
+            "BLOCKED: Playwright MCP not connected.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("install hint" in f for f in validate.FAILURES)
+
+    def test_read_network_requests_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Capture read_network_requests to inspect XHR calls.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_no_browser_refs_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "This agent does not reference any browser tools.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_emits_failure(self, reset_validate):
+        """None sentinel in the agent cache (unreadable file) must emit a failure, not silently skip."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        # Write a file that would pass the gate if readable — but the cache marks it unreadable.
+        agent_path.write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\nnpx @playwright/mcp@latest\n",
+            encoding="utf-8",
+        )
+        cache = ({agent_path: None}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        assert any("could not read file" in f for f in validate.FAILURES), (
+            f"Expected 'could not read file' failure for None sentinel; got: {validate.FAILURES}"
+        )
+
+    def test_cache_hit_with_valid_content_passes(self, reset_validate):
+        """Valid-text cache hit (agent satisfies gate) must not emit any failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        content = (
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\n"
+            "claude mcp add playwright npx @playwright/mcp@latest\n"
+        )
+        agent_path.write_text(content, encoding="utf-8")
+        cache = ({agent_path: content}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        assert len(validate.FAILURES) == 0, (
+            f"Expected no failures for cached valid content; got: {validate.FAILURES}"
+        )
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """All real agents/commands referencing browser MCP tools must carry BLOCKED: + install hint."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.check_browser_tool_gate()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+    def test_claude_in_chrome_only_passes(self, reset_validate):
+        """File referencing only mcp__claude-in-chrome__* is exempt from the install-hint requirement."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages to get logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_claude_in_chrome_plus_browser_snapshot_requires_blocked(self, reset_validate):
+        """File mixing mcp__claude-in-chrome__* with another browser signal must still carry BLOCKED:."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages and also browser_snapshot.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# e2e-test-writer agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestWriterAgent:
+    """Integration tests: assert agents/e2e-test-writer.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-writer.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-writer.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-writer" in fm_text
+        assert "description:" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bSkill\b", fm_text), "tools: must include Skill"
+
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, "agent must carry a BLOCKED: hard-gate sentinel"
+
+    def test_playwright_mcp_install_hint_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "claude mcp add" in text and "@playwright/mcp" in text, (
+            "agent must include the Playwright MCP install hint (claude mcp add ... @playwright/mcp)"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# e2e-test-verifier agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestVerifierAgent:
+    """Integration tests: assert agents/e2e-test-verifier.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-verifier.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-verifier.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-verifier" in fm_text
+        assert "description:" in fm_text
+        assert "model: haiku" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bBash\b", fm_text), "tools: must include Bash (runs specs)"
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_no_browser_mcp_tools_in_frontmatter(self):
+        """Verifier uses the CLI runner, not browser MCP — tools: must not list MCP browser tools."""
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        tools_line = next(
+            (line for line in fm_text.splitlines() if line.startswith("tools:")), ""
+        )
+        assert "browser_snapshot" not in tools_line
+        assert "mcp__" not in tools_line
+
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, (
+            "agent must include a BLOCKED: sentinel for the missing-runner case"
+        )
+
+    def test_boundary_section_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "Boundary vs. `test-reviewer`" in text, (
+            "agent must have a Boundary vs. test-reviewer section"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
