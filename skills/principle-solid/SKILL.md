@@ -72,3 +72,6 @@ SOLID is about making change cheap. If nothing is changing, it costs complexity 
 | "The entity is just data, logic goes elsewhere" | Anemic domain. Move behavior onto the entity. |
 | "Let me import the store directly, it's faster" | Faster to write, impossible to test in isolation. Define the interface. |
 | "YAGNI — we might never need another implementation" | DIP isn't about multiple implementations. It's about testability and decoupling. |
+
+> See `examples/` for a worked DIP + OCP payment-gateway implementation in C#, Go, Java, Kotlin,
+> Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
