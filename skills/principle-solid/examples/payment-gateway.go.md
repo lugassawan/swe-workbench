@@ -84,7 +84,9 @@ func main() {
 ```go
 // ✗ DIP violation — OrderService imports the concrete stripe package
 // ✗ OCP violation — adding PayPal requires editing PlaceOrder
-import stripe "github.com/stripe/stripe-go/v74"
+import (
+	stripe "github.com/stripe/stripe-go/v74"
+)
 
 type BadOrderService struct{}
 

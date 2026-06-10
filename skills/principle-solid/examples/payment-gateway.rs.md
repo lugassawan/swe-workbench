@@ -69,11 +69,12 @@ impl OrderService {
 // file: main.rs
 mod order_service;
 mod payment_gateway;
-mod paypal_gateway;
+mod paypal_gateway; // swap `use` below to exercise OCP — no OrderService edits needed
 mod stripe_gateway;
 
 use order_service::OrderService;
 use stripe_gateway::StripeGateway;
+// use paypal_gateway::PayPalGateway; // ← uncomment to swap provider; OrderService unchanged
 
 fn main() {
     // Box<dyn PaymentGateway> is the seam — swap for PayPalGateway; OrderService unchanged (OCP).
