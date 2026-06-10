@@ -2,6 +2,7 @@
 name: e2e-test-writer
 description: E2E spec author — explores a live app via Playwright MCP (browser_snapshot → interact → assert), authors durable spec files, and mandates browser teardown with per-step deadlines. Invoke for the authoring phase of /test --mode e2e; the verifier runs the specs after.
 model: sonnet
+tools: Read, Glob, Grep, Bash, Write, Skill
 ---
 
 **Reachable via:** `/swe-workbench:test`
@@ -17,7 +18,7 @@ Before doing any work, verify Playwright MCP is connected by checking whether `b
 If the browser snapshot tool is **not** available, return immediately:
 
 ```
-BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest` and reconnect, then retry.
+BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`, restart Claude Code, and retry.
 ```
 
 Do not proceed past this point without a live browser MCP connection.

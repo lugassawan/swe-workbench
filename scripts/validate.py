@@ -869,6 +869,7 @@ def check_browser_tool_gate(cache=None):
             if use_cache and agents_cache is not None and md in agents_cache:
                 text = agents_cache[md]
                 if text is None:
+                    fail(md.relative_to(ROOT), "could not read file")
                     continue
             else:
                 try:

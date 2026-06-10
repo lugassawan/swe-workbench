@@ -2161,3 +2161,129 @@ class TestCheckBrowserToolGate:
         monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
         val.check_browser_tool_gate()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# e2e-test-writer agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestWriterAgent:
+    """Integration tests: assert agents/e2e-test-writer.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-writer.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-writer.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-writer" in fm_text
+        assert "description:" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bSkill\b", fm_text), "tools: must include Skill"
+
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, "agent must carry a BLOCKED: hard-gate sentinel"
+
+    def test_playwright_mcp_install_hint_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "npx @playwright/mcp@latest" in text, (
+            "agent must include the Playwright MCP install hint"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# e2e-test-verifier agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestVerifierAgent:
+    """Integration tests: assert agents/e2e-test-verifier.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-verifier.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-verifier.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-verifier" in fm_text
+        assert "description:" in fm_text
+        assert "model: haiku" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bBash\b", fm_text), "tools: must include Bash (runs specs)"
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_no_browser_mcp_tools_in_frontmatter(self):
+        """Verifier uses the CLI runner, not browser MCP — tools: must not list MCP browser tools."""
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        tools_line = next(
+            (line for line in fm_text.splitlines() if line.startswith("tools:")), ""
+        )
+        assert "browser_snapshot" not in tools_line
+        assert "mcp__" not in tools_line
+
+    def test_boundary_section_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "Boundary vs. `test-reviewer`" in text, (
+            "agent must have a Boundary vs. test-reviewer section"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
