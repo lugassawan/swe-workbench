@@ -2173,6 +2173,24 @@ class TestCheckBrowserToolGate:
             f"Expected 'could not read file' failure for None sentinel; got: {validate.FAILURES}"
         )
 
+    def test_cache_hit_with_valid_content_passes(self, reset_validate):
+        """Valid-text cache hit (agent satisfies gate) must not emit any failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        content = (
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\n"
+            "claude mcp add playwright npx @playwright/mcp@latest\n"
+        )
+        agent_path.write_text(content, encoding="utf-8")
+        cache = ({agent_path: content}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        assert len(validate.FAILURES) == 0, (
+            f"Expected no failures for cached valid content; got: {validate.FAILURES}"
+        )
+
     def test_live_tree_passes(self, reset_validate, monkeypatch):
         """All real agents/commands referencing browser MCP tools must carry BLOCKED: + install hint."""
         import validate as val
