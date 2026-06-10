@@ -31,7 +31,7 @@ _BROWSER_MCP_SIGNALS = re.compile(
     r'|mcp__\S*chrome\S*|@playwright/mcp'
 )
 _BROWSER_INSTALL_HINTS = re.compile(
-    r'npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
+    r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
 )
 
 
@@ -858,8 +858,9 @@ def check_browser_tool_gate(cache=None):
 
     Signals that trigger the check: browser_snapshot, read_console_messages,
     read_network_requests, mcp__*chrome*, @playwright/mcp.
-    Required when triggered: BLOCKED: string + npx @playwright/mcp@latest
-    or npx chrome-devtools-mcp@latest.
+    Required when triggered: BLOCKED: string + a per-backend install hint,
+    either `claude mcp add <name> npx <package>@latest` (preferred) or the
+    legacy `npx <package>@latest` form.
     """
     agents_cache = cache[0] if cache is not None else None
     for subdir, use_cache in ((ROOT / "agents", True), (ROOT / "commands", False)):
@@ -885,14 +886,15 @@ def check_browser_tool_gate(cache=None):
                     rel,
                     "references browser MCP tools but missing BLOCKED: sentinel — "
                     "add a hard-gate that returns BLOCKED: with a per-backend install hint "
-                    "(e.g. `npx @playwright/mcp@latest` or `npx chrome-devtools-mcp@latest`) "
+                    "(e.g. `claude mcp add playwright npx @playwright/mcp@latest`) "
                     "when the required MCP server is absent (#364)",
                 )
             elif not _BROWSER_INSTALL_HINTS.search(text):
                 fail(
                     rel,
                     "references browser MCP tools and has BLOCKED: but missing a per-backend install hint — "
-                    "add `npx @playwright/mcp@latest` or `npx chrome-devtools-mcp@latest` (#364)",
+                    "add `claude mcp add playwright npx @playwright/mcp@latest` or "
+                    "`claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest` (#364)",
                 )
 
 

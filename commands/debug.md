@@ -26,7 +26,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
    ```
    BLOCKED: Browser diagnostics requested but no Chrome backend is connected.
-   To capture console and network evidence, install chrome-devtools-mcp: `npx chrome-devtools-mcp@latest`
+   To capture console and network evidence, run `claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest`
    Then reconnect and retry, or re-run /debug without a browser context to skip this step.
    ```
 

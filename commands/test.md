@@ -23,7 +23,7 @@ Before dispatching any agents, verify that Playwright MCP is available in this s
 If Playwright MCP is **not connected**, stop immediately and return:
 
 ```
-BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`, restart Claude Code, and retry.
+BLOCKED: Playwright MCP not connected — run `claude mcp add playwright npx @playwright/mcp@latest`, restart Claude Code, and retry.
 ```
 
 Do not delegate to any agent until the gate passes.

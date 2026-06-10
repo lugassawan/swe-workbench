@@ -2210,8 +2210,8 @@ class TestE2eTestWriterAgent:
 
     def test_playwright_mcp_install_hint_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "npx @playwright/mcp@latest" in text, (
-            "agent must include the Playwright MCP install hint"
+        assert "claude mcp add" in text and "@playwright/mcp" in text, (
+            "agent must include the Playwright MCP install hint (claude mcp add ... @playwright/mcp)"
         )
 
     def test_principle_testing_wired(self):

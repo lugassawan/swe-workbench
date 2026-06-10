@@ -16,13 +16,11 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 | Server | Source | Used by | Install | Required? |
 |---|---|---|---|---|
-| Playwright MCP | [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp) | `/test --mode e2e` — browser snapshot → interact → assert spec authoring via `e2e-test-writer` | `npx @playwright/mcp@latest` | Required **only** for `/test --mode e2e` (hard-gated: absent → `BLOCKED:`) |
-| Chrome DevTools MCP | [`ChromeDevTools/chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) | `/debug` console/network/perf diagnostics for web-UI symptoms via `read_console_messages` + `read_network_requests` | `npx chrome-devtools-mcp@latest` | Optional; one Chrome backend required for `/debug` browser diagnostics (hard-gated) |
+| Playwright MCP | [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp) | `/test --mode e2e` — browser snapshot → interact → assert spec authoring via `e2e-test-writer` | `claude mcp add playwright npx @playwright/mcp@latest` | Required **only** for `/test --mode e2e` (hard-gated: absent → `BLOCKED:`) |
+| Chrome DevTools MCP | [`ChromeDevTools/chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) | `/debug` console/network/perf diagnostics for web-UI symptoms via `read_console_messages` + `read_network_requests` | `claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest` | Optional; one Chrome backend required for `/debug` browser diagnostics (hard-gated) |
 | Claude-in-Chrome | In-harness (`mcp__claude-in-chrome__*`) | `/debug` console/network capture when the Claude browser extension is connected — alternative to chrome-devtools-mcp | None (provided by the Claude Code harness) | Optional alternative to chrome-devtools-mcp for `/debug` browser diagnostics |
 
-**Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … install with \`npx <server>@latest\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/test` (unit) and non-web-UI `/debug` are completely unaffected by these servers.
-
-**`hangwin/mcp-chrome` — evaluated and not adopted:** this server is oriented toward semantic page search and content extraction; it does not provide the deterministic console/network capture (`read_console_messages`, `read_network_requests`) or E2E interaction primitives needed here. `chrome-devtools-mcp` and Claude-in-Chrome provide the right primitives for `/debug`; Playwright MCP provides the right primitives for `/test --mode e2e`.
+**Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … run \`claude mcp add …\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/test` (unit) and non-web-UI `/debug` are completely unaffected by these servers.
 
 ## Claude Code native tools
 

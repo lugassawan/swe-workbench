@@ -18,7 +18,7 @@ Before doing any work, verify Playwright MCP is connected by checking whether `b
 If the browser snapshot tool is **not** available, return immediately:
 
 ```
-BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`, restart Claude Code, and retry.
+BLOCKED: Playwright MCP not connected — run `claude mcp add playwright npx @playwright/mcp@latest`, restart Claude Code, and retry.
 ```
 
 Do not proceed past this point without a live browser MCP connection.
