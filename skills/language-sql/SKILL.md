@@ -1,6 +1,6 @@
 ---
 name: language-sql
-description: SQL idioms - query tuning, EXPLAIN plans, table definitions, constraints, indexes, transactions, window functions, CTEs, and pagination. Auto-load when working with .sql files or migrations, or when the user mentions SQL syntax, SELECT, JOIN, EXPLAIN, CTE, window functions, transaction isolation, deadlocks, or SQL indexes.
+description: SQL idioms — query tuning, EXPLAIN plans, table definitions, constraints, indexes, transactions, window functions, CTEs, and pagination. Auto-load when working with .sql files or migrations, or when the user mentions SQL syntax, SELECT, JOIN, EXPLAIN, CTE, window functions, transaction isolation, deadlocks, or SQL indexes.
 ---
 
 # SQL
