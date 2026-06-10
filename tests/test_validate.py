@@ -2169,7 +2169,6 @@ class TestCheckBrowserToolGate:
         )
         cache = ({agent_path: None}, {})
         validate.check_browser_tool_gate(cache=cache)
-        rel = str(agent_path.relative_to(root))
         assert any("could not read file" in f for f in validate.FAILURES), (
             f"Expected 'could not read file' failure for None sentinel; got: {validate.FAILURES}"
         )
