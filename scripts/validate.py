@@ -23,6 +23,17 @@ _NON_CODE_AGENTS = frozenset({
     "product-manager",
 })
 
+# Browser MCP tool patterns that trigger the hard gate (#364).
+# Any agent or command containing one of these strings must also carry
+# a BLOCKED: sentinel and a per-backend install hint.
+_BROWSER_MCP_SIGNALS = re.compile(
+    r'browser_snapshot|read_console_messages|read_network_requests'
+    r'|mcp__\S*chrome\S*|@playwright/mcp'
+)
+_BROWSER_INSTALL_HINTS = re.compile(
+    r'npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
+)
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -219,7 +230,11 @@ def check_agents(cache=None):
         for field in ("name", "description"):
             if field not in fm:
                 fail(agent_md.relative_to(ROOT), f"frontmatter missing required field: {field!r}")
-        if re.search(r'`swe-workbench:[\w-]+`', text) and "Skill" not in fm.get("tools", ""):
+        if (
+            re.search(r'`swe-workbench:[\w-]+`', text)
+            and "tools" in fm
+            and "Skill" not in fm["tools"]
+        ):
             fail(agent_md.relative_to(ROOT), "references swe-workbench: skills but 'Skill' is missing from tools: frontmatter")
 
 
@@ -837,6 +852,48 @@ def check_plan_mode_workflow_embedding():
             )
 
 
+def check_browser_tool_gate(cache=None):
+    """Any agent or command referencing browser MCP tools must carry a BLOCKED: sentinel
+    and a per-backend install hint — enforces the hard gate from #364.
+
+    Signals that trigger the check: browser_snapshot, read_console_messages,
+    read_network_requests, mcp__*chrome*, @playwright/mcp.
+    Required when triggered: BLOCKED: string + npx @playwright/mcp@latest
+    or npx chrome-devtools-mcp@latest.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    for subdir, use_cache in ((ROOT / "agents", True), (ROOT / "commands", False)):
+        if not subdir.is_dir():
+            continue
+        for md in sorted(subdir.glob("*.md")):
+            if use_cache and agents_cache is not None and md in agents_cache:
+                text = agents_cache[md]
+                if text is None:
+                    continue
+            else:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+            if not _BROWSER_MCP_SIGNALS.search(text):
+                continue
+            rel = md.relative_to(ROOT)
+            if "BLOCKED:" not in text:
+                fail(
+                    rel,
+                    "references browser MCP tools but missing BLOCKED: sentinel — "
+                    "add a hard-gate that returns BLOCKED: with a per-backend install hint "
+                    "(e.g. `npx @playwright/mcp@latest` or `npx chrome-devtools-mcp@latest`) "
+                    "when the required MCP server is absent (#364)",
+                )
+            elif not _BROWSER_INSTALL_HINTS.search(text):
+                fail(
+                    rel,
+                    "references browser MCP tools and has BLOCKED: but missing a per-backend install hint — "
+                    "add `npx @playwright/mcp@latest` or `npx chrome-devtools-mcp@latest` (#364)",
+                )
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -867,6 +924,7 @@ def main():
     check_hook_scripts()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
+    check_browser_tool_gate(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

@@ -323,6 +323,20 @@ class TestCheckAgents:
         validate.check_agents()
         assert len(validate.FAILURES) == 0
 
+    def test_skill_ref_without_tools_line_passes(self, reset_validate):
+        """Omitting tools: entirely grants all tools (Skill implicitly available) — no failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: An agent\n---\n"
+            "\nUse `swe-workbench:foo` to do things.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agents()
+        assert len(validate.FAILURES) == 0
+
 
 # ──────────────────────────────────────────────
 # performance-tuner agent structural assertions
@@ -2029,4 +2043,121 @@ class TestCheckPlanModeWorkflowEmbedding:
         import validate as val
         monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
         val.check_plan_mode_workflow_embedding()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_browser_tool_gate
+# ──────────────────────────────────────────────
+
+class TestCheckBrowserToolGate:
+    """check_browser_tool_gate: agents/commands referencing browser MCP tools must carry
+    a BLOCKED: sentinel and a per-backend install hint (#364)."""
+
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def test_browser_snapshot_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_browser_snapshot_with_blocked_and_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n\n"
+            "BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_playwright_mcp_ref_in_command_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Requires @playwright/mcp for E2E testing.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_read_console_messages_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call read_console_messages to get browser logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_blocked_with_chrome_devtools_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Capture read_console_messages for diagnostics.\n\n"
+            "BLOCKED: No Chrome backend connected — install with `npx chrome-devtools-mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_blocked_without_install_hint_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Use browser_snapshot to explore the UI.\n\n"
+            "BLOCKED: Playwright MCP not connected.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("install hint" in f for f in validate.FAILURES)
+
+    def test_read_network_requests_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Capture read_network_requests to inspect XHR calls.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_no_browser_refs_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "This agent does not reference any browser tools.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """All real agents/commands referencing browser MCP tools must carry BLOCKED: + install hint."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.check_browser_tool_gate()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"

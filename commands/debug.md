@@ -16,6 +16,37 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
+**Browser diagnostic step (web-UI symptoms only).** Before delegating, check whether the symptom indicates a browser / web-UI context (e.g., mentions a rendered page, console error, XHR/fetch failure, visual regression, or DOM state). If it does:
+
+1. **Gate** — check whether a Chrome backend is available in this session. A Chrome backend is one of:
+   - `chrome-devtools-mcp` (`read_console_messages`, `read_network_requests` tools reachable), OR
+   - Claude-in-Chrome (`mcp__claude-in-chrome__read_console_messages` tool reachable).
+
+   If the symptom is web-UI but **no Chrome backend is connected**, stop immediately and return:
+
+   ```
+   BLOCKED: Browser diagnostics requested but no Chrome backend is connected.
+   To capture console and network evidence, install chrome-devtools-mcp: `npx chrome-devtools-mcp@latest`
+   Then reconnect and retry, or re-run /debug without a browser context to skip this step.
+   ```
+
+2. **Capture** — if a Chrome backend is present, collect:
+   - Console messages (errors, warnings, and relevant info) via `read_console_messages`.
+   - Network request failures or unexpected responses via `read_network_requests`.
+   - Summarise into a structured block:
+
+   ```
+   ## Browser evidence
+   ### Console
+   <filtered console output — errors and warnings>
+   ### Network
+   <failed or anomalous requests with status codes>
+   ```
+
+3. **Prepend** this `## Browser evidence` block to the delegation context below (same position as a ticket-context summary). The debugger agent will incorporate it as boundary evidence before forming hypotheses.
+
+Non-web symptoms (backend panics, CLI failures, test assertion errors): skip this step entirely — no gate, no prompt.
+
 Delegate to the `debugger` subagent. Its output must include:
 
 1. **Repro** — exact steps, inputs, and the observed failure (command, stack trace, or assertion delta).
