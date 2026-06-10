@@ -40,19 +40,20 @@ def test_address_feedback_triggers_txt():
 
 
 def test_address_feedback_skill_references_reply_rest_endpoint():
-    """SKILL.md must reference the per-thread reply REST endpoint for inline replies."""
+    """SKILL.md must reference the reply REST endpoint directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert re.search(r"pulls/.*comments/.*replies", text), (
-        "SKILL.md must reference the REST reply endpoint pattern: "
-        "pulls/{N}/comments/{id}/replies"
+    assert re.search(r"pulls/.*comments/.*replies", text) or "reply-and-resolve.sh" in text, (
+        "SKILL.md must either reference the REST reply endpoint pattern "
+        "(pulls/{N}/comments/{id}/replies) or invoke runtime/reply-and-resolve.sh"
     )
 
 
 def test_address_feedback_skill_references_resolve_mutation():
-    """SKILL.md must reference the resolveReviewThread GraphQL mutation."""
+    """SKILL.md must reference resolveReviewThread directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert "resolveReviewThread" in text, (
-        "SKILL.md must reference the resolveReviewThread GraphQL mutation"
+    assert "resolveReviewThread" in text or "reply-and-resolve.sh" in text, (
+        "SKILL.md must reference the resolveReviewThread GraphQL mutation "
+        "or delegate to runtime/reply-and-resolve.sh"
     )
 
 

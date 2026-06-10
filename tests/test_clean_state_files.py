@@ -1,4 +1,4 @@
-"""Tests for scripts/clean-state-files.sh — file-only state cleanup helper.
+"""Tests for runtime/clean-state-files.sh — file-only state cleanup helper.
 
 Mirrors tests/test_clean_ephemeral.py.  Each test invokes the script as a
 subprocess.  Exit code 0 + file removed → allowed deletion.  Exit code 1 +
@@ -13,7 +13,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "clean-state-files.sh"
+SCRIPT = Path(__file__).parent.parent / "runtime" / "clean-state-files.sh"
 ROOT = Path(__file__).parent.parent
 TMP = Path("/tmp")
 
@@ -47,7 +47,7 @@ def _tmp_addr_feedback_dir() -> Path:
 # ── script existence ──────────────────────────────────────────────────────────
 
 def test_script_exists_and_is_executable():
-    """scripts/clean-state-files.sh must exist and be executable."""
+    """runtime/clean-state-files.sh must exist and be executable."""
     assert SCRIPT.exists(), f"missing {SCRIPT}"
     assert os.access(SCRIPT, os.X_OK), f"{SCRIPT} must be executable"
 

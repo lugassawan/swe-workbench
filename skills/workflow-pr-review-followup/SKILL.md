@@ -33,10 +33,9 @@ This skill orchestrates; analysis is delegated to:
 ```bash
 gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
-mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,headRefOid,title,body,author \
-  > "/tmp/swe-workbench-pr-review/${PR}-followup.json"
-[ -s "/tmp/swe-workbench-pr-review/${PR}-followup.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/fetch-pr.sh" \
+  "$PR" "/tmp/swe-workbench-pr-review/${PR}-followup.json" \
+  "state,number,headRefName,baseRefName,headRefOid,title,body,author"
 ```
 
 Extract fields from the JSON. The state file is stored under `${PR}-followup.json` (distinct from `${PR}.json` used by the primary review) to allow both to coexist.
@@ -75,7 +74,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}-followup"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-followup-${PR}" --force
@@ -192,7 +191,7 @@ BYLINE="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassa
 INFORMATIONAL_SECTION=""
 [ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
 if [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '**Review Decision: %s**\n\n---\n%s%s\n' \
+  SUMMARY=$(printf '**Review Decision: %s**\n\n%s%s\n' \
     "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
 else
   SUMMARY=""
@@ -228,11 +227,11 @@ Identity does not gate the CTA — when the user has invoked Claude to review th
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
 ```bash
-( bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-followup.json" "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json" 2>/dev/null || true; \
+( bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-followup.json" "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json" 2>/dev/null || true; \
   rimba remove "pr-followup-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-followup-$PR" 2>/dev/null; \
-       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
+       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
 ```
 
 ## Footer parsing contract

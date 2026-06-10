@@ -70,7 +70,8 @@ Also check CLAUDE.md for project-specific conventions.
 | `package.json` | `npx organize-imports-cli` (always works); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` configured | check `scripts.format`/`prettier` | check `scripts.lint`/`eslint` | check `scripts.test` |
 | `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports — review output before staging); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
-| `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
+| `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin) | `mvn test` |
+| `build.gradle` / `build.gradle.kts` | `./gradlew spotlessApply` (Spotless: importOrder + removeUnusedImports) | `./gradlew spotlessApply` (or ktlint / google-java-format) | `./gradlew check` (Kotlin: `detekt`; Java: `checkstyleMain`) | `./gradlew test` |
 
 > **`quality-command` fallback** is in the table below — intentionally separate because Quality is multi-tool by nature and a single cell would be unreadably wide.
 
@@ -83,6 +84,7 @@ Also check CLAUDE.md for project-specific conventions.
 | `Cargo.toml` | `cargo clippy -- -W clippy::cognitive_complexity` • (duplication: no OSS first-party tool; `jscpd` covers cross-language including Rust; `simian` is cross-language but commercial) • `cargo clippy -- -W clippy::too_many_lines` (per-function length; no file-level enforcer in first-party Rust) |
 | `pyproject.toml` | `radon cc -n B -s` (grade ≥ B = complexity ≥ 6) and `lizard -CCN 15 -L 50` • `pylint --disable=all --enable=duplicate-code` • `radon mi -n B` |
 | `pom.xml` | `mvn pmd:check` • `mvn pmd:cpd-check` • `checkstyle` (FileLengthCheck, MethodLengthCheck) |
+| `build.gradle` / `build.gradle.kts` | `./gradlew detekt` (Kotlin) or `./gradlew pmdMain` (Java) • `./gradlew cpdCheck` (de.aaschmid.cpd; or `jscpd`) • `./gradlew checkstyleMain` (Method/FileLength) |
 
 **PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `Issue: N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
@@ -105,6 +107,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
   || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
   || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
   || true)
+[ -n "$RIMBA" ] && "$RIMBA" version 2>/dev/null || true   # confirm binary; never `--version`
 ```
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
