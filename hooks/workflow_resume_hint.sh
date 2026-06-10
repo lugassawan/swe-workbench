@@ -11,7 +11,7 @@ main() {
     local input cwd root branch safe_branch state_dir state_file stale
     local real_state real_dir version ctx_branch
     local skill mode phase phase_label completed notes preamble
-    local worktree_root real_wt_root real_live_root reanchor_line
+    local worktree_root real_wt_root real_live_root cmp_wt_root cmp_live_root reanchor_line
 
     input=$(cat)
     cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null) || return 0
@@ -69,16 +69,21 @@ main() {
     # Worktree re-anchor check: if the checkpoint recorded a worktree path that
     # differs from the live root, emit a nudge to call EnterWorktree before resuming.
     # Uses python3 realpath for portability (GNU realpath -m absent on macOS).
+    # Comparison is case-insensitive (tr lowercase) to avoid false positives on
+    # macOS APFS/HFS+ (case-insensitive filesystem) and bind-mount paths.
     reanchor_line=""
     if [ -n "$worktree_root" ]; then
         real_wt_root=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
             "$worktree_root" 2>/dev/null) || real_wt_root=""
         real_live_root=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
             "$root" 2>/dev/null) || real_live_root=""
+        cmp_wt_root=$(printf '%s' "$real_wt_root" | tr '[:upper:]' '[:lower:]')
+        cmp_live_root=$(printf '%s' "$real_live_root" | tr '[:upper:]' '[:lower:]')
         if [ -n "$real_wt_root" ] && [ -n "$real_live_root" ] \
-           && [ "$real_wt_root" != "$real_live_root" ]; then
+           && [ "$cmp_wt_root" != "$cmp_live_root" ]; then
             reanchor_line="
-WORKTREE RE-ANCHOR REQUIRED: Your checkpoint recorded work in a worktree at \`${worktree_root}\`, but this session resumed at \`${root}\`. Call \`EnterWorktree(path=${worktree_root})\` before resuming — do not cd-prefix."
+WORKTREE RE-ANCHOR REQUIRED: Your checkpoint recorded work in a worktree at \`${worktree_root}\`, but this session resumed at \`${root}\`. Call \`EnterWorktree(path=${worktree_root})\` before resuming — do not cd-prefix.
+"
         fi
     fi
 

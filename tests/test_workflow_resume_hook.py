@@ -363,3 +363,42 @@ class TestWorktreeRootReanchor:
         assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
             "Preamble must not emit a re-anchor nudge when worktree_root is empty."
         )
+
+    def test_no_reanchor_nudge_case_insensitive_same_path(self, hook_script, git_repo):
+        """worktree_root same path, different casing → no re-anchor nudge (macOS APFS guard)."""
+        live_root = str(git_repo)
+        # Flip the case of the last path component to simulate APFS case-insensitive behavior.
+        parent, name = os.path.split(live_root)
+        mixed_case_root = os.path.join(parent, name.upper() if name.islower() else name.lower())
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": mixed_case_root},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must NOT emit a re-anchor nudge when worktree_root is the same path "
+            "as the live root with only casing differences (macOS APFS case-insensitive guard)."
+        )
+
+    def test_blank_line_after_reanchor_block(self, hook_script, git_repo, tmp_path):
+        """Re-anchor block must be followed by a blank line before 'If the recorded state'."""
+        foreign_path = str(tmp_path / "some-other-worktree")
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": foreign_path},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" in ctx
+        # The re-anchor block must be separated from the next paragraph by a blank line.
+        assert "do not cd-prefix.\n\nIf the recorded state" in ctx, (
+            "Preamble must have a blank line between the re-anchor block and the "
+            "'If the recorded state' safety gate."
+        )
