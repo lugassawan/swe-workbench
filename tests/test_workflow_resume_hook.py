@@ -31,7 +31,7 @@ VALID_STATE: dict = {
     "completed_phases": ["1", "2"],
     "context": {
         "branch": _BRANCH,
-        "worktree_root": "/abs/path",
+        "worktree_root": None,
         "pr": None,
         "base": None,
         "head_sha": None,
@@ -275,3 +275,138 @@ class TestResumeInjection:
         assert result.returncode == 0
         data = json.loads(result.stdout)  # must be valid JSON — raises if corrupted
         assert "hookSpecificOutput" in data
+
+
+# ---------------------------------------------------------------------------
+# worktree_root re-anchor nudge
+# ---------------------------------------------------------------------------
+
+class TestWorktreeRootReanchor:
+    """Hook must emit a re-anchor nudge when worktree_root differs from live root.
+
+    context.worktree_root records the worktree where the session was doing its
+    work. If the session resumes from a different directory (live root ≠ recorded
+    worktree_root), the hook appends an EnterWorktree(path=…) instruction so the
+    executor moves into the correct worktree before resuming.
+    """
+
+    def test_reanchor_nudge_when_worktree_root_differs(self, hook_script, git_repo, tmp_path):
+        """worktree_root ≠ live root → preamble contains EnterWorktree(path=…)."""
+        # Use a path that exists but differs from git_repo (the live root).
+        foreign_path = str(tmp_path / "some-other-worktree")
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": foreign_path},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected non-empty output for valid state"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "EnterWorktree" in ctx, (
+            "Preamble must contain 'EnterWorktree' when worktree_root differs from live root."
+        )
+        assert foreign_path in ctx, (
+            "Preamble must include the recorded worktree_root path so the executor "
+            "knows where to re-anchor."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_matches_live_root(
+        self, hook_script, git_repo
+    ):
+        """worktree_root == live root → no re-anchor line in the preamble."""
+        # Set worktree_root to the same directory as git_repo (the live root).
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": str(git_repo)},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        # Re-anchor nudge must NOT appear when already in the right place.
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must NOT emit a re-anchor nudge when worktree_root matches "
+            "the live root — the session is already in the correct place."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_absent(self, hook_script, git_repo):
+        """worktree_root absent (null/empty) → no re-anchor nudge."""
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": None},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must not emit a re-anchor nudge when worktree_root is absent."
+        )
+
+    def test_no_reanchor_nudge_when_worktree_root_empty_string(
+        self, hook_script, git_repo
+    ):
+        """worktree_root empty string → no re-anchor nudge."""
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": ""},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must not emit a re-anchor nudge when worktree_root is empty."
+        )
+
+    def test_no_reanchor_nudge_case_insensitive_same_path(self, hook_script, git_repo):
+        """worktree_root same path, different casing → no re-anchor nudge (tr lowercasing guard).
+
+        On macOS APFS (case-insensitive) os.path.realpath can return different-cased strings
+        for the same directory, so the tr guard prevents a false positive there.  On Linux
+        (case-sensitive) the mixed-case path is a different inode, so realpath returns the
+        mixed-case string unchanged — but tr still equalises both strings to lowercase, which
+        is what we are exercising here: the guard works on both platforms.
+        """
+        live_root = str(git_repo)
+        # Flip the case of the last path component to simulate the APFS scenario on macOS
+        # (where realpath may return different casing) and exercise the tr guard on Linux.
+        parent, name = os.path.split(live_root)
+        mixed_case_root = os.path.join(parent, name.upper() if name.islower() else name.lower())
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": mixed_case_root},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" not in ctx, (
+            "Preamble must NOT emit a re-anchor nudge when worktree_root is the same path "
+            "as the live root with only casing differences (macOS APFS case-insensitive guard)."
+        )
+
+    def test_blank_line_after_reanchor_block(self, hook_script, git_repo, tmp_path):
+        """Re-anchor block must be followed by a blank line before 'If the recorded state'."""
+        foreign_path = str(tmp_path / "some-other-worktree")
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": foreign_path},
+        }
+        _write_state(git_repo, state)
+        result = _run(hook_script, str(git_repo))
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR REQUIRED" in ctx
+        # The re-anchor block must be separated from the next paragraph by a blank line.
+        assert "do not cd-prefix.\n\nIf the recorded state" in ctx, (
+            "Preamble must have a blank line between the re-anchor block and the "
+            "'If the recorded state' safety gate."
+        )

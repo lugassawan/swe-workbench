@@ -1,7 +1,7 @@
 ---
 name: workflow-worktree-session
 orchestrator: true
-description: Use when the user mentions "worktree" to start, switch, or end a worktree session — routes to `EnterWorktree` / `ExitWorktree` so the running claude moves into the worktree without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), pivoting current work into a new worktree, and exiting back. Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
+description: Use when the user mentions a worktree — to start, switch, resume, continue, or end a worktree session. Routes to `EnterWorktree` / `ExitWorktree` so the running claude moves into the worktree without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), resuming or continuing work in an already-created worktree, pivoting current work into a new worktree, and exiting back. Also fires when a user describes the cd-prefix symptom ("I've been cd-ing into the worktree", "I've been cd-prefixing commands"). Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
 ---
 
 # Workflow: Worktree Session
@@ -14,8 +14,9 @@ Read the user's prompt and pick exactly one mode:
 
 ### Mode A — Switch into an existing worktree
 
-Triggers: user named or pointed at a worktree that already exists
-("open the `feat-login` worktree", "switch to `test-enter`", "move into `.worktrees/auth`", "cd into the worktree I made").
+Triggers: user named or pointed at a worktree that already exists, or is resuming / continuing work in a worktree already created.
+
+Examples: "open the `feat-login` worktree", "switch to `test-enter`", "move into `.worktrees/auth`", "cd into the worktree I made", "continue work in the worktree I made", "resume in the worktree", "I've been cd-ing into the worktree", "I've been cd-prefixing commands".
 
 1. Discover the path. Resolve rimba using the detection helper in `workflow-development` Phase 1 (`$RIMBA`). If non-empty, run `$RIMBA list --json` to list worktrees. Otherwise use `git worktree list --porcelain`:
 
@@ -49,6 +50,8 @@ Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *re
 
 **Never use `Bash(cd <worktree-path>)` to switch the session.** `cd` in a Bash invocation only affects that single shell subprocess. The Claude Code session CWD is owned by `EnterWorktree` / `ExitWorktree`; `cd` silently does nothing to it.
 
+**Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and call `EnterWorktree(path=<worktree-path>)` now. The cd-prefix is not a workaround; it leaves the session anchored elsewhere and bypasses the `ExitWorktree action=keep` lock contract.
+
 ## Do not auto-exit
 
 Do not call `ExitWorktree` proactively. Only call it when the user explicitly requests it (Mode C). The harness prompts the user on session end; do not second-guess it.
@@ -59,6 +62,9 @@ Do not call `ExitWorktree` proactively. Only call it when the user explicitly re
 |-----------|------|-----------|
 | "open the `feat-login` worktree" | A | `EnterWorktree(path=<resolved>)` |
 | "switch to `.worktrees/auth`" | A | `EnterWorktree(path=<abs-path>)` |
+| "continue work in the worktree I made" | A | `EnterWorktree(path=<resolved>)` |
+| "resume in the worktree" | A | `EnterWorktree(path=<resolved>)` |
+| "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` |
 | "in a fresh worktree" | B | defer to `superpowers:using-git-worktrees` |
 | "exit the worktree" | C | `ExitWorktree(action: "keep")` |
 | "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` |
