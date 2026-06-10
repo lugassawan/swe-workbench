@@ -365,9 +365,17 @@ class TestWorktreeRootReanchor:
         )
 
     def test_no_reanchor_nudge_case_insensitive_same_path(self, hook_script, git_repo):
-        """worktree_root same path, different casing → no re-anchor nudge (macOS APFS guard)."""
+        """worktree_root same path, different casing → no re-anchor nudge (tr lowercasing guard).
+
+        On macOS APFS (case-insensitive) os.path.realpath can return different-cased strings
+        for the same directory, so the tr guard prevents a false positive there.  On Linux
+        (case-sensitive) the mixed-case path is a different inode, so realpath returns the
+        mixed-case string unchanged — but tr still equalises both strings to lowercase, which
+        is what we are exercising here: the guard works on both platforms.
+        """
         live_root = str(git_repo)
-        # Flip the case of the last path component to simulate APFS case-insensitive behavior.
+        # Flip the case of the last path component to simulate the APFS scenario on macOS
+        # (where realpath may return different casing) and exercise the tr guard on Linux.
         parent, name = os.path.split(live_root)
         mixed_case_root = os.path.join(parent, name.upper() if name.islower() else name.lower())
         state = {

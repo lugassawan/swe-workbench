@@ -81,6 +81,10 @@ main() {
         cmp_live_root=$(printf '%s' "$real_live_root" | tr '[:upper:]' '[:lower:]')
         if [ -n "$real_wt_root" ] && [ -n "$real_live_root" ] \
            && [ "$cmp_wt_root" != "$cmp_live_root" ]; then
+            # ${worktree_root} is the original recorded path (not realpath-resolved) — the
+            # operator must pass that same path to EnterWorktree so it matches the registered
+            # worktree entry. ${root} is the git-resolved live root and is only shown for
+            # context; the asymmetry between the two is intentional.
             reanchor_line="
 WORKTREE RE-ANCHOR REQUIRED: Your checkpoint recorded work in a worktree at \`${worktree_root}\`, but this session resumed at \`${root}\`. Call \`EnterWorktree(path=${worktree_root})\` before resuming — do not cd-prefix.
 "
