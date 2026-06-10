@@ -144,3 +144,13 @@ def test_followup_skill_state_cleanup_inside_background_subshell():
     assert subshell_match, (
         "SKILL.md Step 7 clean-state-files.sh call must be inside the background ( ... ) & subshell"
     )
+
+
+def test_followup_skill_state_cleanup_has_or_true_guard():
+    """clean-state-files.sh call must be followed by || true so set -e in the subshell cannot
+    abort rimba remove when the state files are already absent or fail validation."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'clean-state-files\.sh.*?\|\|\s*true', text, re.DOTALL), (
+        "SKILL.md Step 7 clean-state-files.sh call must use '|| true' so a non-zero exit "
+        "does not abort rimba remove via set -e propagation into the background subshell"
+    )

@@ -49,6 +49,12 @@ validate_one() {
     reject "path contains '..' traversal: $TARGET"
   fi
 
+  # Reject symlinks — rm -f on a symlink removes the link itself (not its target), which violates
+  # the "only named state files" contract even though it is technically safe.
+  if [ -L "$TARGET" ]; then
+    reject "path is a symlink: $TARGET"
+  fi
+
   # Reject directories and other non-regular files; absent files are allowed (rm -f is idempotent).
   if [ -e "$TARGET" ] && [ ! -f "$TARGET" ]; then
     reject "path is not a regular file: $TARGET"

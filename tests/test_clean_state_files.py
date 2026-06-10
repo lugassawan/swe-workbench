@@ -180,6 +180,27 @@ def test_rejects_capture_directory(tmp_path):
         subdir.rmdir()
 
 
+def test_rejects_symlink(tmp_path):
+    """A symlink — even under a sanctioned location — is rejected (exit 1).
+    rm -f on a symlink removes the link itself, not its target; the script's
+    'regular files only' contract requires an explicit -L rejection.
+    """
+    d = _tmp_pr_review_dir()
+    target = tmp_path / "real-file.json"
+    target.write_text("{}")
+    link = d / f"test-symlink-{tmp_path.name}.json"
+    link.symlink_to(target)
+    try:
+        result = run_script(str(link))
+        assert result.returncode != 0, (
+            f"Expected non-zero for symlink {link}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert link.exists(), "symlink must NOT be removed when rejected"
+    finally:
+        link.unlink(missing_ok=True)
+
+
 # ── rejection: path traversal ────────────────────────────────────────────────
 
 def test_rejects_dotdot_traversal():
