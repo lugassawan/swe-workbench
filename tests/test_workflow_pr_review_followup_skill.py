@@ -119,3 +119,28 @@ def test_followup_skill_has_owner_repo_guard_clause():
         "SKILL.md must include the guard-clause error message for missing OWNER/REPO "
         "so fork-PR failures produce an actionable error rather than silently misrouting API calls"
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_followup_skill_cleanup_deletes_followup_json():
+    """Step 7 success-path subshell must invoke clean-state-files.sh with the followup state files."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Step 7 must call scripts/clean-state-files.sh to remove per-run followup state files"
+    )
+    assert "/tmp/swe-workbench-pr-review/${PR}-followup.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-followup.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-followup-threads.json to clean-state-files.sh"
+    )
+
+
+def test_followup_skill_state_cleanup_inside_background_subshell():
+    """clean-state-files.sh must appear inside the background ( ... ) & subshell."""
+    text = SKILL_MD.read_text()
+    subshell_match = re.search(r'\(\s*bash.*?clean-state-files\.sh.*?\)\s*&', text, re.DOTALL)
+    assert subshell_match, (
+        "SKILL.md Step 7 clean-state-files.sh call must be inside the background ( ... ) & subshell"
+    )

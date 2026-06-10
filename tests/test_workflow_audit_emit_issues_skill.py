@@ -251,6 +251,31 @@ def test_catalog_md_contains_name():
     )
 
 
+# ── state-file cleanup assertions (issue #428) ───────────────────────────────
+
+def test_audit_emit_uses_clean_state_files_for_deletion():
+    """SKILL.md Phase 4 confirm path must invoke clean-state-files.sh (not inline rm -f)."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Phase 4 must call scripts/clean-state-files.sh to delete temp files after "
+        "successful issue filing — migrated from inline rm for consistency (issue #428)"
+    )
+
+
+def test_audit_emit_cleanup_on_confirm_success():
+    """clean-state-files.sh must appear in the confirm-success row of the Phase 4 table."""
+    text = SKILL_MD.read_text()
+    # The confirm row contains clean-state-files.sh in its action description
+    confirm_idx = text.find("`confirm` (literal)")
+    cleanup_idx = text.find("clean-state-files.sh")
+    assert confirm_idx != -1, "SKILL.md must have a 'confirm' table row"
+    assert cleanup_idx != -1, "SKILL.md must reference clean-state-files.sh"
+    # The cleanup instruction should appear near the confirm row (within 500 chars)
+    assert abs(cleanup_idx - confirm_idx) < 500, (
+        "clean-state-files.sh must appear within the Phase 4 confirm table row"
+    )
+
+
 def test_readme_contains_name():
     readme = ROOT / "README.md"
     text = readme.read_text()

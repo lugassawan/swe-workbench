@@ -313,3 +313,64 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
         f"Found bare rm -rf \"$WT\" lines in Phase 6 (should use clean-ephemeral.sh):\n"
         + "\n".join(lines_with_rm)
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_address_feedback_skill_deletes_three_state_files():
+    """Phase 5 success path must invoke clean-state-files.sh with all three state files."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md must call scripts/clean-state-files.sh to remove address-feedback state files"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}-threads.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}-triage.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to clean-state-files.sh"
+    )
+
+
+def test_address_feedback_skill_triage_cleanup_before_phase6():
+    """${PR}-triage.json removal must appear BEFORE ### Phase 6 (Q-quit safety invariant).
+
+    Phase 6 fires on Q-quit too.  triage.json is durable resume state that must survive Q-quit
+    so the user can resume from Phase 3.  Removing it on the Phase 5 success path (before Phase 6)
+    ensures Q-quit leaves it intact.
+    """
+    text = SKILL_MD.read_text()
+    triage_cleanup_idx = text.find("/tmp/swe-workbench-address-feedback/${PR}-triage.json")
+    phase6_idx = text.find("### Phase 6")
+    assert triage_cleanup_idx != -1, (
+        "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-triage.json for cleanup"
+    )
+    assert phase6_idx != -1, "SKILL.md must have a ### Phase 6 section"
+    assert triage_cleanup_idx < phase6_idx, (
+        "triage.json cleanup must appear BEFORE ### Phase 6 — "
+        "Phase 6 also fires on Q-quit; triage.json must survive Q-quit for resume"
+    )
+
+
+def test_address_feedback_skill_phase6_does_not_delete_triage_json():
+    """Phase 6 code block must NOT contain a triage.json deletion (Q-quit must leave it intact)."""
+    text = SKILL_MD.read_text()
+    phase6_idx = text.find("### Phase 6")
+    assert phase6_idx != -1, "Phase 6 section must exist"
+    # Extract only up to the next top-level section (## Failure modes or ## Common mistakes).
+    next_section = re.search(r'\n## ', text[phase6_idx:])
+    phase6_text = text[phase6_idx: phase6_idx + next_section.start()] if next_section else text[phase6_idx:]
+    # triage.json must not appear in the Phase 6 action blocks (only in the failure-modes table which follows)
+    # Filter out lines that are in a table row referencing the failure-mode description
+    phase6_lines_with_triage = [
+        line for line in phase6_text.splitlines()
+        if "triage.json" in line
+        and not line.lstrip().startswith("|")   # table rows describe the failure, not Phase 6 actions
+    ]
+    assert not phase6_lines_with_triage, (
+        "Phase 6 action blocks must NOT delete triage.json — Phase 6 runs on Q-quit too, and "
+        "triage.json is durable resume state that must survive Q-quit.\n"
+        "Lines found: " + "\n".join(phase6_lines_with_triage)
+    )

@@ -226,6 +226,12 @@ After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/review --check-followup <N>`."
 
+On the Phase 5 success path, delete the address-feedback state files:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" "/tmp/swe-workbench-address-feedback/${PR}.json" "/tmp/swe-workbench-address-feedback/${PR}-threads.json" "/tmp/swe-workbench-address-feedback/${PR}-triage.json" 2>/dev/null
+```
+
 Then run **Phase 6 — Cleanup**.
 
 ### Phase 6 — Cleanup (always)

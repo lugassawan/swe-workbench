@@ -119,7 +119,7 @@ Reply `confirm` to file all · `drop N` to remove group N · `edit N` to revise 
 
 | Reply | Action |
 |-------|--------|
-| `confirm` (literal) | Run each sidecar `gh issue create` line; return issue URLs. After all issues are filed successfully, delete the temp `.md` files and the `.cmd` sidecar. |
+| `confirm` (literal) | Run each sidecar `gh issue create` line; return issue URLs. After all issues are filed successfully, delete the temp `.md` files and the `.cmd` sidecar: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-state-files.sh" <each-md-path> <cmd-sidecar-path> 2>/dev/null` (substituting the actual paths written in Phase 3). |
 | `drop N` | Remove group N from the batch; rewrite temp files and sidecar; re-print preview. |
 | `edit N` | Show group N's body; accept revised text; rewrite temp file; re-print preview. |
 | anything else | Re-prompt; do **not** file. |

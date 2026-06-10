@@ -194,3 +194,30 @@ def test_extend_skill_under_orchestrator_cap():
         f"skills/workflow-extend/SKILL.md has {line_count} lines — "
         f"exceeds the 300-line orchestrator cap"
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_extend_skill_phase_d_deletes_tmp_file():
+    """SKILL.md Phase D must invoke clean-state-files.sh on /tmp/extend-${TS}.md after delivery."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Phase D must call scripts/clean-state-files.sh to remove /tmp/extend-${TS}.md "
+        "after successful delivery"
+    )
+    assert "/tmp/extend-${TS}.md" in text, (
+        "SKILL.md must pass /tmp/extend-${TS}.md to clean-state-files.sh"
+    )
+
+
+def test_extend_skill_cleanup_after_delivery():
+    """SKILL.md: clean-state-files.sh call must appear AFTER Phase D delivery text (success-only)."""
+    text = SKILL_MD.read_text()
+    phase_d_idx = text.find("## Phase D")
+    cleanup_idx = text.find("clean-state-files.sh")
+    assert phase_d_idx != -1, "SKILL.md must have a Phase D section"
+    assert cleanup_idx != -1, "SKILL.md must reference clean-state-files.sh"
+    assert cleanup_idx > phase_d_idx, (
+        "clean-state-files.sh call must appear within/after Phase D — "
+        "cleanup runs on the success delivery path only"
+    )
