@@ -5,6 +5,8 @@ argument-hint: <file, function, or module> [--mode e2e | --e2e]
 
 Target: $ARGUMENTS
 
+If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
+
 ## Mode resolution
 
 Parse `$ARGUMENTS` for `--mode e2e` or `--e2e`:
@@ -52,8 +54,6 @@ Surface the combined output:
 ---
 
 ## Unit path (default)
-
-If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 Delegate to the `test-writer` subagent. Its output must include:
 

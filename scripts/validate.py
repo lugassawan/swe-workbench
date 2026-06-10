@@ -26,10 +26,14 @@ _NON_CODE_AGENTS = frozenset({
 # Browser MCP tool patterns that trigger the hard gate (#364).
 # Any agent or command containing one of these strings must also carry
 # a BLOCKED: sentinel and a per-backend install hint.
+# Exception: mcp__claude-in-chrome__* is the in-harness Claude browser extension —
+# it has no installable package, so the install-hint requirement is waived for
+# files whose only browser signal is claude-in-chrome references.
 _BROWSER_MCP_SIGNALS = re.compile(
     r'browser_snapshot|read_console_messages|read_network_requests'
     r'|mcp__\S*chrome\S*|@playwright/mcp'
 )
+_CLAUDE_IN_CHROME_ONLY = re.compile(r'mcp__claude-in-chrome__')
 _BROWSER_INSTALL_HINTS = re.compile(
     r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
 )
@@ -879,6 +883,11 @@ def check_browser_tool_gate(cache=None):
                     fail(md.relative_to(ROOT), "could not read file")
                     continue
             if not _BROWSER_MCP_SIGNALS.search(text):
+                continue
+            # Claude-in-Chrome is in-harness (no installable package); if the file's
+            # only browser signal is claude-in-chrome references, waive the install-hint.
+            stripped = _CLAUDE_IN_CHROME_ONLY.sub("", text)
+            if not _BROWSER_MCP_SIGNALS.search(stripped):
                 continue
             rel = md.relative_to(ROOT)
             if "BLOCKED:" not in text:

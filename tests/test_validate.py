@@ -2296,6 +2296,12 @@ class TestE2eTestVerifierAgent:
         assert "browser_snapshot" not in tools_line
         assert "mcp__" not in tools_line
 
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, (
+            "agent must include a BLOCKED: sentinel for the missing-runner case"
+        )
+
     def test_boundary_section_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
         assert "Boundary vs. `test-reviewer`" in text, (
