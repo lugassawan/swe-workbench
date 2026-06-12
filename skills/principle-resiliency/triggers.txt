@@ -4,3 +4,7 @@ should this service fail fast or degrade gracefully when the cache is unavailabl
 how do I use failure domains and bulkheads for isolating dependencies and containing the blast radius
 how should liveness and readiness probes differ for a Kubernetes deployment that warms a cache on startup
 my system has cascading failure when one upstream degrades — what graceful degradation or fault tolerance should I add
+how do I make a POST endpoint safely retryable using idempotency keys and a dedup store
+my payment service double-charges on retries — how do I implement exactly-once semantics with idempotency
+how do I implement a token-bucket rate limiter to protect my API from burst traffic and thundering herd retries
+my service is getting hammered with 429s and clients retry without jitter causing synchronized load spikes — how do I fix this
