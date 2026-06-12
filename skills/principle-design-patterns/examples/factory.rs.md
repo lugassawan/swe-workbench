@@ -65,8 +65,8 @@ notification function individually.
 // ✗ construction scattered — every call site must repeat this match
 fn notify(kind: &str, msg: &str) {
     match kind {
-        "email" => EmailChannel.send(msg),   // ✗ duplicated construction
-        "sms"   => SmsChannel.send(msg),     // ✗ duplicated construction
+        "email" => EmailChannel{}.send(msg),   // ✗ duplicated construction
+        "sms"   => SmsChannel{}.send(msg),     // ✗ duplicated construction
         // ✗ adding push requires editing every call site
         _ => {}
     }

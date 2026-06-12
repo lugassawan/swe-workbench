@@ -35,7 +35,7 @@ class PushChannel:
 
 
 # Registry-based factory — one mapping, no scattered switches.
-_REGISTRY: dict[str, type] = {
+_REGISTRY: dict[str, type[Channel]] = {
     "email": EmailChannel,
     "sms":   SmsChannel,
     "push":  PushChannel,

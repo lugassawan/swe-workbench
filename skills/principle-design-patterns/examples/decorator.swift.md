@@ -20,8 +20,14 @@ protocol Fetcher {
 struct HttpFetcher: Fetcher {
     func fetch(url: String) throws -> String {
         guard let u = URL(string: url) else { throw URLError(.badURL) }
-        let (data, _) = try URLSession.shared.data(from: u)
-        return String(decoding: data, as: UTF8.self)
+        var result: Result<Data, Error>?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: u) { data, _, err in
+            result = data.map { .success($0) } ?? .failure(err ?? URLError(.unknown))
+            sem.signal()
+        }.resume()
+        sem.wait()
+        return String(decoding: try result!.get(), as: UTF8.self)
     }
 }
 
@@ -77,14 +83,17 @@ new combination demands a new subclass.
 
 ```swift
 // ✗ subclass explosion — retry + logging fused into one class
-class RetryLoggingFetcher: HttpFetcher {         // ✗ combined into one subclass
+class HttpFetcherBase {                          // must be a class for subclassing
+    func fetch(url: String) throws -> String { /* core HTTP fetch */ }
+}
+class RetryLoggingFetcher: HttpFetcherBase {     // ✗ combined into one subclass
     override func fetch(url: String) throws -> String {
         print("[fetch] GET \(url)")              // ✗ retry cannot be used without logging
         for _ in 0..<3 {
-            if let result = try? super.fetch(url: url) { return result }
+            if let r = try? super.fetch(url: url) { return r }
         }
         throw URLError(.cannotConnectToHost)
     }
 }
-// class CachingRetryFetcher: HttpFetcher { ... } // ✗ N behaviors → N² subclasses
+// class CachingRetryFetcher: HttpFetcherBase { ... } // ✗ N behaviors → N² subclasses
 ```

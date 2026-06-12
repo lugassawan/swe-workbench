@@ -26,7 +26,7 @@ module Fetcher
       (n + 1).times do
         begin
           return fn.call(url)
-        rescue => e
+        rescue StandardError => e
           last_err = e
         end
       end
