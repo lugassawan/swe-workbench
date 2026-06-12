@@ -14,6 +14,7 @@ RUNTIME_SCRIPTS = [
     "clean-state-files.sh",
     "doctor.sh",
     "fetch-pr.sh",
+    "preflight-pr.sh",
     "reply-and-resolve.sh",
 ]
 
@@ -51,27 +52,38 @@ def test_runtime_scripts_pass_bash_syntax_check():
         )
 
 
-def test_fetch_pr_referenced_in_pr_review_skill():
-    """workflow-pr-review SKILL.md must invoke runtime/fetch-pr.sh in Step 1."""
+def test_preflight_pr_referenced_in_pr_review_skill():
+    """workflow-pr-review SKILL.md Step 1 must use preflight-pr.sh (not raw inline gh/jq)."""
     text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
-    assert "runtime/fetch-pr.sh" in text, (
-        "workflow-pr-review SKILL.md Step 1 must invoke runtime/fetch-pr.sh"
+    assert "runtime/preflight-pr.sh" in text, (
+        "workflow-pr-review SKILL.md Step 1 must invoke runtime/preflight-pr.sh — "
+        "the consolidated pre-flight replaces the ~20-line inline gh/jq block"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source preflight-pr.sh output "
+        "into the current shell (KEY=VALUE contract)"
     )
 
 
-def test_fetch_pr_referenced_in_pr_review_followup_skill():
-    """workflow-pr-review-followup SKILL.md must invoke runtime/fetch-pr.sh in Step 1."""
+def test_preflight_pr_referenced_in_pr_review_followup_skill():
+    """workflow-pr-review-followup SKILL.md Step 1 must use preflight-pr.sh."""
     text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
-    assert "runtime/fetch-pr.sh" in text, (
-        "workflow-pr-review-followup SKILL.md Step 1 must invoke runtime/fetch-pr.sh"
+    assert "runtime/preflight-pr.sh" in text, (
+        "workflow-pr-review-followup SKILL.md Step 1 must invoke runtime/preflight-pr.sh"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
     )
 
 
-def test_fetch_pr_referenced_in_address_feedback_skill():
-    """workflow-address-feedback SKILL.md must invoke runtime/fetch-pr.sh in Phase 1."""
+def test_preflight_pr_referenced_in_address_feedback_skill():
+    """workflow-address-feedback SKILL.md Phase 1 must use preflight-pr.sh."""
     text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
-    assert "runtime/fetch-pr.sh" in text, (
-        "workflow-address-feedback SKILL.md Phase 1 must invoke runtime/fetch-pr.sh"
+    assert "runtime/preflight-pr.sh" in text, (
+        "workflow-address-feedback SKILL.md Phase 1 must invoke runtime/preflight-pr.sh"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-address-feedback SKILL.md must use eval \"$(...)\" to source preflight output"
     )
 
 

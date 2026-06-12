@@ -34,27 +34,17 @@ This skill orchestrates; analysis is delegated to:
 ### Step 1 — Pre-flight
 
 ```bash
-gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
-CURRENT_USER=$(gh api /user -q .login)
-bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/fetch-pr.sh" \
-  "$PR" "/tmp/swe-workbench-pr-review/${PR}.json" \
-  "state,number,headRefName,baseRefName,headRefOid,title,body,author"
-```
-
-Extract fields from the JSON:
-
-```bash
-JSON="/tmp/swe-workbench-pr-review/${PR}.json"
-BASE=$(jq -r .baseRefName "$JSON")
-HEAD_SHA=$(jq -r .headRefOid "$JSON")
-AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name   -q .name)
-if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
-  echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
   exit 1
-fi
+}
+JSON="/tmp/swe-workbench-pr-review/${PR}.json"
+eval "$("$_RT/runtime/preflight-pr.sh" "$PR" "$JSON")"
+CURRENT_USER=$(gh api /user -q .login)
 ```
+
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context).
 
 ### Step 2 — Ephemeral worktree
 
@@ -71,7 +61,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
+  git worktree remove --force "$WT" 2>/dev/null || bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-review-${PR}" --force
@@ -225,12 +215,24 @@ Identity does not gate the CTA — when the user has invoked Claude to review th
 
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
+Foreground state-file reap — runs before worktree teardown; failures surface (no `2>/dev/null` or `|| true`):
+
 ```bash
-( bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}.json" "/tmp/swe-workbench-pr-review/${PR}-threads.json" 2>/dev/null || true; \
-  rimba remove "pr-review-$PR" --force 2>/dev/null \
+bash "$_RT/runtime/clean-state-files.sh" \
+  "/tmp/swe-workbench-pr-review/${PR}.json" \
+  "/tmp/swe-workbench-pr-review/${PR}-threads.json"
+for f in "/tmp/swe-workbench-pr-review/${PR}.json" "/tmp/swe-workbench-pr-review/${PR}-threads.json"; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
+```
+
+Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:
+
+```bash
+( rimba remove "pr-review-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-review-$PR" 2>/dev/null; \
-       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
+       bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
 ```
 
 ## Footer parsing contract
