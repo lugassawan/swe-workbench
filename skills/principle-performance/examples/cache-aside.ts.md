@@ -37,14 +37,14 @@ class CacheAside<V> {
     const existing = this.inflight.get(key);
     if (existing) return existing;
 
-    const promise = this.loader(key).then((value) => {
-      this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
-      this.inflight.delete(key);
-      return value;
-    });
-    // Attach a no-op catch so Node.js doesn't report an unhandled rejection on the shared
-    // inflight promise itself; callers still receive the error via their own await.
-    promise.catch(() => this.inflight.delete(key));
+    const promise = this.loader(key)
+      .then((value) => {
+        this.store.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+        return value;
+      })
+      // .finally() runs on both success and failure without swallowing the rejection —
+      // cleaner than the dual-path .then(delete)/.catch(delete) pattern.
+      .finally(() => this.inflight.delete(key));
     this.inflight.set(key, promise);
     return promise;
   }

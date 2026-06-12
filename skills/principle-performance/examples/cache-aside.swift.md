@@ -41,6 +41,8 @@ actor CacheAside<V: Sendable> {
         if let task = inflight[key] {
             return try await task.value
         }
+        // `self` is captured strongly — the actor lives at least as long as any inflight Task.
+        // For short-lived actors, use `[weak self]` with a guard-let before calling loader.
         let task = Task { try await self.loader(key) }
         inflight[key] = task
         do {

@@ -67,6 +67,9 @@ func (c *Cache[V]) Get(key string) (V, error) {
 
 	// Wrap in an anonymous func so defer fires on panic too — without this,
 	// a panicking loader would leave wg.Done() uncalled and all waiters blocked forever.
+	// Note: if the loader panics, the panic propagates after wg.Done() and the
+	// inflight cleanup below is skipped — future callers silently get the zero value.
+	// Use recover() inside the defer to convert panics to errors in production.
 	func() {
 		defer cl.wg.Done()
 		cl.val, cl.err = c.loader(key)
