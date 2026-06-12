@@ -25,11 +25,6 @@ SKILLS_WITH_RT = [
 
 _RT_BINDING_RE = re.compile(r'_RT\s*=.*\$\{CLAUDE_PLUGIN_ROOT:-\$\(git rev-parse')
 _GUARD_STR = "runtime scripts not found"
-# Inline ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse at a SCRIPT CALL SITE (not the _RT= binding line)
-_INLINE_ROOT_RE = re.compile(
-    r'(?<!_RT\s=\s)(?<!_RT=)'   # not on the binding line
-    r'\$\{CLAUDE_PLUGIN_ROOT:-\$\(git rev-parse'
-)
 
 
 def _skill_text(skill_name: str) -> str:

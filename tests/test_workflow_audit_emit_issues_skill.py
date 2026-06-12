@@ -327,7 +327,7 @@ def test_audit_emit_reap_no_suppression():
 def test_audit_emit_reap_has_post_check():
     """The confirm path must include a post-reap report line confirming each file was reaped."""
     text = SKILL_MD.read_text()
-    assert "state file" in text and "reaped" in text, (
+    assert re.search(r'✓ state file reaped:', text), (
         "SKILL.md must include a post-reap report line "
-        "(e.g. '✓ state file reaped: ...') after the confirm-path cleanup"
+        "'✓ state file reaped: ...' after the confirm-path cleanup"
     )

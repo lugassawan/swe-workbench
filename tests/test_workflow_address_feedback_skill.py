@@ -389,7 +389,7 @@ def test_address_feedback_skill_phase5_reap_no_suppression():
 def test_address_feedback_skill_phase5_reap_has_post_check():
     """Phase 5 must include a post-reap report line confirming each state file was reaped."""
     text = SKILL_MD.read_text()
-    assert "state file" in text and "reaped" in text, (
+    assert re.search(r'✓ state file reaped:', text), (
         "SKILL.md Phase 5 must include a post-reap report line "
-        "(e.g. '✓ state file reaped: ...') so operators can verify cleanup completed"
+        "'✓ state file reaped: ...' so operators can verify cleanup completed"
     )

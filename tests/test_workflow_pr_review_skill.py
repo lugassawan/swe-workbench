@@ -143,7 +143,7 @@ def test_pr_review_skill_state_cleanup_no_suppression():
 def test_pr_review_skill_state_cleanup_has_post_check():
     """Step 7 must include a post-reap verification that reports each state file as reaped or not."""
     text = SKILL_MD.read_text()
-    assert "state file" in text and "reaped" in text, (
-        "SKILL.md Step 7 must include a post-reap report line (e.g. '✓ state file reaped: ...') "
+    assert re.search(r'✓ state file reaped:', text), (
+        "SKILL.md Step 7 must include a post-reap report line '✓ state file reaped: ...' "
         "so operators can verify cleanup completed without inspecting /tmp by hand"
     )
