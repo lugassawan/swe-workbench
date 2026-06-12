@@ -61,6 +61,7 @@ export function fetchWithRetry(
 
     if (result.ok && result.status < 400) return result;
     if (isPermanent(result)) return result;           // bubble permanent immediately
+    if (!isTransient(result)) return result;          // non-transient — bubble
 
     const delay = BASE_MS * Math.pow(2, attempt) * (Math.random() * 1.0 + 0.5);
     void delay; // real impl: await new Promise(r => setTimeout(r, delay))
