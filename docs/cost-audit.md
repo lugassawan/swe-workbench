@@ -8,7 +8,7 @@
 
 ## Agents
 
-All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-auditor, product-manager, tech-writer, test-writer) were flipped to `model: haiku` in this PR; see the Recommended tier column. None invoke the `Agent` or `Task` tool (verified by `grep -r 'Agent\|Task' agents/ --include='*.md'` at snapshot) — subagent spawning is exclusively via the orchestrating Claude session.
+At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was added in a subsequent PR. Four (dependency-auditor, product-manager, tech-writer, test-writer) were flipped to `model: haiku` in this PR; see the Recommended tier column. None invoke the `Agent` or `Task` tool (verified by `grep -r 'Agent\|Task' agents/ --include='*.md'` at snapshot) — subagent spawning is exclusively via the orchestrating Claude session.
 
 | Surface | Path | Current model | Spawns subagents? | Recommended tier | Notes |
 |---|---|---|---|---|---|
@@ -29,7 +29,7 @@ All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-audit
 | test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec. Watch: test-writer auto-detects framework, reads existing tests, and invokes `principle-tdd`/`principle-testing` skills — multi-step steps that haiku may skip. Revert if Skill invocations are skipped or framework detection regresses. |
 
 **Tier S agents (flipped to haiku in this PR):** dependency-auditor, product-manager, tech-writer, test-writer  
-**Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, refactorer, reviewer, security-auditor, senior-engineer
+**Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, product-designer, refactorer, reviewer, security-auditor, senior-engineer
 
 ---
 
