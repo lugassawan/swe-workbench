@@ -33,6 +33,19 @@ Findings already in the orchestrator's context from the audit render. Each findi
 carries: `file_line`, `domain`, `severity`, `confidence`, `effort`, `symptom`,
 `root_cause`, `reasoning_chain`, `counter_evidence_considered`, `suggested_fix`.
 
+## Preamble — bind plugin root
+
+Resolve and bind the plugin root before any script call. If the runtime scripts directory is
+missing (e.g. cwd is a worktree where `CLAUDE_PLUGIN_ROOT` is unset), abort loudly.
+
+```bash
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+  exit 1
+}
+```
+
 ## Phases
 
 ### Phase 1 — Group by subsystem
@@ -119,10 +132,25 @@ Reply `confirm` to file all · `drop N` to remove group N · `edit N` to revise 
 
 | Reply | Action |
 |-------|--------|
-| `confirm` (literal) | Run each sidecar `gh issue create` line; return issue URLs. After all issues are filed successfully, delete the temp files: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" /tmp/audit-emit-<repo-slug>-<unix-ts>-1.md … /tmp/audit-emit-<repo-slug>-<unix-ts>-N.md /tmp/audit-emit-<repo-slug>-<unix-ts>.cmd 2>/dev/null` — use the actual paths written in Phase 3 (pattern: `/tmp/audit-emit-<repo-slug>-<unix-ts>-<n>.md` and `.cmd`). |
+| `confirm` (literal) | Run each sidecar `gh issue create` line; return issue URLs. After all issues are filed successfully, reap the temp files (foreground, no `2>/dev/null`) then post-check each path (see below). |
 | `drop N` | Remove group N from the batch; rewrite temp files and sidecar; re-print preview. |
 | `edit N` | Show group N's body; accept revised text; rewrite temp file; re-print preview. |
 | anything else | Re-prompt; do **not** file. |
+
+After a successful `confirm`, reap all temp files and verify each was removed:
+
+```bash
+bash "$_RT/runtime/clean-state-files.sh" \
+  /tmp/audit-emit-<repo-slug>-<unix-ts>-1.md \
+  … \
+  /tmp/audit-emit-<repo-slug>-<unix-ts>-N.md \
+  /tmp/audit-emit-<repo-slug>-<unix-ts>.cmd
+for f in /tmp/audit-emit-<repo-slug>-<unix-ts>-1.md … /tmp/audit-emit-<repo-slug>-<unix-ts>.cmd; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
+```
+
+Use the actual paths written in Phase 3 (pattern: `/tmp/audit-emit-<repo-slug>-<unix-ts>-<n>.md` and `.cmd`).
 
 On `gh issue create` failure: surface the error, print the URLs of successfully-filed
 issues so far, and rewrite the `.cmd` sidecar to contain only the remaining (unfiled)

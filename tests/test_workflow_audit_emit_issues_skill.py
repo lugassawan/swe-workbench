@@ -263,16 +263,20 @@ def test_audit_emit_uses_clean_state_files_for_deletion():
 
 
 def test_audit_emit_cleanup_on_confirm_success():
-    """clean-state-files.sh must appear in the confirm-success row of the Phase 4 table."""
+    """clean-state-files.sh invocation must appear after the Phase 4 confirm table row.
+
+    After Fix C, the reap block is a separate section below the table (not inline in the row).
+    We search for the bash invocation (not the [ -f ... ] guard check in the Preamble) so
+    the ordering check finds the correct occurrence.
+    """
     text = SKILL_MD.read_text()
-    # The confirm row contains clean-state-files.sh in its action description
     confirm_idx = text.find("`confirm` (literal)")
-    cleanup_idx = text.find("clean-state-files.sh")
+    # Use the executable invocation, not the guard check ([ -f "$_RT/runtime/clean-state-files.sh" ])
+    cleanup_idx = text.find('bash "$_RT/runtime/clean-state-files.sh"')
     assert confirm_idx != -1, "SKILL.md must have a 'confirm' table row"
-    assert cleanup_idx != -1, "SKILL.md must reference clean-state-files.sh"
-    # The cleanup instruction should appear near the confirm row (within 500 chars)
-    assert abs(cleanup_idx - confirm_idx) < 500, (
-        "clean-state-files.sh must appear within the Phase 4 confirm table row"
+    assert cleanup_idx != -1, "SKILL.md must reference bash invocation of clean-state-files.sh"
+    assert cleanup_idx > confirm_idx, (
+        "clean-state-files.sh invocation must appear after the Phase 4 confirm table row"
     )
 
 
@@ -297,4 +301,31 @@ def test_triggers_mention_audit_and_issues():
     text = TRIGGERS.read_text().lower()
     assert "audit" in text and ("issue" in text or "github" in text), (
         "triggers.txt must mention 'audit' and 'issue'/'github' for good trigger scoring"
+    )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_audit_emit_reap_no_suppression():
+    """The clean-state-files.sh call in the confirm path must have NO 2>/dev/null suppression.
+
+    The reap must run foreground; suppression would recreate the silent-orphan path.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must surface failures:\n" + "\n".join(suppressed)
+    )
+
+
+def test_audit_emit_reap_has_post_check():
+    """The confirm path must include a post-reap report line confirming each file was reaped."""
+    text = SKILL_MD.read_text()
+    assert "state file" in text and "reaped" in text, (
+        "SKILL.md must include a post-reap report line "
+        "(e.g. '✓ state file reaped: ...') after the confirm-path cleanup"
     )

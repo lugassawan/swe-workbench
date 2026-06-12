@@ -78,14 +78,15 @@ def test_followup_skill_documents_stale_commit_retry():
 
 
 def test_followup_skill_owner_repo_from_gh_repo_view():
-    """OWNER and REPO must be derived from 'gh repo view' (not from headRepository or baseRepository)."""
-    text = SKILL_MD.read_text()
+    """OWNER and REPO must be derived from 'gh repo view' — now lives in preflight-pr.sh (Fix A)."""
+    # Fix A moved OWNER/REPO derivation to runtime/preflight-pr.sh; check there, not the skill
+    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
     assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
-        "SKILL.md must derive OWNER via 'gh repo view --json owner' — "
+        "runtime/preflight-pr.sh must derive OWNER via 'gh repo view --json owner' — "
         "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
     )
     assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
-        "SKILL.md must derive REPO via 'gh repo view --json name' — "
+        "runtime/preflight-pr.sh must derive REPO via 'gh repo view --json name' — "
         "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
     )
 
@@ -113,10 +114,11 @@ def test_followup_skill_no_fragile_owner_extraction():
 
 
 def test_followup_skill_has_owner_repo_guard_clause():
-    """SKILL.md must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    text = SKILL_MD.read_text()
+    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
+    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "SKILL.md must include the guard-clause error message for missing OWNER/REPO "
+        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
         "so fork-PR failures produce an actionable error rather than silently misrouting API calls"
     )
 
@@ -137,20 +139,43 @@ def test_followup_skill_cleanup_deletes_followup_json():
     )
 
 
-def test_followup_skill_state_cleanup_inside_background_subshell():
-    """clean-state-files.sh must appear inside the background ( ... ) & subshell."""
+def test_followup_skill_state_cleanup_outside_background_subshell():
+    """clean-state-files.sh must NOT appear inside the background ( ... ) & subshell.
+
+    The reap must run in the foreground so failures surface immediately rather than being
+    silently dropped by the backgrounded, output-suppressed worktree-teardown subshell.
+    This is the inverse of the previous #428 assertion, which encoded the bug as correct.
+    """
     text = SKILL_MD.read_text()
     subshell_match = re.search(r'\(\s*bash.*?clean-state-files\.sh.*?\)\s*&', text, re.DOTALL)
-    assert subshell_match, (
-        "SKILL.md Step 7 clean-state-files.sh call must be inside the background ( ... ) & subshell"
+    assert not subshell_match, (
+        "SKILL.md Step 7 clean-state-files.sh call must NOT be inside the background ( ... ) & "
+        "subshell — the reap must run foreground so failures are visible (recurrence of #428/#429)"
     )
 
 
-def test_followup_skill_state_cleanup_has_or_true_guard():
-    """clean-state-files.sh call must be followed by || true so set -e in the subshell cannot
-    abort rimba remove when the state files are already absent or fail validation."""
+def test_followup_skill_state_cleanup_no_suppression():
+    """clean-state-files.sh call must have NO 2>/dev/null and NO || true guard.
+
+    The reap runs foreground (fix for #428/#429 recurrence): suppression guards would re-hide
+    the same silent-orphan path. A non-zero exit from clean-state-files.sh is a real failure.
+    """
     text = SKILL_MD.read_text()
-    assert re.search(r'clean-state-files\.sh.*?\|\|\s*true', text, re.DOTALL), (
-        "SKILL.md Step 7 clean-state-files.sh call must use '|| true' so a non-zero exit "
-        "does not abort rimba remove via set -e propagation into the background subshell"
+    lines_with_reap = [
+        ln for ln in text.splitlines() if "clean-state-files.sh" in ln
+    ]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        f"clean-state-files.sh call must not carry 2>/dev/null (foreground reap must be visible):\n"
+        + "\n".join(suppressed)
+    )
+
+
+def test_followup_skill_state_cleanup_has_post_check():
+    """Step 7 must include a post-reap verification that reports each state file as reaped or not."""
+    text = SKILL_MD.read_text()
+    assert "state file" in text and "reaped" in text, (
+        "SKILL.md Step 7 must include a post-reap report line (e.g. '✓ state file reaped: ...') "
+        "so operators can verify cleanup completed without inspecting /tmp by hand"
     )

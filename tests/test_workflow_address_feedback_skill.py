@@ -66,14 +66,15 @@ def test_address_feedback_skill_uses_three_way_triage():
 
 
 def test_address_feedback_skill_owner_repo_from_gh_repo_view():
-    """OWNER and REPO must be derived from 'gh repo view' (not from headRepository or baseRepository)."""
-    text = SKILL_MD.read_text()
+    """OWNER and REPO must be derived from 'gh repo view' — now lives in preflight-pr.sh (Fix A)."""
+    # Fix A moved OWNER/REPO derivation to runtime/preflight-pr.sh; check there, not the skill
+    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
     assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
-        "SKILL.md must derive OWNER via 'gh repo view --json owner' — "
+        "runtime/preflight-pr.sh must derive OWNER via 'gh repo view --json owner' — "
         "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
     )
     assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
-        "SKILL.md must derive REPO via 'gh repo view --json name' — "
+        "runtime/preflight-pr.sh must derive REPO via 'gh repo view --json name' — "
         "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
     )
 
@@ -101,10 +102,11 @@ def test_address_feedback_skill_no_fragile_owner_extraction():
 
 
 def test_address_feedback_skill_has_owner_repo_guard_clause():
-    """SKILL.md must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    text = SKILL_MD.read_text()
+    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
+    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "SKILL.md must include the guard-clause error message for missing OWNER/REPO "
+        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
         "so failures produce an actionable error rather than silently misrouting API calls"
     )
 
@@ -374,4 +376,33 @@ def test_address_feedback_skill_phase6_does_not_delete_triage_json():
         "Phase 6 action blocks must NOT delete triage.json — Phase 6 runs on Q-quit too, and "
         "triage.json is durable resume state that must survive Q-quit.\n"
         "Lines found: " + "\n".join(phase6_lines_with_triage)
+    )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_address_feedback_skill_phase5_reap_no_suppression():
+    """Phase 5 clean-state-files.sh call must have NO 2>/dev/null suppression.
+
+    The reap runs foreground; suppression would recreate the silent-orphan path
+    that was the root cause of the #428/#429 recurrence.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must be visible so orphaned state files surface as failures:\n"
+        + "\n".join(suppressed)
+    )
+
+
+def test_address_feedback_skill_phase5_reap_has_post_check():
+    """Phase 5 must include a post-reap report line confirming each state file was reaped."""
+    text = SKILL_MD.read_text()
+    assert "state file" in text and "reaped" in text, (
+        "SKILL.md Phase 5 must include a post-reap report line "
+        "(e.g. '✓ state file reaped: ...') so operators can verify cleanup completed"
     )

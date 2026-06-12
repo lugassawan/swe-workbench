@@ -69,7 +69,12 @@ DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 
 Then invoke the companion script, passing the resolved default branch as `$2`:
 
 ```bash
-_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+  exit 1
+}
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>" "$DEFAULT_BRANCH")"
 ```
 
@@ -122,7 +127,7 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
    ```bash
-   _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+   _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
    eval "$("$_SCRIPTS/check-rimba-hook.sh")"
    ```
    `RIMBA_HOOK_ACTIVE=1` is required. (The grep inside the script excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
@@ -143,7 +148,7 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 **Preconditions:**
 - rimba MCP server is active in the session, OR the rimba binary resolves on PATH or a known install location:
   ```bash
-  _SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+  _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
   RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
   ```
   `RIMBA` must be non-empty (or MCP server active).
@@ -174,7 +179,7 @@ If `$RIMBA remove` exits non-zero, run a filesystem probe as the canonical signa
 Run the companion script and eval its `KEY=VALUE` output:
 
 ```bash
-_SCRIPTS="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/skills/workflow-cleanup-merged/scripts"
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 ```
 

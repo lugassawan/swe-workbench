@@ -221,3 +221,21 @@ def test_extend_skill_cleanup_after_delivery():
         "clean-state-files.sh call must appear within/after Phase D — "
         "cleanup runs on the success delivery path only"
     )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_extend_skill_reap_no_suppression():
+    """The clean-state-files.sh call in Phase D must have NO 2>/dev/null suppression.
+
+    The reap must run without error suppression so orphaned spec-temp files surface as failures.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must surface failures:\n" + "\n".join(suppressed)
+    )
