@@ -67,3 +67,5 @@ Patterns are vocabulary, not goals. Reach for one only when the problem it solve
 - **Singleton** — almost always a disguised global; prefer a single instance composed at the root.
 - **God object** — one class that does everything; split by change vector.
 - **Pattern-itis** — five patterns where a function would do.
+
+> See `examples/` for worked Strategy, Observer, Decorator, and Factory Method implementations in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
