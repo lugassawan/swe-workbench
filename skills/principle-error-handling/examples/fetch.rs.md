@@ -65,8 +65,9 @@ pub fn fetch_with_retry(
             Ok(resp) => return Ok(resp),
             Err(err) if !is_transient(&err) => return Err(err), // permanent — bubble
             Err(_) => {
-                // jitter without rand crate: deterministic pseudo-random in [0.5, 1.4]
-                let jitter = ((attempt * 17 + 3) % 10) as f64 / 10.0 + 0.5;
+                // deterministic stand-in for illustration only — NOT for production.
+                // Real impl: rand::thread_rng().gen_range(0.5_f64..=1.5)
+                let jitter = ((attempt * 17 + 3) % 10) as f64 / 10.0 + 0.5; // [0.5, 1.4]
                 let delay = BASE_MS * (1u64 << attempt) as f64 * jitter;
                 let _ = delay; // sleep(delay as u64) — real impl: std::thread::sleep(Duration::from_millis(...))
             }

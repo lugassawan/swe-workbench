@@ -22,9 +22,10 @@ import (
 
 type Config struct{ Host string; Port int }
 
-type ConfigError struct{ Code, Msg string }
+type ConfigError struct{ Code, Msg string; Err error }
 
-func (e *ConfigError) Error() string { return fmt.Sprintf("[%s] %s", e.Code, e.Msg) }
+func (e *ConfigError) Error() string  { return fmt.Sprintf("[%s] %s", e.Code, e.Msg) }
+func (e *ConfigError) Unwrap() error  { return e.Err }
 
 func Parse(path string) (Config, error) {
 	f, err := os.Open(path)
@@ -65,7 +66,7 @@ func validate(kv map[string]string) (Config, error) {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return Config{}, fmt.Errorf("validating config: %w",
-			&ConfigError{Code: "VALIDATION", Msg: "port must be an integer"})
+			&ConfigError{Code: "VALIDATION", Msg: "port must be an integer", Err: err})
 	}
 	if port < 1 || port > 65535 {
 		return Config{}, fmt.Errorf("validating config: %w",

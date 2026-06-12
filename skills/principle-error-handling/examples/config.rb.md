@@ -58,11 +58,13 @@ def validate_config(kv)
   %w[host port].each do |field|
     raise ValidationConfigError.new(field, "required key missing") unless kv.key?(field)
   end
-  port = Integer(kv["port"])
+  begin
+    port = Integer(kv["port"])
+  rescue ArgumentError
+    raise ValidationConfigError.new("port", "'#{kv['port']}' is not an integer")
+  end
   raise ValidationConfigError.new("port", "#{port} out of range 1-65535") unless (1..65535).cover?(port)
   kv
-rescue ArgumentError
-  raise ValidationConfigError.new("port", "'#{kv['port']}' is not an integer")
 end
 ```
 

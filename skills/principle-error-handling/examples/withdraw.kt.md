@@ -50,14 +50,11 @@ fun main() {
         onFailure = { err ->
             // log ONCE at the boundary with account ID and amount
             System.err.println("[${acc.id}] withdraw 150.0 failed: ${err.message}")
-            val e = err as WithdrawError
-            when (e) {
-                is WithdrawError.InvalidAmount ->
-                    System.err.println("hint: amount must be a positive number")
-                is WithdrawError.AccountFrozen ->
-                    System.err.println("hint: contact support to unfreeze")
-                is WithdrawError.InsufficientFunds ->
-                    System.err.println("hint: available balance is ${e.available}")
+            when (err) {
+                is WithdrawError.InvalidAmount    -> System.err.println("hint: amount must be positive")
+                is WithdrawError.AccountFrozen    -> System.err.println("hint: contact support to unfreeze")
+                is WithdrawError.InsufficientFunds -> System.err.println("hint: available is ${err.available}")
+                else                              -> Unit  // unexpected — the log above is sufficient
             }
         }
     )

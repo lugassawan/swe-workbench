@@ -28,9 +28,9 @@ fun parseConfig(path: String): Result<Config> {
         .getOrElse { e -> return Result.failure(ConfigError.IoError(e.message ?: "unreadable")) }
 
     val kv = mutableMapOf<String, String>()
-    lines.forEachIndexed { idx, raw ->
+    for ((idx, raw) in lines.withIndex()) {
         val line = raw.trim()
-        if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
+        if (line.isEmpty() || line.startsWith("#")) continue
         val eq = line.indexOf('=')
         if (eq < 1) return Result.failure(
             ConfigError.ParseError(idx + 1, "missing '=' separator"))

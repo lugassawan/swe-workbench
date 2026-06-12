@@ -26,12 +26,12 @@ type Transport interface {
 	Fetch(url string) (*Response, error)
 }
 
-type FakeTransport struct{ attempt int }
+type FakeTransport struct{ Attempt int }
 
 func (f *FakeTransport) Fetch(url string) (*Response, error) {
 	if url == "/not-found" { return nil, &PermanentError{Status: 404} }
-	defer func() { f.attempt++ }()
-	if f.attempt < 2 { return nil, ErrTimeout }
+	defer func() { f.Attempt++ }()
+	if f.Attempt < 2 { return nil, ErrTimeout }
 	return &Response{Status: 200, Body: "OK"}, nil
 }
 ```
@@ -84,7 +84,8 @@ func main() {
 	}
 
 	// permanent → fail immediately
-	resp, err = fetch.FetchWithRetry(t, "/not-found", 5, 1000)
+	t2 := &fetch.FakeTransport{}
+	resp, err = fetch.FetchWithRetry(t2, "/not-found", 5, 1000)
 	if err != nil {
 		var pe *fetch.PermanentError
 		if errors.As(err, &pe) { fmt.Printf("permanent %d — no retries\n", pe.Status) } else { fmt.Println("error:", err) }

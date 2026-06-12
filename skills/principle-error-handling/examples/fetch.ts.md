@@ -13,7 +13,7 @@ without real network I/O.
 // file: transport.ts
 export type FetchResult =
   | { status: number; body: string }
-  | { error: "timeout" | "network" | "exhausted"; status?: never };
+  | { error: "timeout" | "network" | "exhausted" | "permanent"; statusCode?: number };
 
 export interface Transport {
   fetch(url: string): FetchResult;
@@ -23,7 +23,7 @@ export class FakeTransport implements Transport {
   private attempt = 0;
 
   fetch(url: string): FetchResult {
-    if (url === "/not-found") return { status: 404, body: "Not Found" };
+    if (url === "/not-found") return { error: "permanent", statusCode: 404 };
     const a = this.attempt++;
     if (a < 2) return { error: "timeout" };          // transient: attempts 0, 1
     return { status: 200, body: "OK" };               // success: attempt 2+
@@ -41,8 +41,7 @@ function isTransient(result: FetchResult): boolean {
 }
 
 function isPermanent(result: FetchResult): boolean {
-  if ("error" in result) return false;
-  return result.status >= 400 && result.status < 500; // 4xx
+  return "error" in result && result.error === "permanent";
 }
 
 /**
@@ -95,10 +94,12 @@ if ("error" in r1) {
 // permanent → fail immediately (no retries)
 const t2 = new FakeTransport();
 const r2 = fetchWithRetry(t2, "/not-found", 5, 1000);
-if ("error" in r2) {
+if ("error" in r2 && r2.error === "permanent") {
+  console.log(`permanent ${r2.statusCode} — no retries`);
+} else if ("error" in r2) {
   console.log("error:", r2.error);
 } else {
-  console.log(`permanent status=${r2.status} — returned without retry`);
+  console.log(`unexpected ok: status=${r2.status}`);
 }
 ```
 
