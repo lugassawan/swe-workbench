@@ -39,9 +39,9 @@ struct OrderLine {
     let price: Money
 }
 
-private enum Status { case draft, submitted }
-
 class Order {
+    private enum Status { case draft, submitted }
+
     let id: String
     private var status: Status = .draft
     private var lines: [OrderLine] = []

@@ -43,7 +43,9 @@ require_relative 'money'
 
 class OrderError < StandardError; end
 
-OrderLine = Struct.new(:sku, :price)
+OrderLine = Struct.new(:sku, :price) do
+  def initialize(sku, price) = super.freeze
+end
 
 class Order
   attr_reader :id

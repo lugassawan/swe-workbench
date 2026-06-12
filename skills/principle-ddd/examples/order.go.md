@@ -12,6 +12,7 @@ exceptions) and `OrderRepository` is a plain `interface` — a domain port with
 zero infrastructure coupling.
 
 ## Implementation
+
 ```go
 // file: money.go
 package ddd
@@ -111,7 +112,6 @@ func main() {
 ## Common Mistake
 
 Exporting `Lines` as a public field lets callers `append` after `Submit()`, bypassing the aggregate root.
-
 ```go
 type Order struct {
 	ID     string

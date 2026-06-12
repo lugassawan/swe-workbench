@@ -32,11 +32,13 @@ impl Money {
 // file: order.rs
 use crate::money::Money;
 
-#[derive(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Status { Draft, Submitted }
 
+#[derive(Debug, Clone)]
 pub struct OrderLine { pub sku: String, pub price: Money }
 
+#[derive(Debug, Clone)]
 pub struct Order {
     pub id: String,
     status: Status,
