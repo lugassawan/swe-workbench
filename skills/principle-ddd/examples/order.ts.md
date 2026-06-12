@@ -38,7 +38,7 @@ import { Money } from "./money";
 
 type Status = "draft" | "submitted";
 
-export interface OrderLine { sku: string; price: Money }
+export interface OrderLine { readonly sku: string; readonly price: Money }
 
 export class Order {
   private status: Status = "draft";

@@ -53,7 +53,7 @@ public class Order {
     public int lineCount() { return lines.size(); }
 
     public List<OrderLine> getLines() {
-        return Collections.unmodifiableList(lines); // defensive copy — callers cannot mutate
+        return Collections.unmodifiableList(lines); // read-only view — callers cannot mutate via this reference
     }
 
     public String getId() { return id; }
