@@ -41,7 +41,7 @@ module Fetcher
         result = fn.call(url)
         puts "[fetch] OK  #{url}"
         result
-      rescue => e
+      rescue StandardError => e
         puts "[fetch] ERR #{url}: #{e.message}"
         raise
       end
