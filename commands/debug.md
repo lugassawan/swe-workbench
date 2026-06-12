@@ -21,9 +21,29 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 If the symptom is performance-shaped:
 
 1. If grill-me mode was active and the `## Resolved decisions` block already classifies the symptom as performance or correctness, use that classification and skip the `AskUserQuestion`.
-2. Otherwise call `AskUserQuestion` — header **Symptom type**, question "Is this a performance investigation or a correctness bug?", two options:
-   - **Performance investigation** — "Activate `swe-workbench:workflow-performance-investigation`: profile-first runbook (baseline → profile → ranked hotspots → one change → before/after measurement → regression guard)."
-   - **Correctness bug** — "Proceed with the debugger: root-cause first, minimal fix, regression test."
+2. Otherwise call `AskUserQuestion`:
+
+   ```json
+   {
+     "questions": [
+       {
+         "question": "Is this a performance investigation or a correctness bug?",
+         "header": "Symptom type",
+         "multiSelect": false,
+         "options": [
+           {
+             "label": "Performance investigation",
+             "description": "Activate `swe-workbench:workflow-performance-investigation`: profile-first runbook (baseline → profile → ranked hotspots → one change → before/after measurement → regression guard)."
+           },
+           {
+             "label": "Correctness bug",
+             "description": "Proceed with the debugger: root-cause first, minimal fix, regression test."
+           }
+         ]
+       }
+     ]
+   }
+   ```
 3. On **Performance investigation**: activate `swe-workbench:workflow-performance-investigation` and stop — do not continue to browser diagnostics or debugger delegation.
 4. On **Correctness bug**: continue with the browser diagnostic step below.
 
