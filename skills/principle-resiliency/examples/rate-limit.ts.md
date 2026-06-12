@@ -44,7 +44,8 @@ export async function callWithRateLimit<T>(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (limiter.tryAcquire()) return operation();
     // Jitter prevents synchronized retries (thundering herd).
-    const backoff = 2 ** attempt * (0.5 + Math.random());
+    // Floor base at 1 so attempt 0 sleeps >= 0.5 ms (2**0 = 1 → sub-ms without this).
+    const backoff = Math.max(1, 2 ** attempt) * (0.5 + Math.random());
     await new Promise((r) => setTimeout(r, backoff));
   }
   throw new Error("rate limit exhausted");
