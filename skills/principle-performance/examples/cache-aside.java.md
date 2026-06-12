@@ -20,7 +20,7 @@ public class CacheAside<V> {
     private record Entry<V>(V value, Instant expiresAt) {}
 
     private final ConcurrentHashMap<String, Entry<V>> store = new ConcurrentHashMap<>();
-    // computeIfAbsent on ConcurrentHashMap serialises concurrent calls for the same key,
+    // compute on ConcurrentHashMap serialises concurrent calls for the same key,
     // providing single-flight semantics without an explicit per-key lock map.
     private final Duration ttl;
     private final Function<String, V> loader;

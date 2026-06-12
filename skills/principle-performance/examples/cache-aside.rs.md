@@ -42,6 +42,8 @@ impl<K: Eq + Hash + Clone, V: Clone> CacheAside<K, V> {
 
     /// Returns the cached value, or calls `loader` under the lock (single-flight).
     pub fn get_or_load(&self, key: K, loader: impl FnOnce(&K) -> V) -> V {
+        // unwrap(): panics if the mutex is poisoned (a thread panicked while holding it).
+        // For production use consider .unwrap_or_else(|p| p.into_inner()) to recover.
         let mut store = self.store.lock().unwrap();
         if let Some(e) = store.get(&key) {
             if Instant::now() < e.expires_at {

@@ -13,7 +13,7 @@ on a hit within the TTL, the value is returned immediately without touching the 
 # file: cache_aside.rb
 require 'monitor'
 
-# Cache-aside with per-key MonitorMixin for single-flight on cold/expired keys.
+# Cache-aside with per-key Monitor for single-flight on cold/expired keys.
 class CacheAside
   Entry = Struct.new(:value, :expires_at)
 
