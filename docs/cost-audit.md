@@ -62,6 +62,7 @@ Skills have no `model:` field — they are prose instructions injected into the 
 | principle-i18n | `skills/principle-i18n/` | N/A | No | M | Localization patterns |
 | principle-observability | `skills/principle-observability/` | N/A | No | M | Logging/tracing/metrics |
 | principle-performance | `skills/principle-performance/` | N/A | No | M | Profile-first optimization |
+| principle-product-design | `skills/principle-product-design/` | N/A | No | M | UX and product design heuristics; usability judgment, visual hierarchy, interaction design |
 | principle-resiliency | `skills/principle-resiliency/` | N/A | No | M | Retry/circuit-breaker patterns |
 | principle-security | `skills/principle-security/` | N/A | No | M | OWASP-aligned security guidance |
 | principle-solid | `skills/principle-solid/` | N/A | No | M | SOLID principles |

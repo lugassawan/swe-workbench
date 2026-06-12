@@ -4,7 +4,7 @@
 
 | Command | Purpose |
 |---|---|
-| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests\|contributor-trust>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests, contributor-trust) or auto-inferred from the diff when omitted. PR number arg unchanged. |
+| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests\|contributor-trust\|ux>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests, contributor-trust, ux) or auto-inferred from the diff when omitted. PR number arg unchanged. |
 | `/swe-workbench:security-review` | Depth-first security audit of the current diff — OWASP Top 10, secrets, insecure APIs, dependency CVEs. Pass a PR number to audit a specific PR. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
 | `/swe-workbench:architect <decision>` | Author an ADR, RFC, or cross-service contract via the architect subagent. Use when the output must be a written decision record — service decomposition, multi-system tech selection, cross-team contract — not advice about existing code. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
