@@ -60,7 +60,7 @@ fun fetchWithRetry(
     for (attempt in 0 until maxRetries) {
         val result = transport.fetch(url)
         if (result.isSuccess) return result
-        val err = result.exceptionOrNull()!!
+        val err = result.exceptionOrNull() ?: return result  // isSuccess path already returned
         if (!isTransient(err)) return result        // permanent — bubble immediately
         val delay = baseMs * 2.0.pow(attempt) * (Random.nextFloat() * 1.0f + 0.5f)
         @Suppress("UNUSED_VARIABLE") val d = delay // Thread.sleep(delay.toLong()) — real impl

@@ -36,7 +36,8 @@ impl Transport for FakeTransport {
         let a = self.attempt.get();
         self.attempt.set(a + 1);
         match a {
-            0 | 1 => Err(FetchError::Timeout),
+            0     => Err(FetchError::Transient(503)), // first: 5xx transient
+            1     => Err(FetchError::Timeout),        // second: timeout transient
             _     => Ok(Response { status: 200, body: "OK".into() }),
         }
     }

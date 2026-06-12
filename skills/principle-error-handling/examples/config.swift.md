@@ -34,15 +34,15 @@ func parseConfig(path: String) throws -> Config {
     for (idx, raw) in lines.enumerated() {
         let line = raw.trimmingCharacters(in: .whitespaces)
         if line.isEmpty || line.hasPrefix("#") { continue }
-        guard line.contains("=") else {
+        let parts = line.split(separator: "=", maxSplits: 1)
+        guard parts.count == 2 else {
             throw ConfigError.parse(line: idx + 1, reason: "missing '=' separator")
         }
-        let eq = line.firstIndex(of: "=")!
-        guard eq != line.startIndex else {
+        let key = parts[0].trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else {
             throw ConfigError.parse(line: idx + 1, reason: "empty key")
         }
-        let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
-        kv[key] = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+        kv[key] = parts[1].trimmingCharacters(in: .whitespaces)
     }
 
     return try validateConfig(kv)

@@ -40,7 +40,7 @@ func (f *FakeTransport) Fetch(url string) (*Response, error) {
 // file: fetch.go
 package fetch
 
-import ("errors"; "fmt"; "math/rand")
+import ("errors"; "fmt"; "math/rand") // rand v1 top-level fns deprecated in Go 1.20; use math/rand/v2 in real code
 
 func isTransient(resp *Response, err error) bool {
 	var pe *PermanentError

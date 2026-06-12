@@ -22,7 +22,7 @@ class PermanentError < FetchError
   attr_reader :status
   def initialize(status) = (@status = status; super("permanent #{status}"))
 end
-class TimeoutError  < FetchError; end
+class FetchTimeoutError  < FetchError; end
 class ExhaustedError < FetchError; end
 
 class Transport
@@ -36,7 +36,7 @@ class FakeTransport < Transport
     raise PermanentError.new(404) if url == "/not-found"
     attempt = @attempt
     @attempt += 1
-    raise TimeoutError, "simulated timeout" if attempt < 2
+    raise FetchTimeoutError, "simulated timeout" if attempt < 2
     Response.new(200, "OK")
   end
 end
@@ -54,7 +54,7 @@ def fetch_with_retry(transport, url, max_retries: 5, timeout_ms: 1000)
     return transport.fetch(url)
   rescue PermanentError
     raise                          # bubble immediately — never retry
-  rescue TransientError, TimeoutError
+  rescue TransientError, FetchTimeoutError
     delay = base_ms * (2**attempt) * rand(0.5..1.5)
     # sleep(delay / 1000.0) — real impl uses Kernel#sleep
     _ = delay
@@ -72,7 +72,7 @@ require_relative "fetch"
 
 t = FakeTransport.new
 
-# transient → success (attempts 0,1 raise TimeoutError; attempt 2 returns 200)
+# transient → success (attempts 0,1 raise FetchTimeoutError; attempt 2 returns 200)
 begin
   resp = fetch_with_retry(t, "/api/data")
   puts "status=#{resp.status} body=#{resp.body}"

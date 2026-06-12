@@ -12,8 +12,8 @@ without real network I/O.
 ```typescript
 // file: transport.ts
 export type FetchResult =
-  | { status: number; body: string }
-  | { error: "timeout" | "network" | "exhausted" | "permanent"; statusCode?: number };
+  | { ok: true;  status: number; body: string }
+  | { ok: false; error: "timeout" | "network" | "exhausted" | "permanent"; statusCode?: number };
 
 export interface Transport {
   fetch(url: string): FetchResult;
@@ -23,10 +23,10 @@ export class FakeTransport implements Transport {
   private attempt = 0;
 
   fetch(url: string): FetchResult {
-    if (url === "/not-found") return { error: "permanent", statusCode: 404 };
+    if (url === "/not-found") return { ok: false, error: "permanent", statusCode: 404 };
     const a = this.attempt++;
-    if (a < 2) return { error: "timeout" };          // transient: attempts 0, 1
-    return { status: 200, body: "OK" };               // success: attempt 2+
+    if (a < 2) return { ok: false, error: "timeout" }; // transient: attempts 0, 1
+    return { ok: true, status: 200, body: "OK" };       // success: attempt 2+
   }
 }
 ```
@@ -36,12 +36,12 @@ export class FakeTransport implements Transport {
 import type { FetchResult, Transport } from "./transport";
 
 function isTransient(result: FetchResult): boolean {
-  if ("error" in result) return result.error === "timeout" || result.error === "network";
+  if (!result.ok) return result.error === "timeout" || result.error === "network";
   return result.status >= 500;                        // 5xx
 }
 
 function isPermanent(result: FetchResult): boolean {
-  return "error" in result && result.error === "permanent";
+  return !result.ok && result.error === "permanent";
 }
 
 /**
@@ -55,20 +55,18 @@ export function fetchWithRetry(
   timeoutMs: number,
 ): FetchResult {
   const BASE_MS = 100;
-  let last: FetchResult = { error: "network" };
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const result = transport.fetch(url);
 
-    if (!("error" in result) && result.status < 400) return result;
+    if (result.ok && result.status < 400) return result;
     if (isPermanent(result)) return result;           // bubble permanent immediately
 
-    last = result;
     const delay = BASE_MS * Math.pow(2, attempt) * (Math.random() * 1.0 + 0.5);
-    void delay; // setTimeout(delay) — real impl: await new Promise(r => setTimeout(r, delay))
+    void delay; // real impl: await new Promise(r => setTimeout(r, delay))
   }
 
-  return { error: "exhausted" }; // retries consumed; distinct from transient errors
+  return { ok: false, error: "exhausted" }; // retries consumed; distinct from transient errors
 }
 ```
 
@@ -81,7 +79,7 @@ const t = new FakeTransport();
 
 // transient → success (attempts 0,1 timeout; attempt 2 returns 200)
 const r1 = fetchWithRetry(t, "/api/data", 5, 1000);
-if ("error" in r1) {
+if (!r1.ok) {
   if (r1.error === "exhausted") {
     console.log("retries consumed — all attempts failed with transient errors");
   } else {
@@ -94,9 +92,9 @@ if ("error" in r1) {
 // permanent → fail immediately (no retries)
 const t2 = new FakeTransport();
 const r2 = fetchWithRetry(t2, "/not-found", 5, 1000);
-if ("error" in r2 && r2.error === "permanent") {
+if (!r2.ok && r2.error === "permanent") {
   console.log(`permanent ${r2.statusCode} — no retries`);
-} else if ("error" in r2) {
+} else if (!r2.ok) {
   console.log("error:", r2.error);
 } else {
   console.log(`unexpected ok: status=${r2.status}`);
@@ -110,8 +108,8 @@ spin loop.
 
 ```typescript
 while (attempts < max) {
-  const r = t.fetch(url); // ✗ no classify — retries 404 and auth errors
-  if (!("error" in r)) break; // ✗ no backoff — tight loop burns CPU
-  attempts++;
+  const r = t.fetch(url);
+  if (r.ok) break;                    // ✗ no classify — retries 404 and auth errors
+  attempts++;                         // ✗ no backoff — tight loop burns CPU
 }
 ```
