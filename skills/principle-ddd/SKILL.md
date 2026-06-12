@@ -68,3 +68,5 @@ Stateless domain logic that does not belong on a single entity (e.g., a transfer
 | **Complex invariants** | Aggregates, domain events, specifications | Interface + unit of work | Portfolio rebalancing with multi-asset constraints |
 
 **Light DDD is the floor when business rules exist**: entity behavior + repository interfaces + value objects for constrained types are non-negotiable even for "simple" cases.
+
+> See `examples/` for a worked Light DDD Order-aggregate implementation (Money value object, aggregate root enforcing one invariant, repository port) in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
