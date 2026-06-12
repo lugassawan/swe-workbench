@@ -28,3 +28,4 @@ All `swe-workbench` principle skills available in this plugin. Use the `Skill` t
 - `swe-workbench:principle-tdd` — TDD: red-green-refactor, test-first, F.I.R.S.T., Arrange-Act-Assert.
 - `swe-workbench:principle-testing` — Testing strategy: test pyramid, doubles taxonomy, coverage-vs-confidence, mutation testing, flaky-test triage, contract testing, fixtures and builders, property-based tests.
 - `swe-workbench:principle-version-control` — Version control: atomic commits, commit-message quality, branching strategy, rebase vs merge, squash vs preserve, PR description quality.
+- `swe-workbench:principle-product-design` — UX and product design: Nielsen's 10 usability heuristics, visual hierarchy, information architecture, interaction design patterns, design-system compliance, responsive design. Accessibility/WCAG → `swe-workbench:principle-accessibility`.

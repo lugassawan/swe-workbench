@@ -39,6 +39,7 @@ CODE_TOUCHING_AGENTS = [
     "tech-writer",
     "test-reviewer",
     "test-writer",
+    "product-designer",
 ]
 
 
