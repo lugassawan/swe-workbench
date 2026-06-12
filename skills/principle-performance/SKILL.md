@@ -1,6 +1,6 @@
 ---
 name: principle-performance
-description: Performance engineering principles — latency vs throughput, profile-before-optimize discipline, Big-O instincts for common patterns, allocation and GC pressure, data locality and cache-friendliness, N+1 queries on a list endpoint. Auto-load when reviewing hot-path code, choosing data structures, designing batch or streaming pipelines, hunting allocations or GC pauses, weighing latency trade-offs, considering caching, detecting N+1 queries on list endpoint calls, or evaluating scalability.
+description: Performance engineering principles — latency vs throughput, profile-before-optimize discipline, Big-O instincts for common patterns, allocation and GC pressure, data locality and cache-friendliness, N+1 queries on a list endpoint, cache-aside and write-through invalidation, TTL sizing for hot-path endpoints, stampede prevention with single-flight. Auto-load when reviewing hot-path code, choosing data structures, designing batch or streaming pipelines, hunting allocations or GC pauses, weighing latency trade-offs, sizing TTL and picking cache invalidation, preventing cache stampede or thundering herd with single-flight on an expired hot key, detecting N+1 queries on list endpoint calls, or evaluating scalability.
 ---
 
 # Performance
