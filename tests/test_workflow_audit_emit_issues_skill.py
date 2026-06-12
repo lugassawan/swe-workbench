@@ -272,9 +272,11 @@ def test_audit_emit_cleanup_on_confirm_success():
     text = SKILL_MD.read_text()
     confirm_idx = text.find("`confirm` (literal)")
     # Use the executable invocation, not the guard check ([ -f "$_RT/runtime/clean-state-files.sh" ])
-    cleanup_idx = text.find('bash "$_RT/runtime/clean-state-files.sh"')
+    # re.search is resilient to minor quoting/whitespace changes vs. text.find()
+    cleanup_match = re.search(r'bash\s+"\$_RT/runtime/clean-state-files\.sh"', text)
     assert confirm_idx != -1, "SKILL.md must have a 'confirm' table row"
-    assert cleanup_idx != -1, "SKILL.md must reference bash invocation of clean-state-files.sh"
+    assert cleanup_match, "SKILL.md must reference bash invocation of clean-state-files.sh"
+    cleanup_idx = cleanup_match.start()
     assert cleanup_idx > confirm_idx, (
         "clean-state-files.sh invocation must appear after the Phase 4 confirm table row"
     )

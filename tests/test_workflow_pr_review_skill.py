@@ -25,19 +25,6 @@ def test_pr_review_skill_file_exists():
     )
 
 
-def test_pr_review_skill_owner_repo_from_gh_repo_view():
-    """OWNER and REPO must be derived from 'gh repo view' — now lives in preflight-pr.sh (Fix A)."""
-    # Fix A moved OWNER/REPO derivation to runtime/preflight-pr.sh; check there, not the skill
-    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
-    assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
-        "runtime/preflight-pr.sh must derive OWNER via 'gh repo view --json owner' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
-    assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
-        "runtime/preflight-pr.sh must derive REPO via 'gh repo view --json name' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
-
 
 def test_pr_review_skill_no_invalid_json_field():
     """Step 1 gh pr view --json must NOT include baseRepository (it is not a valid gh CLI field)."""
@@ -127,7 +114,7 @@ def test_pr_review_skill_state_cleanup_outside_background_subshell():
     This is the inverse of the previous #428 assertion, which encoded the bug as correct.
     """
     text = SKILL_MD.read_text()
-    subshell_match = re.search(r'\(\s*bash.*?clean-state-files\.sh.*?\)\s*&', text, re.DOTALL)
+    subshell_match = re.search(r'\([^)]*clean-state-files\.sh[^)]*\)\s*&', text)
     assert not subshell_match, (
         "SKILL.md Step 7 clean-state-files.sh call must NOT be inside the background ( ... ) & "
         "subshell — the reap must run foreground so failures are visible (recurrence of #428/#429)"

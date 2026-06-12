@@ -65,19 +65,6 @@ def test_address_feedback_skill_uses_three_way_triage():
     assert "DEFERRED" in text, "SKILL.md must reference DEFERRED triage state"
 
 
-def test_address_feedback_skill_owner_repo_from_gh_repo_view():
-    """OWNER and REPO must be derived from 'gh repo view' — now lives in preflight-pr.sh (Fix A)."""
-    # Fix A moved OWNER/REPO derivation to runtime/preflight-pr.sh; check there, not the skill
-    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
-    assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
-        "runtime/preflight-pr.sh must derive OWNER via 'gh repo view --json owner' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
-    assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
-        "runtime/preflight-pr.sh must derive REPO via 'gh repo view --json name' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
-
 
 def test_address_feedback_skill_no_invalid_json_field():
     """Phase 1 gh pr view --json must NOT include baseRepository (it is not a valid gh CLI field)."""

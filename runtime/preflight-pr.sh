@@ -16,7 +16,7 @@ PR="${1:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
 OUT_JSON="${2:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
 FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision}"
 
-SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 gh auth status >/dev/null || {
   echo "gh not authenticated. Run 'gh auth login'." >&2
@@ -29,6 +29,14 @@ BASE=$(jq -r .baseRefName     "$OUT_JSON")
 HEAD_SHA=$(jq -r .headRefOid  "$OUT_JSON")
 AUTHOR_LOGIN=$(jq -r .author.login "$OUT_JSON")
 STATE=$(jq -r .state          "$OUT_JSON")
+
+for _var in BASE HEAD_SHA AUTHOR_LOGIN STATE; do
+  _val="${!_var}"
+  if [ -z "$_val" ] || [ "$_val" = "null" ]; then
+    echo "preflight-pr.sh: field $_var is empty/null in $OUT_JSON — PR data may be incomplete." >&2
+    exit 1
+  fi
+done
 
 OWNER=$(gh repo view --json owner -q .owner.login)
 REPO=$(gh repo view --json name   -q .name)
