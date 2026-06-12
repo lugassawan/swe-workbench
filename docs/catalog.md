@@ -36,6 +36,7 @@
 | `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
 | `performance-tuner` | Profile-driven hotspot triage — ranks bottlenecks from a flame graph or benchmark and recommends targeted optimizations. Refuses speculative optimization without profiling evidence. |
+| `product-designer` | Depth-first UX and design quality review of frontend diffs — usability heuristics, visual hierarchy, information architecture, interaction design, design-system compliance. Invoked by `/swe-workbench:review --mode ux`. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
@@ -70,6 +71,7 @@
 | `principle-data-modeling` | "schema design", "data model", "normalization", "denormalization", "indexing", "hot key", "hot partition", "schema evolution", "expand contract", "query-first", "storage paradigm", "relational vs document", "TTL", "archival". |
 | `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
 | `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
+| `principle-product-design` | "usability heuristic", "UX review", "visual hierarchy", "information architecture", "interaction design", "design system", "usability audit", "Nielsen", "loading state", "empty state", "error state", "progressive disclosure", "responsive design". |
 
 ### Languages — auto-hint by file type (subagents load deterministically)
 

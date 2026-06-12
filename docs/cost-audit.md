@@ -19,6 +19,7 @@ All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-audit
 | dependency-auditor | `agents/dependency-auditor.md` | sonnet | No | **S → haiku** | Reads manifests, reports versions/licenses; mechanical extraction, low reasoning density. Watch window: GPL/AGPL transitive in MIT projects, SSPL/BUSL/Commons-Clause, per-version license changes, dev-only vs. production viral scope — any relational license judgment that misclassifies to lower severity is a revert trigger. |
 | migrator | `agents/migrator.md` | sonnet | No | M–L | Expand-backfill-switch-contract reasoning across deployments; phase correctness is high-stakes |
 | performance-tuner | `agents/performance-tuner.md` | sonnet | No | M | Profile-driven; delegates to `principle-performance` skill; hotspot ranking requires judgment |
+| product-designer | `agents/product-designer.md` | sonnet | No | M | Depth-first UX review; usability heuristic judgment and design-system compliance require reasoning |
 | product-manager | `agents/product-manager.md` | sonnet | No | **S → haiku** | Formats rough ideas into structured GitHub issues; template discovery + fill is mechanical |
 | refactorer | `agents/refactorer.md` | sonnet | No | M | Fowler-catalog steps; behavior-preservation invariant needs correctness judgment |
 | reviewer | `agents/reviewer.md` | sonnet | No | M–L | Four-axis PR review (correctness, security, design, tests); correctness judgment is high-stakes |

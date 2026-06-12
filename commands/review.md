@@ -1,6 +1,6 @@
 ---
-description: Review the current git diff — auditor selected by --mode (general, security, a11y, deps, perf, tests, contributor-trust) or auto-inferred from the diff when omitted. Pass a PR number to review a specific PR; use --check-followup <N> to re-check a PR after the owner has addressed feedback.
-argument-hint: "[--mode <general|security|a11y|deps|perf|tests|contributor-trust>] [PR number — optional] [--check-followup <PR number>]"
+description: Review the current git diff — auditor selected by --mode (general, security, a11y, deps, perf, tests, contributor-trust, ux) or auto-inferred from the diff when omitted. Pass a PR number to review a specific PR; use --check-followup <N> to re-check a PR after the owner has addressed feedback.
+argument-hint: "[--mode <general|security|a11y|deps|perf|tests|contributor-trust|ux>] [PR number — optional] [--check-followup <PR number>]"
 ---
 
 Review code with senior-engineer depth. Two dimensions — fully orthogonal:
@@ -25,6 +25,7 @@ Parse `$ARGUMENTS` left-to-right:
    | `performance`, `perf` | `performance` | `performance-tuner` |
    | `tests` *(no short alias — keyword is already short)* | `tests` | `test-reviewer` |
    | `contributor-trust`, `trust` | `contributor-trust` | `contributor-auditor` |
+   | `ux` *(no short alias)* | `ux` | `product-designer` |
 
    Strip `--mode <value>` from `$ARGUMENTS`. Store the normalized mode. If the value is unrecognized, print an error listing valid values and stop.
 
@@ -53,7 +54,7 @@ Apply these inference rules **in precedence order** (first match wins; ties reso
 4. **performance** — diff touches perf-sensitive hot-path globs (`**/cache/**`, `**/queries/**`, `**/db/**`, `**/index*`, `**/search*`) AND the diff is small (< 200 lines changed).
 5. **general** — fallthrough when none of the above match.
 
-> **Note:** `tests` and `contributor-trust` are intentionally absent from auto-inference — both must be requested explicitly. `tests` rationale: test files are also valid targets for general review, so auto-routing would suppress the full-spectrum `reviewer` on test-only diffs. `contributor-trust` rationale: author signal and pattern-risk checks only make sense on PRs from external contributors; auto-firing on local diffs would add noise with no signal.
+> **Note:** `tests`, `contributor-trust`, and `ux` are intentionally absent from auto-inference — all must be requested explicitly. `tests` rationale: test files are also valid targets for general review, so auto-routing would suppress the full-spectrum `reviewer` on test-only diffs. `contributor-trust` rationale: author signal and pattern-risk checks only make sense on PRs from external contributors; auto-firing on local diffs would add noise with no signal. `ux` rationale: UX-only diffs are rare and subjective; the caller must opt in deliberately to avoid noisy UX reports on backend-only changes.
 
 Print exactly:
 > `Inferred mode: <mode> — reason: <one-sentence justification>`
