@@ -1,5 +1,5 @@
 ---
-description: Invoke the debugger subagent to diagnose a bug, failing test, or unexpected behavior — root-cause first, then a minimal, principle-aware fix with a regression test
+description: Diagnose a bug, failing test, or unexpected behavior — root-cause first, minimal fix, regression test. Performance-shaped symptoms (slow, latency, profiling) are routed to workflow-performance-investigation via one clarifying question.
 argument-hint: <symptom, failing test, or error, optionally with a ticket ref> [--grill | --standard]
 ---
 
@@ -15,6 +15,39 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 **Standard mode:** proceed with the command's existing lightweight clarify (a restatement and at most one clarifying question) — do not ask the mode question again.
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
+
+**Performance routing.** After resolving the mode, check whether the symptom is performance-shaped before proceeding. A symptom is performance-shaped when it describes speed, latency, throughput, or resource exhaustion without an assertion failure or incorrect output — key vocabulary (case-insensitive, stem-matched): `slow`, `too slow`, `latency`, `throughput`, `cpu`, `memory leak`, `oom`, `profil*`, `benchmark`, `bottleneck`, `perf`, `performance`, `high memory`, `resource exhaustion`, `takes too long`.
+
+If the symptom is performance-shaped:
+
+1. If grill-me mode was active and the `## Resolved decisions` block already classifies the symptom as performance or correctness, use that classification and skip the `AskUserQuestion`.
+2. Otherwise call `AskUserQuestion`:
+
+   ```json
+   {
+     "questions": [
+       {
+         "question": "Is this a performance investigation or a correctness bug?",
+         "header": "Symptom type",
+         "multiSelect": false,
+         "options": [
+           {
+             "label": "Performance investigation",
+             "description": "Activate `swe-workbench:workflow-performance-investigation`: profile-first runbook (baseline → profile → ranked hotspots → one change → before/after measurement → regression guard)."
+           },
+           {
+             "label": "Correctness bug",
+             "description": "Proceed with the debugger: root-cause first, minimal fix, regression test."
+           }
+         ]
+       }
+     ]
+   }
+   ```
+3. On **Performance investigation**: activate `swe-workbench:workflow-performance-investigation` and stop — do not continue to browser diagnostics or debugger delegation.
+4. On **Correctness bug**: continue with the browser diagnostic step below.
+
+If the symptom is not performance-shaped: skip this step entirely.
 
 **Browser diagnostic step (web-UI symptoms only).** Before delegating, check whether the symptom indicates a browser / web-UI context (e.g., mentions a rendered page, console error, XHR/fetch failure, visual regression, or DOM state). If it does:
 
