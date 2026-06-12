@@ -25,6 +25,9 @@ struct Entry<V> {
 
 pub struct CacheAside<K, V> {
     // A single Mutex over the whole store is simple and correct for moderate contention.
+    // Trade-off: the lock is held while the loader runs, so slow loaders (e.g. HTTP calls)
+    // block all concurrent reads for any key. For high-throughput use, prefer a per-key
+    // lock map (e.g. DashMap) to avoid global blocking.
     store: Mutex<HashMap<K, Entry<V>>>,
     ttl: Duration,
 }

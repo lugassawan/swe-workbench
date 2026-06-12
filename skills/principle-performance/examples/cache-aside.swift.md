@@ -18,7 +18,8 @@ private struct Entry<V> {
     let expiresAt: Date
 }
 
-/// Cache-aside backed by an NSLock per key for single-flight on cold/expired keys.
+/// Cache-aside using Swift actor isolation for single-flight on cold/expired keys.
+/// Concurrent `get` calls for the same key share one in-flight `Task`; the loader runs exactly once.
 actor CacheAside<V: Sendable> {
     private var store: [String: Entry<V>] = [:]
     private var inflight: [String: Task<V, Error>] = [:]

@@ -30,7 +30,10 @@ class CacheAside
     return entry.value if entry && Time.now < entry.expires_at
 
     # Per-key Monitor: only one thread recomputes on a cold/expired hit.
-    @locks[key].synchronize do
+    # @locks itself is a Hash — guard its access with @global to avoid two threads
+    # creating different Monitor instances for the same key (breaking single-flight).
+    lock = @global.synchronize { @locks[key] }
+    lock.synchronize do
       entry = @global.synchronize { @store[key] }
       return entry.value if entry && Time.now < entry.expires_at
 

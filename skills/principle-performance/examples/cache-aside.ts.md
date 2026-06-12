@@ -42,6 +42,8 @@ class CacheAside<V> {
       this.inflight.delete(key);
       return value;
     });
+    // Attach a no-op catch so Node.js doesn't report an unhandled rejection on the shared
+    // inflight promise itself; callers still receive the error via their own await.
     promise.catch(() => this.inflight.delete(key));
     this.inflight.set(key, promise);
     return promise;

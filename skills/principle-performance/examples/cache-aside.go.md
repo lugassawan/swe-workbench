@@ -72,6 +72,7 @@ func (c *Cache[V]) Get(key string) (V, error) {
 	if cl.err == nil {
 		c.store[key] = entry[V]{value: cl.val, expiresAt: time.Now().Add(c.ttl)}
 	}
+	// Always remove the inflight entry — on error we don't cache, so the next caller retries.
 	delete(c.inflight, key)
 	c.mu.Unlock()
 

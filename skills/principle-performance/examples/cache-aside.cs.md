@@ -36,6 +36,8 @@ class CacheAside<T>
             return entry.Value;
 
         // Single-flight: acquire a per-key lock so only one caller recomputes.
+        // GetOrAdd may invoke the factory on multiple threads; only one SemaphoreSlim wins.
+        // Extra instances are discarded (not Disposed) — acceptable here, use a pool in production.
         var sem = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync();
         try

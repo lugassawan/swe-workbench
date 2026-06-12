@@ -25,12 +25,13 @@ class CacheAside<V>(
 ) {
     private val store = ConcurrentHashMap<String, Entry<V>>()
     // Per-key Mutex: only one coroutine recomputes a cold/expired entry.
+    // computeIfAbsent is atomic per-key; getOrPut is NOT — two coroutines could get different instances.
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     suspend fun get(key: String): V {
         store[key]?.let { if (Instant.now().isBefore(it.expiresAt)) return it.value }
 
-        val mutex = locks.getOrPut(key) { Mutex() }
+        val mutex = locks.computeIfAbsent(key) { Mutex() }
         return mutex.withLock {
             // Re-check after acquiring: a concurrent caller may have already populated the entry.
             store[key]?.let { if (Instant.now().isBefore(it.expiresAt)) return it.value }

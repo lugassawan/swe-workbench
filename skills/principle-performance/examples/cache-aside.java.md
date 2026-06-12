@@ -35,10 +35,13 @@ public class CacheAside<V> {
         if (entry != null && Instant.now().isBefore(entry.expiresAt())) {
             return entry.value();
         }
-        // computeIfAbsent holds the segment lock while the mapping function runs,
-        // so only one thread recomputes a missing/expired key at a time.
-        store.remove(key); // evict stale entry so computeIfAbsent fires
-        return store.computeIfAbsent(key, k -> {
+        // compute is atomic per-key (bin-level lock in ConcurrentHashMap since Java 8):
+        // eviction of a stale entry and recomputation happen as a single step, so only
+        // one thread calls loader for a given key at a time.
+        return store.compute(key, (k, existing) -> {
+            if (existing != null && Instant.now().isBefore(existing.expiresAt())) {
+                return existing; // another thread already refreshed it
+            }
             V value = loader.apply(k);
             return new Entry<>(value, Instant.now().plus(ttl));
         }).value();
