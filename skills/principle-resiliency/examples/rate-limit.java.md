@@ -54,7 +54,7 @@ public class RateLimitedCaller {
         for (int attempt = 0; attempt < maxAttempts; attempt++) {
             if (bucket.tryAcquire()) return op.call();
             // Jitter prevents synchronized retries (thundering herd).
-            long backoff = (long) ((1 << attempt) * (0.5 + RNG.nextDouble()));
+            long backoff = Math.max(1L, (long) ((1 << attempt) * (0.5 + RNG.nextDouble())));
             Thread.sleep(backoff);
         }
         throw new RuntimeException("rate limit exhausted");

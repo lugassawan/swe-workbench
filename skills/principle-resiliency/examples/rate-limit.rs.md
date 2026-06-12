@@ -58,7 +58,8 @@ where
             return Some(op());
         }
         // Jitter prevents synchronized retries (thundering herd).
-        let base_ms = (1u64 << attempt).min(1000);
+        // Start at 2 so base_ms / 2 >= 1 on attempt 0 (avoids zero-ms sleep from integer division).
+        let base_ms = (2u64 << attempt).min(1000);
         let jitter_ms = base_ms / 2 + (rand_jitter() % (base_ms / 2 + 1));
         std::thread::sleep(Duration::from_millis(jitter_ms));
     }

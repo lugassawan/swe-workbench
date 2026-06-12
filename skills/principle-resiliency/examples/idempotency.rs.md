@@ -31,7 +31,7 @@ impl<T: Clone> IdempotencyStore<T> {
 
     pub fn execute<F>(&self, key: &str, operation: F) -> Result<T, String>
     where
-        F: FnOnce() -> T,
+        F: FnOnce() -> Result<T, String>,
     {
         {
             let mut guard = self.store.lock().unwrap();
@@ -45,9 +45,16 @@ impl<T: Clone> IdempotencyStore<T> {
             }
         }
 
-        let result = operation();
-        self.store.lock().unwrap().insert(key.to_string(), Entry::Completed(result.clone()));
-        Ok(result)
+        match operation() {
+            Ok(result) => {
+                self.store.lock().unwrap().insert(key.to_string(), Entry::Completed(result.clone()));
+                Ok(result)
+            }
+            Err(e) => {
+                self.store.lock().unwrap().remove(key); // release — allows retry with same key
+                Err(e)
+            }
+        }
     }
 }
 ```
@@ -65,8 +72,8 @@ fn main() {
     let calls2 = calls.clone();
 
     let key = "order-abc-attempt-1";
-    let r1 = store.execute(key, || { calls.fetch_add(1, Ordering::SeqCst); "ch_123" }).unwrap();
-    let r2 = store.execute(key, || { calls2.fetch_add(1, Ordering::SeqCst); "ch_123" }).unwrap();
+    let r1 = store.execute(key, || { calls.fetch_add(1, Ordering::SeqCst); Ok("ch_123") }).unwrap();
+    let r2 = store.execute(key, || { calls2.fetch_add(1, Ordering::SeqCst); Ok("ch_123") }).unwrap();
 
     assert_eq!(r1, r2);
     assert_eq!(calls.load(Ordering::SeqCst), 1, "charge executed more than once");

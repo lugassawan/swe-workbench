@@ -40,8 +40,8 @@ fun <T> callWithRateLimit(bucket: TokenBucket, operation: () -> T, maxAttempts: 
     repeat(maxAttempts) { attempt ->
         if (bucket.tryAcquire()) return operation()
         // Jitter prevents synchronized retries (thundering herd).
-        val backoff = (1L shl attempt) * (0.5 + Random.nextDouble())
-        Thread.sleep(backoff.toLong())
+        val backoff = maxOf(1L, ((1L shl attempt) * (0.5 + Random.nextDouble())).toLong())
+        Thread.sleep(backoff)
     }
     throw RuntimeException("rate limit exhausted")
 }

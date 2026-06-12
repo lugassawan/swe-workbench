@@ -89,7 +89,7 @@ Rate limiting controls request volume to protect producers from overload and con
 
 - **Token bucket** — bucket holds up to N tokens; each request consumes one; tokens refill at a steady rate. Allows short bursts up to bucket capacity, then enforces the steady-state rate.
 - **Leaky bucket** — requests enter a queue and drain at a fixed rate regardless of burst, producing constant-rate output at the cost of higher latency.
-- **Fixed/sliding window** — simpler to implement; fixed window has a boundary-burst caveat: a client can send up to 2× the limit across a window boundary.
+- **Fixed/sliding window** — simpler to implement; fixed window has a boundary-burst caveat: a client can send up to 2× the limit across a window boundary. Sliding window tracks per-slot request counts and avoids this burst by weighting across the boundary — at the cost of more state per client.
 - **Quota headers** — servers should return `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, and `Retry-After`. Clients must honor `Retry-After`; ignoring it escalates to a ban.
 - **Client-side backpressure** — use bounded queues that reject new work when full rather than growing unboundedly. A 429 means slow down now, not retry immediately.
 - **Jitter on retry** — when many clients hit a rate limit simultaneously, synchronized retries produce a thundering herd at the next interval. Add random jitter; see `principle-error-handling#Retries and Backoff`.

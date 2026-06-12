@@ -59,7 +59,7 @@ async Task<string> CallWithRateLimit(Func<string> op, int maxAttempts = 5)
     {
         if (bucket.TryAcquire()) return op();
         // Jitter prevents synchronized retries (thundering herd).
-        int backoff = (int)((1 << attempt) * (0.5 + rng.NextDouble()));
+        int backoff = Math.Max(1, (int)((1 << attempt) * (0.5 + rng.NextDouble())));
         await Task.Delay(backoff);
     }
     throw new InvalidOperationException("rate limit exhausted");

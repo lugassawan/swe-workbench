@@ -56,8 +56,8 @@ language-python, language-rust
 principle-performance, workflow-performance-investigation
 
 # principle-resiliency and principle-distributed-systems share idempotency trigger
-# surface: principle-distributed-systems covers at-least-once delivery and idempotency
-# across the network layer, while principle-resiliency covers the dedup-store
+# surface: principle-distributed-systems covers at-least-once delivery via
+# `## Idempotency Across the Network`, while principle-resiliency covers the dedup-store
 # implementation that makes retries safe. A prompt like "my payment service double-
 # charges on retries — how do I implement exactly-once semantics with idempotency"
 # legitimately belongs to either skill — the delivery-layer vs dedup-store distinction

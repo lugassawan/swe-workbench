@@ -52,7 +52,8 @@ func callWithRateLimit<T>(
     for attempt in 0..<maxAttempts {
         if await bucket.tryAcquire() { return await op() }
         // Jitter prevents synchronized retries (thundering herd).
-        let baseMs = UInt64(1 << attempt)
+        // Start at 2 so baseMs / 2 >= 1 on attempt 0 (avoids zero-ms sleep from integer division).
+        let baseMs = max(2, UInt64(1 << attempt))
         let jitterMs = baseMs / 2 + UInt64.random(in: 0...(baseMs / 2))
         try await Task.sleep(nanoseconds: jitterMs * 1_000_000)
     }

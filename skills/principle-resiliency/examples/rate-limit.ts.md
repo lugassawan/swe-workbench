@@ -59,11 +59,14 @@ import { TokenBucket, callWithRateLimit } from "./rateLimiter";
 const limiter = new TokenBucket(3, 1 / 1000);
 
 for (let i = 0; i < 5; i++) {
-  callWithRateLimit(limiter, async () => `ok-${i}`)
-    .then((r) => console.log(r))
-    .catch(() => console.log("rejected"));
+  try {
+    const r = await callWithRateLimit(limiter, async () => `ok-${i}`);
+    console.log(r);
+  } catch {
+    console.log("rejected");
+  }
 }
-// first 3 succeed immediately; later calls depend on refill timing
+// first 3 succeed immediately; 4th and 5th retry until the bucket refills
 ```
 
 ## Common Mistake
