@@ -18,7 +18,7 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 ## When NOT to invoke
 
 - Design-time hot-path review (Big-O, allocation choices, N+1 avoidance) → use `swe-workbench:principle-performance` directly.
-- You already have a profile and only need the ranked hotspot read → invoke the `performance-tuner` agent directly.
+- You already have a profile and only need the ranked hotspot read → invoke the `performance-tuner` agent directly via `/swe-workbench:review --mode perf`.
 - Reviewing a PR diff for perf regressions → `/swe-workbench:review --mode perf`.
 
 ## Composition
@@ -42,7 +42,7 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 
 ### Phase 3 — Rank hotspots
 
-1. Hand the profile artifact to the **`performance-tuner` agent** for ranked hotspot read.
+1. Hand the profile artifact to the **`performance-tuner` agent** (`/swe-workbench:review --mode perf`) for ranked hotspot read.
 2. Classify each hotspot by bottleneck taxonomy: CPU-bound · memory/GC · I/O · lock-contention.
 3. Surface the top 3 ranked hotspots with their taxonomy label before hypothesizing.
 
