@@ -45,3 +45,12 @@ workflow-development, workflow-delegated-implementation
 # asyncio" is unambiguously Python at runtime, but BM25 scores both language descriptions
 # similarly on "async" + "generator" tokens; Rust can outrank Python on high-IDF matches.
 language-python, language-rust
+
+# principle-performance and workflow-performance-investigation share the "performance"
+# and "profile" trigger surface: principle-performance covers design-time discipline
+# (Big-O, allocation, N+1) while workflow-performance-investigation is the investigation
+# runbook for a live bottleneck (profiling, flame graphs, hotspot ranking, before/after
+# measurement). A prompt like "this endpoint is slow, how do I find and fix the bottleneck"
+# legitimately belongs to either skill — the design-time vs runtime distinction is context
+# the BM25 ranker cannot resolve.
+principle-performance, workflow-performance-investigation
