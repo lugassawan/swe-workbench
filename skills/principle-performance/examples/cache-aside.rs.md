@@ -58,7 +58,7 @@ impl<K: Eq + Hash + Clone, V: Clone> CacheAside<K, V> {
 }
 ```
 
-## Common Mistake
+## Common Mistakes
 
 No single-flight guard: every concurrent miss for the same key calls the origin independently.
 
@@ -70,4 +70,15 @@ if let Some(e) = store.get(&key) {
 }
 drop(store); // ✗ multiple threads now call loader concurrently for the same key
 let value = loader(&key);
+```
+
+Global lock held across a slow loader: concurrent reads for *any* key block until the loader returns — not just reads on the cold key.
+
+```rust
+// ✗ lock held for entire loader duration — a slow HTTP call here stalls reads for every other key
+let mut store = self.store.lock().unwrap();
+let value = loader(&key); // ✗ all threads waiting on the global lock are blocked here
+store.insert(key, Entry { value: value.clone(), expires_at: Instant::now() + self.ttl });
+value
+// Fix: use a per-key lock map (e.g. DashMap) so each key's recomputation is independent.
 ```

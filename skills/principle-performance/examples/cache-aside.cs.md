@@ -37,7 +37,9 @@ class CacheAside<T>
 
         // Single-flight: acquire a per-key lock so only one caller recomputes.
         // GetOrAdd may invoke the factory on multiple threads; only one SemaphoreSlim wins.
-        // Extra instances are discarded (not Disposed) — acceptable here, use a pool in production.
+        // Extra instances are discarded (not Disposed) — acceptable for low-cardinality keys.
+        // For high-cardinality keys, remove the entry from _locks after Release() so semaphores
+        // don't accumulate: _locks.TryRemove(key, out _) after sem.Release() in the finally block.
         var sem = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync();
         try

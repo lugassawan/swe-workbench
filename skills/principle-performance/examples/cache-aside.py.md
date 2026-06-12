@@ -26,6 +26,10 @@ class CacheAside:
         self._ttl = ttl
         self._loader = loader
         self._store: dict[str, tuple[object, float]] = {}
+        # defaultdict(asyncio.Lock) is safe only inside a single-threaded event loop —
+        # defaultdict's __missing__ is not thread-safe, so concurrent threads can create
+        # duplicate locks for the same key. If you run the loop in a thread pool
+        # (e.g. via run_in_executor), guard _locks creation with a threading.Lock instead.
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def get(self, key: str) -> object:
