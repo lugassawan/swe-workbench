@@ -4,3 +4,5 @@ what should I profile before optimizing this slow request
 how do I avoid N+1 queries on this list endpoint
 what allocation patterns will hurt GC pause times in this service
 how do I think about Big-O complexity for this data-processing loop
+how do I design a cache-aside layer and choose the right TTL and invalidation strategy
+how do I prevent a cache stampede or thundering herd on a cold or expired hot key
