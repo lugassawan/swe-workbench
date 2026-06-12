@@ -88,6 +88,8 @@ Log once; at the boundary. Never log-and-return.
 - Prototypes under two weeks with no production callers.
 - Single-team internal tools where the author is also the operator and on-call.
 
+> See `examples/` for worked config parse-and-validate, HTTP fetch with retry, and account-withdrawal error handling in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
+
 ## Red Flags
 
 | Flag | Problem |
