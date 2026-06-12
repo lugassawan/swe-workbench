@@ -35,7 +35,7 @@ class CacheAside<V>(
         val mutex = locks.computeIfAbsent(key) { Mutex() }
         return mutex.withLock {
             // Re-check after acquiring: a concurrent caller may have already populated the entry.
-            store[key]?.let { if (Instant.now().isBefore(it.expiresAt)) return it.value }
+            store[key]?.let { if (Instant.now().isBefore(it.expiresAt)) return it.value } // non-local return (withLock is inline)
 
             val value = loader(key)
             store[key] = Entry(value, Instant.now().plus(ttl))

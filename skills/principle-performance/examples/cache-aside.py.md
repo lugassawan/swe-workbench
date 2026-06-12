@@ -14,9 +14,7 @@ on a hit within the TTL, the value is returned immediately without touching the 
 import asyncio
 import time
 from collections import defaultdict
-from typing import Awaitable, Callable, TypeVar
-
-V = TypeVar("V")
+from typing import Awaitable, Callable
 
 
 class CacheAside:

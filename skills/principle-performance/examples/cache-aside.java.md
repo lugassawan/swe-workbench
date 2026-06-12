@@ -38,6 +38,9 @@ public class CacheAside<V> {
         // compute is atomic per-key (bin-level lock in ConcurrentHashMap since Java 8):
         // eviction of a stale entry and recomputation happen as a single step, so only
         // one thread calls loader for a given key at a time.
+        // Note: compute holds the bin lock for the entire loader call. For blocking I/O
+        // loaders on high-cardinality keys, threads sharing the same bin stall; prefer a
+        // per-key CompletableFuture single-flight to eliminate cross-key bin contention.
         return store.compute(key, (k, existing) -> {
             if (existing != null && Instant.now().isBefore(existing.expiresAt())) {
                 return existing; // another thread already refreshed it

@@ -65,8 +65,12 @@ func (c *Cache[V]) Get(key string) (V, error) {
 	c.inflight[key] = cl
 	c.mu.Unlock()
 
-	cl.val, cl.err = c.loader(key)
-	cl.wg.Done()
+	// Wrap in an anonymous func so defer fires on panic too — without this,
+	// a panicking loader would leave wg.Done() uncalled and all waiters blocked forever.
+	func() {
+		defer cl.wg.Done()
+		cl.val, cl.err = c.loader(key)
+	}()
 
 	c.mu.Lock()
 	if cl.err == nil {

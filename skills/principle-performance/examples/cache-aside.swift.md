@@ -20,6 +20,8 @@ private struct Entry<V> {
 
 /// Cache-aside using Swift actor isolation for single-flight on cold/expired keys.
 /// Concurrent `get` calls for the same key share one in-flight `Task`; the loader runs exactly once.
+/// Note: cancelling a caller's task does not cancel the shared loader `Task` — it runs to completion
+/// and populates the cache regardless. Use `withTaskCancellationHandler` for strict cancellation.
 actor CacheAside<V: Sendable> {
     private var store: [String: Entry<V>] = [:]
     private var inflight: [String: Task<V, Error>] = [:]
