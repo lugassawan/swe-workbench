@@ -72,7 +72,7 @@ drop(store); // ✗ multiple threads now call loader concurrently for the same k
 let value = loader(&key);
 ```
 
-Global lock held across a slow loader: concurrent reads for *any* key block until the loader returns — not just reads on the cold key.
+Global lock held across a slow loader on a **high-cardinality** store: concurrent reads for *any* key block until the loader returns. This is distinct from the implementation above, which is explicitly scoped to moderate contention. When key cardinality or loader latency is high, prefer a per-key lock map so each key's recomputation is independent.
 
 ```rust
 // ✗ lock held for entire loader duration — a slow HTTP call here stalls reads for every other key

@@ -30,6 +30,8 @@ type Cache[V any] struct {
 	// inflight gates concurrent misses: only one goroutine recomputes per key.
 	inflight map[string]*call[V]
 	ttl    time.Duration
+	// Note: production loaders should accept context.Context as first arg so callers
+	// can propagate deadlines and cancellation to the origin call.
 	loader func(key string) (V, error)
 }
 
