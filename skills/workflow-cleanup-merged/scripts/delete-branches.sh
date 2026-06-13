@@ -17,14 +17,14 @@ cd "$MAIN_REPO"
 # are not merge ancestors of main so lowercase -d would refuse)
 LOCAL_DELETED=0
 if git rev-parse --verify "refs/heads/$HEAD_REF" >/dev/null 2>&1; then
-  git branch -D "$HEAD_REF" >/dev/null 2>&1
+  git branch -D "$HEAD_REF" >/dev/null
   LOCAL_DELETED=1
 fi
 
 # Block C: delete remote branch (always attempted regardless of local result,
 # to handle the WORKTREE_GONE=1 path where local is already gone)
 REMOTE_DELETED=0
-if PUSH_ERR=$(git push origin --delete "$HEAD_REF" 2>&1); then
+if PUSH_ERR=$(git push origin --delete "$HEAD_REF" 2>&1 >/dev/null); then
   REMOTE_DELETED=1
 else
   case "$PUSH_ERR" in

@@ -275,3 +275,47 @@ class TestDeleteBranchesEvalSafety:
             f"stdout+stderr contains output that eval parsed as shell commands: "
             f"{[f.name for f in stray]}"
         )
+
+    def test_eval_stdout_only_does_not_create_stray_files(self, tmp_path, git_repo):
+        """Production eval pattern: eval "$(script branch)" — stdout only, no 2>&1.
+
+        The 2>&1 test covers the worst-case merged stream. This test exercises
+        the actual production invocation from SKILL.md so that any git stdout
+        noise on the success path is caught directly.
+        """
+        eval_cwd = tmp_path / "eval_cwd_stdout"
+        eval_cwd.mkdir()
+        (eval_cwd / "decoy").write_text("")
+
+        assert (
+            '"' not in str(eval_cwd)
+            and '"' not in str(SCRIPT)
+            and '"' not in BRANCH
+        ), (
+            f"Path or branch contains double-quote — inline bash string will break.\n"
+            f"eval_cwd={eval_cwd}, SCRIPT={SCRIPT}, BRANCH={BRANCH}"
+        )
+
+        # Mirror the production SKILL.md call: eval "$(<script> <branch>)" — stdout only.
+        runner = (
+            f'output="$(bash "{SCRIPT}" "{BRANCH}")"; '
+            f'cd "{eval_cwd}"; '
+            f'eval "$output" 2>/dev/null || true'
+        )
+        result = subprocess.run(
+            ["bash", "-c", runner],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, (
+            f"bash runner failed (rc={result.returncode}):\n{result.stderr}"
+        )
+
+        stray = [f for f in eval_cwd.iterdir() if f.name != "decoy"]
+        assert not stray, (
+            f"Stray files created in {eval_cwd} via stdout-only eval — "
+            f"git push emitted something to stdout that eval parsed as a shell command: "
+            f"{[f.name for f in stray]}"
+        )
