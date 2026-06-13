@@ -56,10 +56,12 @@ _GCD=$(git rev-parse --git-common-dir)
 Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root:
 
 ```bash
-git worktree remove "$(git rev-parse --show-toplevel)"
 _GCD=$(git rev-parse --git-common-dir)
+git worktree remove "$(git rev-parse --show-toplevel)"
 [[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
+
+> **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
 
 ## Forbidden pattern
 
@@ -82,5 +84,5 @@ Do not call `ExitWorktree` proactively. Only call it when the user explicitly re
 | "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
 | "in a fresh worktree" | B | defer to `superpowers:using-git-worktrees` |
 | "exit the worktree" | C | `ExitWorktree(action: "keep")` → else `cd <main-root>` |
-| "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` → else `git worktree remove <path> && cd <main-root>` |
+| "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` → else capture GCD, `git worktree remove <path>`, `cd <main-root>` |
 | "add a branch for this work" | — | **skill does not fire** (no "worktree" word) |

@@ -54,7 +54,7 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 - Releases the harness's session lock on the worktree so the rimba post-merge hook (fired by `git pull` in 3c) can remove it cleanly.
 - Ensures rimba's binary `remove` strategy (if reached) won't fire `git branch -D` from a deleted cwd.
 
-If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` is a no-op — instead, `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
+If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` will report a no-op (confirming cd-entry) — instead, `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
 
 ```bash
 _GCD=$(git rev-parse --git-common-dir)
