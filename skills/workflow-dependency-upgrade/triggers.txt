@@ -1,4 +1,4 @@
 Upgrade our dependencies and open a PR
 Dependabot opened a bunch of PRs — how do I triage and merge them safely?
 Bump this package to the latest major and fix whatever breaks
-A CVE was flagged in one of our deps — walk me through patching it
+Dependabot flagged a CVE in our deps — triage and bump the affected package

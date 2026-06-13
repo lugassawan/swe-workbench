@@ -1,6 +1,6 @@
 ---
 name: workflow-dependency-upgrade
-description: Use when walking the dependency-upgrade lifecycle — routine sweep, Dependabot/Renovate PR triage, CVE patch, or major-version migration. Structured runbook: triage+batch → bump & regen lockfile → build/test → breakage-triage → PR hygiene. Per-ecosystem command matrix; composes principle-security & principle-release-engineering. Keywords: dependency upgrade bump lockfile Dependabot Renovate semver CVE supply-chain breakage
+description: Use when walking the dependency-upgrade lifecycle — routine sweep, Dependabot/Renovate PR triage, CVE patch, or major-version migration. Structured runbook: triage+batch → bump regen lockfile → build/test → breakage-triage → PR hygiene. Per-ecosystem command matrix; composes principle-security. Keywords: dependency upgrade bump lockfile Dependabot Renovate semver CVE supply-chain breakage
 ---
 
 # workflow-dependency-upgrade
