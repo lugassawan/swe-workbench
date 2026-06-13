@@ -25,7 +25,6 @@ Structured runbook for the full upgrade lifecycle: triage → bump → test → 
 ## Composition
 
 - **`swe-workbench:principle-security`** — supply-chain integrity, CVE triage, SBOM, lockfile pinning, frozen installs.
-- **`swe-workbench:principle-release-engineering`** — semver discipline, manifest-bump pre-release gate.
 - **`security-auditor` agent** — CVE confirmation and dependency-graph risk read.
 - **`reviewer` agent** — breakage diff read for ambiguous API/type changes.
 

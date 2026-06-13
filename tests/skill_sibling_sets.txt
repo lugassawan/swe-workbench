@@ -28,15 +28,14 @@ workflow-pr-review, workflow-pr-review-followup
 # alongside old, migrate callers, remove old). A prompt like "how do I evolve a
 # database schema without breaking existing clients using an expand-contract migration"
 # legitimately belongs to either skill.
-# workflow-dependency-upgrade joins this group because it shares "bump", "semver", and
-# "major/minor version" trigger surface with principle-release-engineering. A prompt
-# like "should this be a major bump or a minor bump?" legitimately lands on either the
-# upgrade-lifecycle runbook or the semver-discipline principle — BM25 cannot resolve
-# the operational vs. guidance distinction.
-# Note: the workflow-dependency-upgrade ↔ principle-data-modeling relationship is
-# incidental (forced by the single-group-per-skill next() design); no direct BM25
-# collision between dep-upgrade and data-modeling triggers has been observed.
-principle-data-modeling, principle-release-engineering, workflow-dependency-upgrade
+principle-data-modeling, principle-release-engineering
+
+# workflow-dependency-upgrade and principle-release-engineering share "bump", "semver",
+# and "major/minor version" trigger surface. A prompt like "should this be a major
+# bump or a minor bump?" legitimately lands on either the upgrade-lifecycle runbook
+# or the semver-discipline principle — BM25 cannot resolve the operational vs. guidance
+# distinction.
+workflow-dependency-upgrade, principle-release-engineering
 
 # workflow-development and workflow-delegated-implementation share genuine trigger
 # surface: workflow-delegated-implementation IS the Phase-2 delegation strategy
