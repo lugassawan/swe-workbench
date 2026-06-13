@@ -53,10 +53,11 @@ _GCD=$(git rev-parse --git-common-dir)
 
 > **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
 
-Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root:
+Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root. Only run this snippet when confirmed to be inside a linked worktree (if cwd is already at main root, `git worktree remove` will fail with "fatal: is a main worktree"):
 
 ```bash
 _GCD=$(git rev-parse --git-common-dir)
+# relative (.git) means we're already at main root — nothing to do
 git worktree remove "$(git rev-parse --show-toplevel)"
 [[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
@@ -83,6 +84,6 @@ Do not call `ExitWorktree` proactively. Only call it when the user explicitly re
 | "resume in the worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
 | "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
 | "in a fresh worktree" | B | defer to `superpowers:using-git-worktrees` |
-| "exit the worktree" | C | `ExitWorktree(action: "keep")` → else `cd <main-root>` |
+| "exit the worktree" | C | `ExitWorktree(action: "keep")` → else `cd <main-root>` (best-effort if tool unavailable; lock may remain) |
 | "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` → else capture GCD, `git worktree remove <path>`, `cd <main-root>` |
 | "add a branch for this work" | — | **skill does not fire** (no "worktree" word) |

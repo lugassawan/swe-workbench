@@ -223,7 +223,7 @@ git worktree remove "$WORKTREE"
 | PR not yet merged | `state != "MERGED"` or `mergedAt == null` | Abort. Print PR state and URL. Do not delete anything. |
 | Uncommitted changes in worktree | `DIRTY > 0` | Abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first. |
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
-| cwd is inside the worktree | Path comparison | `cd` to main repo root before Batch B, or abort if not possible. |
+| cwd is inside the worktree | Path comparison | `cd` to the worktree root (`git rev-parse --show-toplevel`) before Batch B, or abort if not possible. |
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
 | No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (local branch delete). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
