@@ -56,9 +56,10 @@ _GCD=$(git rev-parse --git-common-dir)
 Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root. Only run this snippet when confirmed to be inside a linked worktree (if cwd is already at main root, `git worktree remove` will fail with "fatal: is a main worktree"):
 
 ```bash
+# capture before remove — path is gone after git worktree remove
 _GCD=$(git rev-parse --git-common-dir)
-# relative (.git) means we're already at main root — nothing to do
 git worktree remove "$(git rev-parse --show-toplevel)"
+# relative (.git) means we're already at main root — cd is a no-op
 [[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
 
