@@ -165,7 +165,7 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 
 1. **Route by how rimba is available** (mirror the MCP → binary → shell ordering of `skills/workflow-development/SKILL.md:113-116`):
    - **rimba MCP server active in session** → invoke the rimba `remove` tool (`task: <headRefName>`); for bulk stale-worktree cleanup (e.g., after a Mode C orchestration run) invoke the `clean` tool (`mode: merged`). No shell process needed.
-   - **`$RIMBA` non-empty (binary resolved by `resolve-rimba.sh`)** → run `$RIMBA remove <headRefName>` (or `$RIMBA clean --merged` for bulk cleanup).
+   - **`$RIMBA` non-empty (binary resolved by `resolve-rimba.sh`)** → run `$RIMBA remove <headRefName>` (or `$RIMBA clean --merged` for bulk cleanup — same scope as the hook at line 136; `--force` is intentionally omitted for manual use).
    - **rimba absent** → fall through to the **shell fallback** strategy below.
 
    Either rimba path handles worktree location, dirty/unpushed checks, and removal internally.
@@ -173,7 +173,7 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 
 **Failure handling:**
 
-If the rimba `remove` (MCP tool or `$RIMBA` binary) reports failure, run a filesystem probe as the canonical signal — do not rely on rimba's message text:
+If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, run a filesystem probe as the canonical signal — do not rely on rimba's message text:
 ```bash
 [ -d "<worktree-path>" ] && WORKTREE_STILL_PRESENT=1 || WORKTREE_STILL_PRESENT=0
 ```
