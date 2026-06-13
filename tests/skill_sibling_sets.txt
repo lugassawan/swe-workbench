@@ -30,6 +30,13 @@ workflow-pr-review, workflow-pr-review-followup
 # legitimately belongs to either skill.
 principle-data-modeling, principle-release-engineering
 
+# workflow-dependency-upgrade and principle-release-engineering share "bump", "semver",
+# and "major/minor version" trigger surface. A prompt like "should this be a major
+# bump or a minor bump?" legitimately lands on either the upgrade-lifecycle runbook
+# or the semver-discipline principle — BM25 cannot resolve the operational vs. guidance
+# distinction.
+workflow-dependency-upgrade, principle-release-engineering
+
 # workflow-development and workflow-delegated-implementation share genuine trigger
 # surface: workflow-delegated-implementation IS the Phase-2 delegation strategy
 # inside workflow-development. A prompt like "drive this feature from plan to
