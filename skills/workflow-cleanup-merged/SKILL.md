@@ -94,34 +94,31 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 
 `sync-and-verify.sh` (Step 3) emits `WORKTREE_GONE=0|1` into the shell environment via `eval`.
 
-- **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. No further action is needed in Step 4; skip Step 5 and proceed directly to Step 6.
+- **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. No further action is needed in Step 4; proceed to Step 5. The script reports `LOCAL_DELETED=0` (local already gone) and still attempts the remote delete.
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
 
-### Step 5 — Delete Local Branch (unconditional)
-
-Always runs unless `WORKTREE_GONE=1` from Step 4:
+### Step 5 — Delete Branches
 
 ```bash
-git branch -D <headRefName>
+eval "$("$_SCRIPTS/delete-branches.sh" "<headRefName>")"
 ```
 
-Capital `-D` is required: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
+The script self-detects `MAIN_REPO` and anchors `cd` internally. It emits exactly two `KEY=VALUE` lines:
 
-### Step 6 — Delete Remote Branch
+- `LOCAL_DELETED=0|1` — `1` if the script deleted the local branch; `0` if it was already gone.
+- `REMOTE_DELETED=0|1` — `1` if the script deleted the remote branch; `0` if it was already gone.
 
-```
-git push origin --delete <headRefName>
-```
+The script always attempts the remote delete regardless of whether the local branch was present — this covers the `WORKTREE_GONE=1` path where the local branch was already removed by the rimba hook. HTTP 404 / "remote ref does not exist" is treated as success (`REMOTE_DELETED=0`). Any other push error is warned to stderr but the script exits 0 so the caller's `eval` never aborts mid-cleanup.
 
-Treat HTTP 404 or "remote ref does not exist" as success — GitHub's `auto-delete-head-branches` repo setting commonly removes the remote branch on merge. Any other error: report it.
+Capital `-D` is used for the local delete: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
-### Step 7 — Report
+### Step 6 — Report
 
 ```
 Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
-  ✓ Local branch deleted: <branch>  (or: already gone)
-  ✓ Remote branch deleted: <branch> (or: already gone)
+  ✓ Local branch deleted: <branch>  (or: already gone — LOCAL_DELETED=0)
+  ✓ Remote branch deleted: <branch> (or: already gone — REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
 
@@ -145,7 +142,7 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 Nothing strategy-specific. The `git pull --ff-only origin "$DEFAULT_BRANCH"` in Step 3 fired the post-merge hook, which ran `rimba clean --merged --force` and removed the worktree and local branch as a side-effect.
 
-The verification gate in Step 4 (`WORKTREE_GONE=1`) confirms the hook succeeded and routes the spine to skip Steps 4 and 5 directly to Step 6.
+The verification gate in Step 4 (`WORKTREE_GONE=1`) confirms the hook succeeded and routes the spine to skip Step 4 worktree-removal strategies and proceed to Step 5 (reports `LOCAL_DELETED=0`, still deletes remote).
 
 **Failure handling:**
 
@@ -177,7 +174,7 @@ If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, 
 ```bash
 [ -d "<worktree-path>" ] && WORKTREE_STILL_PRESENT=1 || WORKTREE_STILL_PRESENT=0
 ```
-- **`WORKTREE_STILL_PRESENT=0`** (worktree directory is gone): treat as **partial success** — the branch deletion failed but the worktree is already removed. `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 executes normally. Fall through to Step 5 (`git branch -D`) from `$MAIN_REPO`. Do NOT abort.
+- **`WORKTREE_STILL_PRESENT=0`** (worktree directory is gone): treat as **partial success** — the branch deletion failed but the worktree is already removed. `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 executes normally. Fall through to Step 5 (`delete-branches.sh`) from `$MAIN_REPO`. Do NOT abort.
 - **`WORKTREE_STILL_PRESENT=1`** (worktree directory still exists — rimba refused, e.g. dirty/unpushed): report the rimba error verbatim and abort. Do not proceed to branch deletion.
 
 ### shell fallback
@@ -219,7 +216,7 @@ git worktree remove "$WORKTREE"
 - `DIRTY > 0`: abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first.
 - `UNPUSHED > 0`: abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first.
 - `git worktree remove` fails: abort. Do not delete branches. Report verbatim.
-- `WORKTREE` empty: skip Batch B. Proceed directly to Step 5 (local branch delete).
+- `WORKTREE` empty: skip Batch B. Proceed directly to Step 5 (delete branches).
 
 ## Failure Mode Table
 
@@ -230,7 +227,7 @@ git worktree remove "$WORKTREE"
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
 | cwd is inside the worktree | Path comparison | `cd` to the worktree root (`git rev-parse --show-toplevel`) before Batch B, or abort if not possible. |
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
-| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (local branch delete). |
+| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (delete branches). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
