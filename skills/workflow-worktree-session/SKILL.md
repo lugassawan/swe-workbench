@@ -43,7 +43,7 @@ Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent,
 
 Triggers: "exit the worktree", "go back", "leave this worktree", "return to main".
 
-Call `ExitWorktree(action: "keep")` by default. If uncertain whether the session was entered via `EnterWorktree` or the `cd` fallback, attempt `ExitWorktree(action=keep)` first — if it succeeds the session was `EnterWorktree`-anchored and exit is complete; if it reports a no-op or is unavailable, the session was `cd`-entered — run the following instead to return to the main repo root:
+Call `ExitWorktree(action: "keep")` by default. If uncertain whether the session was entered via `EnterWorktree` or the `cd` fallback, attempt `ExitWorktree(action=keep)` first — if it succeeds the session was `EnterWorktree`-anchored and exit is complete; if it reports a no-op (confirms `cd`-entry) or is unavailable (treat the following as a best-effort fallback — entry method is unknown) — run the following to return to the main repo root:
 
 ```bash
 _GCD=$(git rev-parse --git-common-dir)
@@ -53,7 +53,13 @@ _GCD=$(git rev-parse --git-common-dir)
 
 > **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
 
-Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree.
+Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root:
+
+```bash
+git worktree remove "$(git rev-parse --show-toplevel)"
+_GCD=$(git rev-parse --git-common-dir)
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
+```
 
 ## Forbidden pattern
 

@@ -62,9 +62,7 @@ _GCD=$(git rev-parse --git-common-dir)
 [[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
 
-`git rev-parse --git-common-dir` returns the path to the common `.git` directory — absolute from a linked worktree (e.g. `/path/to/main/.git`), relative (`.git`) from the main worktree itself. The guard `[[ "$_GCD" != /* ]]` skips the `cd` when already at main root. **Assumes a standard embedded `.git` directory**; repos created with `--separate-git-dir` or submodule common dirs (e.g. `.git/modules/sub`) may return a path that does not end in `/.git`, in which case `${_GCD%/.git}` is a no-op and a different navigation strategy is needed.
-
-If `EnterWorktree` was never called this session and the cwd is not inside a worktree, this step is a no-op — proceed to 3b without aborting.
+`git rev-parse --git-common-dir` returns the path to the common `.git` directory — absolute from a linked worktree (e.g. `/path/to/main/.git`), relative (`.git`) from the main worktree itself. The guard `[[ "$_GCD" != /* ]]` skips the `cd` when already at main root (this includes the case where `EnterWorktree` was never called and the cwd is not inside any worktree — the relative `.git` result causes the guard to short-circuit, making the command a no-op). **Assumes a standard embedded `.git` directory**; repos created with `--separate-git-dir` or submodule common dirs (e.g. `.git/modules/sub`) may return a path that does not end in `/.git`, in which case `${_GCD%/.git}` is a no-op and a different navigation strategy is needed.
 
 **3b. Resolve the default branch, anchor cwd, sync, and verify hook cleanup.**
 
