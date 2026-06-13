@@ -33,6 +33,9 @@ workflow-pr-review, workflow-pr-review-followup
 # like "should this be a major bump or a minor bump?" legitimately lands on either the
 # upgrade-lifecycle runbook or the semver-discipline principle — BM25 cannot resolve
 # the operational vs. guidance distinction.
+# Note: the workflow-dependency-upgrade ↔ principle-data-modeling relationship is
+# incidental (forced by the single-group-per-skill next() design); no direct BM25
+# collision between dep-upgrade and data-modeling triggers has been observed.
 principle-data-modeling, principle-release-engineering, workflow-dependency-upgrade
 
 # workflow-development and workflow-delegated-implementation share genuine trigger
