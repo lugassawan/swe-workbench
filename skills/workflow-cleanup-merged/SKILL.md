@@ -162,13 +162,18 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
   `RIMBA` must be non-empty (or MCP server active).
 
 **Procedure:**
-1. Run `$RIMBA remove <headRefName>` (or the `remove` tool on the `rimba mcp` server) — handles worktree location, dirty/unpushed checks, and removal internally.
-2. For bulk stale-worktree cleanup (e.g., after a Mode C orchestration run), use `$RIMBA clean` instead.
-3. (Once per repo) recommend the user run `rimba hook install` to automate future post-merge cleanups via a git hook — this removes the need for manual `/swe-workbench:cleanup-merged` invocations.
+
+1. **Route by how rimba is available** (mirror the MCP → binary → shell ordering of `skills/workflow-development/SKILL.md:113-116`):
+   - **rimba MCP server active in session** → invoke the rimba `remove` tool (`task: <headRefName>`); for bulk stale-worktree cleanup (e.g., after a Mode C orchestration run) invoke the `clean` tool (`mode: merged` — equivalent to the binary's `--merged` flag). No shell process needed.
+   - **`$RIMBA` non-empty (binary resolved by `resolve-rimba.sh`)** → run `$RIMBA remove <headRefName>` (or `$RIMBA clean --merged` for bulk cleanup — same scope as the hook at line 136; `--force` is intentionally omitted for manual use).
+   - **rimba absent** → fall through to the **shell fallback** strategy below.
+
+   Either rimba path handles worktree location, dirty/unpushed checks, and removal internally.
+2. (Once per repo) recommend the user run `rimba hook install` to automate future post-merge cleanups via a git hook — this removes the need for manual `/swe-workbench:cleanup-merged` invocations.
 
 **Failure handling:**
 
-If `$RIMBA remove` exits non-zero, run a filesystem probe as the canonical signal — do not rely on rimba's message text:
+If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, run a filesystem probe as the canonical signal — do not rely on rimba's message text:
 ```bash
 [ -d "<worktree-path>" ] && WORKTREE_STILL_PRESENT=1 || WORKTREE_STILL_PRESENT=0
 ```
