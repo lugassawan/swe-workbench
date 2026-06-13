@@ -27,7 +27,7 @@ Examples: "open the `feat-login` worktree", "switch to `test-enter`", "move into
 
    Match the user's name against branch names or directory basenames. If no match is found, tell the user no worktree matched their description and stop — do not call `EnterWorktree` with an empty path.
 
-2. Enter the worktree. **Try `EnterWorktree(path=<absolute-path>)` first.** From the main session this works for any registered worktree (including rimba's `../<repo>-worktrees/` layout). If it is rejected — which happens when the session is already inside another worktree AND the target path is outside `.claude/worktrees/` (e.g. a pinned subagent or a nested worktree switch) — fall back to `cd <absolute-path>` via Bash. The Bash tool's working directory persists across calls, so subsequent git/build/test commands run from the worktree; note that this fallback does not re-anchor session-level caches (plans dir, memory dir) the way `EnterWorktree` does.
+2. Enter the worktree. **Try `EnterWorktree(path=<absolute-path>)` first.** From the main session this works for any registered worktree (including rimba's `../<repo>-worktrees/` layout). If it is rejected for any reason (most commonly: session already inside a worktree with the target path outside `.claude/worktrees/`) — fall back to `cd <absolute-path>` via Bash. The Bash tool's working directory persists across calls, so subsequent git/build/test commands run from the worktree; note that this fallback does not re-anchor session-level caches (plans dir, memory dir) the way `EnterWorktree` does.
 
 3. Confirm: run `git rev-parse --git-dir --git-common-dir` and verify the two paths differ (linked worktree, not main). Report the new CWD.
 
@@ -43,10 +43,12 @@ Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent,
 
 Triggers: "exit the worktree", "go back", "leave this worktree", "return to main".
 
-Call `ExitWorktree(action: "keep")` by default. If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` is a no-op — run the following instead to return to the main repo root:
+Call `ExitWorktree(action: "keep")` by default. If uncertain whether the session was entered via `EnterWorktree` or the `cd` fallback, attempt `ExitWorktree(action=keep)` first — if it succeeds the session was `EnterWorktree`-anchored and exit is complete; if it reports a no-op or is unavailable, the session was `cd`-entered — run the following instead to return to the main repo root:
 
 ```bash
-cd "$(git rev-parse --git-common-dir | sed 's|/\.git$||')"
+_GCD=$(git rev-parse --git-common-dir)
+# relative (.git) means we're already at main root — nothing to do
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
 
 Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree.
@@ -55,7 +57,7 @@ Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *re
 
 **`cd` is not the primary session switch — `EnterWorktree` is.** The Bash tool's working directory *does* persist across calls (subsequent commands run from the `cd`-ed directory), but `cd` does not re-anchor session-level caches (plans dir, memory dir, env cwd) the way `EnterWorktree` does. Use `cd` only as the sanctioned fallback when `EnterWorktree(path=…)` is rejected (see Mode A step 2 above).
 
-**Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and try `EnterWorktree(path=<worktree-path>)` now. If it succeeds, the session is properly anchored. If it is rejected (session is already in a worktree + rimba path is outside `.claude/worktrees/`), the `cd`-prefix is the correct sanctioned fallback — ensure you are consistently `cd`-ing to the same path and do not also call `ExitWorktree` (it is a no-op for `cd`-entered worktrees; use the `cd`-to-main-root fallback in Mode C instead).
+**Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and try `EnterWorktree(path=<worktree-path>)` now. If it succeeds, the session is properly anchored. If it is rejected for any reason (most commonly: session is already in a worktree + path is outside `.claude/worktrees/`), the `cd`-prefix is the correct sanctioned fallback — ensure you are consistently `cd`-ing to the same path and do not also call `ExitWorktree` (it is a no-op for `cd`-entered worktrees; use the `cd`-to-main-root fallback in Mode C instead).
 
 ## Do not auto-exit
 

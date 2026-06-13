@@ -57,10 +57,12 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` is a no-op — instead, `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
 
 ```bash
-cd "$(git rev-parse --git-common-dir | sed 's|/\.git$||')"
+_GCD=$(git rev-parse --git-common-dir)
+# relative (.git) means we're already at main root — nothing to do
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
 
-`git rev-parse --git-common-dir` returns the absolute path to the common `.git` directory (e.g. `/path/to/main/.git`); stripping `/.git` yields the main repo root. This is reliable from any linked worktree regardless of how git output is filtered.
+`git rev-parse --git-common-dir` returns the path to the common `.git` directory — absolute from a linked worktree (e.g. `/path/to/main/.git`), relative (`.git`) from the main worktree itself. The guard `[[ "$_GCD" != /* ]]` skips the `cd` when already at main root.
 
 If `EnterWorktree` was never called this session and the cwd is not inside a worktree, this step is a no-op — proceed to 3b without aborting.
 
@@ -197,9 +199,9 @@ eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 
 *[Optional] cwd-fix*
 
-If `cwd` is a subdirectory of `$WORKTREE`, cd to the main repo root before removal:
+If `cwd` is a subdirectory of `$WORKTREE`, cd to the worktree root before removal:
 ```bash
-cd "$(git rev-parse --git-common-dir | sed 's|/\.git$||')"
+cd "$(git rev-parse --show-toplevel)"
 ```
 
 *Batch B — Remove Worktree*
