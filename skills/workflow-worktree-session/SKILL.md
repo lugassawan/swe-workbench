@@ -27,7 +27,7 @@ Examples: "open the `feat-login` worktree", "switch to `test-enter`", "move into
 
    Match the user's name against branch names or directory basenames. If no match is found, tell the user no worktree matched their description and stop — do not call `EnterWorktree` with an empty path.
 
-2. Call `EnterWorktree(path=<absolute-path>)`.
+2. Enter the worktree. **Try `EnterWorktree(path=<absolute-path>)` first.** From the main session this works for any registered worktree (including rimba's `../<repo>-worktrees/` layout). If it is rejected for any reason (most commonly: session already inside a worktree with the target path outside `.claude/worktrees/`) — fall back to `cd <absolute-path>` via Bash. The Bash tool's working directory persists across calls, so subsequent git/build/test commands run from the worktree; note that this fallback does not re-anchor session-level caches (plans dir, memory dir) the way `EnterWorktree` does. After `cd`, still run the Step 3 confirmation — the `--git-dir ≠ --git-common-dir` check is path-independent and confirms you are actually in a linked worktree regardless of entry method.
 
 3. Confirm: run `git rev-parse --git-dir --git-common-dir` and verify the two paths differ (linked worktree, not main). Report the new CWD.
 
@@ -43,14 +43,33 @@ Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent,
 
 Triggers: "exit the worktree", "go back", "leave this worktree", "return to main".
 
-Call `ExitWorktree(action: "keep")` by default.
-Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree.
+Call `ExitWorktree(action: "keep")` by default. If uncertain whether the session was entered via `EnterWorktree` or the `cd` fallback, attempt `ExitWorktree(action=keep)` first — if it succeeds the session was `EnterWorktree`-anchored and exit is complete; if it reports a no-op (confirms `cd`-entry) or is unavailable (treat the following as a best-effort fallback — entry method is unknown) — run the following to return to the main repo root:
+
+```bash
+_GCD=$(git rev-parse --git-common-dir)
+# relative (.git) means we're already at main root — nothing to do
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
+```
+
+> **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
+
+Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree. If it is rejected or unavailable and the session is `cd`-entered, remove the worktree and then navigate to the main repo root. Only run this snippet when confirmed to be inside a linked worktree (if cwd is already at main root, `git worktree remove` will fail with "fatal: is a main worktree"):
+
+```bash
+# capture before remove — path is gone after git worktree remove
+_GCD=$(git rev-parse --git-common-dir)
+git worktree remove "$(git rev-parse --show-toplevel)"
+# relative (.git) means we're already at main root — cd is a no-op
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
+```
+
+> **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
 
 ## Forbidden pattern
 
-**Never use `Bash(cd <worktree-path>)` to switch the session.** `cd` in a Bash invocation only affects that single shell subprocess. The Claude Code session CWD is owned by `EnterWorktree` / `ExitWorktree`; `cd` silently does nothing to it.
+**`cd` is not the primary session switch — `EnterWorktree` is.** The Bash tool's working directory *does* persist across calls (subsequent commands run from the `cd`-ed directory), but `cd` does not re-anchor session-level caches (plans dir, memory dir, env cwd) the way `EnterWorktree` does. Use `cd` only as the sanctioned fallback when `EnterWorktree(path=…)` is rejected (see Mode A step 2 above).
 
-**Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and call `EnterWorktree(path=<worktree-path>)` now. The cd-prefix is not a workaround; it leaves the session anchored elsewhere and bypasses the `ExitWorktree action=keep` lock contract.
+**Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and try `EnterWorktree(path=<worktree-path>)` now. If it succeeds, the session is properly anchored. If it is rejected for any reason (most commonly: session is already in a worktree + path is outside `.claude/worktrees/`), the `cd`-prefix is the correct sanctioned fallback — ensure you are consistently `cd`-ing to the same path and do not also call `ExitWorktree` (it is a no-op for `cd`-entered worktrees; use the `cd`-to-main-root fallback in Mode C instead).
 
 ## Do not auto-exit
 
@@ -60,12 +79,12 @@ Do not call `ExitWorktree` proactively. Only call it when the user explicitly re
 
 | User says | Mode | Tool call |
 |-----------|------|-----------|
-| "open the `feat-login` worktree" | A | `EnterWorktree(path=<resolved>)` |
-| "switch to `.worktrees/auth`" | A | `EnterWorktree(path=<abs-path>)` |
-| "continue work in the worktree I made" | A | `EnterWorktree(path=<resolved>)` |
-| "resume in the worktree" | A | `EnterWorktree(path=<resolved>)` |
-| "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` |
+| "open the `feat-login` worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
+| "switch to `.worktrees/auth`" | A | `EnterWorktree(path=<abs-path>)` → else `cd <path>` |
+| "continue work in the worktree I made" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
+| "resume in the worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
+| "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` → else `cd <path>` |
 | "in a fresh worktree" | B | defer to `superpowers:using-git-worktrees` |
-| "exit the worktree" | C | `ExitWorktree(action: "keep")` |
-| "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` |
+| "exit the worktree" | C | `ExitWorktree(action: "keep")` → else `cd <main-root>` (best-effort if tool unavailable; lock may remain) |
+| "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` → else capture GCD, `git worktree remove <path>`, `cd <main-root>` |
 | "add a branch for this work" | — | **skill does not fire** (no "worktree" word) |

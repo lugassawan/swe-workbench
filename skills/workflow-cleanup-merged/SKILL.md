@@ -54,7 +54,15 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 - Releases the harness's session lock on the worktree so the rimba post-merge hook (fired by `git pull` in 3c) can remove it cleanly.
 - Ensures rimba's binary `remove` strategy (if reached) won't fire `git branch -D` from a deleted cwd.
 
-If `EnterWorktree` was never called this session (or the `ExitWorktree` tool is unavailable), this step is a no-op — proceed to 3b without aborting.
+If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` will report a no-op (confirming cd-entry) — instead, `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
+
+```bash
+_GCD=$(git rev-parse --git-common-dir)
+# relative (.git) means we're already at main root — nothing to do
+[[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
+```
+
+`git rev-parse --git-common-dir` returns the path to the common `.git` directory — absolute from a linked worktree (e.g. `/path/to/main/.git`), relative (`.git`) from the main worktree itself. The guard `[[ "$_GCD" != /* ]]` skips the `cd` when already at main root (this includes the case where `EnterWorktree` was never called and the cwd is not inside any worktree — the relative `.git` result causes the guard to short-circuit, making the command a no-op). **Assumes a standard embedded `.git` directory**; repos created with `--separate-git-dir` or submodule common dirs (e.g. `.git/modules/sub`) may return a path that does not end in `/.git`, in which case `${_GCD%/.git}` is a no-op and a different navigation strategy is needed.
 
 **3b. Resolve the default branch, anchor cwd, sync, and verify hook cleanup.**
 
@@ -189,8 +197,8 @@ eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 
 *[Optional] cwd-fix*
 
-If `cwd` is a subdirectory of `$WORKTREE`, cd to the main repo root before removal:
-```
+If `cwd` is a subdirectory of `$WORKTREE`, cd to the worktree root before removal:
+```bash
 cd "$(git rev-parse --show-toplevel)"
 ```
 
@@ -215,14 +223,14 @@ git worktree remove "$WORKTREE"
 | PR not yet merged | `state != "MERGED"` or `mergedAt == null` | Abort. Print PR state and URL. Do not delete anything. |
 | Uncommitted changes in worktree | `DIRTY > 0` | Abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first. |
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
-| cwd is inside the worktree | Path comparison | `cd` to main repo root before Batch B, or abort if not possible. |
+| cwd is inside the worktree | Path comparison | `cd` to the worktree root (`git rev-parse --show-toplevel`) before Batch B, or abort if not possible. |
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
 | No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (local branch delete). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
-| cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` prevents this when followed. If observed, re-run from the main repo root. |
+| cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` (or the `cd`-to-main-root fallback for `cd`-entered worktrees) prevents this when followed. If observed, re-run from the main repo root. |
 | rimba `remove` removes worktree but fails branch delete | Non-zero exit after worktree directory is gone | Partial success — fall through to Step 5 from `$MAIN_REPO`. Worktree is gone; only branch remains. |
 
 ## Common Mistakes
@@ -233,7 +241,7 @@ git worktree remove "$WORKTREE"
 | Use lowercase `git branch -d` | Always use `-D`. Squash-merged branches are not merge ancestors of `main`. |
 | Force-delete a worktree with dirty state | Never. Batch A aborts before Batch B runs. |
 | Run cleanup from inside the worktree being deleted | Step 3 anchors cwd to $MAIN_REPO before the pull. If skipped, the rimba hook can delete the cwd mid-flight and strand subsequent commands with "fatal: not a git repository". |
-| Skip `ExitWorktree action=keep` in a session entered via `EnterWorktree` | Always call it as the first action of Step 3 when the tool is available. Without it, the harness session lock remains on the worktree when `git pull` fires the rimba hook — rimba's child process inherits a cwd that gets deleted mid-operation, leaving the branch undeleted and the session stranded at `$HOME`. |
+| Skip `ExitWorktree action=keep` in a session entered via `EnterWorktree` | Always call it as the first action of Step 3 when the tool is available. Without it, the harness session lock remains on the worktree when `git pull` fires the rimba hook — rimba's child process inherits a cwd that gets deleted mid-operation, leaving the branch undeleted and the session stranded at `$HOME`. For sessions entered via the `cd` fallback, `ExitWorktree` is a no-op — use the `cd`-to-main-root command in Step 3a instead. |
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
 | Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit. |

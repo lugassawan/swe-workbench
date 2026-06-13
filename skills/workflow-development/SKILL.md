@@ -148,7 +148,7 @@ Use the service scope whenever the work is clearly contained within one module �
 
 Skip this optimisation when install is fast, `--skip-deps`/`--skip-hooks` already apply (no wait), or `post_create` hooks rewrite the files you'd edit (let hooks finish first).
 
-**Enter the worktree:** After `Path: <abs-path>` appears, call `EnterWorktree(path=<abs-path>)` to anchor the session — `cd` only affects a single Bash subprocess and does **not** move the session. On any resumed or continued session, call `EnterWorktree(path=<worktree-path>)` before running commands; if you catch yourself cd-prefixing, that is the signal to re-anchor.
+**Enter the worktree:** After `Path: <abs-path>` appears, try `EnterWorktree(path=<abs-path>)`. From the main session this works for any git-registered worktree (including rimba's `../<repo>-worktrees/` layout). **If rejected for any reason** (most commonly: session already inside a worktree with the target path outside `.claude/worktrees/`) — fall back to `cd <abs-path>` via Bash; the persistent Bash cwd anchors subsequent commands in the worktree, though session-level caches are not re-anchored. On any resumed or continued session, try `EnterWorktree(path=<worktree-path>)` first; if rejected, re-`cd <worktree-path>` (the Bash cwd does not persist across session resume, so `cd` must be re-issued each time — unlike `EnterWorktree`, which restores it automatically).
 
 Verify baseline tests pass before writing any code.
 
