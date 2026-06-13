@@ -27,7 +27,7 @@ Examples: "open the `feat-login` worktree", "switch to `test-enter`", "move into
 
    Match the user's name against branch names or directory basenames. If no match is found, tell the user no worktree matched their description and stop — do not call `EnterWorktree` with an empty path.
 
-2. Enter the worktree. **Try `EnterWorktree(path=<absolute-path>)` first.** From the main session this works for any registered worktree (including rimba's `../<repo>-worktrees/` layout). If it is rejected for any reason (most commonly: session already inside a worktree with the target path outside `.claude/worktrees/`) — fall back to `cd <absolute-path>` via Bash. The Bash tool's working directory persists across calls, so subsequent git/build/test commands run from the worktree; note that this fallback does not re-anchor session-level caches (plans dir, memory dir) the way `EnterWorktree` does.
+2. Enter the worktree. **Try `EnterWorktree(path=<absolute-path>)` first.** From the main session this works for any registered worktree (including rimba's `../<repo>-worktrees/` layout). If it is rejected for any reason (most commonly: session already inside a worktree with the target path outside `.claude/worktrees/`) — fall back to `cd <absolute-path>` via Bash. The Bash tool's working directory persists across calls, so subsequent git/build/test commands run from the worktree; note that this fallback does not re-anchor session-level caches (plans dir, memory dir) the way `EnterWorktree` does. After `cd`, still run the Step 3 confirmation — the `--git-dir ≠ --git-common-dir` check is path-independent and confirms you are actually in a linked worktree regardless of entry method.
 
 3. Confirm: run `git rev-parse --git-dir --git-common-dir` and verify the two paths differ (linked worktree, not main). Report the new CWD.
 
@@ -50,6 +50,8 @@ _GCD=$(git rev-parse --git-common-dir)
 # relative (.git) means we're already at main root — nothing to do
 [[ "$_GCD" != /* ]] || cd "${_GCD%/.git}"
 ```
+
+> **Note:** assumes a standard embedded `.git` directory; `--separate-git-dir` setups and submodule common dirs may return a path that does not end in `/.git`, requiring a different navigation strategy.
 
 Call `ExitWorktree(action: "remove")` **only** when the user explicitly says *remove*, *delete*, or *clean up* the worktree.
 
