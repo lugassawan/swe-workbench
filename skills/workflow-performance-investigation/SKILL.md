@@ -1,6 +1,6 @@
 ---
 name: workflow-performance-investigation
-description: Profile-first performance investigation runbook — reproduce and baseline a metric, pick a profiler from the ecosystem tooling matrix (Go/Python/JVM/Node/Rust/Ruby/.NET/native), capture CPU + alloc profiles under load, hand the profile to the performance-tuner agent for ranked hotspot read, classify by bottleneck taxonomy (CPU/memory-GC/I-O/lock-contention), form one hypothesis, make one isolated change, before/after measurement, regression guard. Keywords: profile flame graph hotspot bottleneck slow endpoint investigation benchmark.
+description: "Profile-first performance investigation runbook — reproduce and baseline a metric, pick a profiler from the ecosystem tooling matrix (Go/Python/JVM/Node/Rust/Ruby/.NET/native), capture CPU + alloc profiles under load, hand the profile to the performance-tuner agent for ranked hotspot read, classify by bottleneck taxonomy (CPU/memory-GC/I-O/lock-contention), form one hypothesis, make one isolated change, before/after measurement, regression guard. Keywords: profile flame graph hotspot bottleneck slow endpoint investigation benchmark."
 ---
 
 # workflow-performance-investigation

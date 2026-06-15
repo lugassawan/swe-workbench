@@ -1,6 +1,6 @@
 ---
 name: workflow-audit-emit-issues
-description: After a codebase audit, groups audit findings by subsystem (path prefix) and emits them as context-rich GitHub issues with template discovery, label selection, and a batch preview-confirm gate before filing. Keywords: audit findings grouped github issues subsystem emit.
+description: "After a codebase audit, groups audit findings by subsystem (path prefix) and emits them as context-rich GitHub issues with template discovery, label selection, and a batch preview-confirm gate before filing. Keywords: audit findings grouped github issues subsystem emit."
 orchestrator: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: agent-architect
-description: Pi-adapted SWE Workbench agent role. Architecture artifact author — produces ADRs, RFCs, and cross-service contracts for decisions that have no existing codebase to read. Invoke when the output must be a written decision record, not a recommendation about existing code: authoring an ADR, drafting a cross-team RFC, decomposing a service, or making a multi-system technology selection.
+description: "Pi-adapted SWE Workbench agent role. Architecture artifact author — produces ADRs, RFCs, and cross-service contracts for decisions that have no existing codebase to read. Invoke when the output must be a written decision record, not a recommendation about existing code: authoring an ADR, drafting a cross-team RFC, decomposing a service, or making a multi-system technology selection."
 ---
 
 # agent-architect

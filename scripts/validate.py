@@ -179,6 +179,70 @@ def check_hooks_json():
                     fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}].command must be a string")
 
 
+def _decode_frontmatter_scalar(value):
+    """Best-effort decode for one-line YAML scalars without depending on YAML."""
+    value = value.strip()
+    if value.startswith('"'):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value.strip('"')
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def check_frontmatter_yaml_plain_scalars():
+    """Catch frontmatter issues that make installed resources fail in pi.
+
+    The project validator intentionally avoids a YAML dependency, but pi parses
+    frontmatter as YAML. A common invalid pattern is an unquoted plain scalar
+    containing `: `, for example `description: Data modeling: relational ...`.
+    Pi also caps skill descriptions at 1024 characters. Validate both so
+    installed skills load cleanly.
+    """
+    frontmatter_files = [
+        *ROOT.glob("agents/*.md"),
+        *ROOT.glob("commands/*.md"),
+        *ROOT.glob("skills/*/SKILL.md"),
+        *ROOT.glob("pi-package/agent-skills/*/SKILL.md"),
+        *ROOT.glob("pi-package/prompts/*.md"),
+    ]
+    for path in sorted(frontmatter_files):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        end = text.find("\n---\n", 3)
+        if end == -1:
+            end = text.find("\n---", 3)
+        if end == -1:
+            continue
+        block = text[3:end]
+        for lineno, raw_line in enumerate(block.splitlines(), start=2):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            m = re.match(r'^([\w][\w-]*):\s+(.+)$', stripped)
+            if not m:
+                continue
+            key = m.group(1).lower()
+            value = m.group(2).strip()
+            if key == "description" and path.name == "SKILL.md":
+                decoded = _decode_frontmatter_scalar(value)
+                if len(decoded) > 1024:
+                    fail(
+                        path.relative_to(ROOT),
+                        f"frontmatter line {lineno} description exceeds pi's 1024-character limit ({len(decoded)})",
+                    )
+            if not value or value[0] in {'"', "'", "|", ">", "[", "{"}:
+                continue
+            if ": " in value:
+                fail(
+                    path.relative_to(ROOT),
+                    f"frontmatter line {lineno} has an unquoted scalar containing ': '; quote the value for pi YAML parsing",
+                )
+
+
 def check_skills(cache=None):
     skills_dir = ROOT / "skills"
     skills_cache = cache[1] if cache is not None else None
@@ -920,6 +984,7 @@ def main():
     plugin_data = check_plugin_json()
     check_marketplace_json(plugin_data)
     check_hooks_json()
+    check_frontmatter_yaml_plain_scalars()
     check_skills(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)

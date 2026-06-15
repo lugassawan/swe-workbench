@@ -1,6 +1,6 @@
 ---
 name: principle-release-engineering
-description: Release engineering: semver discipline, tag identity, rollout strategy, rollback planning, expand-contract for breaking changes, kill-switch, feature flag, release notes audience, idempotent release automation, post-release verification. Auto-load when cutting a release, planning a breaking API change, writing release notes, choosing a version bump, designing a rollback plan, using a feature flag as a kill-switch, or building release automation scripts.
+description: "Release engineering: semver discipline, tag identity, rollout strategy, rollback planning, expand-contract for breaking changes, kill-switch, feature flag, release notes audience, idempotent release automation, post-release verification. Auto-load when cutting a release, planning a breaking API change, writing release notes, choosing a version bump, designing a rollback plan, using a feature flag as a kill-switch, or building release automation scripts."
 ---
 
 # Release Engineering

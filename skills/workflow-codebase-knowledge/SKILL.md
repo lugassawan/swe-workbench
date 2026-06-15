@@ -1,6 +1,6 @@
 ---
 name: workflow-codebase-knowledge
-description: Use to understand an unfamiliar codebase — presents architecture overview, module map, public API surfaces, and conventions as a layered mental model. Knowledge-presentation only: read-only sweep, no defect ranking, no reasoning chains. Distinct from workflow-codebase-audit (finding-oriented defect detection) and tech-writer / /swe-workbench:document (generates new prose artifacts). Ideal for onboarding, knowledge-handoff, and reviewer context-gathering.
+description: "Use to understand an unfamiliar codebase — presents architecture overview, module map, public API surfaces, and conventions as a layered mental model. Knowledge-presentation only: read-only sweep, no defect ranking, no reasoning chains. Distinct from workflow-codebase-audit (finding-oriented defect detection) and tech-writer / /swe-workbench:document (generates new prose artifacts). Ideal for onboarding, knowledge-handoff, and reviewer context-gathering."
 ---
 
 # Workflow: Codebase Knowledge
