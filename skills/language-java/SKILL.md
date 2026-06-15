@@ -84,7 +84,7 @@ List<String> emails = users.stream()
 - Gradle: `build.gradle` (Groovy) or `build.gradle.kts` (Kotlin DSL — preferred for IDE support).
 - JPMS (`module-info.java`): adopt only when publishing a library that needs strong encapsulation.
 
-## Tests
+## Testing
 - JUnit 5 (`@Test`, `@ParameterizedTest`, `@MethodSource`) — not JUnit 4.
 - AssertJ for fluent assertions: `assertThat(actual).isEqualTo(expected)`.
 - Mockito for external boundaries; do not mock domain objects.

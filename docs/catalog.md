@@ -4,7 +4,7 @@
 
 | Command | Purpose |
 |---|---|
-| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests\|contributor-trust>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests, contributor-trust) or auto-inferred from the diff when omitted. PR number arg unchanged. |
+| `/swe-workbench:review [--mode <general\|security\|a11y\|deps\|perf\|tests\|contributor-trust\|ux>]` | Review the current git diff — auditor selected by `--mode` (general, security, a11y, deps, perf, tests, contributor-trust, ux) or auto-inferred from the diff when omitted. PR number arg unchanged. |
 | `/swe-workbench:security-review` | Depth-first security audit of the current diff — OWASP Top 10, secrets, insecure APIs, dependency CVEs. Pass a PR number to audit a specific PR. |
 | `/swe-workbench:design <question>` | Consult the senior-engineer subagent for an architectural decision. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
 | `/swe-workbench:architect <decision>` | Author an ADR, RFC, or cross-service contract via the architect subagent. Use when the output must be a written decision record — service decomposition, multi-system tech selection, cross-team contract — not advice about existing code. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
@@ -36,6 +36,7 @@
 | `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
 | `performance-tuner` | Profile-driven hotspot triage — ranks bottlenecks from a flame graph or benchmark and recommends targeted optimizations. Refuses speculative optimization without profiling evidence. |
+| `product-designer` | Depth-first UX and design quality review of frontend diffs — usability heuristics, visual hierarchy, information architecture, interaction design, design-system compliance. Invoked by `/swe-workbench:review --mode ux`. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
@@ -70,6 +71,7 @@
 | `principle-data-modeling` | "schema design", "data model", "normalization", "denormalization", "indexing", "hot key", "hot partition", "schema evolution", "expand contract", "query-first", "storage paradigm", "relational vs document", "TTL", "archival". |
 | `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
 | `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
+| `principle-product-design` | "usability heuristic", "UX review", "visual hierarchy", "information architecture", "interaction design", "design system", "usability audit", "Nielsen", "loading state", "empty state", "error state", "progressive disclosure", "responsive design". |
 
 ### Languages — auto-hint by file type (subagents load deterministically)
 
@@ -101,6 +103,8 @@
 | `workflow-grill` | "--grill", "grill me", "grill-me mode", "walk the decision tree", "interrogate me on requirements". | Interrogation MODE for a scoped command's clarify step: builds a decision tree from `$ARGUMENTS` and ticket context, walks it one question at a time (recommended answer per question), self-answers codebase-answerable questions with `file:line` evidence, exits on shared understanding or "proceed" (taking recommended defaults for remaining decisions), and emits a `## Resolved decisions` block for the command to thread into its artifact step. Activated by `/capture` `/design` `/implement` `/architect` `/extend` `/debug`. Not a from-scratch design flow; produces no design doc. |
 | `workflow-worktree-session` | "in a worktree", "open the X worktree", "move into worktree", "switch to worktree", "enter worktree", "exit the worktree", "leave worktree". | Routes to `EnterWorktree(path=…)` for existing worktrees; defers to `superpowers:using-git-worktrees` for new ones (that skill handles consent, baseline tests, and calls `EnterWorktree` itself). `ExitWorktree(action: "keep"\|"remove")` on the way out. Forbids `Bash(cd …)` as a session-switch mechanism. |
 | `workflow-delegated-implementation` | "delegate this multi-module feature to focused implementer sub-agents", "group file changes and hand each cohesive changeset to code-impl", "keep orchestrator context lean by delegating implementation". | Conditional scope/complexity gate → group changes by commit-taxonomy axis (Infra/Core/Tests/Wiring) → dispatch each group to `code-impl` with a structured brief → consume the four-status summary without re-reading files → sequential default with opt-in worktree-isolated parallelism (safety table: disjoint file sets, zero cross-group dependency, no shared test target). |
+| `workflow-performance-investigation` | "this endpoint is slow", "find the performance hotspot", "profile flame graph", "capture a CPU profile", "structure the investigation and add a regression guard". | Profile-first runbook: baseline → profile (per-ecosystem tooling matrix) → hand profile to `performance-tuner` for ranked hotspots → bottleneck taxonomy → one isolated change → before/after measurement → regression guard. Composes `principle-performance`. |
+| `workflow-dependency-upgrade` | "upgrade our dependencies", "Dependabot PR triage", "bump this package to the latest major", "CVE patch", "major version migration and fix what breaks". | Structured upgrade runbook: triage+batch (patch/minor/major, automated vs manual) → bump & regen lockfile → build/test → breakage-triage taxonomy → PR hygiene. Per-ecosystem command matrix; composes `principle-security`. |
 
 This skill is an orchestrator — it coordinates other skills rather than restating their content.
 

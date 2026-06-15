@@ -102,7 +102,7 @@ fi
 - `#!/bin/sh` only when strict POSIX portability is required — drop all bash-isms.
 - Run `shellcheck --shell=bash` (or `--shell=sh`) to enforce the declared contract.
 
-## Tests
+## Testing
 - `bats-core` for non-trivial scripts: one assertion per test, temp dirs for isolation.
 - For inline assertions in one-shot scripts:
 ```bash

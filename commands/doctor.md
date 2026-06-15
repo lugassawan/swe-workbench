@@ -5,7 +5,7 @@ description: Read-only preflight check of runtime dependencies (gh, git, jq, rim
 Run the preflight diagnostic and print the results verbatim:
 
 ```
-bash "$CLAUDE_PLUGIN_ROOT/scripts/doctor.sh"
+bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"
 ```
 
 Print the full stdout output exactly as produced — do not summarise, truncate, or reformat it.

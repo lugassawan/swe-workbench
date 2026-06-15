@@ -162,9 +162,8 @@ def test_prompt_ranks_target_skill_top1(
     )
     assert target_rank is not None, f"skill `{skill_name}` not found in corpus"
 
-    my_siblings = next(
-        (s for s in sibling_sets if skill_name in s), {skill_name}
-    )
+    _all_groups = [s for s in sibling_sets if skill_name in s]
+    my_siblings = set().union(*_all_groups) if _all_groups else {skill_name}
 
     if target_rank == 0:
         # Score-margin guard: catch near-ties from IDF drift before they flip.

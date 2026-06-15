@@ -31,31 +31,21 @@ This skill orchestrates:
 ### Phase 1 — Pre-flight + fetch
 
 ```bash
-gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
-CURRENT_USER=$(gh api /user -q .login)
-mkdir -p /tmp/swe-workbench-address-feedback
-gh pr view "$PR" --json number,title,body,headRefName,baseRefName,author,reviewDecision,state \
-  > "/tmp/swe-workbench-address-feedback/${PR}.json"
-[ -s "/tmp/swe-workbench-address-feedback/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
-```
-
-Extract fields from the JSON:
-
-```bash
-JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
-AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
-PR_BRANCH=$(jq -r .headRefName "$JSON")
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name   -q .name)
-if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
-  echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
   exit 1
-fi
+}
+JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
+eval "$("$_RT/runtime/preflight-pr.sh" "$PR" "$JSON")"
+CURRENT_USER=$(gh api /user -q .login)
+PR_BRANCH=$(jq -r .headRefName "$JSON")
 ```
+
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2).
 
 Check that the PR is open before proceeding:
 ```bash
-STATE=$(jq -r .state "$JSON")
 [ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
 ```
 
@@ -198,33 +188,35 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each thread, post a reply via REST then conditionally resolve. Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
-
-```bash
-# Post reply
-gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments/${COMMENT_DATABASEID}/replies" \
-  -F body="$REPLY_BODY"
-```
+For each **ADDRESSED** or **CLARIFIED** thread, post a reply via REST then conditionally resolve (DEFERRED threads skip this call entirely). Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
 
 Reply body templates by triage classification:
-- **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."`
-- **CLARIFIED**: free-text owner-authored reply (asked interactively). No resolve.
-- **DEFERRED**: no reply posted, no resolve.
-
-For each `ADDRESSED` thread, resolve via GraphQL after the reply succeeds:
+- **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."` — pass both `$REPLY_BODY` and `$THREAD_ID`.
+- **CLARIFIED**: free-text owner-authored reply (asked interactively) — pass `$REPLY_BODY` with empty `$THREAD_ID` (reply only, no resolve).
+- **DEFERRED**: pass empty `$REPLY_BODY` and empty `$THREAD_ID` (neither reply nor resolve).
 
 ```bash
-gh api graphql -F threadId="$THREAD_ID" -f query='
-  mutation($threadId: ID!) {
-    resolveReviewThread(input: {threadId: $threadId}) {
-      thread { id isResolved }
-    }
-  }'
+bash "$_RT/runtime/reply-and-resolve.sh" \
+  "$OWNER" "$REPO" "$PR" "$COMMENT_DATABASEID" "$THREAD_ID" "$REPLY_BODY"
 ```
 
 After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/review --check-followup <N>`."
+
+On the Phase 5 success path, delete the address-feedback state files. The reap runs foreground; failures surface (no `2>/dev/null`):
+
+```bash
+bash "$_RT/runtime/clean-state-files.sh" \
+  "/tmp/swe-workbench-address-feedback/${PR}.json" \
+  "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
+  "/tmp/swe-workbench-address-feedback/${PR}-triage.json"
+for f in "/tmp/swe-workbench-address-feedback/${PR}.json" \
+         "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
+         "/tmp/swe-workbench-address-feedback/${PR}-triage.json"; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
+```
 
 Then run **Phase 6 — Cleanup**.
 
@@ -241,7 +233,7 @@ else
     echo "Cleaned up worktree address-feedback-$PR."
   else
     # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
-    git worktree remove --force "$WT" 2>/dev/null; bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+    git worktree remove --force "$WT" 2>/dev/null; bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
     echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
   fi
 fi

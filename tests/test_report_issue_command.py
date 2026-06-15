@@ -79,3 +79,99 @@ def test_report_issue_supports_blank_argument():
     assert "MEMORY.md" in text, (
         "commands/report-issue.md must reference MEMORY.md as the memory fallback for blank-arg mode"
     )
+
+
+def test_report_issue_has_redaction_pass():
+    """commands/report-issue.md must include a redaction sub-step in the draft step."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Redaction pass" in text, (
+        "commands/report-issue.md must include a 'Redaction pass' instruction in step 7"
+    )
+
+
+def test_report_issue_redaction_has_allowlist():
+    """commands/report-issue.md must define an allowlist for the redaction pass."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Allowlist" in text, (
+        "commands/report-issue.md must include an 'Allowlist' section in the redaction instructions"
+    )
+    assert "NEVER redact" in text, (
+        "commands/report-issue.md must include a 'NEVER redact' directive in the allowlist"
+    )
+    never_redact_pos = text.find("NEVER redact")
+    allowlist_end = text.find("Redact when NOT allowlisted", never_redact_pos)
+    allowlist_block = text[never_redact_pos:allowlist_end]
+    assert "swe-workbench" in allowlist_block, (
+        "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
+    )
+
+
+def test_report_issue_redaction_has_placeholder_vocabulary():
+    """commands/report-issue.md must define placeholder vocabulary for all required categories."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "[internal-email]" in text, (
+        "commands/report-issue.md must specify '[internal-email]' as a redaction placeholder"
+    )
+    assert "[internal-host]" in text, (
+        "commands/report-issue.md must specify '[internal-host]' as a redaction placeholder"
+    )
+    assert "[internal-ip]" in text, (
+        "commands/report-issue.md must specify '[internal-ip]' as a redaction placeholder"
+    )
+    assert "an internal service" in text, (
+        "commands/report-issue.md must specify 'an internal service' as a redaction placeholder"
+    )
+    assert "[redacted-token]" in text, (
+        "commands/report-issue.md must specify '[redacted-token]' as a placeholder for API keys/tokens"
+    )
+
+
+def test_report_issue_preview_shows_redaction_status():
+    """commands/report-issue.md must include a 'Redacted:' line in the step 8 preview block."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "Redacted:" in text, (
+        "commands/report-issue.md must include a 'Redacted:' line in the preview gate block"
+    )
+
+
+def test_report_issue_redaction_before_preview():
+    """commands/report-issue.md: redaction pass → Redacted: line → confirm gate, in that order."""
+    text = REPORT_ISSUE_MD.read_text()
+    redaction_pos = text.find("Redaction pass")
+    assert redaction_pos != -1, (
+        "commands/report-issue.md must include a 'Redaction pass' instruction"
+    )
+    redacted_line_pos = text.find("Redacted:", redaction_pos)
+    assert redacted_line_pos != -1, (
+        "commands/report-issue.md must include a 'Redacted:' preview line"
+    )
+    confirm_pos = text.find("Reply 'confirm'", redacted_line_pos)
+    assert confirm_pos != -1, (
+        "commands/report-issue.md must include a \"Reply 'confirm'\" instruction"
+    )
+    assert redaction_pos < redacted_line_pos < confirm_pos, (
+        "Order must be: 'Redaction pass' → 'Redacted:' line → \"Reply 'confirm'\""
+    )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_report_issue_step9_deletes_temp_files():
+    """commands/report-issue.md step 9 must invoke clean-state-files.sh on success."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "commands/report-issue.md step 9 must call runtime/clean-state-files.sh "
+        "to delete the temp .md and .cmd files after successful issue creation"
+    )
+    assert "/tmp/report-issue-lugassawan-swe-workbench-" in text, (
+        "commands/report-issue.md must reference the /tmp/report-issue-lugassawan-swe-workbench-* "
+        "file pattern in the clean-state-files.sh call"
+    )
+
+
+def test_report_issue_step9_cleanup_on_success_only():
+    """commands/report-issue.md must specify that temp files are left on failure."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "failure" in text.lower() or "on failure" in text.lower() or "retry" in text.lower(), (
+        "commands/report-issue.md must state that temp files are left intact on failure (for retry)"
+    )

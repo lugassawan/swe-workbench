@@ -30,6 +30,13 @@ workflow-pr-review, workflow-pr-review-followup
 # legitimately belongs to either skill.
 principle-data-modeling, principle-release-engineering
 
+# workflow-dependency-upgrade and principle-release-engineering share "bump", "semver",
+# and "major/minor version" trigger surface. A prompt like "should this be a major
+# bump or a minor bump?" legitimately lands on either the upgrade-lifecycle runbook
+# or the semver-discipline principle — BM25 cannot resolve the operational vs. guidance
+# distinction.
+workflow-dependency-upgrade, principle-release-engineering
+
 # workflow-development and workflow-delegated-implementation share genuine trigger
 # surface: workflow-delegated-implementation IS the Phase-2 delegation strategy
 # inside workflow-development. A prompt like "drive this feature from plan to
@@ -45,3 +52,21 @@ workflow-development, workflow-delegated-implementation
 # asyncio" is unambiguously Python at runtime, but BM25 scores both language descriptions
 # similarly on "async" + "generator" tokens; Rust can outrank Python on high-IDF matches.
 language-python, language-rust
+
+# principle-performance and workflow-performance-investigation share the "performance"
+# and "profile" trigger surface: principle-performance covers design-time discipline
+# (Big-O, allocation, N+1) while workflow-performance-investigation is the investigation
+# runbook for a live bottleneck (profiling, flame graphs, hotspot ranking, before/after
+# measurement). A prompt like "this endpoint is slow, how do I find and fix the bottleneck"
+# legitimately belongs to either skill — the design-time vs runtime distinction is context
+# the BM25 ranker cannot resolve.
+principle-performance, workflow-performance-investigation
+
+# principle-resiliency and principle-distributed-systems share idempotency trigger
+# surface: principle-distributed-systems covers at-least-once delivery via
+# `## Idempotency Across the Network`, while principle-resiliency covers the dedup-store
+# implementation that makes retries safe. A prompt like "my payment service double-
+# charges on retries — how do I implement exactly-once semantics with idempotency"
+# legitimately belongs to either skill — the delivery-layer vs dedup-store distinction
+# cannot be resolved by BM25 alone.
+principle-resiliency, principle-distributed-systems

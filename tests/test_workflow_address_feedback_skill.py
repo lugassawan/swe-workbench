@@ -40,19 +40,20 @@ def test_address_feedback_triggers_txt():
 
 
 def test_address_feedback_skill_references_reply_rest_endpoint():
-    """SKILL.md must reference the per-thread reply REST endpoint for inline replies."""
+    """SKILL.md must reference the reply REST endpoint directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert re.search(r"pulls/.*comments/.*replies", text), (
-        "SKILL.md must reference the REST reply endpoint pattern: "
-        "pulls/{N}/comments/{id}/replies"
+    assert re.search(r"pulls/.*comments/.*replies", text) or "reply-and-resolve.sh" in text, (
+        "SKILL.md must either reference the REST reply endpoint pattern "
+        "(pulls/{N}/comments/{id}/replies) or invoke runtime/reply-and-resolve.sh"
     )
 
 
 def test_address_feedback_skill_references_resolve_mutation():
-    """SKILL.md must reference the resolveReviewThread GraphQL mutation."""
+    """SKILL.md must reference resolveReviewThread directly or via reply-and-resolve.sh."""
     text = SKILL_MD.read_text()
-    assert "resolveReviewThread" in text, (
-        "SKILL.md must reference the resolveReviewThread GraphQL mutation"
+    assert "resolveReviewThread" in text or "reply-and-resolve.sh" in text, (
+        "SKILL.md must reference the resolveReviewThread GraphQL mutation "
+        "or delegate to runtime/reply-and-resolve.sh"
     )
 
 
@@ -63,18 +64,6 @@ def test_address_feedback_skill_uses_three_way_triage():
     assert "CLARIFIED" in text, "SKILL.md must reference CLARIFIED triage state"
     assert "DEFERRED" in text, "SKILL.md must reference DEFERRED triage state"
 
-
-def test_address_feedback_skill_owner_repo_from_gh_repo_view():
-    """OWNER and REPO must be derived from 'gh repo view' (not from headRepository or baseRepository)."""
-    text = SKILL_MD.read_text()
-    assert re.search(r"OWNER\s*=.*\$\(gh repo view[^\n]*owner", text), (
-        "SKILL.md must derive OWNER via 'gh repo view --json owner' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
-    assert re.search(r"REPO\s*=.*\$\(gh repo view[^\n]*name", text), (
-        "SKILL.md must derive REPO via 'gh repo view --json name' — "
-        "gh pr view --json has no baseRepository field; gh repo view resolves the base remote correctly"
-    )
 
 
 def test_address_feedback_skill_no_invalid_json_field():
@@ -100,10 +89,11 @@ def test_address_feedback_skill_no_fragile_owner_extraction():
 
 
 def test_address_feedback_skill_has_owner_repo_guard_clause():
-    """SKILL.md must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    text = SKILL_MD.read_text()
+    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
+    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "SKILL.md must include the guard-clause error message for missing OWNER/REPO "
+        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
         "so failures produce an actionable error rather than silently misrouting API calls"
     )
 
@@ -295,7 +285,7 @@ def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
     """Phase 6 fallback must invoke clean-ephemeral.sh, not bare rm -rf "$WT"."""
     text = SKILL_MD.read_text()
     assert "clean-ephemeral.sh" in text, (
-        "SKILL.md Phase 6 fallback must use scripts/clean-ephemeral.sh — "
+        "SKILL.md Phase 6 fallback must use runtime/clean-ephemeral.sh — "
         "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
     )
 
@@ -312,4 +302,94 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
     assert not lines_with_rm, (
         f"Found bare rm -rf \"$WT\" lines in Phase 6 (should use clean-ephemeral.sh):\n"
         + "\n".join(lines_with_rm)
+    )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_address_feedback_skill_deletes_three_state_files():
+    """Phase 5 success path must invoke clean-state-files.sh with all three state files."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md must call runtime/clean-state-files.sh to remove address-feedback state files"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}-threads.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to clean-state-files.sh"
+    )
+    assert "/tmp/swe-workbench-address-feedback/${PR}-triage.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to clean-state-files.sh"
+    )
+
+
+def test_address_feedback_skill_triage_cleanup_before_phase6():
+    """${PR}-triage.json removal must appear BEFORE ### Phase 6 (Q-quit safety invariant).
+
+    Phase 6 fires on Q-quit too.  triage.json is durable resume state that must survive Q-quit
+    so the user can resume from Phase 3.  Removing it on the Phase 5 success path (before Phase 6)
+    ensures Q-quit leaves it intact.
+    """
+    text = SKILL_MD.read_text()
+    triage_cleanup_idx = text.find("/tmp/swe-workbench-address-feedback/${PR}-triage.json")
+    phase6_idx = text.find("### Phase 6")
+    assert triage_cleanup_idx != -1, (
+        "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-triage.json for cleanup"
+    )
+    assert phase6_idx != -1, "SKILL.md must have a ### Phase 6 section"
+    assert triage_cleanup_idx < phase6_idx, (
+        "triage.json cleanup must appear BEFORE ### Phase 6 — "
+        "Phase 6 also fires on Q-quit; triage.json must survive Q-quit for resume"
+    )
+
+
+def test_address_feedback_skill_phase6_does_not_delete_triage_json():
+    """Phase 6 code block must NOT contain a triage.json deletion (Q-quit must leave it intact)."""
+    text = SKILL_MD.read_text()
+    phase6_idx = text.find("### Phase 6")
+    assert phase6_idx != -1, "Phase 6 section must exist"
+    # Extract only up to the next top-level section (## Failure modes or ## Common mistakes).
+    next_section = re.search(r'\n## ', text[phase6_idx:])
+    phase6_text = text[phase6_idx: phase6_idx + next_section.start()] if next_section else text[phase6_idx:]
+    # triage.json must not appear in the Phase 6 action blocks (only in the failure-modes table which follows)
+    # Filter out lines that are in a table row referencing the failure-mode description
+    phase6_lines_with_triage = [
+        line for line in phase6_text.splitlines()
+        if "triage.json" in line
+        and not line.lstrip().startswith("|")   # table rows describe the failure, not Phase 6 actions
+    ]
+    assert not phase6_lines_with_triage, (
+        "Phase 6 action blocks must NOT delete triage.json — Phase 6 runs on Q-quit too, and "
+        "triage.json is durable resume state that must survive Q-quit.\n"
+        "Lines found: " + "\n".join(phase6_lines_with_triage)
+    )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_address_feedback_skill_phase5_reap_no_suppression():
+    """Phase 5 clean-state-files.sh call must have NO 2>/dev/null suppression.
+
+    The reap runs foreground; suppression would recreate the silent-orphan path
+    that was the root cause of the #428/#429 recurrence.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must be visible so orphaned state files surface as failures:\n"
+        + "\n".join(suppressed)
+    )
+
+
+def test_address_feedback_skill_phase5_reap_has_post_check():
+    """Phase 5 must include a post-reap report line confirming each state file was reaped."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'✓ state file reaped:', text), (
+        "SKILL.md Phase 5 must include a post-reap report line "
+        "'✓ state file reaped: ...' so operators can verify cleanup completed"
     )

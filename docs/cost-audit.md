@@ -8,7 +8,7 @@
 
 ## Agents
 
-All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-auditor, product-manager, tech-writer, test-writer) were flipped to `model: haiku` in this PR; see the Recommended tier column. None invoke the `Agent` or `Task` tool (verified by `grep -r 'Agent\|Task' agents/ --include='*.md'` at snapshot) — subagent spawning is exclusively via the orchestrating Claude session.
+At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was added in a subsequent PR. Four (dependency-auditor, product-manager, tech-writer, test-writer) were flipped to `model: haiku` in this PR; see the Recommended tier column. None invoke the `Agent` or `Task` tool (verified by `grep -r 'Agent\|Task' agents/ --include='*.md'` at snapshot) — subagent spawning is exclusively via the orchestrating Claude session.
 
 | Surface | Path | Current model | Spawns subagents? | Recommended tier | Notes |
 |---|---|---|---|---|---|
@@ -19,6 +19,7 @@ All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-audit
 | dependency-auditor | `agents/dependency-auditor.md` | sonnet | No | **S → haiku** | Reads manifests, reports versions/licenses; mechanical extraction, low reasoning density. Watch window: GPL/AGPL transitive in MIT projects, SSPL/BUSL/Commons-Clause, per-version license changes, dev-only vs. production viral scope — any relational license judgment that misclassifies to lower severity is a revert trigger. |
 | migrator | `agents/migrator.md` | sonnet | No | M–L | Expand-backfill-switch-contract reasoning across deployments; phase correctness is high-stakes |
 | performance-tuner | `agents/performance-tuner.md` | sonnet | No | M | Profile-driven; delegates to `principle-performance` skill; hotspot ranking requires judgment |
+| product-designer | `agents/product-designer.md` | sonnet | No | M | Depth-first UX review; usability heuristic judgment and design-system compliance require reasoning |
 | product-manager | `agents/product-manager.md` | sonnet | No | **S → haiku** | Formats rough ideas into structured GitHub issues; template discovery + fill is mechanical |
 | refactorer | `agents/refactorer.md` | sonnet | No | M | Fowler-catalog steps; behavior-preservation invariant needs correctness judgment |
 | reviewer | `agents/reviewer.md` | sonnet | No | M–L | Four-axis PR review (correctness, security, design, tests); correctness judgment is high-stakes |
@@ -28,7 +29,7 @@ All 14 agents shipped with `model: sonnet` at audit time. Four (dependency-audit
 | test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec. Watch: test-writer auto-detects framework, reads existing tests, and invokes `principle-tdd`/`principle-testing` skills — multi-step steps that haiku may skip. Revert if Skill invocations are skipped or framework detection regresses. |
 
 **Tier S agents (flipped to haiku in this PR):** dependency-auditor, product-manager, tech-writer, test-writer  
-**Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, refactorer, reviewer, security-auditor, senior-engineer
+**Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, product-designer, refactorer, reviewer, security-auditor, senior-engineer
 
 ---
 
@@ -61,6 +62,7 @@ Skills have no `model:` field — they are prose instructions injected into the 
 | principle-i18n | `skills/principle-i18n/` | N/A | No | M | Localization patterns |
 | principle-observability | `skills/principle-observability/` | N/A | No | M | Logging/tracing/metrics |
 | principle-performance | `skills/principle-performance/` | N/A | No | M | Profile-first optimization |
+| principle-product-design | `skills/principle-product-design/` | N/A | No | M | UX and product design heuristics; usability judgment, visual hierarchy, interaction design |
 | principle-resiliency | `skills/principle-resiliency/` | N/A | No | M | Retry/circuit-breaker patterns |
 | principle-security | `skills/principle-security/` | N/A | No | M | OWASP-aligned security guidance |
 | principle-solid | `skills/principle-solid/` | N/A | No | M | SOLID principles |

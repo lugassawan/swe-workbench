@@ -37,6 +37,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 ## Process
 
 1. **Reproduce** — get the failure under your hand (command, input, assertion). No repro → ask; do not guess.
+   - **Browser evidence** — if a `## Browser evidence` block was prepended to your context (console messages + network failures captured by the orchestrator), treat it as boundary evidence before forming any hypothesis. It is the first concrete artifact to reason from.
 2. **Delegate** — invoke `superpowers:systematic-debugging` for the investigation loop.
 3. **Confirm root cause** — one sentence, backed by a concrete artifact.
 4. **Write the regression test first** — it must fail against current code for the stated reason.
@@ -48,7 +49,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Repro
 - Hypotheses (with falsification)
 - Root cause (+ evidence)
-- Minimal fix (diff summary + what it deliberately does NOT touch)
+- Minimal fix (diff summary + what it deliberately does NOT touch + placement choice if a new type was introduced)
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")
 
@@ -73,3 +74,4 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 - No behavior change beyond what the failing test demands.
 - No "while I'm here" refactors — note them, defer to `/refactor`.
 - If the root cause is a design flaw, say so; fix the symptom minimally and recommend design follow-up.
+- If a fix genuinely requires a new type: (1) scan sibling source files — if empty/absent, apply `swe-workbench:principle-clean-architecture` layering directly; if coherent, match the observed convention; if incoherent, apply best practice via `swe-workbench:principle-clean-architecture`. (2) Note the placement choice in the Minimal-fix output line. (3) Never let placement reasoning widen the diff.

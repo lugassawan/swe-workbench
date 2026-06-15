@@ -27,35 +27,24 @@ orchestrator: true
 This skill orchestrates; analysis is delegated to:
 - `swe-workbench:reviewer` subagent — produces `Severity | File:Line | Issue | Why | Fix` findings + a Review Decision footer (when instructed by this skill — see Step 4).
 - `swe-workbench:ticket-context` skill — prepended to the reviewer prompt when the PR body or commit messages reference a ticket key, atlassian/Confluence URL, or `#NNN` GitHub ref.
-- **Checkpoint:** write the workflow state file (see `docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Delete the state file after Step 7.
+- **Checkpoint:** write the workflow state file (see `docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete the state file after Step 7.
 
 ## 7-step flow
 
 ### Step 1 — Pre-flight
 
 ```bash
-gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
-CURRENT_USER=$(gh api /user -q .login)
-mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,headRefOid,title,body,author \
-  > "/tmp/swe-workbench-pr-review/${PR}.json"
-[ -s "/tmp/swe-workbench-pr-review/${PR}.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
-```
-
-Extract fields from the JSON:
-
-```bash
-JSON="/tmp/swe-workbench-pr-review/${PR}.json"
-BASE=$(jq -r .baseRefName "$JSON")
-HEAD_SHA=$(jq -r .headRefOid "$JSON")
-AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name   -q .name)
-if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
-  echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
   exit 1
-fi
+}
+JSON="/tmp/swe-workbench-pr-review/${PR}.json"
+eval "$("$_RT/runtime/preflight-pr.sh" "$PR" "$JSON")"
+CURRENT_USER=$(gh api /user -q .login)
 ```
+
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context).
 
 ### Step 2 — Ephemeral worktree
 
@@ -72,7 +61,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+  git worktree remove --force "$WT" 2>/dev/null || bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-review-${PR}" --force
@@ -87,7 +76,8 @@ Read `title` and `body` from the saved JSON. Match `[A-Z]+-\d+`, atlassian/Confl
 
 Pass the agent:
 - Working-directory hint: absolute path of the worktree (`$WT`).
-- Diff: `git -C "$WT" diff "$BASE"..HEAD`.
+- Before diffing, refresh the remote base so already-merged commits are excluded (best-effort — a fetch failure is non-fatal): `git -C "$WT" fetch origin "$BASE" --quiet || true`
+- Diff: `git -C "$WT" diff "origin/$BASE"...HEAD` (three-dot = merge-base; only commits unique to the PR branch).
 - Repo-relative-path instruction (load-bearing): emit **repo-relative** paths (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments.
 - Footer instruction (opt-in per `## Decision footer`): end with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**`. Never `REQUEST_CHANGES`.
 - Blocking-scope instruction (opt-in per `## Blocking-scope verdict`): classify each Critical/High as in-diff (`+` lines) or out-of-diff; mark out-of-diff with `**Informational (out-of-diff):** `; emit `**Blocking Scope: NONE|OUT-OF-DIFF-ONLY|IN-DIFF**` before the footer. APPROVE/COMMENT rule unchanged.
@@ -171,7 +161,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 ### Step 7 — Submit + cleanup
 
-Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
+Build the lean review body `$SUMMARY` — decision line + byline (+ optional informational notes for out-of-diff findings). Findings already posted as inline comments in Step 6 must NOT be restated here:
 
 ```bash
 if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
@@ -190,7 +180,7 @@ BYLINE="_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan
 INFORMATIONAL_SECTION=""
 [ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
 if [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '**Review Decision: %s**\n\n---\n%s%s\n' \
+  SUMMARY=$(printf '**Review Decision: %s**\n\n%s%s\n' \
     "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
 else
   SUMMARY=""
@@ -225,11 +215,24 @@ Identity does not gate the CTA — when the user has invoked Claude to review th
 
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
+Foreground state-file reap — runs before worktree teardown; failures surface (no `2>/dev/null` or `|| true`):
+
+```bash
+bash "$_RT/runtime/clean-state-files.sh" \
+  "/tmp/swe-workbench-pr-review/${PR}.json" \
+  "/tmp/swe-workbench-pr-review/${PR}-threads.json"
+for f in "/tmp/swe-workbench-pr-review/${PR}.json" "/tmp/swe-workbench-pr-review/${PR}-threads.json"; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
+```
+
+Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:
+
 ```bash
 ( rimba remove "pr-review-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-review-$PR" 2>/dev/null; \
-       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
+       bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
 ```
 
 ## Footer parsing contract

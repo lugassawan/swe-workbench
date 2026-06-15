@@ -8,6 +8,11 @@ Defects addressed:
    plans race against rimba's dep-install pipeline before the first test run.
 3. SKILL.md line ~94 uses wrong prefixes `feat/`, `fix/` — rimba actually produces
    `feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`.
+4. SKILL.md Phase 1 does not document the <service>/<task> monorepo scope pattern
+   or the majority-service heuristic for cross-cutting changes.
+5. SKILL.md and plan-workflow-section.md do not document that `Path:` is printed
+   before deps finish, so agents idle during long installs instead of implementing
+   in parallel and reconciling via `git stash` → RED → `git stash pop` → GREEN.
 """
 
 from pathlib import Path
@@ -235,4 +240,80 @@ def test_template_documents_post_create_timing():
     assert "wait" in lower, (
         "plan-workflow-section.md Phase 1 must instruct agents to wait for rimba add "
         "to complete when deps are required — 'wait' must appear in the timing guidance"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Defect 5 — Parallel implementation during install undocumented
+# ---------------------------------------------------------------------------
+
+
+def test_skill_documents_parallel_impl_during_install():
+    """SKILL.md Phase 1 must document that coding may begin before deps finish.
+
+    rimba add prints Path: after creating/copying the worktree — before deps
+    install and hooks run. The session should not idle; it can implement during
+    the long install and reconcile with TDD via git stash once rimba completes.
+
+    Required tokens: git stash, stash pop, red, green, background, before deps.
+    """
+    body = SKILL.read_text()
+    phase1 = _phase1_section(body)
+    lower = phase1.lower()
+
+    assert "git stash" in phase1, (
+        "SKILL.md Phase 1 must document 'git stash' as the TDD reconciliation mechanic"
+    )
+    assert "stash pop" in phase1, (
+        "SKILL.md Phase 1 must document 'git stash pop' to restore implementation after RED"
+    )
+    assert "**RED**" in phase1, (
+        "SKILL.md Phase 1 must reference the **RED** step so agents know verification is preserved"
+    )
+    assert "**GREEN**" in phase1, (
+        "SKILL.md Phase 1 must reference the **GREEN** step so agents know verification is preserved"
+    )
+    assert "background" in lower, (
+        "SKILL.md Phase 1 must document backgrounding the rimba call so the session is free to implement"
+    )
+    assert "path:" in lower, (
+        "SKILL.md Phase 1 must state that Path: is available before deps finish "
+        "so agents know when coding may begin"
+    )
+    assert "deps" in lower, (
+        "SKILL.md Phase 1 must mention deps so agents know to wait for full completion"
+    )
+
+
+def test_template_documents_parallel_impl_during_install():
+    """plan-workflow-section.md Phase 1 must document the parallel-impl pattern.
+
+    Mirrors test_skill_documents_parallel_impl_during_install — the template is
+    rendered verbatim into every generated plan, so agents need this guidance there.
+    Asserts the same six behavioral tokens as the SKILL.md test.
+    """
+    body = TEMPLATE.read_text()
+    phase1 = _phase1_section(body)
+    lower = phase1.lower()
+
+    assert "git stash" in phase1, (
+        "plan-workflow-section.md Phase 1 must document 'git stash' as TDD reconciliation mechanic"
+    )
+    assert "stash pop" in phase1, (
+        "plan-workflow-section.md Phase 1 must document 'git stash pop' to restore implementation after RED"
+    )
+    assert "**RED**" in phase1, (
+        "plan-workflow-section.md Phase 1 must reference the **RED** step so agents know verification is preserved"
+    )
+    assert "**GREEN**" in phase1, (
+        "plan-workflow-section.md Phase 1 must reference the **GREEN** step so agents know verification is preserved"
+    )
+    assert "background" in lower, (
+        "plan-workflow-section.md Phase 1 must document backgrounding the rimba call"
+    )
+    assert "path:" in lower, (
+        "plan-workflow-section.md Phase 1 must state that Path: is available before deps finish"
+    )
+    assert "deps" in lower, (
+        "plan-workflow-section.md Phase 1 must mention deps so agents know to wait for full completion"
     )

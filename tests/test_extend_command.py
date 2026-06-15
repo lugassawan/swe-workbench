@@ -194,3 +194,48 @@ def test_extend_skill_under_orchestrator_cap():
         f"skills/workflow-extend/SKILL.md has {line_count} lines — "
         f"exceeds the 300-line orchestrator cap"
     )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_extend_skill_phase_d_deletes_tmp_file():
+    """SKILL.md Phase D must invoke clean-state-files.sh on /tmp/extend-${TS}.md after delivery."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Phase D must call runtime/clean-state-files.sh to remove /tmp/extend-${TS}.md "
+        "after successful delivery"
+    )
+    assert "/tmp/extend-${TS}.md" in text, (
+        "SKILL.md must pass /tmp/extend-${TS}.md to clean-state-files.sh"
+    )
+
+
+def test_extend_skill_cleanup_after_delivery():
+    """SKILL.md: clean-state-files.sh call must appear AFTER Phase D delivery text (success-only)."""
+    text = SKILL_MD.read_text()
+    phase_d_idx = text.find("## Phase D")
+    cleanup_idx = text.find("clean-state-files.sh")
+    assert phase_d_idx != -1, "SKILL.md must have a Phase D section"
+    assert cleanup_idx != -1, "SKILL.md must reference clean-state-files.sh"
+    assert cleanup_idx > phase_d_idx, (
+        "clean-state-files.sh call must appear within/after Phase D — "
+        "cleanup runs on the success delivery path only"
+    )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_extend_skill_reap_no_suppression():
+    """The clean-state-files.sh call in Phase D must have NO 2>/dev/null suppression.
+
+    The reap must run without error suppression so orphaned spec-temp files surface as failures.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must surface failures:\n" + "\n".join(suppressed)
+    )

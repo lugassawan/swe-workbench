@@ -23,6 +23,21 @@ _NON_CODE_AGENTS = frozenset({
     "product-manager",
 })
 
+# Browser MCP tool patterns that trigger the hard gate (#364).
+# Any agent or command containing one of these strings must also carry
+# a BLOCKED: sentinel and a per-backend install hint.
+# Exception: mcp__claude-in-chrome__* is the in-harness Claude browser extension —
+# it has no installable package, so the install-hint requirement is waived for
+# files whose only browser signal is claude-in-chrome references.
+_BROWSER_MCP_SIGNALS = re.compile(
+    r'browser_snapshot|read_console_messages|read_network_requests'
+    r'|mcp__\S*chrome\S*|@playwright/mcp'
+)
+_CLAUDE_IN_CHROME_ONLY = re.compile(r'mcp__claude-in-chrome__\S*')
+_BROWSER_INSTALL_HINTS = re.compile(
+    r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
+)
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -219,7 +234,11 @@ def check_agents(cache=None):
         for field in ("name", "description"):
             if field not in fm:
                 fail(agent_md.relative_to(ROOT), f"frontmatter missing required field: {field!r}")
-        if re.search(r'`swe-workbench:[\w-]+`', text) and "Skill" not in fm.get("tools", ""):
+        if (
+            re.search(r'`swe-workbench:[\w-]+`', text)
+            and "tools" in fm
+            and "Skill" not in fm["tools"]
+        ):
             fail(agent_md.relative_to(ROOT), "references swe-workbench: skills but 'Skill' is missing from tools: frontmatter")
 
 
@@ -269,6 +288,99 @@ def check_command_skill_refs():
                     cmd_md.relative_to(ROOT),
                     f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
                 )
+
+
+def _artifact_exists(artifact_id):
+    """Return True if artifact_id resolves to a skill dir, agent file, or command file."""
+    return (
+        (ROOT / "skills" / artifact_id).is_dir()
+        or (ROOT / "agents" / f"{artifact_id}.md").is_file()
+        or (ROOT / "commands" / f"{artifact_id}.md").is_file()
+    )
+
+
+def check_skill_skill_refs(cache=None):
+    """Every `swe-workbench:<id>` in skills/*/SKILL.md must resolve to a skill dir,
+    agent file, or command file on disk."""
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    pattern = re.compile(r'`swe-workbench:([\w-]+)`')
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        for artifact_id in set(pattern.findall(text)):
+            if not _artifact_exists(artifact_id):
+                fail(
+                    skill_md.relative_to(ROOT),
+                    f"references 'swe-workbench:{artifact_id}' but skills/{artifact_id}/ does not exist "
+                    f"and neither does agents/{artifact_id}.md or commands/{artifact_id}.md",
+                )
+
+
+def check_workflow_development_activation_contract():
+    """The '/swe-workbench:<cmd>' tokens in workflow-development's description frontmatter
+    must match exactly the set of commands whose .md files reference
+    'swe-workbench:workflow-development'."""
+    skill_md = ROOT / "skills" / "workflow-development" / "SKILL.md"
+    if not skill_md.is_file():
+        fail(
+            skill_md.relative_to(ROOT),
+            "missing — cannot check workflow-development activation contract",
+        )
+        return
+    fm = parse_frontmatter(skill_md)
+    if fm is None or "description" not in fm:
+        fail(skill_md.relative_to(ROOT), "missing or malformed frontmatter")
+        return
+
+    commands_dir = ROOT / "commands"
+    declared_pattern = re.compile(r'/swe-workbench:([\w-]+)')
+    desc = fm["description"]
+    # Scope to the activation clause (before "when") to avoid matching prose examples
+    activation_clause = desc.split(" when ")[0]
+    raw_declared = set(declared_pattern.findall(activation_clause))
+    unknown_commands = sorted(t for t in raw_declared if not (commands_dir / f"{t}.md").is_file())
+    if unknown_commands:
+        fail(
+            skill_md.relative_to(ROOT),
+            f"workflow-development description lists unknown commands: {unknown_commands}",
+        )
+    # Exclude unknown tokens from set-equality to avoid double-reporting
+    declared = raw_declared - set(unknown_commands)
+
+    actual = set()
+    wf_pattern = re.compile(r'`swe-workbench:workflow-development`')
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        # commands are intentionally not cached in _build_cache; read directly
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(cmd_md.relative_to(ROOT), "could not read file")
+            continue
+        if wf_pattern.search(text):
+            actual.add(cmd_md.stem)
+
+    if declared != actual:
+        listed_not_activating = sorted(declared - actual)
+        activating_not_listed = sorted(actual - declared)
+        parts = []
+        if listed_not_activating:
+            parts.append(f"listed but do not activate: {listed_not_activating}")
+        if activating_not_listed:
+            parts.append(f"activate but are not listed: {activating_not_listed}")
+        fail(
+            skill_md.relative_to(ROOT),
+            "workflow-development activation contract mismatch — " + "; ".join(parts),
+        )
 
 
 TEMPLATE_MARKER_RE = re.compile(r'\[\[detect:([a-z][a-z0-9-]*)\]\]')
@@ -712,6 +824,89 @@ def check_no_cycles(cache=None):
             dfs(node)
 
 
+def check_plan_mode_workflow_embedding():
+    """Every command that activates workflow-development Mode A must instruct embedding the
+    ## Workflow section covering the ExitPlanMode path — otherwise the section is silently
+    dropped under built-in plan mode (#423).
+
+    Note: gate fires when all three signals appear anywhere in the document. A command that
+    mentions 'Mode A' only in a 'Skip Mode A if …' clause without activating it will produce
+    a false positive if ExitPlanMode is also absent. Today no such command exists; add the
+    clause if one is introduced.
+    """
+    commands_dir = ROOT / "commands"
+    if not commands_dir.is_dir():
+        fail(Path("commands"), "directory missing — cannot check plan-mode workflow embedding (#423)")
+        return
+    wf_ref = re.compile(r'`swe-workbench:workflow-development`')
+    mode_a = re.compile(r'\bMode A\b')
+    clause = "ExitPlanMode"
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(cmd_md.relative_to(ROOT), "could not read file")
+            continue
+        if wf_ref.search(text) and mode_a.search(text) and clause not in text:
+            fail(
+                cmd_md.relative_to(ROOT),
+                "activates workflow-development Mode A but does not mention ExitPlanMode in the "
+                "embedding instruction — under built-in plan mode the ## Workflow section is "
+                "silently dropped (#423). Add the robustness clause covering both authoring paths.",
+            )
+
+
+def check_browser_tool_gate(cache=None):
+    """Any agent or command referencing browser MCP tools must carry a BLOCKED: sentinel
+    and a per-backend install hint — enforces the hard gate from #364.
+
+    Signals that trigger the check: browser_snapshot, read_console_messages,
+    read_network_requests, mcp__*chrome*, @playwright/mcp.
+    Required when triggered: BLOCKED: string + a per-backend install hint,
+    either `claude mcp add <name> npx <package>@latest` (preferred) or the
+    legacy `npx <package>@latest` form.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    for subdir, use_cache in ((ROOT / "agents", True), (ROOT / "commands", False)):
+        if not subdir.is_dir():
+            continue
+        for md in sorted(subdir.glob("*.md")):
+            if use_cache and agents_cache is not None and md in agents_cache:
+                text = agents_cache[md]
+                if text is None:
+                    fail(md.relative_to(ROOT), "could not read file")
+                    continue
+            else:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                except OSError:
+                    fail(md.relative_to(ROOT), "could not read file")
+                    continue
+            if not _BROWSER_MCP_SIGNALS.search(text):
+                continue
+            # Claude-in-Chrome is in-harness (no installable package); if the file's
+            # only browser signal is claude-in-chrome references, waive the install-hint.
+            stripped = _CLAUDE_IN_CHROME_ONLY.sub("", text)
+            if not _BROWSER_MCP_SIGNALS.search(stripped):
+                continue
+            rel = md.relative_to(ROOT)
+            if "BLOCKED:" not in text:
+                fail(
+                    rel,
+                    "references browser MCP tools but missing BLOCKED: sentinel — "
+                    "add a hard-gate that returns BLOCKED: with a per-backend install hint "
+                    "(e.g. `claude mcp add playwright npx @playwright/mcp@latest`) "
+                    "when the required MCP server is absent (#364)",
+                )
+            elif not _BROWSER_INSTALL_HINTS.search(text):
+                fail(
+                    rel,
+                    "references browser MCP tools and has BLOCKED: but missing a per-backend install hint — "
+                    "add `claude mcp add playwright npx @playwright/mcp@latest` or "
+                    "`claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest` (#364)",
+                )
+
+
 # ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
@@ -731,6 +926,9 @@ def main():
     check_commands()
     check_agent_skill_refs(cache=cache)
     check_command_skill_refs()
+    check_skill_skill_refs(cache=cache)
+    check_workflow_development_activation_contract()
+    check_plan_mode_workflow_embedding()
     check_catalog_completeness(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
@@ -739,6 +937,7 @@ def main():
     check_hook_scripts()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
+    check_browser_tool_gate(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

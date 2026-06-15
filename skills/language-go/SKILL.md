@@ -1,6 +1,6 @@
 ---
 name: language-go
-description: Go idioms, error handling, concurrency, and standard library usage. Auto-load when working with .go files, go.mod, go.sum, or when the user mentions Go, Golang, goroutines, channels, interfaces, context, or error wrapping.
+description: Go idioms — error handling, concurrency, and standard library usage. Auto-load when working with .go files, go.mod, go.sum, or when the user mentions Go, Golang, goroutines, channels, interfaces, context, or error wrapping.
 ---
 
 # Go
@@ -42,7 +42,7 @@ if err := g.Wait(); err != nil { return err }
 - Never store `context.Context` in a struct field.
 - Don't use `context.Value` for required parameters — only cross-cutting concerns like request IDs.
 
-## Tests
+## Testing
 - Table-driven tests are the default.
 - `t.Run(name, ...)` for subtests.
 - `t.Cleanup` beats `defer` for shared fixtures.

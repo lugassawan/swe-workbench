@@ -1,6 +1,6 @@
 ---
 name: principle-resiliency
-description: Resiliency principles — fault tolerance, resilience, partial failure, blast radius, failure domains, bulkheads, resource isolation, graceful degradation, fail-fast vs fail-soft, health checks, liveness vs readiness probes, cascading failure, gray failure, fault isolation. Auto-load when designing for partial failure, isolating dependencies via bulkheads, planning graceful degradation, choosing fail-fast vs fail-soft, configuring health/readiness/liveness probes, evaluating cascading failure risk, designing fallback paths, or reviewing system-level fault tolerance.
+description: Resiliency principles — fault tolerance, resilience, partial failure, blast radius, failure domains, bulkheads, resource isolation, graceful degradation, fail-fast vs fail-soft, health checks, liveness vs readiness probes, cascading failure, gray failure, fault isolation, idempotency, idempotency keys, safe retry, deduplication, exactly-once, rate limiting, throttling, quotas, backpressure, token bucket, leaky bucket, jitter, thundering herd, synchronized retries, 429. Auto-load when designing for partial failure, isolating dependencies via bulkheads, planning graceful degradation, choosing fail-fast vs fail-soft, configuring health/readiness/liveness probes, evaluating cascading failure risk, designing fallback paths, reviewing system-level fault tolerance, making operations safely retryable with idempotency keys, implementing dedup stores, designing rate limiters or token buckets, handling 429 responses and backpressure, adding jitter to avoid thundering herd retry storms and synchronized retry spikes, or preventing double-execute with idempotency key dedup.
 ---
 
 # Resiliency
@@ -69,6 +69,33 @@ Cascading-check trap: if every instance polls every dependency on each health in
 
 For SLI/SLO framing of availability signals, see `principle-observability#SLI / SLO / Error Budget`.
 
+## Idempotency
+
+An operation is idempotent if executing it multiple times produces the same outcome as executing it once. Idempotency is the precondition for safe retry.
+
+- **Idempotency key** — a stable, client-generated ID that uniquely identifies a logical request. The server stores the key; on duplicate submission it returns the stored result instead of re-executing.
+- **Safe HTTP methods** — GET, PUT, and DELETE are idempotent by spec. POST is not; add an `Idempotency-Key` request header to make individual POST calls safely retryable.
+- **At-least-once vs exactly-once** — networks guarantee at-least-once delivery at best. Exactly-once semantics = at-least-once delivery + idempotent or dedup processing. There is no true exactly-once over an unreliable network without a dedup layer.
+- **Dedup store states** — track each key as `pending` (in-flight) or `completed` (result stored). A retry arriving while the original is still pending must wait or return a conflict — never execute a second time.
+- **Ordering trap** — reserve the idempotency key (insert `pending`) *before* executing the side effect, not after. Executing first leaves a window where a concurrent retry sees no record and proceeds, causing a double-execute.
+
+For the API contract perspective see `principle-api-design#Idempotency`. For distributed delivery semantics see `principle-distributed-systems#Idempotency Across the Network`.
+
+> See `examples/` for a worked idempotency-key dedup store — prevents double-charge on concurrent retries (read on demand — not auto-loaded).
+
+## Rate Limiting
+
+Rate limiting controls request volume to protect producers from overload and consumers from accidental burst.
+
+- **Token bucket** — bucket holds up to N tokens; each request consumes one; tokens refill at a steady rate. Allows short bursts up to bucket capacity, then enforces the steady-state rate.
+- **Leaky bucket** — requests enter a queue and drain at a fixed rate regardless of burst, producing constant-rate output at the cost of higher latency.
+- **Fixed/sliding window** — simpler to implement; fixed window has a boundary-burst caveat: a client can send up to 2× the limit across a window boundary. Sliding window tracks per-slot request counts and avoids this burst by weighting across the boundary — at the cost of more state per client.
+- **Quota headers** — servers should return `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`, and `Retry-After`. Clients must honor `Retry-After`; ignoring it escalates to a ban.
+- **Client-side backpressure** — use bounded queues that reject new work when full rather than growing unboundedly. A 429 means slow down now, not retry immediately.
+- **Jitter on retry** — when many clients hit a rate limit simultaneously, synchronized retries produce a thundering herd at the next interval. Add random jitter; see `principle-error-handling#Retries and Backoff`.
+
+> See `examples/` for a worked token-bucket rate limiter — enforces steady rate, allows controlled bursts, rejects with jitter (read on demand — not auto-loaded).
+
 ## When Resiliency Engineering is Overkill
 
 - Single-process tools with no network dependencies; crash-and-restart is the recovery.
@@ -87,3 +114,8 @@ For SLI/SLO framing of availability signals, see `principle-observability#SLI / 
 | No explicit degraded mode for non-critical paths | Fallback invented under incident pressure |
 | Fail-soft returning a misleading or stale result | User confusion or downstream data corruption |
 | No per-dependency resource isolation | Any slow caller can exhaust all threads or connections |
+| Idempotency key recorded after the side effect | Concurrent retry sees no record → executes the operation a second time |
+| Treating exactly-once as achievable without a dedup layer | At-least-once delivery + no dedup = duplicate side effects under retries |
+| Rate-limit retry without jitter | Synchronized retries → thundering herd; load spike repeats every retry interval |
+| Unbounded client queue under backpressure | Memory grows without limit; OOM instead of graceful rejection |
+| Ignoring `Retry-After` header | Client hammers server immediately; risks escalation from throttle to ban |

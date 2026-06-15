@@ -1,6 +1,6 @@
-"""Tests for scripts/clean-ephemeral.sh — self-validating ephemeral worktree removal.
+"""Tests for runtime/clean-ephemeral.sh — self-validating ephemeral worktree removal.
 
-Each test invokes scripts/clean-ephemeral.sh directly as a subprocess, mirroring
+Each test invokes runtime/clean-ephemeral.sh directly as a subprocess, mirroring
 the pattern used in test_hooks.py for bash_guard.sh.
 
 Exit code 0  + path removed   → allowed removal (registered ephemeral worktree)
@@ -21,7 +21,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "clean-ephemeral.sh"
+SCRIPT = Path(__file__).parent.parent / "runtime" / "clean-ephemeral.sh"
 REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -194,6 +194,6 @@ def test_refuses_submodule_style_git_file(tmp_path):
 # ──────────────────────────────────────────────────────
 
 def test_script_exists_and_is_executable():
-    """scripts/clean-ephemeral.sh must exist and be executable."""
+    """runtime/clean-ephemeral.sh must exist and be executable."""
     assert SCRIPT.exists(), f"missing {SCRIPT}"
     assert os.access(SCRIPT, os.X_OK), f"{SCRIPT} must be executable"
