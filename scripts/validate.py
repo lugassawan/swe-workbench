@@ -192,7 +192,7 @@ def _decode_frontmatter_scalar(value):
     return value
 
 
-def check_frontmatter_yaml_plain_scalars():
+def check_frontmatter_yaml_plain_scalars(cache=None):
     """Catch frontmatter issues that make installed resources fail in pi.
 
     The project validator intentionally avoids a YAML dependency, but pi parses
@@ -208,8 +208,22 @@ def check_frontmatter_yaml_plain_scalars():
         *ROOT.glob("pi-package/agent-skills/*/SKILL.md"),
         *ROOT.glob("pi-package/prompts/*.md"),
     ]
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
     for path in sorted(frontmatter_files):
-        text = path.read_text(encoding="utf-8")
+        if agents_cache is not None and path in agents_cache:
+            text = agents_cache[path]
+        elif skills_cache is not None and path in skills_cache:
+            text = skills_cache[path]
+        else:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                fail(path.relative_to(ROOT), "could not read file")
+                continue
+        if text is None:
+            fail(path.relative_to(ROOT), "could not read file")
+            continue
         if not text.startswith("---"):
             continue
         end = text.find("\n---\n", 3)
@@ -984,7 +998,7 @@ def main():
     plugin_data = check_plugin_json()
     check_marketplace_json(plugin_data)
     check_hooks_json()
-    check_frontmatter_yaml_plain_scalars()
+    check_frontmatter_yaml_plain_scalars(cache=cache)
     check_skills(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)

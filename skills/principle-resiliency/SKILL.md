@@ -1,6 +1,6 @@
 ---
 name: principle-resiliency
-description: "Resiliency principles — fault tolerance, partial failure, blast radius, failure domains, bulkheads, resource isolation, graceful degradation, fail-fast vs fail-soft, health checks, liveness/readiness probes, cascading and gray failures, idempotency keys, safe retries, deduplication, rate limiting, throttling, quotas, backpressure, jitter, thundering herd, and 429 handling. Auto-load when designing fallback paths, isolating dependencies, reviewing system-level fault tolerance, making operations safely retryable, implementing dedup stores, or designing rate limiters/token buckets."
+description: "Resiliency principles — service fail fast or degrade gracefully when cache is unavailable or upstream dependencies degrade; graceful degradation and fallback paths; liveness and readiness probes for Kubernetes deployments, startup warm cache behavior; fault tolerance, partial failure, blast radius, failure domains, bulkheads, resource pools, slow dependency isolation; cascading failure and gray failure; idempotency keys, safe retries, retryable POST, dedup store, exactly-once and double-charge prevention; rate limiting, throttling, quotas, backpressure, token bucket, leaky bucket; 429 responses, clients retry without jitter, synchronized load spikes, and thundering herd. Auto-load when choosing fail-fast vs fail-soft behavior, designing health/readiness/liveness probes, isolating dependencies, making retries safe, implementing dedup stores, adding rate limiters, or fixing jittered retry storms."
 ---
 
 # Resiliency
