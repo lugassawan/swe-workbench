@@ -2383,13 +2383,21 @@ class TestCheckWorkflowFullFidelityMandate:
         content = header + "\n\n````markdown\n## Workflow\n````\n"
         (tmpl_dir / "plan-workflow-section.md").write_text(content, encoding="utf-8")
 
+    def test_skill_md_file_absent_fails(self, reset_validate):
+        root = reset_validate
+        # Neither SKILL.md nor the template exists — the missing-file branch fires.
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("missing" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'missing' when SKILL.md does not exist"
+        )
+
     def test_skill_md_missing_in_full_and_verbatim_fails(self, reset_validate):
         root = reset_validate
         self._write_skill(root, "Substitute [[detect:KEY]] markers only.\n")
         self._write_template(root, "Copy this section — do not abridge.")
         validate.check_workflow_full_fidelity_mandate()
-        assert any("in full" in f or "verbatim" in f for f in validate.FAILURES), (
-            "Expected a failure naming 'in full' or 'verbatim' when Mode A mandate is absent"
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when Mode A mandate tokens are absent"
         )
 
     def test_skill_md_missing_verbatim_fails(self, reset_validate):

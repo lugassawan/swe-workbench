@@ -868,7 +868,7 @@ def check_workflow_full_fidelity_mandate():
     """
     skill_md = ROOT / "skills" / "workflow-development" / "SKILL.md"
     if not skill_md.is_file():
-        fail(Path("skills/workflow-development/SKILL.md"),
+        fail(skill_md.relative_to(ROOT),
              "missing — cannot check Mode A full-fidelity mandate (#455)")
         skill_text = None
     else:
@@ -880,22 +880,26 @@ def check_workflow_full_fidelity_mandate():
     if skill_text is not None:
         mode_a_marker = "## Plan-Time Behavior (Mode A)"
         idx = skill_text.find(mode_a_marker)
-        if idx >= 0:
-            next_h2 = skill_text.find("\n## ", idx + len(mode_a_marker))
-            section = skill_text[idx:next_h2] if next_h2 >= 0 else skill_text[idx:]
-        else:
-            section = ""
-        if "in full" not in section or "verbatim" not in section:
+        if idx < 0:
             fail(
                 skill_md.relative_to(ROOT),
-                "Mode A paragraph is missing the full-fidelity mandate — the section must "
-                "contain both 'in full' and 'verbatim' to prevent the orchestrator from "
-                "condensing the ## Workflow template (#455).",
+                "section '## Plan-Time Behavior (Mode A)' not found — "
+                "cannot locate Mode A full-fidelity mandate (#455).",
             )
+        else:
+            next_h2 = skill_text.find("\n## ", idx + len(mode_a_marker))
+            section = skill_text[idx:next_h2] if next_h2 >= 0 else skill_text[idx:]
+            if "in full" not in section or "verbatim" not in section:
+                fail(
+                    skill_md.relative_to(ROOT),
+                    "Mode A paragraph is missing the full-fidelity mandate — the section must "
+                    "contain both 'in full' and 'verbatim' to prevent the orchestrator from "
+                    "condensing the ## Workflow template (#455).",
+                )
 
     template_md = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
     if not template_md.is_file():
-        fail(Path("skills/workflow-development/templates/plan-workflow-section.md"),
+        fail(template_md.relative_to(ROOT),
              "missing — cannot check template full-fidelity header (#455)")
         tmpl_text = None
     else:
