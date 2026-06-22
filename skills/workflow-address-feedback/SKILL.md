@@ -1,6 +1,6 @@
 ---
 name: workflow-address-feedback
-description: Use when a PR owner wants to address review feedback — fetches outstanding threads, presents a per-thread triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes via the Edit tool, commits via workflow-commit-and-pr, posts per-thread replies via the GitHub comments API, and resolves addressed threads via GraphQL resolveReviewThread.
+description: Use when a PR owner wants to address review feedback — fetches outstanding threads, presents a per-thread triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes via the Edit tool, commits via workflow-commit-and-pr, posts per-thread replies via the GitHub comments API, resolves addressed threads via GraphQL resolveReviewThread, and syncs stale PR metadata when drift is detected.
 orchestrator: true
 ---
 
@@ -26,7 +26,7 @@ This skill orchestrates:
 - `swe-workbench:ticket-context` — prepended context when PR references a ticket.
 - `swe-workbench:workflow-commit-and-pr` — invoked after all ADDRESSED fixes are applied to commit and push.
 
-## 5-phase flow
+## Phase flow
 
 ### Phase 1 — Pre-flight + fetch
 
@@ -131,7 +131,7 @@ git fetch origin "${PR_BRANCH}"
 git worktree add "$WT" "${PR_BRANCH}"
 ```
 
-This worktree is **disposable** — fixes are committed and pushed to the PR branch in Phase 4, so the work lives on the remote, not the worktree. Phase 6 removes it on every exit (success, Q-quit, or error). If removal fails, a fallback is attempted; see Phase 6 for details. If the skill exits with an unrecoverable error at any point after this phase, run Phase 6 before stopping.
+This worktree is **disposable** — fixes are committed and pushed to the PR branch in Phase 4, so the work lives on the remote, not the worktree. Phase 7 removes it on every exit (success, Q-quit, or error). If removal fails, a fallback is attempted; see Phase 7 for details. If the skill exits with an unrecoverable error at any point after this phase, run Phase 7 before stopping.
 
 ### Phase 3 — Triage digest
 
@@ -147,7 +147,7 @@ If no threads remain after filtering:
 - When N ≥ 1 (threads were skipped under rule 2): print "No new threads to triage — N already clarified."
 - When N = 0 (only resolved threads filtered): print "No new threads to triage."
 
-Then run **Phase 6 — Cleanup** and exit cleanly.
+Then run **Phase 7 — Cleanup** and exit cleanly.
 
 For each remaining thread:
 
@@ -167,7 +167,7 @@ Parse severity from `Severity: <level>` prefix in comment body if present; other
 
 Capture: `triage[<thread_id>] = A|C|D`.
 
-If the owner replies `Q`, save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, then run **Phase 6 — Cleanup**, and exit. Re-invocation resumes from this file (Phase 2 re-creates the worktree).
+If the owner replies `Q`, save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, then run **Phase 7 — Cleanup**, and exit. Re-invocation resumes from this file (Phase 2 re-creates the worktree).
 
 ### Phase 4 — Implement + commit
 
@@ -218,9 +218,32 @@ for f in "/tmp/swe-workbench-address-feedback/${PR}.json" \
 done
 ```
 
-Then run **Phase 6 — Cleanup**.
+Then run **Phase 6 — Sync PR metadata**.
 
-### Phase 6 — Cleanup (always)
+### Phase 6 — Sync PR metadata (when fixes were committed)
+
+Skip this phase entirely if `$FIX_SHA` is unset (no fixes were committed in Phase 4).
+
+Fetch: `gh pr view "$PR" --json title,body`; commit subjects via `git -C "$WT" log "$BASE"..HEAD --format='%s'`; diff stat via `git -C "$WT" diff "$BASE"..HEAD --stat`. No new state file — the reap already ran in Phase 5.
+
+**Judge drift** by comparing the live title and `## Summary` section of the PR body against the commit subjects and diff stat. If aligned, emit "PR metadata is up to date — no changes needed." and fall through to Phase 7 — Cleanup.
+
+**If drift is detected,** draft a revised `$NEW_TITLE` and `$NEW_SUMMARY`. Rewrite only the `## Summary` section of the body; preserve `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other collaborator sections. Preview old→new for title and summary, then:
+
+> Reply `yes` to apply these changes to PR #N.
+
+On `yes`:
+
+```bash
+NEW_BODY_FILE=$(mktemp)
+trap 'rm -f "$NEW_BODY_FILE"' EXIT
+printf '%s' "$NEW_BODY" > "$NEW_BODY_FILE"
+bash "$_RT/runtime/sync-pr-metadata.sh" "$PR" "$NEW_TITLE" "$NEW_BODY_FILE"
+```
+
+Then run **Phase 7 — Cleanup**.
+
+### Phase 7 — Cleanup (always)
 
 Run on every exit that occurs after a worktree was **created** in Phase 2 (success, Q-quit, or error). Skip on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove.
 
@@ -249,7 +272,7 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 | PR not found | `gh pr view` fails | Abort. |
 | `CURRENT_USER != AUTHOR_LOGIN` | JSON mismatch | Warn + ask to continue. |
 | No outstanding threads | GraphQL returns 0 unresolved | Print "No open threads — nothing to address." Exit. |
-| Owner picks Q mid-triage | Loop exit | Save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, run Phase 6 cleanup, then exit. |
+| Owner picks Q mid-triage | Loop exit | Save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, run Phase 7 cleanup, then exit. |
 | Worktree removal fails (rimba absent or busy) | `rimba remove` non-zero | Attempt `git worktree remove --force` fallback; log warning; do not block. |
 | Reply REST fails (404 — comment deleted) | HTTP 404 | Skip that thread, log "skipped (comment deleted)". |
 | Resolve mutation fails | GraphQL error | Reply already posted — log "reply posted but resolve failed". Continue. Do not roll back the reply. |
@@ -260,8 +283,8 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 |---|---|
 | Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
 | Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
-| Leave the worktree behind after skill exits | Phase 6 always removes it — skip Phase 6 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
-| Deleting `$PR_BRANCH` directly in Phase 6 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
+| Leave the worktree behind after skill exits | Phase 7 always removes it — skip Phase 7 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
+| Deleting `$PR_BRANCH` directly in Phase 7 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Resolve a CLARIFIED thread | Only resolve ADDRESSED threads. CLARIFIED = reply only, no resolve. |
 | Try to resolve via REST | Thread resolution is GraphQL-only (`resolveReviewThread` mutation). REST has no equivalent endpoint. |
