@@ -2413,8 +2413,8 @@ class TestCheckWorkflowFullFidelityMandate:
         self._write_skill(root, "Reproduce the template in full — substitute [[detect:KEY]] markers.\n")
         self._write_template(root, "Copy this section — do not abridge.")
         validate.check_workflow_full_fidelity_mandate()
-        assert any("verbatim" in f for f in validate.FAILURES), (
-            "Expected a failure naming 'verbatim' when that token is missing from Mode A"
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when 'verbatim' token is absent"
         )
 
     def test_skill_md_missing_in_full_fails(self, reset_validate):
@@ -2442,6 +2442,5 @@ class TestCheckWorkflowFullFidelityMandate:
         import validate as val
         real_root = Path(__file__).parent.parent
         monkeypatch.setattr(val, "ROOT", real_root)
-        val.FAILURES.clear()
         val.check_workflow_full_fidelity_mandate()
         assert val.FAILURES == [], f"validate.py failures on real repo: {val.FAILURES}"

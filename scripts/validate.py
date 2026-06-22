@@ -889,6 +889,7 @@ def check_workflow_full_fidelity_mandate():
         else:
             next_h2 = skill_text.find("\n## ", idx + len(mode_a_marker))
             section = skill_text[idx:next_h2] if next_h2 >= 0 else skill_text[idx:]
+            # Fail if either token is absent — both are required.
             if "in full" not in section or "verbatim" not in section:
                 fail(
                     skill_md.relative_to(ROOT),
