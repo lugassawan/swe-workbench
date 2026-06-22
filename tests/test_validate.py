@@ -2358,3 +2358,89 @@ class TestE2eTestVerifierAgent:
         val.check_agents(cache=cache)
         val.check_agent_skill_refs(cache=cache)
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_workflow_full_fidelity_mandate
+# ──────────────────────────────────────────────
+
+class TestCheckWorkflowFullFidelityMandate:
+    """Guards the Mode A full-fidelity mandate in SKILL.md and the template header (#455)."""
+
+    def _write_skill(self, root, mode_a_body):
+        skill_dir = root / "skills" / "workflow-development"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        content = (
+            "## Plan-Time Behavior (Mode A)\n"
+            + mode_a_body
+            + "\n## Implementation-Time Behavior (Mode B)\n"
+        )
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+    def _write_template(self, root, header):
+        tmpl_dir = root / "skills" / "workflow-development" / "templates"
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+        content = header + "\n\n````markdown\n## Workflow\n````\n"
+        (tmpl_dir / "plan-workflow-section.md").write_text(content, encoding="utf-8")
+
+    def test_both_files_correct_passes(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert validate.FAILURES == [], f"Expected no failures but got: {validate.FAILURES}"
+
+    def test_skill_md_file_absent_fails(self, reset_validate):
+        root = reset_validate
+        # Neither SKILL.md nor the template exists — the missing-file branch fires.
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("missing" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'missing' when SKILL.md does not exist"
+        )
+
+    def test_skill_md_missing_in_full_and_verbatim_fails(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Substitute [[detect:KEY]] markers only.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when Mode A mandate tokens are absent"
+        )
+
+    def test_skill_md_missing_verbatim_fails(self, reset_validate):
+        root = reset_validate
+        # Has "in full" but NOT "verbatim"
+        self._write_skill(root, "Reproduce the template in full — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when 'verbatim' token is absent"
+        )
+
+    def test_skill_md_missing_in_full_fails(self, reset_validate):
+        root = reset_validate
+        # Has "verbatim" but NOT "in full" — mirrors test_skill_md_missing_verbatim_fails
+        # to guard both halves of the `or` in the guard condition independently.
+        self._write_skill(root, "Reproduce verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure when 'in full' is absent from Mode A paragraph"
+        )
+
+    def test_template_missing_no_abridge_fails(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section into your plan.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("do not abridge" in f for f in validate.FAILURES), (
+            "Expected a failure naming 'do not abridge' when that phrase is missing from template header"
+        )
+
+    def test_real_repo_passes(self, reset_validate, monkeypatch):
+        """After applying changes #1 and #2, the real files must pass cleanly."""
+        import validate as val
+        real_root = Path(__file__).parent.parent
+        monkeypatch.setattr(val, "ROOT", real_root)
+        val.check_workflow_full_fidelity_mandate()
+        assert val.FAILURES == [], f"validate.py failures on real repo: {val.FAILURES}"
