@@ -238,7 +238,8 @@ On `yes`:
 NEW_BODY_FILE=$(mktemp)
 trap 'rm -f "$NEW_BODY_FILE"' EXIT
 printf '%s' "$NEW_BODY" > "$NEW_BODY_FILE"
-bash "$_RT/runtime/sync-pr-metadata.sh" "$PR" "$NEW_TITLE" "$NEW_BODY_FILE"
+bash "$_RT/runtime/sync-pr-metadata.sh" "$PR" "$NEW_TITLE" "$NEW_BODY_FILE" \
+  || echo "Warning: PR metadata update failed — continuing to cleanup." >&2
 ```
 
 Then run **Phase 7 — Cleanup**.

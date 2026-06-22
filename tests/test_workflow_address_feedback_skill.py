@@ -205,34 +205,34 @@ def test_address_feedback_skill_phase6_preserves_trailer():
 # --- Cleanup (Phase 7) tests — AC#1, AC#2, AC#3 from issue #291 ---
 
 def test_address_feedback_skill_cleans_up_worktree():
-    """Phase 6 must include rimba remove "address-feedback-$PR" --force (AC#1)."""
+    """Phase 7 must include rimba remove "address-feedback-$PR" --force (AC#1)."""
     text = SKILL_MD.read_text()
     assert re.search(r'rimba remove ["\']?address-feedback-\$PR["\']? --force', text), (
-        'SKILL.md Phase 6 must include: rimba remove "address-feedback-$PR" --force — '
+        'SKILL.md Phase 7 must include: rimba remove "address-feedback-$PR" --force — '
         "the worktree is disposable; fixes are on the remote branch after Phase 4"
     )
 
 
 def test_address_feedback_skill_cleanup_failure_tolerant():
-    """Phase 6 cleanup must include a git-worktree fallback and must not block on failure (AC#2)."""
+    """Phase 7 cleanup must include a git-worktree fallback and must not block on failure (AC#2)."""
     text = SKILL_MD.read_text()
     assert "git worktree remove" in text, (
-        "SKILL.md Phase 6 must include a 'git worktree remove' fallback for when rimba is absent"
+        "SKILL.md Phase 7 must include a 'git worktree remove' fallback for when rimba is absent"
     )
     assert re.search(
         r"warn|do not block|never block|not block|continue|non.blocking|emit.*notice",
         text, re.IGNORECASE
     ), (
-        "SKILL.md Phase 6 must state that cleanup failure is non-blocking (warn, do not block, continue)"
+        "SKILL.md Phase 7 must state that cleanup failure is non-blocking (warn, do not block, continue)"
     )
 
 
 def test_address_feedback_skill_cleanup_preserves_pr_branch():
-    """Phase 6 fallback must NEVER contain git branch -D \"$PR_BRANCH\" — that deletes the real PR head branch."""
+    """Phase 7 fallback must NEVER contain git branch -D \"$PR_BRANCH\" — that deletes the real PR head branch."""
     text = SKILL_MD.read_text()
     assert not re.search(r'branch\s+-D\s+["\']?\$PR_BRANCH', text), (
         'SKILL.md must NOT contain: git branch -D "$PR_BRANCH" — '
-        "the git-worktree fallback in Phase 6 only removes the worktree dir; "
+        "the git-worktree fallback in Phase 7 only removes the worktree dir; "
         "deleting $PR_BRANCH would destroy the owner's actual PR head branch"
     )
 
@@ -242,7 +242,7 @@ def test_address_feedback_skill_drops_durable_no_cleanup_claim():
     text = SKILL_MD.read_text()
     assert "no auto-cleanup" not in text, (
         "SKILL.md must not claim 'no auto-cleanup' — issue #291 reversed this stance; "
-        "Phase 6 always removes the worktree on exit"
+        "Phase 7 always removes the worktree on exit"
     )
 
 
