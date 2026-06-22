@@ -30,7 +30,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Checkout the branch tip (not a detached SHA) so git push is a fast-forward.
           # github.head_ref is safe here: action inputs are not shell-evaluated by the runner.
