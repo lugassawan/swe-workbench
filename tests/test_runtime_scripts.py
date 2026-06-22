@@ -16,6 +16,7 @@ RUNTIME_SCRIPTS = [
     "fetch-pr.sh",
     "preflight-pr.sh",
     "reply-and-resolve.sh",
+    "sync-pr-metadata.sh",
 ]
 
 
