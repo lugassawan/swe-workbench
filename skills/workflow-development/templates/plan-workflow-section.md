@@ -1,6 +1,6 @@
 # Plan Workflow Section Template
 
-Copy this `## Workflow` section into your plan and substitute `[[detect:KEY]]` markers with actual values from Project Detection.
+Copy this `## Workflow` section into your plan **in full — do not abridge, summarize, or collapse steps.** Substitute `[[detect:KEY]]` markers with actual values from Project Detection; that substitution is the only permitted edit.
 
 ---
 

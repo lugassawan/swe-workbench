@@ -6,6 +6,8 @@ Tests assert that:
    cd-prefix anti-pattern).
 2. The template includes a re-anchor/resume note so a continued session knows
    to call EnterWorktree before running commands.
+3. The template header carries a 'do not abridge' instruction so the mandate
+   travels with the template itself (#455).
 """
 
 from pathlib import Path
@@ -110,4 +112,23 @@ class TestReanchorNote:
         assert any(p in text for p in signal_phrases), (
             "Template must state that catching yourself cd-prefixing is the signal "
             "to stop and call EnterWorktree(path=…)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Full-fidelity header mandate (#455)
+# ---------------------------------------------------------------------------
+
+class TestFullFidelityHeader:
+    """Template header must instruct the orchestrator not to abridge."""
+
+    def test_header_no_abridge_phrase(self):
+        """Header region must carry 'do not abridge' before the fenced markdown block."""
+        text = _text()
+        # Slice header: everything before the first ```markdown fence
+        fence_idx = text.find("````markdown")
+        header = text[:fence_idx] if fence_idx >= 0 else text
+        assert "do not abridge" in header, (
+            "Template header must carry 'do not abridge' so the no-summarize "
+            "instruction travels with the template itself (#455)."
         )

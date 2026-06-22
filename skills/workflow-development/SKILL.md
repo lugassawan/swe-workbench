@@ -236,6 +236,8 @@ Two existing skills provide deeper verification when warranted — invoke ad hoc
 
 When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute every `[[detect:KEY]]` marker with concrete values from Project Detection. **Before saving, grep your rendered draft for `[[detect:` — if any match remains, you skipped Project Detection; redo it.**
 
+Reproduce the template's `## Workflow` body **in full and verbatim** — copy every phase and line. The **only** permitted edit is substituting `[[detect:KEY]]` markers with concrete values; do **not** summarize, paraphrase, abridge, or collapse steps.
+
 ## Implementation-Time Behavior (Mode B)
 
 1. **Announce transitions**: `Phase N complete — <summary>. Moving to Phase N+1: <name>.`
@@ -265,6 +267,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | Plan that introduces file edits without Workflow section | Always add the Workflow section (Mode A) — skip only for pure design / analysis output |
 | Jump straight to coding | Always start at Phase 1 |
 | Ignore PR template, use generic format | Check for PR template first; fill every section |
+| Render a summarized / short Workflow section | Copy the template body verbatim — substitute only `[[detect:]]` markers (Mode A) |
 
 ### Red Flags — Never
 
@@ -284,3 +287,4 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | "Phase 2 sub-skill did everything" | Verify it provided evidence for Phases 3-4 |
 | "This is a small fix, no need for the full lifecycle" | Small fixes still need verify + review |
 | "The plan doesn't need a Workflow section" | If the plan introduces file edits, it does. Add one (Mode A). Skip only for pure design / analysis output. |
+| "The plan only needs the gist of the Workflow steps" | Reproduce the template in full — a summary drops the exact guidance that prevents mistakes. |

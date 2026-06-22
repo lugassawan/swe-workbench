@@ -856,6 +856,65 @@ def check_plan_mode_workflow_embedding():
             )
 
 
+def check_workflow_full_fidelity_mandate():
+    """SKILL.md Mode A must mandate verbatim reproduction of the Workflow template, and
+    the template header must carry 'do not abridge' — locks fix for #455.
+
+    Two invariants checked:
+    1. The '## Plan-Time Behavior (Mode A)' section of workflow-development/SKILL.md
+       must contain both 'in full' and 'verbatim' (the explicit no-summarize mandate).
+    2. The header of templates/plan-workflow-section.md (before the first ```markdown
+       fence) must contain 'do not abridge' (the instruction travels with the template).
+    """
+    skill_md = ROOT / "skills" / "workflow-development" / "SKILL.md"
+    if not skill_md.is_file():
+        fail(Path("skills/workflow-development/SKILL.md"),
+             "missing — cannot check Mode A full-fidelity mandate (#455)")
+        skill_text = None
+    else:
+        try:
+            skill_text = skill_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(skill_md.relative_to(ROOT), "could not read file")
+            skill_text = None
+    if skill_text is not None:
+        mode_a_marker = "## Plan-Time Behavior (Mode A)"
+        idx = skill_text.find(mode_a_marker)
+        if idx >= 0:
+            next_h2 = skill_text.find("\n## ", idx + len(mode_a_marker))
+            section = skill_text[idx:next_h2] if next_h2 >= 0 else skill_text[idx:]
+        else:
+            section = ""
+        if "in full" not in section or "verbatim" not in section:
+            fail(
+                skill_md.relative_to(ROOT),
+                "Mode A paragraph is missing the full-fidelity mandate — the section must "
+                "contain both 'in full' and 'verbatim' to prevent the orchestrator from "
+                "condensing the ## Workflow template (#455).",
+            )
+
+    template_md = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
+    if not template_md.is_file():
+        fail(Path("skills/workflow-development/templates/plan-workflow-section.md"),
+             "missing — cannot check template full-fidelity header (#455)")
+        tmpl_text = None
+    else:
+        try:
+            tmpl_text = template_md.read_text(encoding="utf-8")
+        except OSError:
+            fail(template_md.relative_to(ROOT), "could not read file")
+            tmpl_text = None
+    if tmpl_text is not None:
+        fence_idx = tmpl_text.find("````markdown")
+        header = tmpl_text[:fence_idx] if fence_idx >= 0 else tmpl_text
+        if "do not abridge" not in header:
+            fail(
+                template_md.relative_to(ROOT),
+                "template header is missing 'do not abridge' — the no-summarize instruction "
+                "must travel with the template so the mandate is visible at the point of use (#455).",
+            )
+
+
 def check_browser_tool_gate(cache=None):
     """Any agent or command referencing browser MCP tools must carry a BLOCKED: sentinel
     and a per-backend install hint — enforces the hard gate from #364.
@@ -929,6 +988,7 @@ def main():
     check_skill_skill_refs(cache=cache)
     check_workflow_development_activation_contract()
     check_plan_mode_workflow_embedding()
+    check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
