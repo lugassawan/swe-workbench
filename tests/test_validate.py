@@ -2410,6 +2410,17 @@ class TestCheckWorkflowFullFidelityMandate:
             "Expected a failure naming 'verbatim' when that token is missing from Mode A"
         )
 
+    def test_skill_md_missing_in_full_fails(self, reset_validate):
+        root = reset_validate
+        # Has "verbatim" but NOT "in full" — mirrors test_skill_md_missing_verbatim_fails
+        # to guard both halves of the `or` in the guard condition independently.
+        self._write_skill(root, "Reproduce verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure when 'in full' is absent from Mode A paragraph"
+        )
+
     def test_template_missing_no_abridge_fails(self, reset_validate):
         root = reset_validate
         self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
