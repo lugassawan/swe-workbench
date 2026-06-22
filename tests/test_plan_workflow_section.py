@@ -125,7 +125,7 @@ class TestFullFidelityHeader:
     def test_header_no_abridge_phrase(self):
         """Header region must carry 'do not abridge' before the fenced markdown block."""
         text = _text()
-        # Slice header: everything before the first ```markdown fence
+        # Slice header: everything before the first ````markdown fence
         fence_idx = text.find("````markdown")
         header = text[:fence_idx] if fence_idx >= 0 else text
         assert "do not abridge" in header, (

@@ -2383,6 +2383,13 @@ class TestCheckWorkflowFullFidelityMandate:
         content = header + "\n\n````markdown\n## Workflow\n````\n"
         (tmpl_dir / "plan-workflow-section.md").write_text(content, encoding="utf-8")
 
+    def test_both_files_correct_passes(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert validate.FAILURES == [], f"Expected no failures but got: {validate.FAILURES}"
+
     def test_skill_md_file_absent_fails(self, reset_validate):
         root = reset_validate
         # Neither SKILL.md nor the template exists — the missing-file branch fires.

@@ -863,7 +863,7 @@ def check_workflow_full_fidelity_mandate():
     Two invariants checked:
     1. The '## Plan-Time Behavior (Mode A)' section of workflow-development/SKILL.md
        must contain both 'in full' and 'verbatim' (the explicit no-summarize mandate).
-    2. The header of templates/plan-workflow-section.md (before the first ```markdown
+    2. The header of templates/plan-workflow-section.md (before the first ````markdown
        fence) must contain 'do not abridge' (the instruction travels with the template).
     """
     skill_md = ROOT / "skills" / "workflow-development" / "SKILL.md"
