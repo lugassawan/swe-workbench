@@ -56,6 +56,42 @@ def test_every_job_has_timeout_minutes(filename):
     )
 
 
+# Matches any uses: line and captures the action ref (stops at whitespace, so a trailing
+# "# v7.0.0" comment is excluded). Handles both "- uses:" and bare "uses:" step forms.
+# Limitation: scans full file text, so a "uses:" string inside a run: heredoc block would
+# also be captured. The "/" not in ref guard below rejects bare words that lack owner/repo
+# structure, covering the common case. No current workflow triggers this path.
+USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)", re.MULTILINE)
+
+# A published-action ref pinned to a full 40-hex commit SHA, e.g. "owner/repo@<40hex>"
+# (path segments allowed for reusable workflows: "owner/repo/.github/workflows/x.yml@<sha>").
+# re.IGNORECASE: git always emits lowercase SHAs, but guards against hand-edited uppercase refs.
+SHA_PIN_RE = re.compile(r"@[0-9a-f]{40}$", re.IGNORECASE)
+
+
+@pytest.mark.parametrize("filename", WORKFLOW_FILES)
+def test_every_uses_is_sha_pinned(filename):
+    text = (ROOT / ".github" / "workflows" / filename).read_text()
+
+    unpinned = []
+    for match in USES_RE.finditer(text):
+        ref = match.group(1)
+        # Local composite actions (./path) and docker refs have no git ref to pin — skip.
+        if ref.startswith("./") or ref.startswith("docker://"):
+            continue
+        # Skip values without "/" — real action refs are "owner/repo@..."; bare words can
+        # appear inside run: heredoc blocks that happen to contain a "uses:" line.
+        if "/" not in ref:
+            continue
+        # .search() + end-anchor ($) is semantically equivalent to fullmatch for this ref string.
+        if not SHA_PIN_RE.search(ref):
+            unpinned.append(ref)
+
+    assert not unpinned, (
+        f"{filename}: action(s) not pinned to a 40-hex commit SHA: {unpinned}"
+    )
+
+
 def test_pr_yml_has_concurrency_guard():
     text = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
 
