@@ -94,7 +94,7 @@ button.onTap = { [weak self] in
 - Pin dependencies via `Package.resolved` in version control for reproducible builds.
 
 ## Tooling
-- **Format:** `swiftformat .` / `swift-format format -i -r .`
+- **Format:** `swiftformat .` (nicklockwood/SwiftFormat) **or** `swift-format format -i -r .` (Apple — incompatible config; pick one per project)
 - **Lint:** `swiftlint lint`
 - **Test:** `swift test` (see Testing below)
 
