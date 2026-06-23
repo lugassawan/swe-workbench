@@ -46,6 +46,7 @@ jobs:
         run: bash scripts/lock-pip-requirements.sh
 
       - name: Guard against new top-level packages
+        # Keep this lockfile list in sync with the "Regenerate pip lockfiles" step above.
         run: bash scripts/check-lockfile-additions.sh tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
 
       - name: Commit and push updated lockfiles if changed

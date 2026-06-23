@@ -42,7 +42,8 @@ failed=0
 
 for lock in "$@"; do
   # Base set: HEAD content (pre-regen, pre-commit).
-  # Empty if the lockfile is new (git cat-file -e exits non-zero).
+  # When the lockfile is new (absent from HEAD), every package is treated as an
+  # addition — this is intentional; a new lockfile always requires human review.
   if git cat-file -e "HEAD:${lock}" 2>/dev/null; then
     base=$(git show "HEAD:${lock}" | extract_top_level)
   else
