@@ -271,8 +271,8 @@ def check_agent_skill_refs(cache=None):
             if not _artifact_exists(artifact_id):
                 fail(
                     agent_md.relative_to(ROOT),
-                    f"references 'swe-workbench:{artifact_id}' but skills/{artifact_id}/ does not exist "
-                    f"(also checked agents/{artifact_id}.md and commands/{artifact_id}.md)",
+                    f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
+                    f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
                 )
 
 
@@ -287,8 +287,8 @@ def check_command_skill_refs():
             if not _artifact_exists(artifact_id):
                 fail(
                     cmd_md.relative_to(ROOT),
-                    f"references 'swe-workbench:{artifact_id}' but skills/{artifact_id}/ does not exist "
-                    f"(also checked agents/{artifact_id}.md and commands/{artifact_id}.md)",
+                    f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
+                    f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
                 )
 
 

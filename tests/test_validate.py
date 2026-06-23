@@ -662,7 +662,27 @@ class TestCheckAgentSkillRefs:
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
-        assert any("does not exist" in f for f in validate.FAILURES)
+        assert any("no matching artifact found" in f for f in validate.FAILURES)
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """An agent referencing another agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "bar.md").write_text(
+            "---\nname: bar\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
+            "\nUse `swe-workbench:bar` subagent.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agent_skill_refs()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -691,7 +711,7 @@ class TestCheckCommandSkillRefs:
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
-        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+        assert any("nonexistent" in f and "no matching artifact found" in f for f in validate.FAILURES)
 
     def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
         root = reset_validate
@@ -705,7 +725,7 @@ class TestCheckCommandSkillRefs:
         )
         validate.check_command_skill_refs()
         assert len(validate.FAILURES) == 1
-        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "fooo" in validate.FAILURES[0] and "no matching artifact found" in validate.FAILURES[0]
         assert "swe-workbench:foo'" not in validate.FAILURES[0]
 
     def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
@@ -713,6 +733,22 @@ class TestCheckCommandSkillRefs:
         make_plugin_tree(root)
         (root / "commands" / "my-cmd.md").write_text(
             "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """A command referencing an agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "reviewer.md").write_text(
+            "---\nname: reviewer\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nDispatch `swe-workbench:reviewer` subagent.\n",
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
