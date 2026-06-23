@@ -102,3 +102,29 @@ class TestForbiddenPatternRemedy:
             "Forbidden-pattern section must mention the ExitWorktree lock contract "
             "so the reader understands the consequence of the cd-prefix pattern."
         )
+
+
+# ---------------------------------------------------------------------------
+# Switch-between-worktrees remedy
+# ---------------------------------------------------------------------------
+
+class TestSwitchBetweenWorktreesRemedy:
+    """Switching from worktree A to B must prescribe ExitWorktree(keep)+retry,
+    not a bare cd, when EnterWorktree is rejected because the session is already
+    inside a different worktree."""
+
+    def test_exit_then_retry_is_primary_remedy(self):
+        text = _text()
+        assert "ExitWorktree(action=keep)" in text or 'ExitWorktree(action: "keep")' in text
+
+    def test_retry_enter_worktree_after_exit(self):
+        text = _text()
+        # scope assertion to the switch remedy paragraph, not the entire file
+        switch_section = text[text.find("different worktree"):text.find("Do not auto-exit")]
+        assert "retry" in switch_section.lower() and "EnterWorktree" in switch_section
+
+    def test_cd_demoted_to_last_resort(self):
+        assert "last resort" in _text().lower()
+
+    def test_already_inside_different_worktree_named(self):
+        assert "different worktree" in _text().lower()
