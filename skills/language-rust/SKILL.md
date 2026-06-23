@@ -64,8 +64,8 @@ let total: u32 = orders.iter()
 - Reserve `unwrap`/`expect` for truly unreachable cases; always prefer `expect("why")` over `unwrap` in production.
 
 ## Tooling
-- **Imports:** `cargo fix --allow-dirty` (removes unused imports; review diff before staging)
-- **Format:** `cargo fmt` (`cargo fmt --check` in CI)
+- **Unused imports:** `cargo fix --allow-dirty` (applies all auto-fixable Cargo lints — review the full diff before staging; not suitable as an unattended CI step)
+- **Format:** `cargo fmt` (set `imports_granularity` in `rustfmt.toml` for import grouping; `cargo fmt --check` in CI)
 - **Lint:** `cargo clippy -- -D warnings`
 - **Test:** `cargo test` (see Testing below)
 

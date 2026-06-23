@@ -104,7 +104,7 @@ fi
 
 ## Tooling
 - **Format:** `shfmt -w .`
-- **Lint:** `shellcheck **/*.sh` (or `shellcheck $(git ls-files '*.sh')`)
+- **Lint:** `shellcheck $(git ls-files '*.sh')` (or `shellcheck **/*.sh` with `shopt -s globstar` on bash 4+)
 - **Test:** `bats` (see Testing below)
 
 ## Testing

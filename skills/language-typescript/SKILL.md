@@ -97,7 +97,7 @@ TypeScript types are shapes, not identities. Two unrelated types with the same f
 - `useEffect` only for synchronizing with external systems. Derived state belongs in render.
 
 ## Tooling
-- **Imports:** `eslint --fix` / `organize-imports-cli`
+- **Imports:** `organize-imports-cli` (reliable regardless of ESLint config); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` is configured
 - **Format:** `prettier --write .`
 - **Lint:** `eslint .` + `tsc --noEmit`
 - **Test:** `vitest` / `jest` (see Testing below)

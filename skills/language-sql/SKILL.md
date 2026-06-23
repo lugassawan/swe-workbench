@@ -70,7 +70,7 @@ LIMIT 50;
 ```
 
 ## Tooling
-- **Format:** `sqlfluff fix --dialect <dialect> .`
+- **Format:** `sqlfluff fix --dialect <dialect> .` (replace `<dialect>` with e.g. `ansi`, `postgres`, `bigquery` — check `.sqlfluff` config or project README)
 - **Lint:** `sqlfluff lint --dialect <dialect> .`
 - **Test:** engine-specific (pgTAP for PostgreSQL, `dbt test` if using dbt)
 
