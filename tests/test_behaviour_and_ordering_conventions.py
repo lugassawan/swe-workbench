@@ -53,7 +53,7 @@ def test_ddd_skill_file_exists():
 def test_ddd_skill_names_tell_dont_ask():
     """Entity subsection must explicitly use the tell-don't-ask idiom."""
     body = DDD_SKILL.read_text()
-    assert re.search(r"tell[,\-]?\s*don\W?t\s*ask", body, re.IGNORECASE), (
+    assert re.search(r"tell\W?\s*don\W?t\W?\s*ask", body, re.IGNORECASE), (
         "skills/principle-ddd/SKILL.md must mention the 'tell, don't ask' principle "
         "so reviewers and implementers can surface the anti-pattern"
     )
