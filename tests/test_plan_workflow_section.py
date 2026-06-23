@@ -143,7 +143,12 @@ class TestSwitchRemedyInTemplate:
     and demote cd to a last resort."""
 
     def test_exit_worktree_retry_remedy_present(self):
-        assert "ExitWorktree" in _text()
+        text = _text()
+        # scope to the Enter-worktree bullet only, not the whole template
+        enter_bullet = text[text.find("Enter worktree"):text.find("Resume note")]
+        assert "ExitWorktree" in enter_bullet
 
     def test_cd_is_last_resort(self):
-        assert "last resort" in _text().lower()
+        text = _text()
+        enter_bullet = text[text.find("Enter worktree"):text.find("Resume note")]
+        assert "last resort" in enter_bullet.lower()
