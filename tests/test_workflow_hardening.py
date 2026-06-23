@@ -58,6 +58,9 @@ def test_every_job_has_timeout_minutes(filename):
 
 # Matches any uses: line and captures the action ref (stops at whitespace, so a trailing
 # "# v7.0.0" comment is excluded). Handles both "- uses:" and bare "uses:" step forms.
+# Limitation: scans full file text, so a "uses:" string inside a run: heredoc block would
+# also be captured. The "/" not in ref guard below rejects bare words that lack owner/repo
+# structure, covering the common case. No current workflow triggers this path.
 USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)", re.MULTILINE)
 
 # A published-action ref pinned to a full 40-hex commit SHA, e.g. "owner/repo@<40hex>"
@@ -80,6 +83,7 @@ def test_every_uses_is_sha_pinned(filename):
         # appear inside run: heredoc blocks that happen to contain a "uses:" line.
         if "/" not in ref:
             continue
+        # .search() + end-anchor ($) is semantically equivalent to fullmatch for this ref string.
         if not SHA_PIN_RE.search(ref):
             unpinned.append(ref)
 
