@@ -61,8 +61,8 @@ for lock in "$@"; do
   # Additions: packages in new that are absent from base.
   # Filter empty lines so an empty base doesn't false-positive.
   added=$(comm -13 \
-    <(printf '%s\n' "${base}" | grep -v '^$' | sort -u) \
-    <(printf '%s\n' "${new}"  | grep -v '^$' | sort -u))
+    <(printf '%s\n' "${base}" | grep -v '^$') \
+    <(printf '%s\n' "${new}"  | grep -v '^$'))
 
   if [[ -n "${added}" ]]; then
     echo "::error::${lock}: new top-level package(s) added — review before merging:" >&2

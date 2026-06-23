@@ -120,6 +120,23 @@ class TestLockfileAdditionsGuard:
         assert result.returncode == 1
         assert "pytest" in result.stderr
 
+    def test_missing_lockfile_exits_one(self, tmp_path):
+        """Path given but file absent from working tree → exit 1 with error message."""
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True,
+                       capture_output=True, env=_CLEAN_ENV)
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init"],
+                       cwd=tmp_path, check=True, capture_output=True, env=_CLEAN_ENV)
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 1
+        assert "file not found" in result.stderr
+
     def test_transitive_only_addition_exits_zero(self, tmp_path):
         """A new package with # via <dep> (no -r) is transitive-only → exit 0."""
         lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
