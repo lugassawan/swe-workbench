@@ -104,7 +104,7 @@ fi
 
 ## Tooling
 - **Format:** `shfmt -w .`
-- **Lint:** `shellcheck $(git ls-files '*.sh')` (or `shellcheck **/*.sh` with `shopt -s globstar` on bash 4+)
+- **Lint:** `git ls-files -z '*.sh' '*.bash' | xargs -0 shellcheck` (null-delimited — handles filenames with spaces; covers both `.sh` and `.bash` extensions)
 - **Test:** `bats` (see Testing below)
 
 ## Testing
