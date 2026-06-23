@@ -20,9 +20,13 @@ CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
 
 
 def _section(body: str, heading: str) -> str:
-    """Extract body of a ## heading, stopping at the next ## heading (skips fenced blocks)."""
+    """Extract body of a ## heading, stopping at the next ## heading (skips fenced blocks).
+
+    Returns "" when the heading is absent so callers can assert with their own message.
+    """
     marker = f"## {heading}"
-    assert marker in body, f"Expected '{marker}' section not found"
+    if marker not in body:
+        return ""
     start = body.index(marker) + len(marker)
     rest = body[start:]
     fence_open = False
@@ -47,10 +51,10 @@ def test_ddd_skill_file_exists():
 
 
 def test_ddd_skill_names_tell_dont_ask():
-    """Entity subsection must explicitly use 'tell' (covering tell-don't-ask)."""
+    """Entity subsection must explicitly use the tell-don't-ask idiom."""
     body = DDD_SKILL.read_text()
-    assert "tell" in body.lower(), (
-        "skills/principle-ddd/SKILL.md must mention 'tell' (tell-don't-ask principle) "
+    assert re.search(r"tell[,\-]?\s*don\W?t\s*ask", body, re.IGNORECASE), (
+        "skills/principle-ddd/SKILL.md must mention the 'tell, don't ask' principle "
         "so reviewers and implementers can surface the anti-pattern"
     )
 
@@ -85,7 +89,7 @@ def test_member_ordering_states_public_protected_private():
     """The section must name the canonical order: public → protected → private."""
     body = CLEAN_CODE_SKILL.read_text()
     section = _section(body, "Member ordering")
-    # Accept arrow variants and plain text describing the order
+    assert section, "'## Member ordering' section is empty or missing"
     has_order = (
         "public" in section.lower()
         and "protected" in section.lower()
@@ -100,6 +104,7 @@ def test_member_ordering_mentions_modifier_less_languages():
     """The section must acknowledge languages without access modifiers (Go, Rust, or Python)."""
     body = CLEAN_CODE_SKILL.read_text()
     section = _section(body, "Member ordering")
+    assert section, "'## Member ordering' section is empty or missing"
     section_lower = section.lower()
     has_modifier_less = (
         bool(re.search(r"\bgo\b", section_lower))
