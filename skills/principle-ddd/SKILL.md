@@ -26,6 +26,8 @@ Document how contexts relate: Partnership, Customer/Supplier, Conformist, Antico
 ### Entity
 Identity persists through change. `User{id, name}` — renaming doesn't change the user.
 
+Entities own their behaviour — **tell, don't ask**. Logic that enforces an entity's invariants belongs on the entity, not in a service that reads its fields and mutates them from outside. An entity that is pure data with all logic elsewhere is an **anemic domain model** — an anti-pattern. (See `principle-solid` § "If You Catch Yourself Thinking…" for the reflection-table form.)
+
 ### Value object
 Identity-less, immutable, compared by value. `Money{amount, currency}`, `EmailAddress`, `DateRange`. Prefer aggressively — eliminates primitive obsession bugs.
 

@@ -25,6 +25,11 @@ description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction 
 - **One word per concept in a module** — `fetch`, `retrieve`, and `get` create false distinctions; pick one and apply it consistently.
 - **Positive booleans** — `isActive`, `hasExpired`, `canDelete`; negated names (`isNotLoaded`, `notActive`) invert reader expectations and compose poorly.
 
+## Member ordering
+*The public contract should read first.*
+- **Order by visibility** — in languages with explicit access modifiers (Java, C#, TypeScript, C++, Swift, Kotlin), declare members `public → protected → private` so readers meet the public surface before implementation detail.
+- **Same spirit, no modifiers** — Go (exported identifiers first), Rust (`pub` items first), and Python (public names before `_internal`) lead with the public surface even though the keywords differ.
+
 ## DRY — Rule of Three
 
 Don't abstract on first duplication. Extract on the third occurrence. Two is coincidence; three is pattern.

@@ -101,3 +101,4 @@ Invoke these skills via the Skill tool when the review surfaces a concern in the
 - `swe-workbench:principle-testing` — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior, flaky tests, mock overuse
 - `swe-workbench:principle-cost-awareness` — chatty service calls, log volume / cardinality, missed storage-tier opportunities
 - `swe-workbench:principle-version-control` — atomic commits, mixed formatting + logic in one diff, commit-message quality, missing PR test plan, force-push smells
+- `swe-workbench:principle-ddd` — anemic domain models, behaviour that belongs on the owning entity, tell-don't-ask violations
