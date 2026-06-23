@@ -254,9 +254,9 @@ def check_commands():
 
 
 def check_agent_skill_refs(cache=None):
-    """Every `swe-workbench:<id>` in agents/*.md must resolve to skills/<id>/ on disk."""
+    """Every `swe-workbench:<id>` in agents/*.md must resolve to a skill dir,
+    agent file, or command file on disk."""
     agents_dir = ROOT / "agents"
-    skills_dir = ROOT / "skills"
     agents_cache = cache[0] if cache is not None else None
     pattern = re.compile(r'`swe-workbench:([\w-]+)`')
     for agent_md in sorted(agents_dir.glob("*.md")):
@@ -267,26 +267,28 @@ def check_agent_skill_refs(cache=None):
                 continue
         else:
             text = agent_md.read_text(encoding="utf-8")
-        for skill_id in set(pattern.findall(text)):
-            if not (skills_dir / skill_id).is_dir():
+        for artifact_id in set(pattern.findall(text)):
+            if not _artifact_exists(artifact_id):
                 fail(
                     agent_md.relative_to(ROOT),
-                    f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
+                    f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
+                    f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
                 )
 
 
 def check_command_skill_refs():
-    """Every `swe-workbench:<id>` in commands/*.md must resolve to skills/<id>/ on disk."""
+    """Every `swe-workbench:<id>` in commands/*.md must resolve to a skill dir,
+    agent file, or command file on disk."""
     commands_dir = ROOT / "commands"
-    skills_dir = ROOT / "skills"
     pattern = re.compile(r'`swe-workbench:([\w-]+)`')
     for cmd_md in sorted(commands_dir.glob("*.md")):
         text = cmd_md.read_text(encoding="utf-8")
-        for skill_id in set(pattern.findall(text)):
-            if not (skills_dir / skill_id).is_dir():
+        for artifact_id in set(pattern.findall(text)):
+            if not _artifact_exists(artifact_id):
                 fail(
                     cmd_md.relative_to(ROOT),
-                    f"references 'swe-workbench:{skill_id}' but skills/{skill_id}/ does not exist",
+                    f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
+                    f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
                 )
 
 

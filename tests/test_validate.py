@@ -662,7 +662,25 @@ class TestCheckAgentSkillRefs:
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
-        assert any("does not exist" in f for f in validate.FAILURES)
+        assert any("no matching artifact found" in f for f in validate.FAILURES)
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """An agent referencing another agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "bar.md").write_text(
+            "---\nname: bar\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
+            "\nUse `swe-workbench:bar` subagent.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agent_skill_refs()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -691,7 +709,7 @@ class TestCheckCommandSkillRefs:
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
-        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+        assert any("nonexistent" in f and "no matching artifact found" in f for f in validate.FAILURES)
 
     def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
         root = reset_validate
@@ -705,7 +723,7 @@ class TestCheckCommandSkillRefs:
         )
         validate.check_command_skill_refs()
         assert len(validate.FAILURES) == 1
-        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "fooo" in validate.FAILURES[0] and "no matching artifact found" in validate.FAILURES[0]
         assert "swe-workbench:foo'" not in validate.FAILURES[0]
 
     def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
@@ -713,6 +731,22 @@ class TestCheckCommandSkillRefs:
         make_plugin_tree(root)
         (root / "commands" / "my-cmd.md").write_text(
             "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """A command referencing an agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "reviewer.md").write_text(
+            "---\nname: reviewer\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nDispatch `swe-workbench:reviewer` subagent.\n",
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
@@ -2444,3 +2478,80 @@ class TestCheckWorkflowFullFidelityMandate:
         monkeypatch.setattr(val, "ROOT", real_root)
         val.check_workflow_full_fidelity_mandate()
         assert val.FAILURES == [], f"validate.py failures on real repo: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────────────────────
+# Phase 4 dispatches BOTH reviewers in parallel (#458)
+# ──────────────────────────────────────────────────────────────
+
+
+class TestPhase4DispatchesBothReviewers:
+    """Every Phase 4 dispatch site must name both reviewers AND the word
+    'parallel', ensuring neither can be omitted and they run concurrently.
+
+    Regression guard for issue #458.
+    """
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    # (file_path_relative, phase4_start_marker, terminator_prefix)
+    SITES = [
+        (
+            "skills/workflow-development/SKILL.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "commands/implement.md",
+            "**Phase 4 — Review**",
+            "**Phase 5",
+        ),
+        (
+            "skills/workflow-development/templates/plan-workflow-section.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "skills/workflow-extend/SKILL.md",
+            "**Phase 4 (Review):**",
+            "## Phase D",
+        ),
+    ]
+
+    REQUIRED_TOKENS = [
+        "superpowers:requesting-code-review",
+        "swe-workbench:reviewer",
+        "parallel",
+    ]
+
+    def _extract_phase4_section(self, text: str, start_marker: str, terminator: str) -> str:
+        """Return the text from start_marker up to (but not including) terminator."""
+        start = text.find(start_marker)
+        if start == -1:
+            return ""  # all required tokens register as missing → clear assertion failure
+        end = text.find(terminator, start + len(start_marker))
+        if end == -1:
+            return text[start:]
+        return text[start:end]
+
+    def test_all_dispatch_sites_name_both_reviewers_and_parallel(self):
+        """Each Phase 4 section must contain both reviewer identifiers and 'parallel'."""
+        failures = []
+        for rel_path, start_marker, terminator in self.SITES:
+            full_path = self.REAL_ROOT / rel_path
+            text = full_path.read_text(encoding="utf-8")
+            section = self._extract_phase4_section(text, start_marker, terminator)
+            section_lower = section.lower()
+            missing = [
+                token
+                for token in self.REQUIRED_TOKENS
+                if token.lower() not in section_lower
+            ]
+            if missing:
+                failures.append(
+                    f"{rel_path}: missing {missing} in Phase 4 section"
+                )
+        assert not failures, (
+            "Phase 4 dispatch sites are missing required tokens (#458):\n"
+            + "\n".join(f"  {f}" for f in failures)
+        )

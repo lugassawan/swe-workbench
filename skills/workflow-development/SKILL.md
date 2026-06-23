@@ -31,8 +31,9 @@ Mode B — Single Implementation:
                           └─ swe-workbench:principle-tdd (per unit)
                           └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
   Phase 3 (Verify)    → superpowers:verification-before-completion
-  Phase 4 (Review)    → superpowers:requesting-code-review (plan-alignment)
-                          └─ swe-workbench:reviewer (diff correctness/security/design)
+  Phase 4 (Review)    → BOTH in parallel (neither optional):
+                          ├─ superpowers:requesting-code-review (Skill — plan-alignment)
+                          └─ swe-workbench:reviewer (subagent — diff correctness/security/design)
   Phase 5 (Deliver)   → swe-workbench:workflow-commit-and-pr
 
 Mode C — Orchestration: see orchestration.md
@@ -199,15 +200,17 @@ Invoke `superpowers:verification-before-completion`.
 
 **Goal:** Catch design and quality issues before delivery.
 
-Dispatch both reviewers — they answer different questions:
-- `superpowers:requesting-code-review` — plan-alignment: does this match the plan and meet standards?
-- `swe-workbench:reviewer` subagent — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**. They are different unit types:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment: does this match the plan and meet standards?
+- `swe-workbench:reviewer` (a **subagent**) — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+
+Running the Skill inline and skipping the subagent (or vice-versa) does **not** satisfy this phase.
 
 Act on feedback:
 - **Critical/Important:** fix → re-verify (Phase 3) → re-review
 - **Minor:** note or fix inline, proceed
 
-**Skip condition:** If Phase 2 sub-skill already ran two-stage code review with evidence, mark as "completed by sub-skill" and proceed.
+**Skip condition:** Only skip with explicit named evidence that **both** stages already ran — a plan-alignment verdict from `superpowers:requesting-code-review` AND a `Severity | File:Line | …` diff review from `swe-workbench:reviewer`. Cite both when marking "completed by sub-skill". A single combined or one-sided review does not qualify.
 
 ---
 
