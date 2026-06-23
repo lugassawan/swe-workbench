@@ -96,6 +96,12 @@ TypeScript types are shapes, not identities. Two unrelated types with the same f
 - Avoid `FC<Props>` — it adds implicit `children` and breaks generic components. Prefer `function Thing(props: Props) { ... }`.
 - `useEffect` only for synchronizing with external systems. Derived state belongs in render.
 
+## Tooling
+- **Imports:** `npx organize-imports-cli` (reliable regardless of ESLint config); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` is configured
+- **Format:** `prettier --write .`
+- **Lint:** `eslint .` + `tsc --noEmit`
+- **Test:** `vitest` / `jest` (see Testing below)
+
 ## Testing
 - Vitest or Jest — pick one.
 - `tsd` or `expectType` for type-level tests of public APIs.

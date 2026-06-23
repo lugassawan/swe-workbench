@@ -42,6 +42,12 @@ if err := g.Wait(); err != nil { return err }
 - Never store `context.Context` in a struct field.
 - Don't use `context.Value` for required parameters — only cross-cutting concerns like request IDs.
 
+## Tooling
+- **Imports:** `goimports -w .`
+- **Format:** `gofmt -w .` (redundant if running goimports; keep for explicit CI parity)
+- **Lint:** `go vet ./...` + `golangci-lint run`
+- **Test:** `go test ./...` (see Testing below)
+
 ## Testing
 - Table-driven tests are the default.
 - `t.Run(name, ...)` for subtests.
