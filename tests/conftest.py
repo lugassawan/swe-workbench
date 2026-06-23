@@ -11,7 +11,9 @@ import pytest
 # inherited by subprocess children — Git then treats temp test repos as if
 # they share the host repo's git context, causing failures.
 # We strip every GIT_* var, then re-add GIT_CONFIG_NOSYSTEM=1 to ignore the
-# system gitconfig for hermeticity.
+# system gitconfig for hermeticity. GIT_CONFIG_COUNT/KEY/VALUE_0 additionally
+# suppresses commit.gpgsign so tests don't fail on machines with GPG signing
+# enabled in ~/.gitconfig (which GIT_CONFIG_NOSYSTEM does not cover).
 #
 # Snapshot: built once from os.environ at pytest collection time. Session-scoped
 # fixtures that mutate GIT_* vars after import will not be reflected here.
@@ -27,6 +29,9 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
         "GIT_AUTHOR_EMAIL": "t@t.com",
         "GIT_COMMITTER_NAME": "T",
         "GIT_COMMITTER_EMAIL": "t@t.com",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "commit.gpgsign",
+        "GIT_CONFIG_VALUE_0": "false",
     }
 )
 

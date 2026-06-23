@@ -137,6 +137,20 @@ class TestLockfileAdditionsGuard:
         assert result.returncode == 1
         assert "file not found" in result.stderr
 
+    def test_all_top_level_removed_exits_zero(self, tmp_path):
+        """Top-level package in HEAD but absent after regen → removal is safe → exit 0."""
+        lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
+        lock_file.write_text("")  # post-regen: empty lock (package removed)
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, result.stderr
+
     def test_transitive_only_addition_exits_zero(self, tmp_path):
         """A new package with # via <dep> (no -r) is transitive-only → exit 0."""
         lock_file = _make_git_repo(tmp_path, _BASE_LOCK)

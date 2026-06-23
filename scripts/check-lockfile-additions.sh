@@ -73,6 +73,6 @@ for lock in "$@"; do
   fi
 done
 
-if [[ "${failed}" -eq 1 ]]; then
+if [[ "${failed}" -ne 0 ]]; then
   exit 1
 fi
