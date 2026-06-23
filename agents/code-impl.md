@@ -70,3 +70,4 @@ Invoke these skills via the Skill tool when relevant:
 - `swe-workbench:principle-testing` — test pyramid, mocking discipline, coverage audit
 - `swe-workbench:principle-clean-code` — naming, DRY, function length, abstraction level
 - `swe-workbench:principle-clean-architecture` — boundaries and layering for the type-placement fallback when sibling structure is incoherent or violates norms
+- `swe-workbench:principle-ddd` — tell-don't-ask: place behaviour on the entity that owns the data; avoid anemic models
