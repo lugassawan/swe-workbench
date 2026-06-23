@@ -132,3 +132,18 @@ class TestFullFidelityHeader:
             "Template header must carry 'do not abridge' so the no-summarize "
             "instruction travels with the template itself (#455)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Switch-between-worktrees remedy in template
+# ---------------------------------------------------------------------------
+
+class TestSwitchRemedyInTemplate:
+    """Template Enter-worktree bullet must prescribe ExitWorktree+retry as primary
+    and demote cd to a last resort."""
+
+    def test_exit_worktree_retry_remedy_present(self):
+        assert "ExitWorktree" in _text()
+
+    def test_cd_is_last_resort(self):
+        assert "last resort" in _text().lower()
