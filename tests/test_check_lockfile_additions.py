@@ -40,6 +40,18 @@ def _make_git_repo(tmp_path: Path, lock_content: str) -> Path:
 
 
 class TestLockfileAdditionsGuard:
+    def test_no_args_exits_one(self, tmp_path):
+        """No lockfile args → usage error → exit 1."""
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 1
+        assert "Usage" in result.stderr
+
     def test_version_bump_exits_zero(self, tmp_path):
         """Bumping a top-level package version is not an addition → exit 0."""
         lock_file = _make_git_repo(tmp_path, _BASE_LOCK)

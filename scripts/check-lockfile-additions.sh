@@ -51,6 +51,11 @@ for lock in "$@"; do
   fi
 
   # New set: working-tree content (post-regen).
+  if [[ ! -f "${lock}" ]]; then
+    echo "::error::${lock}: file not found in working tree" >&2
+    failed=1
+    continue
+  fi
   new=$(extract_top_level < "${lock}")
 
   # Additions: packages in new that are absent from base.
