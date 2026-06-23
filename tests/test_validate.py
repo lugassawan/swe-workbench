@@ -669,13 +669,11 @@ class TestCheckAgentSkillRefs:
         when the target exists as agents/<id>.md (not just skills/<id>/)."""
         root = reset_validate
         make_plugin_tree(root)
-        agents_dir = root / "agents"
-        agents_dir.mkdir(parents=True, exist_ok=True)
-        (agents_dir / "bar.md").write_text(
+        (root / "agents" / "bar.md").write_text(
             "---\nname: bar\ndescription: d\ntools: Read\n---\n",
             encoding="utf-8",
         )
-        (agents_dir / "my-agent.md").write_text(
+        (root / "agents" / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:bar` subagent.\n"
             "\n> See @./shared/principles.md\n",
@@ -2530,7 +2528,7 @@ class TestPhase4DispatchesBothReviewers:
         """Return the text from start_marker up to (but not including) terminator."""
         start = text.find(start_marker)
         if start == -1:
-            raise ValueError(f"Phase-4 start marker {start_marker!r} not found in text")
+            return ""  # all required tokens register as missing → clear assertion failure
         end = text.find(terminator, start + len(start_marker))
         if end == -1:
             return text[start:]
