@@ -60,9 +60,11 @@ Test: [[detect:test-command]] — N/N pass
 
 ### Phase 4: Review
 
-Dispatch both reviewers:
-- `superpowers:requesting-code-review` — plan-alignment, standards
-- `swe-workbench:reviewer` subagent — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment, standards
+- `swe-workbench:reviewer` (a **subagent**) — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+
+Running the Skill inline and skipping the subagent (or vice-versa) does **not** satisfy this phase.
 
 Act on feedback:
 - **Critical/Important:** fix → re-verify → re-review

@@ -68,11 +68,13 @@ Hand off to `swe-workbench:workflow-development` Mode B starting at **Phase 2 (I
 
 **Phase 3 (Verify):** Run `superpowers:verification-before-completion`. Do not advance until all format / lint / test steps pass with evidence.
 
-**Phase 4 (Review):** Dispatch both reviewers:
-- `superpowers:requesting-code-review` — plan-alignment and standards
-- `swe-workbench:reviewer` — diff correctness/security/design
+**Phase 4 (Review):** Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment and standards
+- `swe-workbench:reviewer` (a **subagent**) — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
 
-The reviewer must additionally check: **does the diff scope match the captured AC?** Flag scope creep as `Severity: High | scope-creep | <files>` and ask user to confirm or carve out before proceeding.
+Running the Skill inline and skipping the `swe-workbench:reviewer` subagent (or vice-versa) does **not** satisfy this phase.
+
+The `swe-workbench:reviewer` subagent must additionally check: **does the diff scope match the captured AC?** Flag scope creep as `Severity: High | scope-creep | <files>` and ask user to confirm or carve out before proceeding.
 
 Do not advance to Phase D until Phase C review passes clean or all issues are resolved.
 

@@ -2444,3 +2444,80 @@ class TestCheckWorkflowFullFidelityMandate:
         monkeypatch.setattr(val, "ROOT", real_root)
         val.check_workflow_full_fidelity_mandate()
         assert val.FAILURES == [], f"validate.py failures on real repo: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────────────────────
+# Phase 4 dispatches BOTH reviewers in parallel (#458)
+# ──────────────────────────────────────────────────────────────
+
+
+class TestPhase4DispatchesBothReviewers:
+    """Every Phase 4 dispatch site must name both reviewers AND the word
+    'parallel', ensuring neither can be omitted and they run concurrently.
+
+    Regression guard for issue #458.
+    """
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    # (file_path_relative, phase4_start_marker, terminator_prefix)
+    SITES = [
+        (
+            "skills/workflow-development/SKILL.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "commands/implement.md",
+            "**Phase 4 — Review**",
+            "**Phase 5",
+        ),
+        (
+            "skills/workflow-development/templates/plan-workflow-section.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "skills/workflow-extend/SKILL.md",
+            "**Phase 4 (Review):**",
+            "## Phase D",
+        ),
+    ]
+
+    REQUIRED_TOKENS = [
+        "superpowers:requesting-code-review",
+        "swe-workbench:reviewer",
+        "parallel",
+    ]
+
+    def _extract_phase4_section(self, text: str, start_marker: str, terminator: str) -> str:
+        """Return the text from start_marker up to (but not including) terminator."""
+        start = text.find(start_marker)
+        if start == -1:
+            raise ValueError(f"Phase-4 start marker {start_marker!r} not found in text")
+        end = text.find(terminator, start + len(start_marker))
+        if end == -1:
+            return text[start:]
+        return text[start:end]
+
+    def test_all_dispatch_sites_name_both_reviewers_and_parallel(self):
+        """Each Phase 4 section must contain both reviewer identifiers and 'parallel'."""
+        failures = []
+        for rel_path, start_marker, terminator in self.SITES:
+            full_path = self.REAL_ROOT / rel_path
+            text = full_path.read_text(encoding="utf-8")
+            section = self._extract_phase4_section(text, start_marker, terminator)
+            section_lower = section.lower()
+            missing = [
+                token
+                for token in self.REQUIRED_TOKENS
+                if token.lower() not in section_lower
+            ]
+            if missing:
+                failures.append(
+                    f"{rel_path}: missing {missing} in Phase 4 section"
+                )
+        assert not failures, (
+            "Phase 4 dispatch sites are missing required tokens (#458):\n"
+            + "\n".join(f"  {f}" for f in failures)
+        )
