@@ -104,6 +104,11 @@ var activeEmails = users
     .ToArray();
 ```
 
+## Tooling
+- **Imports/Format:** `dotnet format`
+- **Lint:** Roslyn analyzers (`<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>` in csproj); `dotnet format --verify-no-changes` as formatting gate in CI
+- **Test:** `dotnet test` (see Testing below)
+
 ## Testing
 - xUnit, NUnit, and MSTest are all fine; follow the repository's existing framework.
 - Use fluent assertions when already present, and keep tests behavior-focused.

@@ -63,11 +63,16 @@ let total: u32 = orders.iter()
 - `ok_or_else`, `map_err`, `and_then`, `unwrap_or_else` — chain, don't match.
 - Reserve `unwrap`/`expect` for truly unreachable cases; always prefer `expect("why")` over `unwrap` in production.
 
+## Tooling
+- **Imports:** `cargo fix --allow-dirty` (removes unused imports; review diff before staging)
+- **Format:** `cargo fmt` (`cargo fmt --check` in CI)
+- **Lint:** `cargo clippy -- -D warnings`
+- **Test:** `cargo test` (see Testing below)
+
 ## Testing
 - `#[cfg(test)] mod tests { ... }` at the bottom of each file for unit tests.
 - Integration tests in `tests/`.
 - `#[should_panic(expected = "...")]` for panic paths.
-- `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` in CI.
 
 ## Async
 - Pick one runtime (usually `tokio`) and stay there.

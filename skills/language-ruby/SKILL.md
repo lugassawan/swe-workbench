@@ -80,6 +80,11 @@ end
 - Use Bundler for dependency boundaries, Rake for project tasks, and gemspecs only when shipping a library.
 - Rails-adjacent names like service objects, jobs, serializers, and presenters should describe ordinary Ruby objects first.
 
+## Tooling
+- **Format:** `rubocop -a` (safe autocorrect; no dedicated import tool in Ruby)
+- **Lint:** `rubocop`
+- **Test:** `rspec` / `rake test` (see Testing below)
+
 ## Testing
 - RSpec favors expressive examples, matchers, and shared context; keep examples behavior-focused and avoid over-nesting.
 - Minitest favors small stdlib tests with direct assertions; use it when simplicity and low dependency weight matter.

@@ -69,6 +69,11 @@ ORDER BY created_at DESC, id DESC
 LIMIT 50;
 ```
 
+## Tooling
+- **Format:** `sqlfluff fix --dialect <dialect> .`
+- **Lint:** `sqlfluff lint --dialect <dialect> .`
+- **Test:** engine-specific (pgTAP for PostgreSQL, `dbt test` if using dbt)
+
 ## Avoid
 - Schema changes without rollback or compatibility planning.
 - Unbounded queries in production paths.

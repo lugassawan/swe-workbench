@@ -74,6 +74,8 @@ Also check CLAUDE.md for project-specific conventions.
 | `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin) | `mvn test` |
 | `build.gradle` / `build.gradle.kts` | `./gradlew spotlessApply` (Spotless: importOrder + removeUnusedImports) | `./gradlew spotlessApply` (or ktlint / google-java-format) | `./gradlew check` (Kotlin: `detekt`; Java: `checkstyleMain`) | `./gradlew test` |
 
+> **Authoritative per-language tool list:** this table covers manifest-detected projects (Go, JS/TS, Rust, Python, Java, Kotlin). For the full, canonical command set for any language — including languages without a manifest row (C#, Ruby, Swift, SQL, Bash) — consult the matching `swe-workbench:language-<lang>` skill (e.g. `swe-workbench:language-csharp`).
+
 > **`quality-command` fallback** is in the table below — intentionally separate because Quality is multi-tool by nature and a single cell would be unreadably wide.
 
 **Quality stage fallback (multi-tool — wire whichever subset the project enforces):**
