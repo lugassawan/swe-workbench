@@ -1,0 +1,147 @@
+"""Structural tests for workflow-branch-sync/SKILL.md (issue #485).
+
+Pins the two sharp edges from the plan:
+1. git's --ours/--theirs inversion under rebase vs merge.
+2. rimba's inverted sync defaults (rebase by default, pushes by default).
+Plus the never-auto-push / force-with-lease-only-under-rebase invariants.
+"""
+
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+SKILL = ROOT / "skills" / "workflow-branch-sync" / "SKILL.md"
+
+
+def _body():
+    return SKILL.read_text(encoding="utf-8")
+
+
+def test_skill_file_exists():
+    assert SKILL.is_file(), "skills/workflow-branch-sync/SKILL.md must exist"
+
+
+def test_frontmatter_has_name_and_orchestrator():
+    body = _body()
+    assert body.startswith("---")
+    frontmatter = body.split("---")[1]
+    assert "name: workflow-branch-sync" in frontmatter
+    assert "orchestrator: true" in frontmatter
+
+
+def test_never_auto_push_documented():
+    body = _body()
+    assert "Never auto-push" in body or "never auto-push" in body.lower()
+    assert "## What This Skill Does NOT Do" in body
+    not_do = body.split("## What This Skill Does NOT Do")[1].split("##")[0]
+    assert "push" in not_do.lower()
+
+
+def test_rebase_push_uses_force_with_lease():
+    body = _body()
+    assert "--force-with-lease" in body
+    # force-with-lease must appear specifically tied to the rebase push branch
+    assert "OPERATION` was `rebase`" in body or "OPERATION was rebase" in body.lower()
+
+
+def test_plain_force_push_never_used():
+    body = _body()
+    for line in body.splitlines():
+        stripped = line.strip()
+        if "git push --force" in stripped and "--force-with-lease" not in stripped:
+            raise AssertionError(f"plain 'git push --force' found (must be --force-with-lease): {stripped!r}")
+
+
+def test_guard_refuses_on_default_branch_and_detached_head():
+    body = _body()
+    assert "### Step 1" in body
+    step1 = body.split("### Step 1")[1].split("### Step 2")[0]
+    assert "IS_DEFAULT=1" in step1 and "refuse" in step1.lower()
+    assert "DETACHED=1" in step1 and "refuse" in step1.lower()
+    assert "DIRTY" in step1 and ("stash" in step1.lower())
+
+
+def test_common_mistakes_documents_ours_theirs_inversion():
+    body = _body()
+    assert "## Common Mistakes" in body
+    mistakes = body.split("## Common Mistakes")[1]
+    assert "--ours" in mistakes and "--theirs" in mistakes
+    assert "invert" in mistakes.lower()
+    assert "apply-resolution.sh" in mistakes
+
+
+def test_common_mistakes_documents_rimba_inverted_defaults():
+    body = _body()
+    mistakes = body.split("## Common Mistakes")[1]
+    assert "rebases by default" in mistakes.lower() or "rebase by default" in mistakes.lower()
+    assert "pushes by default" in mistakes.lower() or "push by default" in mistakes.lower()
+    assert "no_push" in mistakes or "--no-push" in mistakes
+
+
+def test_common_mistakes_documents_no_hardcoded_main():
+    body = _body()
+    mistakes = body.split("## Common Mistakes")[1]
+    assert "main" in mistakes.lower()
+    assert "hardcode" in mistakes.lower() or "hard-code" in mistakes.lower()
+
+
+def test_common_mistakes_documents_rebase_repauses():
+    body = _body()
+    mistakes = body.split("## Common Mistakes")[1]
+    assert "rebase --continue" in mistakes
+    assert "pause" in mistakes.lower() or "loop back" in mistakes.lower()
+
+
+def test_step3_documents_rimba_no_push_always_passed():
+    body = _body()
+    assert "### Step 3" in body
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "no_push: true" in step3
+    assert "--no-push" in step3
+    assert "always" in step3.lower()
+
+
+def test_step3_translation_table_present():
+    body = _body()
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "merge: true" in step3
+    assert "--merge --no-push" in step3
+    assert "--no-push" in step3
+
+
+def test_step5_never_calls_ours_theirs_inline():
+    body = _body()
+    assert "### Step 5" in body
+    step5 = body.split("### Step 5")[1].split("### Step 6")[0]
+    assert "apply-resolution.sh" in step5
+    # The skill must not instruct calling git checkout --ours/--theirs as an
+    # actual invocation (file-separator form) directly in this step — mentioning
+    # the flag names in prose (e.g. "never call --ours/--theirs inline") is fine.
+    assert "git checkout --ours --" not in step5
+    assert "git checkout --theirs --" not in step5
+
+
+def test_step5_shows_both_sides_before_prompting():
+    body = _body()
+    step5 = body.split("### Step 5")[1].split("### Step 6")[0]
+    assert "keep-mine" in step5
+    assert "keep-main" in step5
+    assert "manual" in step5
+    assert "both sides" in step5.lower()
+
+
+def test_step6_never_auto_pushes():
+    body = _body()
+    assert "### Step 6" in body
+    step6 = body.split("### Step 6")[1].split("## ")[0]
+    assert "Never auto-push" in step6
+    assert "Push now?" in step6 or "push now" in step6.lower()
+
+
+def test_failure_mode_table_present():
+    body = _body()
+    assert "## Failure Mode Table" in body
+
+
+def test_when_to_invoke_references_sync_command():
+    body = _body()
+    assert "/swe-workbench:sync" in body

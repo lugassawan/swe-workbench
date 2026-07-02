@@ -1,0 +1,4 @@
+# Representative trigger prompts for workflow-branch-sync
+sync my branch with the default branch and help me resolve any merge conflicts
+walk me through each conflicting file and recommend whether to keep my change or the default branch's change
+rebase my branch onto main, resolving conflicts one file at a time with a recommendation for each
