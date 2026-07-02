@@ -198,20 +198,20 @@ Skip when `IS_SELF_REVIEW = true`. **Never** use `--request-changes`.
 ```json
 {
   "questions": [{
-    "question": "Want me to help address this feedback? Start /address-feedback <N>?",
+    "question": "Want me to help address this feedback? Start /swe-workbench:address-feedback <N>?",
     "header": "Next step",
     "multiSelect": false,
     "options": [
-      { "label": "Yes — address feedback", "description": "Starts /address-feedback <N> to drive fixes end-to-end." },
+      { "label": "Yes — address feedback", "description": "Starts /swe-workbench:address-feedback <N> to drive fixes end-to-end." },
       { "label": "No thanks",              "description": "Stay here; no further action." }
     ]
   }]
 }
 ```
 
-Substitute the real PR number for `<N>` in the question text and in the `Yes — address feedback` option description. On `Yes — address feedback` → invoke `/address-feedback <N>`. On `No thanks` (or any other answer) → no further action.
+Substitute the real PR number for `<N>` in the question text and in the `Yes — address feedback` option description. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or any other answer) → no further action.
 
-Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/address-feedback` is the natural next step regardless of authorship.
+Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/swe-workbench:address-feedback` is the natural next step regardless of authorship.
 
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
 
@@ -284,4 +284,4 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. See [Diff-scoping flip contract](#diff-scoping-flip-contract). |
 | Apply the diff-scoping flip when identity is unknown | `IDENTITY_KNOWN = false` when `$CURRENT_USER` or `$AUTHOR_LOGIN` is empty. The flip does NOT fire — stay COMMENT. Never auto-approve when you can't verify the authorship axis. |
-| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/address-feedback` to act on. |
+| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/swe-workbench:address-feedback` to act on. |

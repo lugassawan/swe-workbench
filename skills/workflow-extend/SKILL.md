@@ -127,7 +127,7 @@ Inherits detections from `workflow-development` for shared markers; adds extend-
 | Failure | Signal | Action |
 |---|---|---|
 | PR detection fails at skill entry | PR_NUM/HEAD_REF/PR_URL absent from context | Fail loudly with diagnostic hint. |
-| PR merged mid-flow | `gh pr view` returns `MERGED` at Phase D | Abort. Print PR URL. Suggest `/implement` for a follow-up PR. |
+| PR merged mid-flow | `gh pr view` returns `MERGED` at Phase D | Abort. Print PR URL. Suggest `/swe-workbench:implement` for a follow-up PR. |
 | Push rejected (non-FF) | `git push` non-zero | Abort. Tell user: `git pull --rebase`. Never force-push. |
 | Scope creep flagged in review | Reviewer flags `Severity: High | scope-creep` | Ask user to confirm scope or carve out before proceeding. |
 | Dirty working tree at invocation | `git status --porcelain` non-empty | Abort. Prompt user to commit or stash uncommitted changes. |

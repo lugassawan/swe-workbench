@@ -60,7 +60,7 @@ If the symptom is not performance-shaped: skip this step entirely.
    ```
    BLOCKED: Browser diagnostics requested but no Chrome backend is connected.
    To capture console and network evidence, run `claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest`
-   Then reconnect and retry, or re-run /debug without a browser context to skip this step.
+   Then reconnect and retry, or re-run /swe-workbench:debug without a browser context to skip this step.
    ```
 
 2. **Capture** — if a Chrome backend is present, collect:
@@ -91,4 +91,4 @@ Delegate to the `debugger` subagent. Its output must include:
 
 Absolute rule: no fix without a failing test first. This command changes behavior to match spec — it is not a refactor.
 
-**Plan output:** If you (the orchestrator) author a plan based on the subagent's response **and that plan modifies the codebase** (fix / make / implement) — whether saved to a plan file or passed to `ExitPlanMode` — first activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section in the plan per `skills/workflow-development/templates/plan-workflow-section.md`. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so the placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/debug` always produces a fix (file edits), Mode A always applies here.
+**Plan output:** If you (the orchestrator) author a plan based on the subagent's response **and that plan modifies the codebase** (fix / make / implement) — whether saved to a plan file or passed to `ExitPlanMode` — first activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section in the plan per `skills/workflow-development/templates/plan-workflow-section.md`. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so the placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/swe-workbench:debug` always produces a fix (file edits), Mode A always applies here.
