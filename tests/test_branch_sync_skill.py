@@ -40,7 +40,33 @@ def test_rebase_push_uses_force_with_lease():
     body = _body()
     assert "--force-with-lease" in body
     # force-with-lease must appear specifically tied to the rebase push branch
-    assert "OPERATION` was `rebase`" in body or "OPERATION was rebase" in body.lower()
+    assert "SYNC_STRATEGY` was `rebase`" in body or "sync_strategy was rebase" in body.lower()
+
+
+def test_step6_push_branches_on_sync_strategy_not_operation():
+    """Regression: Step 6 must branch push logic on SYNC_STRATEGY, never OPERATION —
+    OPERATION is `none` on a clean sync (the common case), so an OPERATION-keyed
+    branch has no push path at all for a clean --rebase sync."""
+    body = _body()
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "SYNC_STRATEGY" in step3
+    assert "merge|rebase" in step3 or "merge | rebase" in step3
+
+    step6 = body.split("### Step 6")[1].split("## ")[0]
+    push_lines = [ln for ln in step6.splitlines() if "git push" in ln]
+    assert push_lines, "Step 6 must contain the push branching bullets"
+    for ln in push_lines:
+        # The decision clause is the first bolded span ("Yes, and X was Y") and
+        # must key off SYNC_STRATEGY. OPERATION may still appear later in the
+        # line as explanatory prose (contrasting why OPERATION would be wrong).
+        parts = ln.split("**")
+        decision_clause = parts[1] if len(parts) >= 2 else ln
+        assert "SYNC_STRATEGY" in decision_clause, (
+            f"push branch decision clause must key off SYNC_STRATEGY: {ln!r}"
+        )
+        assert "OPERATION" not in decision_clause, (
+            f"push branch decision clause must not key off OPERATION: {ln!r}"
+        )
 
 
 def test_plain_force_push_never_used():
@@ -67,6 +93,20 @@ def test_common_mistakes_documents_ours_theirs_inversion():
     assert "--ours" in mistakes and "--theirs" in mistakes
     assert "invert" in mistakes.lower()
     assert "apply-resolution.sh" in mistakes
+
+
+def test_step1_stash_sets_flag_and_step6_restores_it():
+    """Regression: a pre-sync stash must be restorable — Step 1 must set a
+    STASHED flag when it stashes, and Step 6 must pop it before reporting,
+    handling a conflicting pop the same way a file conflict is surfaced."""
+    body = _body()
+    step1 = body.split("### Step 1")[1].split("### Step 2")[0]
+    assert "STASHED=1" in step1
+
+    step6 = body.split("### Step 6")[1].split("## ")[0]
+    assert "STASHED=1" in step6
+    assert "git stash pop" in step6
+    assert "git stash drop" in step6, "a conflicting pop must be followed by an explicit drop after resolution"
 
 
 def test_common_mistakes_documents_rimba_inverted_defaults():

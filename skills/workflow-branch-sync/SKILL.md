@@ -35,7 +35,7 @@ Emits `CURRENT_BRANCH`, `DEFAULT_BRANCH` (detected — never hardcode `main`), `
 
 - **`IS_DEFAULT=1`**: refuse. Report "already on `$DEFAULT_BRANCH` — nothing to sync onto itself" and stop.
 - **`DETACHED=1`**: refuse. Report "detached HEAD — checkout a branch first" and stop.
-- **`DIRTY>0`**: offer **stash-or-abort** before touching history — `git stash push -u -m "branch-sync: pre-sync stash"` if the user opts to stash, otherwise stop and let the user commit or discard first. Never proceed with a dirty tree.
+- **`DIRTY>0`**: offer **stash-or-abort** before touching history — `git stash push -u -m "branch-sync: pre-sync stash"` if the user opts to stash, otherwise stop and let the user commit or discard first. Never proceed with a dirty tree. If the user stashes, set `STASHED=1` — Step 6 restores it before reporting.
 
 ### Step 2 — Overlap Advisory (optional)
 
@@ -43,7 +43,7 @@ If the rimba MCP server is active in the session, invoke its `conflict-check` to
 
 ### Step 3 — Mechanical Sync
 
-**Resolve strategy** from the invoking command: default is **merge**; `--rebase` selects **rebase**.
+**Resolve strategy** from the invoking command into `SYNC_STRATEGY=merge|rebase` — default is **merge**; `--rebase` selects **rebase**. Keep `SYNC_STRATEGY` separate from `OPERATION` (Step 4): `OPERATION` means "conflict resolution currently in progress" (and is `none` on a clean sync — the common case), not "which strategy was used." Step 6's push branching reads `SYNC_STRATEGY`, never `OPERATION`.
 
 **Derive the task identifier** for rimba from `CURRENT_BRANCH` by stripping a known type prefix (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`) if present; otherwise use `CURRENT_BRANCH` as-is.
 
@@ -113,12 +113,16 @@ After every file in `UNMERGED` has been resolved and staged:
 
 ### Step 6 — Leave Local & Prompt Before Push
 
+**If `STASHED=1`** (Step 1 stashed a dirty tree), restore it now, before reporting: `git stash pop`.
+- **Pop succeeds cleanly** → note it in the resolution summary ("Restored N file(s) from the pre-sync stash").
+- **Pop conflicts** → surface it exactly like a file conflict from Step 5 (show both sides, let the user resolve, `git add` the resolved files), then `git stash drop` once resolved — a conflicting pop leaves the stash entry in place rather than consuming it, so an explicit drop is required after manual resolution.
+
 Report the resolution summary: one line per file — which side was kept (or "manual") and the one-line rationale from Step 5. **Never auto-push.**
 
 Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 
-- **Yes, and `OPERATION` was `merge`** → `git push`.
-- **Yes, and `OPERATION` was `rebase`** → `git push --force-with-lease`. Force-push surfaces **only** here, under `--rebase` — never anywhere else in this skill.
+- **Yes, and `SYNC_STRATEGY` was `merge`** → `git push`.
+- **Yes, and `SYNC_STRATEGY` was `rebase`** → `git push --force-with-lease`. Force-push surfaces **only** here, under `--rebase` — never anywhere else in this skill. This branches on `SYNC_STRATEGY`, not `OPERATION` — `OPERATION` is `none` for the common clean-sync case and would otherwise leave a `--rebase` sync with no push path at all.
 - **No** → stop. The result stays local; the user pushes later at their own discretion (follow `workflow-commit-and-pr` push conventions if they ask for help with that later — this is an async handoff, not this skill's job to chase).
 
 ## Failure Mode Table
@@ -136,6 +140,8 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Derived task isn't a rimba-managed worktree | `Error: worktree not found for task "<task>"` from the rimba binary (or the MCP equivalent) | Fall through to the shell fallback — this is expected for branches not created via `rimba add`, not a sync failure. |
 | A conflicting file was deleted on the chosen side | `apply-resolution.sh` reports `git checkout` failed with "does not have our/their version" | Handled in-script: resolves as `git rm` instead of aborting — no skill-level action needed. |
 | Push requested after a rebase without `--force-with-lease` | N/A — this skill always uses `--force-with-lease` under rebase | N/A — documented so a future edit doesn't regress to plain `--force`. |
+| Clean sync with `SYNC_STRATEGY=rebase` has no push path | N/A — this skill branches Step 6 on `SYNC_STRATEGY`, not `OPERATION` (which is `none` on a clean sync) | N/A — documented so a future edit doesn't regress to reading `OPERATION` for push branching. |
+| Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 6 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 
 ## Common Mistakes
 
@@ -150,3 +156,5 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Use plain `git push --force` after a rebase | Always `--force-with-lease` — it aborts if the remote moved since the last fetch, instead of silently clobbering someone else's push. |
 | Stage a manually-edited file on confirmation alone | Grep for `<<<<<<<`/`=======`/`>>>>>>>` markers first — a premature confirmation or a missed hunk can leave literal conflict-marker text in the file, which stages and commits broken content. |
 | Pre-check whether the branch is "a rimba worktree" before calling `rimba sync` | Don't — try the call and read the failure. The binary's `Error: worktree not found for task "<task>"` (or the MCP equivalent) is the signal to fall through to shell, not an upfront probe. |
+| Branch Step 6's push logic on `OPERATION` | Don't — `OPERATION` is `none` on a clean sync (the common case), so an `OPERATION`-keyed branch has no path for a clean `--rebase` sync's required `--force-with-lease` push. Capture the resolved strategy into `SYNC_STRATEGY` in Step 3 and branch Step 6 on that instead. |
+| Leave a pre-sync stash unpopped after a successful sync | Always attempt `git stash pop` at the start of Step 6 when `STASHED=1` — a forgotten stash silently parks the user's uncommitted work indefinitely across repeated syncs. |
