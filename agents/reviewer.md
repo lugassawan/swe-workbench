@@ -43,7 +43,7 @@ For 4–5 line edits, prefer ` ```suggestion` if the change is a contiguous repl
 
 ## Decision footer (when instructed)
 
-When the invoker (e.g. `/review` PR mode) explicitly asks for a Review Decision footer, end the review with EXACTLY ONE of the following on its own line, no prefix, no trailing text:
+When the invoker (e.g. `/swe-workbench:review` PR mode) explicitly asks for a Review Decision footer, end the review with EXACTLY ONE of the following on its own line, no prefix, no trailing text:
 
 - `**Review Decision: APPROVE**` — no Critical or High findings; Medium/Low are optional polish.
 - `**Review Decision: COMMENT**` — at least one Critical/High finding, OR you want the author to see findings before merging without blocking the PR.

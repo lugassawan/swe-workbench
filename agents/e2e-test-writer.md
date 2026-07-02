@@ -1,6 +1,6 @@
 ---
 name: e2e-test-writer
-description: E2E spec author — explores a live app via Playwright MCP (browser_snapshot → interact → assert), authors durable spec files, and mandates browser teardown with per-step deadlines. Invoke for the authoring phase of /test --mode e2e; the verifier runs the specs after.
+description: E2E spec author — explores a live app via Playwright MCP (browser_snapshot → interact → assert), authors durable spec files, and mandates browser teardown with per-step deadlines. Invoke for the authoring phase of /swe-workbench:test --mode e2e; the verifier runs the specs after.
 model: sonnet
 tools: Read, Glob, Grep, Bash, Write, Skill
 ---

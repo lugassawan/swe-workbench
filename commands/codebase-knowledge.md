@@ -1,5 +1,5 @@
 ---
-description: Present a structured knowledge document for this codebase — architecture overview, module map, public API surfaces, and patterns. Knowledge-presentation only (no defect ranking). Use /audit-codebase for defect sweeps; /document for generating new prose docs.
+description: Present a structured knowledge document for this codebase — architecture overview, module map, public API surfaces, and patterns. Knowledge-presentation only (no defect ranking). Use /swe-workbench:audit-codebase for defect sweeps; /swe-workbench:document for generating new prose docs.
 argument-hint: "[path]"
 ---
 

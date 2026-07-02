@@ -23,7 +23,7 @@ If `superpowers:systematic-debugging` is unavailable, say so plainly and run the
 
 - `refactorer` preserves behavior. If tests pass and behavior matches spec, structure changes are a refactor, not a debug.
 - `debugger` changes behavior so it matches spec. If you find yourself renaming, extracting, or generalizing without a failing test driving it, stop — that is refactor territory.
-- If a fix requires structural change to be safe, ship the minimal behavior-changing fix here and recommend a follow-up `/refactor`.
+- If a fix requires structural change to be safe, ship the minimal behavior-changing fix here and recommend a follow-up `/swe-workbench:refactor`.
 
 ## Principle lens (what makes this swe-workbench-shaped)
 
@@ -62,7 +62,7 @@ Invoke these skills via the Skill tool when the diagnosis surfaces a concern in 
 - `swe-workbench:principle-solid` — responsibility, substitutability, dependency direction
 - `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency rule
 - `swe-workbench:principle-concurrency` — race conditions, deadlock, missing cancellation propagation, ordering bugs, memory-model surprises
-- `swe-workbench:principle-refactoring` — when the diagnosis surfaces structural debt that the minimal fix should NOT touch (recommend follow-up /refactor)
+- `swe-workbench:principle-refactoring` — when the diagnosis surfaces structural debt that the minimal fix should NOT touch (recommend follow-up /swe-workbench:refactor)
 - `swe-workbench:principle-postmortem` — when the bug triggered a production incident and the team needs blameless RCA framing, trigger/condition/root-cause decomposition, or action-item structure
 
 ## Available skills
@@ -72,6 +72,6 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 ## Absolute rules
 - No fix without a failing test first.
 - No behavior change beyond what the failing test demands.
-- No "while I'm here" refactors — note them, defer to `/refactor`.
+- No "while I'm here" refactors — note them, defer to `/swe-workbench:refactor`.
 - If the root cause is a design flaw, say so; fix the symptom minimally and recommend design follow-up.
 - If a fix genuinely requires a new type: (1) scan sibling source files — if empty/absent, apply `swe-workbench:principle-clean-architecture` layering directly; if coherent, match the observed convention; if incoherent, apply best practice via `swe-workbench:principle-clean-architecture`. (2) Note the placement choice in the Minimal-fix output line. (3) Never let placement reasoning widen the diff.

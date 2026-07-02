@@ -3,7 +3,7 @@ description: File a plugin bug or feature request directly into lugassawan/swe-w
 argument-hint: "[<one-line thought> — omit to draft from conversation/memory]"
 ---
 
-> **Override (this command only):** The `product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/report-issue`. You MUST pass `--repo lugassawan/swe-workbench` on every `gh` invocation in this flow. No other rule is changed.
+> **Override (this command only):** The `product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/swe-workbench:report-issue`. You MUST pass `--repo lugassawan/swe-workbench` on every `gh` invocation in this flow. No other rule is changed.
 
 The user wants to file a plugin issue: $ARGUMENTS
 

@@ -19,7 +19,7 @@ orchestrator: true
 
 - The user wants a fix **now** → use `/swe-workbench:debug` (counterpart skill that ends in code change + regression test).
 - The root cause is already known and only the fix is needed → use `/swe-workbench:debug`.
-- The user is capturing a feature request, idea, or improvement (not a bug) → use the `/capture` command directly.
+- The user is capturing a feature request, idea, or improvement (not a bug) → use the `/swe-workbench:capture` command directly.
 - The user is reviewing already-merged code for retroactive issues → use `/swe-workbench:review` first.
 
 ## Iron Law
@@ -157,7 +157,7 @@ Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST
 3. Wait for `confirm`. Reject any other reply (re-prompt).
 4. On `confirm`, run the command and return the issue URL.
 
-## Boundary vs `/debug`
+## Boundary vs `/swe-workbench:debug`
 
 | Aspect | `/swe-workbench:debug` | `workflow-bug-triage` |
 |--------|------------------------|------------------------|
@@ -166,7 +166,7 @@ Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST
 | Use when | Bug is yours, fix-now is the goal | Bug needs documentation, fix-planning is separate |
 | Composes | `superpowers:systematic-debugging` | `superpowers:systematic-debugging` |
 
-If you start in `/debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `workflow-bug-triage`?"
+If you start in `/swe-workbench:debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `workflow-bug-triage`?"
 
 ## Common mistakes
 

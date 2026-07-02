@@ -62,11 +62,11 @@ If `PR_STATE` is not `"OPEN"` (empty, `"CLOSED"`, `"MERGED"`, or `gh` error): su
     "options": [
       {
         "label": "Open a PR first",
-        "description": "Commit and push current work, open a PR, then re-run /extend."
+        "description": "Commit and push current work, open a PR, then re-run /swe-workbench:extend."
       },
       {
-        "label": "Defer to /capture + /implement",
-        "description": "File a new top-level issue via /capture, then implement it on a new branch via /implement."
+        "label": "Defer to /swe-workbench:capture + /swe-workbench:implement",
+        "description": "File a new top-level issue via /swe-workbench:capture, then implement it on a new branch via /swe-workbench:implement."
       },
       {
         "label": "Abort",
