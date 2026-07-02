@@ -34,15 +34,6 @@ def _section(body: str, heading: str) -> str:
     return "\n".join(lines)
 
 
-def _step_containing(section: str, phrase: str) -> str:
-    """Return the numbered-step line (and its continuation) containing phrase."""
-    lines = section.splitlines()
-    for i, line in enumerate(lines):
-        if phrase.lower() in line.lower():
-            return line
-    return ""
-
-
 # ---------------------------------------------------------------------------
 # Existence + frontmatter
 # ---------------------------------------------------------------------------
