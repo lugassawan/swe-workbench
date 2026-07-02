@@ -88,6 +88,7 @@
 |---|---|
 | `language-bash` | `.sh`, `.bash` files; keywords: bash, shell, sh, shellcheck, set -e, pipefail. |
 | `language-csharp` | `.cs` files, `.csproj`, `.sln`, `Directory.Build.props`, keywords: C#, .NET, dotnet, nullable reference types, records, pattern matching, async/await, cancellation tokens, ConfigureAwait, IOptions, LINQ. |
+| `language-dart` | `.dart` files, `pubspec.yaml`, keywords: Dart, Flutter, widget, Riverpod, Bloc, Stream, null safety. |
 | `language-go` | `.go` files, `go.mod`, `go.sum`, keywords: Go, Golang, goroutine, channel, context. |
 | `language-java` | `.java` files, `pom.xml`, `build.gradle`, keywords: Java, JVM, Spring, Maven, Gradle, records, sealed classes, virtual threads. |
 | `language-kotlin` | `.kt` files, `build.gradle.kts`, keywords: Kotlin, coroutines, suspend, StateFlow, sealed interface, Kotlin DSL. |

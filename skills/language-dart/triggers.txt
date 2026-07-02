@@ -1,0 +1,7 @@
+# Representative trigger prompts for language-dart
+how do I manage state in Flutter using Riverpod providers and ref.watch
+what is the idiomatic way to structure a Bloc with events and states in Dart
+review this Dart code for null safety and proper use of late and nullable types
+how should I compose StatelessWidget and StatefulWidget for a Flutter widget tree
+how do I use async await with Futures and Streams in Dart for network calls
+what goes in pubspec.yaml and how do I run flutter test for a widget test

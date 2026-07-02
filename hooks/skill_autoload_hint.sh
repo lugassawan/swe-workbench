@@ -22,6 +22,7 @@ ext_to_skill() {
         sh|bash)              echo "language-bash" ;;
         sql)                  echo "language-sql" ;;
         cs)                   echo "language-csharp" ;;
+        dart)                 echo "language-dart" ;;
         *)                    echo "" ;;
     esac
 }
