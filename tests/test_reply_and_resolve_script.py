@@ -32,11 +32,14 @@ def _make_recording_gh_stub(stub_dir: Path, log_file: Path) -> None:
     stub.chmod(0o755)
 
 
-def _run(owner, repo, pr, comment_id, thread_id, reply_body, *, stub_dir: Path):
+def _run(owner, repo, pr, comment_id, thread_id, reply_body, kind=None, *, stub_dir: Path):
     env = dict(_CLEAN_ENV)
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
+    args = ["bash", str(SCRIPT), owner, repo, pr, comment_id, thread_id, reply_body]
+    if kind is not None:
+        args.append(kind)
     return subprocess.run(
-        ["bash", str(SCRIPT), owner, repo, pr, comment_id, thread_id, reply_body],
+        args,
         capture_output=True, text=True,
         cwd=str(ROOT),
         env=env,
@@ -147,3 +150,106 @@ def test_reply_without_comment_id_exits_nonzero(tmp_path):
         f"Expected COMMENT_DATABASEID error on stderr; got: {result.stderr!r}"
     )
     assert _gh_calls(log) == [], "gh must NOT be called when COMMENT_DATABASEID is missing"
+
+
+# ── KIND=issue (PR-level conversation comments) ───────────────────────────────
+
+def test_issue_kind_posts_to_issues_comments(tmp_path):
+    """KIND=issue posts the reply to the issues/{pr}/comments endpoint, not a review reply."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    result = _run(
+        "owner", "repo", "123", "", "", "@reviewer re: thanks, fixed.", "issue",
+        stub_dir=stub_dir,
+    )
+    assert result.returncode == 0, f"Expected exit 0\nstderr: {result.stderr!r}"
+    calls = _gh_calls(log)
+    assert len(calls) == 1, f"Expected 1 gh call for issue KIND, got {len(calls)}: {calls}"
+    assert "issues/123/comments" in calls[0], (
+        f"Expected the issues/{{pr}}/comments endpoint; got: {calls[0]!r}"
+    )
+
+
+def test_issue_kind_never_calls_graphql(tmp_path):
+    """KIND=issue never resolves — PR-level comments have no thread to resolve."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    _run("owner", "repo", "123", "", "", "@reviewer re: noted.", "issue", stub_dir=stub_dir)
+    calls = _gh_calls(log)
+    assert all("graphql" not in c for c in calls), (
+        f"KIND=issue must not call graphql; calls: {calls}"
+    )
+
+
+def test_issue_kind_ignores_nonempty_comment_databaseid(tmp_path):
+    """KIND=issue ignores a stray COMMENT_DATABASEID — no missing-id error, still posts."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    result = _run(
+        "owner", "repo", "123", "999", "", "@reviewer re: thanks.", "issue",
+        stub_dir=stub_dir,
+    )
+    assert result.returncode == 0, f"Expected exit 0\nstderr: {result.stderr!r}"
+    calls = _gh_calls(log)
+    assert len(calls) == 1
+    assert "issues/123/comments" in calls[0]
+
+
+def test_issue_kind_empty_body_exits_zero_without_calling_gh(tmp_path):
+    """KIND=issue with an empty REPLY_BODY is a no-op: exit 0, gh never invoked."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    result = _run("owner", "repo", "123", "", "", "", "issue", stub_dir=stub_dir)
+    assert result.returncode == 0, f"Expected exit 0\nstderr: {result.stderr!r}"
+    assert _gh_calls(log) == [], "gh must NOT be called when REPLY_BODY is empty"
+
+
+def test_unknown_kind_exits_nonzero(tmp_path):
+    """An unrecognized KIND value fails loudly instead of silently falling through."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    result = _run(
+        "owner", "repo", "123", "456", "THREAD_abc", "Addressed.", "bogus",
+        stub_dir=stub_dir,
+    )
+    assert result.returncode != 0, "Expected non-zero exit for an unknown KIND value"
+    assert _gh_calls(log) == [], "gh must NOT be called for an unknown KIND value"
+
+
+def test_body_flag_is_lowercase_f_not_uppercase_f():
+    """Both gh api body= call sites must use -f (raw string), never -F.
+
+    Reply bodies always start with @{author} — `gh api -F body=@x` treats an
+    @-prefixed value as a file path to read rather than a literal string, so
+    every reply would silently try to read a nonexistent file named after the
+    reviewer's handle. The recording gh stub used elsewhere in this file only
+    logs "$1 $2" (sub-command + URL), not flags, so it can't catch a regression
+    here — this test reads the script source directly instead.
+    """
+    text = SCRIPT.read_text()
+    body_lines = [ln for ln in text.splitlines() if "body=" in ln and "gh api" in ln]
+    assert len(body_lines) == 2, f"expected exactly 2 gh api body= call sites, found {len(body_lines)}: {body_lines}"
+    for ln in body_lines:
+        assert "-f body=" in ln, f"expected -f body= (raw string), got: {ln!r}"
+        assert "-F body=" not in ln, f"-F body= would @-file-expand an @-prefixed reply: {ln!r}"
+
+
+def test_six_arg_call_still_behaves_as_review(tmp_path):
+    """Omitting the 7th KIND arg preserves the existing review-reply behavior (back-compat)."""
+    stub_dir = tmp_path / "stubs"
+    log = tmp_path / "gh.log"
+    _make_recording_gh_stub(stub_dir, log)
+    result = _run(
+        "owner", "repo", "123", "456", "THREAD_abc", "Addressed in abc123: fix typo.",
+        stub_dir=stub_dir,
+    )
+    assert result.returncode == 0, f"Expected exit 0\nstderr: {result.stderr!r}"
+    calls = _gh_calls(log)
+    assert len(calls) == 2, f"Expected 2 gh calls, got {len(calls)}: {calls}"
+    assert "comments/456/replies" in calls[0]
+    assert "graphql" in calls[1]
