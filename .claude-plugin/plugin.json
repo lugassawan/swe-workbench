@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "swe-workbench",
-  "version": "0.1.9",
-  "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Go, Rust, TypeScript), and pragmatic workflows.",
+  "version": "0.1.21",
+  "description": "Senior-engineer toolkit: principled design (Clean Arch, DDD, SOLID, TDD, patterns, observability, concurrency), security review, language expertise (Bash, C#, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript), and pragmatic workflows.",
   "author": {
     "name": "Lugas Septiawan",
     "email": "11341007+lugassawan@users.noreply.github.com",
@@ -19,8 +19,17 @@
     "ddd",
     "tdd",
     "solid",
+    "bash",
+    "csharp",
+    "dotnet",
     "golang",
+    "java",
+    "kotlin",
+    "python",
+    "ruby",
     "rust",
+    "sql",
+    "swift",
     "typescript"
   ]
 }

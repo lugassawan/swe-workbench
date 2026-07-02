@@ -61,6 +61,8 @@ Layers don't require separate modules. A directory per layer suffices: `domain/`
 ## Decision aid
 Ask: "If we swapped the database / web framework / message bus, which files change?" Only the adapters should.
 
+> See `examples/` for worked MVC implementations in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
+
 ## Common Excuses — and Why They're Wrong
 
 | Excuse | Reality |

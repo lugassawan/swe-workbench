@@ -4,7 +4,39 @@ Regression tests for the validate-pr CI issue-reference check.
 These tests replicate the strip-then-match pipeline from
 .github/workflows/pr.yml so the logic is verifiable without CI.
 """
+import os
 import re
+import subprocess
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from conftest import _CLEAN_ENV
+
+_PR_YML_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pr.yml"
+try:
+    _PR_YML_TEXT: str | None = _PR_YML_PATH.read_text(encoding="utf-8")
+except OSError:
+    _PR_YML_TEXT = None
+
+
+def _extract_pr_yml_pattern(anchor: str) -> str:
+    """Extract the first capture group from pr.yml using a stable anchor regex.
+
+    Uses re.DOTALL so anchors can span lines. Skips the test (pytest.skip) if
+    pr.yml is absent — avoids a FileNotFoundError at collection time for partial
+    checkouts. Raises AssertionError if the anchor cannot be located.
+    """
+    if _PR_YML_TEXT is None:
+        pytest.skip(f"pr.yml not found at {_PR_YML_PATH} — skipping sync tests")
+    m = re.search(anchor, _PR_YML_TEXT, re.DOTALL)
+    if not m:
+        raise AssertionError(
+            f"could not locate anchor {anchor!r} in pr.yml — "
+            "did the workflow change? Update the test or sync the drift."
+        )
+    return m.group(1)
 
 
 def strip_html_comments(text: str) -> str:
@@ -142,3 +174,206 @@ class TestValidOptout:
         body = "## Summary\n- x\n\nFixes #99\n"
         visible = strip_html_comments(body)
         assert has_closing_keyword(visible)
+
+
+class TestPrYamlSync:
+    """Tie Python helper functions to the source-of-truth regexes in pr.yml.
+
+    If someone edits a pattern in pr.yml without updating its Python mirror
+    (or vice-versa), these tests fail with a clear diagnostic.
+    """
+
+    def test_html_stripper_matches_pr_yml(self):
+        """strip_html_comments() must use the exact same regex as pr.yml."""
+        # Anchor includes 'python3 -c' context so a future re.sub addition
+        # above line 61 in pr.yml doesn't silently redirect extraction.
+        extracted = _extract_pr_yml_pattern(r"python3 -c.*?re\.sub\(r'([^']+)'")
+        # No POSIX classes — pattern is byte-identical between shell and Python.
+        assert extracted == r"<!--.*?(?:-->|$)", (
+            f"pr.yml HTML-stripper pattern {extracted!r} diverged from the "
+            "pattern used in strip_html_comments() — "
+            "update strip_html_comments() or the expected string in this test."
+        )
+
+    def test_na_optout_matches_pr_yml(self):
+        """_na_optout() behaviour must match the pr.yml grep -iqE N/A pattern."""
+        raw = _extract_pr_yml_pattern(
+            r"Allow ad-hoc PRs.*?grep -iqE '([^']+)'"
+        )
+        # Translate POSIX [[:space:]] → [ \t] for Python re.
+        py_pattern = raw.replace("[[:space:]]", r"[ \t]")
+        yml_re = re.compile(py_pattern, re.IGNORECASE | re.MULTILINE)
+
+        samples = [
+            ("N/A",                                      True),
+            ("Issue: N/A",                               True),
+            ("Issue: N/A — internal tooling",            True),
+            ("Issue: N/A — reason with trailing space ", True),
+            ("\tN/A",                                    True),
+            ("  N/A  ",                                  True),
+            ("This is N/A",                              False),
+            ("Closes #42",                               False),
+            ("Fix N/A issue",                            False),
+        ]
+        for text, expected in samples:
+            yml_result = bool(yml_re.search(text))
+            py_result = _na_optout(text)
+            assert yml_result == py_result, (
+                f"yml_re and _na_optout() disagree on {text!r}: "
+                f"yml={yml_result}, py={py_result}"
+            )
+            assert yml_result == expected, (
+                f"yml regex gave {yml_result!r} for {text!r}, expected {expected}"
+            )
+            assert py_result == expected, (
+                f"_na_optout() gave {py_result!r} for {text!r}, expected {expected}"
+            )
+
+    def test_closing_keyword_matches_pr_yml(self):
+        """has_closing_keyword() behaviour must match the pr.yml grep -iqE closing pattern."""
+        raw = _extract_pr_yml_pattern(
+            r"Require a GitHub closing keyword.*?grep -iqE '([^']+)'"
+        )
+        yml_re = re.compile(raw, re.IGNORECASE)
+
+        samples = [
+            ("Closes #42",         True),
+            ("closes #1",          True),
+            ("Fixes #99",          True),
+            ("Fixed #7",           True),
+            ("Resolves #100",      True),
+            ("resolved #99",       True),   # resolve[sd]? matches 'resolved' and 'resolves'
+            ("resolves #99",       True),
+            ("Fix #5",             True),   # fix(e[sd])? matches plain 'fix'
+            ("Close #3",           True),   # close[sd]? matches plain 'close'
+            ("see Closes #42",     True),   # keyword not required at line start
+            ("Closes N/A",         False),
+            ("Closes #N/A",        False),
+            ("fixes the bug",      False),  # no #number
+        ]
+        for text, expected in samples:
+            yml_result = bool(yml_re.search(text))
+            py_result = has_closing_keyword(text)
+            assert yml_result == py_result, (
+                f"yml_re and has_closing_keyword() disagree on {text!r}: "
+                f"yml={yml_result}, py={py_result}"
+            )
+            assert yml_result == expected, (
+                f"yml regex gave {yml_result!r} for {text!r}, expected {expected}"
+            )
+
+    def test_title_pattern_locks_allowed_types(self):
+        """PR title regex in pr.yml must accept only defined types."""
+        pattern = _extract_pr_yml_pattern(r"Validate PR title.*?PATTERN='([^']+)'")
+        title_re = re.compile(pattern)
+
+        positives = [
+            "[feat] Add something",
+            "[fix] Fix the bug",
+            "[refactor] Clean up code",
+            "[test] Add tests",
+            "[ci] Update workflow",
+            "[docs] Update readme",
+            "[perf] Improve speed",
+            "[chore] Bump deps",
+            "[polish] Minor cleanup",
+            "[breaking] Remove old API",
+            "[feat]: Add something with colon",
+            "[fix]: Fix with colon",
+        ]
+        negatives = [
+            "feat: foo",        # no brackets
+            "[unknown] foo",    # unknown type
+            "[fix]foo",         # missing space after bracket
+            "[fix] ",           # empty description (only a space)
+            "Fix the bug",      # no brackets at all
+            "[FEAT] uppercase", # case-sensitive — uppercase not in allowed list
+        ]
+
+        for title in positives:
+            assert title_re.match(title), (
+                f"Expected {title!r} to match PR title pattern"
+            )
+        for title in negatives:
+            assert not title_re.match(title), (
+                f"Expected {title!r} NOT to match PR title pattern"
+            )
+
+
+_PRE_COMMIT_HOOK = Path(__file__).parent.parent / ".githooks" / "pre-commit"
+
+
+class TestAuthorshipDenylist:
+    """Email denylist in pr.yml and .githooks/pre-commit must cover t@t.com."""
+
+    def _denylist_re(self) -> re.Pattern:
+        """Extract the authorship-denylist grep pattern from pr.yml."""
+        if _PR_YML_TEXT is None:
+            pytest.skip("pr.yml not found")
+        m = re.search(
+            r"Validate commit authorship.*?grep -E '([^']+)' \|\| true",
+            _PR_YML_TEXT,
+            re.DOTALL,
+        )
+        assert m, "Authorship denylist grep pattern not found under 'Validate commit authorship' in pr.yml"
+        return re.compile(m.group(1))
+
+    def test_pr_yml_denylist_rejects_test_at_example(self):
+        pat = self._denylist_re()
+        assert pat.fullmatch("test@example.com"), "test@example.com must be denied"
+
+    def test_pr_yml_denylist_rejects_t_at_t(self):
+        pat = self._denylist_re()
+        assert pat.fullmatch("t@t"), "t@t must be denied"
+
+    def test_pr_yml_denylist_rejects_t_at_t_dot_com(self):
+        """t@t.com (form used by _CLEAN_ENV in conftest.py) must be denied."""
+        pat = self._denylist_re()
+        assert pat.fullmatch("t@t.com"), "t@t.com must be denied by pr.yml denylist"
+
+    def test_pr_yml_denylist_allows_real_email(self):
+        pat = self._denylist_re()
+        assert not pat.fullmatch("real@example.org"), "real email must be allowed"
+
+    def _run_pre_commit(self, email: str, branch: str = "feature/test") -> subprocess.CompletedProcess:
+        """Run the pre-commit hook with a stubbed git identity.
+
+        Values are passed via environment variables to avoid shell injection.
+        """
+        hook = _PRE_COMMIT_HOOK.read_text()
+        script = textwrap.dedent(f"""\
+            #!/bin/sh
+            git() {{
+                case "$*" in
+                    "rev-parse --abbrev-ref HEAD") printf '%s\\n' "$_STUB_BRANCH" ;;
+                    "config user.email")           printf '%s\\n' "$_STUB_EMAIL" ;;
+                    *) command git "$@" ;;
+                esac
+            }}
+            {hook}
+        """)
+        return subprocess.run(
+            ["sh", "-c", script],
+            capture_output=True,
+            text=True,
+            env={**dict(_CLEAN_ENV), "_STUB_EMAIL": email, "_STUB_BRANCH": branch},
+        )
+
+    def test_pre_commit_blocks_test_at_example(self):
+        result = self._run_pre_commit("test@example.com")
+        assert result.returncode == 1
+
+    def test_pre_commit_blocks_t_at_t(self):
+        result = self._run_pre_commit("t@t")
+        assert result.returncode == 1
+
+    def test_pre_commit_blocks_t_at_t_dot_com(self):
+        """t@t.com must be blocked by the pre-commit hook (currently passes through)."""
+        result = self._run_pre_commit("t@t.com")
+        assert result.returncode == 1, (
+            "pre-commit hook must block t@t.com but allowed it through"
+        )
+
+    def test_pre_commit_allows_real_email(self):
+        result = self._run_pre_commit("dev@example.org")
+        assert result.returncode == 0

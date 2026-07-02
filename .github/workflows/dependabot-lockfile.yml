@@ -1,0 +1,62 @@
+name: Dependabot Lockfile Regen
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+    paths:
+      - tests/requirements.txt
+      - tests/release-requirements.txt
+      - tests/build-requirements.txt
+
+# Default to least-privilege; the one job that writes elevates explicitly.
+permissions:
+  contents: read
+
+# Cancel in-progress runs when Dependabot pushes a new commit — only the
+# latest lockfile state matters, so stale runs are safe to discard.
+concurrency:
+  group: dependabot-lockfile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regen-lockfiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run for Dependabot PRs. Checking the PR author (user.login) rather than
+    # github.actor ensures the guard holds even when a human pushes a follow-up commit
+    # to a Dependabot branch (as happened manually in #277/#278).
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          # Checkout the branch tip (not a detached SHA) so git push is a fast-forward.
+          # github.head_ref is safe here: action inputs are not shell-evaluated by the runner.
+          # persist-credentials lets the subsequent git push succeed via GITHUB_TOKEN.
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate pip lockfiles
+        run: bash scripts/lock-pip-requirements.sh
+
+      - name: Guard against new top-level packages
+        # Keep this lockfile list in sync with the "Regenerate pip lockfiles" step above.
+        run: bash scripts/check-lockfile-additions.sh tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
+
+      - name: Commit and push updated lockfiles if changed
+        run: |
+          if git diff --quiet HEAD -- tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock; then
+            echo "Lockfiles are already up to date — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
+          git commit -m "[chore] Regenerate lockfiles after dependency bump"
+          git push

@@ -1,0 +1,5 @@
+# Representative trigger prompts for language-ruby
+how should I use Ruby 3 pattern matching with hash shorthand and endless methods in a small object
+what is the difference between Ruby blocks procs and lambdas when storing callbacks
+review this Ruby code for Enumerable Comparable and frozen string literal conventions
+how do I avoid bare rescue and keep rescue scopes narrow in Ruby error handling

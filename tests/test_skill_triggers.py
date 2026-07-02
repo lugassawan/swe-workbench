@@ -137,6 +137,14 @@ assert _FIXTURES, (
 )
 
 
+# Minimum BM25 score gap between #1 and the nearest non-sibling when target ranks top.
+# Tunable: lower to suppress noise, raise to catch closer near-ties earlier.
+# Calibrated at 0.1 against the current fixture set; all top-1 skills scored ≥ 0.35
+# margin at time of writing.  Lower if a legitimate top-1 fixture produces a false alarm;
+# raise to detect IDF drift earlier.
+_SCORE_MARGIN = 0.1
+
+
 @pytest.mark.parametrize(
     "skill_name,prompt",
     _FIXTURES,
@@ -146,18 +154,35 @@ def test_prompt_ranks_target_skill_top1(
     skill_name, prompt, real_corpus, real_index, sibling_sets
 ):
     ranked = _rank_skills(prompt, real_corpus, real_index)
+    top3_summary = ", ".join(
+        f"`{n}` ({sc:.2f})" for n, sc in ranked[:3]
+    )
     target_rank = next(
         (i for i, (n, _) in enumerate(ranked) if n == skill_name), None
     )
     assert target_rank is not None, f"skill `{skill_name}` not found in corpus"
 
+    _all_groups = [s for s in sibling_sets if skill_name in s]
+    my_siblings = set().union(*_all_groups) if _all_groups else {skill_name}
+
     if target_rank == 0:
-        return  # top-1 globally; pass
+        # Score-margin guard: catch near-ties from IDF drift before they flip.
+        target_score = ranked[0][1]
+        non_siblings_below = [
+            (n, sc) for n, sc in ranked[1:] if n not in my_siblings
+        ]
+        if non_siblings_below:
+            next_name, next_score = non_siblings_below[0]
+            margin = target_score - next_score
+            assert margin >= _SCORE_MARGIN, (
+                f"prompt for `{skill_name}` ranks #1 but margin over next non-sibling "
+                f"`{next_name}` is only {margin:.3f} (< {_SCORE_MARGIN}). "
+                f"Top-3: [{top3_summary}]. "
+                f"IDF drift may flip this ranking — tighten the description or raise _SCORE_MARGIN."
+            )
+        return
 
     # Sibling-set escape hatch: all outrankers must be documented siblings.
-    my_siblings = next(
-        (s for s in sibling_sets if skill_name in s), {skill_name}
-    )
     outrankers = [n for n, _ in ranked[:target_rank]]
     if all(n in my_siblings for n in outrankers):
         return
@@ -165,7 +190,8 @@ def test_prompt_ranks_target_skill_top1(
     non_sibling = [(n, sc) for n, sc in ranked[:target_rank] if n not in my_siblings]
     pytest.fail(
         f"prompt for `{skill_name}` ranked #{target_rank + 1}; "
-        f"outranked by: "
+        f"top-3: [{top3_summary}]; "
+        f"outranked by non-siblings: "
         + ", ".join(f"`{n}` (score {sc:.2f})" for n, sc in non_sibling)
         + f". Refine skills/{skill_name}/SKILL.md description "
         f"or add a sibling-set entry to tests/skill_sibling_sets.txt."
@@ -196,4 +222,65 @@ def test_deliberately_vague_description_is_flagged():
     assert ranked[0][0] == "synthetic-specific-skill", (
         f"synthetic-vague-skill unexpectedly ranked #1 (score {ranked[0][1]:.2f}) — "
         "BM25 IDF weighting may be broken."
+    )
+
+
+# ── Plan-execution trigger: wrapper must outrank leaf ─────────────────────
+
+def test_plan_execution_prompt_prefers_wrapper():
+    """workflow-development must rank above executing-plans for plan-execution prompts.
+
+    Uses a self-contained two-skill corpus: the live workflow-development description
+    is loaded from the real SKILL.md so the test bites both before (fails) and after
+    (passes) the description fix. The competitor is a frozen snapshot of the
+    superpowers:executing-plans description — frozen so the test doesn't depend on a
+    vendored cache path and remains stable if the upstream skill is updated.
+
+    Discoverability snapshot (do not edit without re-verifying the test still fails
+    before the workflow-development description fix):
+      superpowers:executing-plans description =
+        "Use when you have a written implementation plan to execute in a separate
+         session with review checkpoints"
+    """
+    from validate import parse_frontmatter  # already on sys.path via conftest
+
+    skill_md = _SKILLS_DIR / "workflow-development" / "SKILL.md"
+    fm = parse_frontmatter(skill_md)
+    assert fm and "description" in fm, "workflow-development SKILL.md missing description"
+
+    # Calibration (pre-fix): old description scored wf≈2.26, ep≈4.91 — executing-plans won.
+    # After fix: wf≈4.74, ep≈2.91 — margin ~1.82, well above _SCORE_MARGIN=0.1.
+    #
+    # Frozen snapshot — intentionally not read from the vendored cache.
+    # Snapshot taken 2026-06-01. Re-verify if superpowers:executing-plans description changes.
+    executing_plans_frozen = (
+        "Use when you have a written implementation plan to execute "
+        "in a separate session with review checkpoints"
+    )
+
+    synthetic_corpus = {
+        "workflow-development": _tokenize(fm["description"]),
+        "executing-plans": _tokenize(executing_plans_frozen),
+    }
+    index = _build_bm25_index(synthetic_corpus)
+
+    prompt = (
+        "i already have a written implementation plan execute it end to end "
+        "with branch verify review and pr"
+    )
+    ranked = _rank_skills(prompt, synthetic_corpus, index)
+    scores = dict(ranked)
+
+    assert ranked[0][0] == "workflow-development", (
+        f"`executing-plans` outranked `workflow-development` "
+        f"(scores: workflow-development={scores['workflow-development']:.2f}, "
+        f"executing-plans={scores['executing-plans']:.2f}). "
+        "Add 'execute a written implementation plan' to the workflow-development "
+        "description so the wrapper claims its own trigger surface."
+    )
+    margin = scores["workflow-development"] - scores.get("executing-plans", 0.0)
+    assert margin >= _SCORE_MARGIN, (
+        f"workflow-development ranks #1 but margin over executing-plans is only "
+        f"{margin:.3f} (< {_SCORE_MARGIN}). IDF drift may flip this — "
+        "tighten the workflow-development description."
     )

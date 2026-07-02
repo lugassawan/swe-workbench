@@ -66,19 +66,40 @@ def make_plugin_tree(
     shared_dir = agents_dir / "shared"
     shared_dir.mkdir(exist_ok=True)
 
-    # Build catalog listing every skill in skills_dir
+    # Build catalog slices listing every skill in skills_dir
+    def _lines(ids):
+        return "\n".join(f"- `swe-workbench:{sid}` — {sid} skill" for sid in ids)
+
     if catalog is not None:
-        (shared_dir / "skills.md").write_text(catalog, encoding="utf-8")
+        # Legacy convenience: caller-supplied catalog text goes to principles.md;
+        # other slices get empty stubs so the validator sees valid (if empty) files.
+        import re as _re
+        _known = _re.findall(r"`swe-workbench:([\w-]+)`", catalog)
+        _bad = [s for s in _known if any(s.startswith(p) for p in ("principle-", "language-", "workflow-")) or s == "ticket-context"]
+        assert not _bad, (
+            f"catalog= must not contain prefixed skills {_bad}; pass them via skills= so "
+            "make_plugin_tree places them in the correct slice file automatically."
+        )
+        (shared_dir / "principles.md").write_text(catalog, encoding="utf-8")
+        (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
+        (shared_dir / "workflows.md").write_text("\n", encoding="utf-8")
     else:
         on_disk = sorted(p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file())
-        lines = "\n".join(f"- `swe-workbench:{sid}` — {sid} skill" for sid in on_disk)
-        (shared_dir / "skills.md").write_text(lines + "\n" if lines else "\n", encoding="utf-8")
+        principles = [s for s in on_disk if s.startswith("principle-")]
+        languages = [s for s in on_disk if s.startswith("language-")]
+        workflows = [s for s in on_disk if s.startswith("workflow-") or s == "ticket-context"]
+        # Skills with unrecognised prefixes land in principles (safe default)
+        others = [s for s in on_disk if s not in principles and s not in languages and s not in workflows]
+        principles = principles + others
+        (shared_dir / "principles.md").write_text((_lines(principles) + "\n") if principles else "\n", encoding="utf-8")
+        (shared_dir / "languages.md").write_text((_lines(languages) + "\n") if languages else "\n", encoding="utf-8")
+        (shared_dir / "workflows.md").write_text((_lines(workflows) + "\n") if workflows else "\n", encoding="utf-8")
 
     if agents is not None:
         for agent in agents:
             name = agent["name"]
             fm_lines = "\n".join(f"{k}: {v}" for k, v in agent.items())
-            body = f"---\n{fm_lines}\n---\n\n> See @./shared/skills.md for the full skill catalog.\n"
+            body = f"---\n{fm_lines}\n---\n\nSee @./shared/principles.md for the skill catalog.\n"
             (agents_dir / f"{name}.md").write_text(body, encoding="utf-8")
 
     # commands/

@@ -93,6 +93,12 @@ match command:
 - Pin transitive deps via lockfile (`uv.lock`, `poetry.lock`) in applications; use version ranges in libraries.
 - Always isolate with a virtualenv — never install into the system Python.
 
+## Tooling
+- **Imports:** `ruff check --select I --fix`
+- **Format:** `ruff format` / `black .`
+- **Lint:** `ruff check` (+ `mypy` for types)
+- **Test:** `pytest` (see Testing below)
+
 ## Testing
 - `pytest` over `unittest` — fixtures, parametrize, and plugins make it richer.
 - `@pytest.mark.parametrize` instead of loops inside tests.

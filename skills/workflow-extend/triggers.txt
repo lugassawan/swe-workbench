@@ -1,0 +1,4 @@
+extend the current PR with this related sub-idea while preserving verify review deliver checkpoints on the existing branch
+capture this mid-PR follow-on and implement it onto the open pull request without creating a new branch or duplicate PR
+add this small related improvement to the open PR for this branch without opening a new pull request
+update the existing pull request with this sub-idea using verify and review but skip branching

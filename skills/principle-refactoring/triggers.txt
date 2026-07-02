@@ -1,0 +1,10 @@
+# Trigger fixtures for principle-refactoring
+# Distinct from principle-clean-code (naming/length aesthetics) and principle-design-patterns (GoF catalog).
+# Anchored on Fowler-specific terms: smell names, move names, characterization tests, behavior-preserving steps.
+How do I safely break up this Long Method using Fowler's Extract Function move while keeping behavior identical between commits
+We have legacy code with no tests that I need to refactor — how do I write characterization tests first to lock in current behavior
+What is the smell-to-move mapping when I see Feature Envy or Data Clumps and how do I sequence small behavior-preserving steps
+I want to apply Replace Conditional with Polymorphism but need to know when this Fowler move is appropriate versus other refactoring catalog options
+Our codebase has Primitive Obsession and Shotgun Surgery smells — what Fowler moves should I apply and in what order to stay green between steps
+how do I safely refactor legacy code with no tests using behavior-preserving steps
+when should I Extract Function versus Inline Function when applying Fowler refactoring moves to reduce code smells

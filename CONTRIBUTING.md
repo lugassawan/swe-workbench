@@ -12,9 +12,15 @@ After cloning, run the setup script once:
 ./scripts/setup.sh
 ```
 
-This installs per-file symlinks in `.git/hooks/` pointing at `.githooks/`. The default git location is used (no `core.hooksPath` config), so the setup is resistant to tools that reset that key.
+This installs per-file symlinks in `.git/hooks/` pointing at `.githooks/`. After a successful run, no `core.hooksPath` config is set — the default git hook location is used, which is resistant to tools that reset that key.
 
-> **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink.
+If you have pre-existing hooks in `.git/hooks/` or a non-default repo-local `core.hooksPath`, setup.sh will refuse to overwrite them and print a conflict list. Re-run with `--force` to acknowledge and overwrite:
+
+```sh
+./scripts/setup.sh --force
+```
+
+> **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink. Re-running on an already-configured repo is safe — no warnings are emitted to stderr.
 
 ## Branch naming
 
@@ -32,6 +38,7 @@ The `commit-msg` hook enforces a `[type] Subject` prefix on every commit:
 [feat] Add Python language skill
 [fix] Resolve trigger keyword collision in DDD skill
 [docs] Clarify F.I.R.S.T. principle in TDD skill
+[chore]: Bump actions/setup-python from 5 to 6
 ```
 
 Allowed types: `feat`, `fix`, `refactor`, `test`, `ci`, `docs`, `perf`, `chore`, `polish`, `breaking`.
@@ -69,6 +76,8 @@ It checks:
 - `commands/*.md` — required frontmatter (`description`).
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
 - `skills/*/triggers.txt` — every skill must have a sibling `triggers.txt` with ≥2 non-empty non-comment lines (each ≤200 chars).
+- `skills/*/examples/**/*.md` — companion example files must be ≤120 lines each. See `docs/extending.md` for the full `examples/` convention (multi-fence `// file:` header rule, visibility ordering).
+- Dependency-flow graph (`check_no_cycles`) — action-cued `` `swe-workbench:<id>` `` activations must not form cycles across commands, skills, and agents. See `docs/extending.md` (`## Dependency flow`) for the allowed layering rules that this check enforces.
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 
@@ -93,7 +102,7 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` �
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
-**Skill catalog**: `agents/shared/skills.md` is the single-source index of every skill in this plugin. When you add a new skill, add a corresponding entry there (format: `- \`swe-workbench:<name>\` — <one-line description>`). The validator's `check_catalog_completeness()` enforces that the catalog matches on-disk skills and that every agent file includes it via `@./shared/skills.md`. See `docs/extending.md` for the full recipe.
+**Skill catalog**: The catalog is split across three slice files under `agents/shared/`: `principles.md`, `languages.md`, and `workflows.md`. When you add a new skill, add a corresponding entry in the appropriate slice (format: `- \`swe-workbench:<name>\` — <one-line description>`). The slice is determined by the skill-name prefix: `principle-*` → `principles.md`; `language-*` → `languages.md`; `workflow-*` and `ticket-context` → `workflows.md`; any other prefix defaults to `principles.md`. The validator's `check_catalog_completeness()` enforces that each slice exactly matches the on-disk skills in its prefix group, and that every agent file includes at least one slice via `@./shared/principles.md`, `@./shared/languages.md`, or `@./shared/workflows.md`. Code-touching agents that include `@./shared/principles.md` must also include `@./shared/languages.md` so language-specific skills are always in scope. If the new agent never touches source code, add its stem to the `_NON_CODE_AGENTS` set at the top of `scripts/validate.py` to suppress this check. See `docs/extending.md` for the full recipe.
 
 ## Cutting a release
 
@@ -104,6 +113,17 @@ Run the release script from a clean `main`:
 ```
 
 It bumps both manifests, opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+
+## Adding a new interactive command
+
+When creating a new interactive command that supports interrogation mode (i.e. one that delegates to a subagent to produce an artifact), inline the canonical interrogation prelude verbatim from `commands/shared/interrogation-prelude.md`:
+
+1. Copy the file content exactly into the new command, positioned after any ticket-context prelude and before the subagent delegation or skill activation instruction.
+2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py` — the `TestInterrogationPreludeUniformity` class will then enforce that the prelude stays in sync.
+3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
+4. Add the command name to the `argument-hint` note in `docs/catalog.md`.
+
+**Important:** the mode gate (`AskUserQuestion`) and the grill loop (`swe-workbench:workflow-grill`) run in the **orchestrator** (command body), never in a shared subagent. Embedding it in a shared subagent (e.g. `product-manager`, `senior-engineer`) would leak the mode gate into other flows that reuse the same agent.
 
 ## `.githooks/` vs `hooks/hooks.json`
 

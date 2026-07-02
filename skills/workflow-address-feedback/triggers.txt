@@ -1,0 +1,6 @@
+# Trigger phrases for workflow-address-feedback
+address the feedback on PR 123
+triage and fix the review threads on this PR
+address feedback from code review
+fix reviewer comments ADDRESSED CLARIFIED DEFERRED triage PR owner close threads
+resolve review threads as PR owner with triage and commit fixes

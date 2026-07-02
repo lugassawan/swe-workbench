@@ -1,0 +1,5 @@
+how do I run a blameless postmortem without the team feeling like they're being blamed for the outage
+what sections should a postmortem document include and in what order
+walk me through the 5 whys and fishbone diagram for finding the root cause of this incident
+every action item from our last postmortem needs an owner and a due date — what format should we use
+how do I track MTTD and MTTR trends over multiple quarters to measure whether our blameless postmortem process is improving incident response

@@ -1,6 +1,6 @@
 ---
 name: principle-performance
-description: Performance engineering principles — latency vs throughput, profile-before-optimize discipline, Big-O instincts for common patterns, allocation and GC pressure, data locality and cache-friendliness, N+1 queries on a list endpoint. Auto-load when reviewing hot-path code, choosing data structures, designing batch or streaming pipelines, hunting allocations or GC pauses, weighing latency trade-offs, considering caching, detecting N+1 queries on list endpoint calls, or evaluating scalability.
+description: Performance engineering principles — latency vs throughput, profile-before-optimize discipline, Big-O instincts for common patterns, allocation and GC pressure, data locality and cache-friendliness, N+1 queries on a list endpoint, cache-aside and write-through invalidation, TTL sizing for hot-path endpoints, stampede prevention with single-flight. Auto-load when reviewing hot-path code, choosing data structures, designing batch or streaming pipelines, hunting allocations or GC pauses, weighing latency trade-offs, sizing TTL and picking cache invalidation, preventing cache stampede or thundering herd with single-flight on an expired hot key, detecting N+1 queries on list endpoint calls, or evaluating scalability.
 ---
 
 # Performance
@@ -58,6 +58,17 @@ One query per iteration is the most common silent performance killer.
 - Measure query count at the boundary (query logs, explain plans) — not only wall-clock time.
 - "We'll cache it later" is not a query strategy; the cache miss path is still N+1.
 
+## Caching
+
+Caching trades freshness and memory for latency — earn it with a profile and a clear invalidation plan, not a hunch.
+- Add a cache only after measuring; a cache that hides an N+1 query still runs N+1 queries on a miss (see `N+1 and the Database Boundary` above).
+- Layers — in-process (L1, fastest, per-node, risks drift between replicas) → distributed (L2, shared, costs a network hop) → CDN/edge (static content and cacheable GETs). See `principle-api-design#REST vs RPC vs Event-Driven` for HTTP cacheability.
+- Invalidation strategies — cache-aside (lazy, app-managed, the default: read from cache; on miss, load from origin, populate, return) vs write-through (write populates cache synchronously, strong consistency, higher write cost) vs write-behind (async flush, fast writes, loss window on crash — back the flush with a WAL or durable queue to bound it). Prefer TTL + explicit bust on known writes; see `principle-event-driven#Event Sourcing` for cache/projection drift.
+- TTL — size TTL to data volatility, not a round number. Short TTL = fresher data + more origin hits; long TTL = staler data + cheaper reads.
+- Stampede prevention — when a hot key expires, concurrent misses dogpile the origin. Use single-flight or a mutex so one caller recomputes while others wait, or use probabilistic early expiry to spread recomputation. See `principle-resiliency#Graceful Degradation` for serving stale-on-error as fail-soft.
+
+> See `examples/` for cache-aside with single-flight in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
+
 ## When Pre-Write Performance Thinking is Overkill
 
 - Scripts that process fixed, small inputs and run rarely or once.
@@ -76,5 +87,8 @@ One query per iteration is the most common silent performance killer.
 | Allocation inside inner loop | High allocation rate causes GC pauses at the worst time |
 | Lazy ORM relation on list endpoint | Guarantees N+1 queries at runtime |
 | "We'll cache it later" | Cache masks a bad access pattern; the cache-miss path is still slow |
+| Cache invalidation as an afterthought | Stale reads with no owner; correctness bugs appear only under write load |
+| Unbounded cache growth / no eviction policy | Memory blows up under load; OOM kills the process |
+| No stampede guard on a hot key | Concurrent cold misses dogpile the origin; the cache makes the outage worse |
 | Tail latency ignored in SLOs | p99 outliers hit real users; mean metrics hide them |
 | String concat in loop | O(n²) byte copies; accumulate and join once outside the loop |

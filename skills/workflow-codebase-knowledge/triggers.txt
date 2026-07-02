@@ -1,0 +1,6 @@
+# Trigger prompts — must rank workflow-codebase-knowledge #1 under BM25
+present this codebase as a knowledge document with architecture and module map
+give me the architecture and module map of src/ so I can build a mental model of the structure
+explain the public API surfaces of this repo as a layered knowledge overview
+I need a mental model of this codebase — show me the modules and their relationships
+onboard me to this codebase: overview, modules, APIs, and conventions

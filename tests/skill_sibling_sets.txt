@@ -13,3 +13,60 @@
 # a prompt like "how do I model a domain event for a state transition?" legitimately
 # belongs to any of these three skills.
 principle-clean-architecture, principle-ddd, principle-event-driven
+
+# workflow-pr-review and workflow-pr-review-followup share genuine trigger surface:
+# both are invoked by reviewers on a specific PR number and both run the reviewer
+# agent against the PR diff. A prompt like "review pull request #123" legitimately
+# belongs to either skill — the distinction (first-pass vs re-check) is determined
+# by context the BM25 ranker cannot resolve.
+workflow-pr-review, workflow-pr-review-followup
+
+# principle-data-modeling and principle-release-engineering both cover the
+# expand-contract pattern, but from different angles: principle-data-modeling owns
+# schema mechanics (column backfills, dual-write windows, index swaps), while
+# principle-release-engineering owns API/code-contract discipline (ship new interface
+# alongside old, migrate callers, remove old). A prompt like "how do I evolve a
+# database schema without breaking existing clients using an expand-contract migration"
+# legitimately belongs to either skill.
+principle-data-modeling, principle-release-engineering
+
+# workflow-dependency-upgrade and principle-release-engineering share "bump", "semver",
+# and "major/minor version" trigger surface. A prompt like "should this be a major
+# bump or a minor bump?" legitimately lands on either the upgrade-lifecycle runbook
+# or the semver-discipline principle — BM25 cannot resolve the operational vs. guidance
+# distinction.
+workflow-dependency-upgrade, principle-release-engineering
+
+# workflow-development and workflow-delegated-implementation share genuine trigger
+# surface: workflow-delegated-implementation IS the Phase-2 delegation strategy
+# inside workflow-development. A prompt like "drive this feature from plan to
+# delivered pull req" could ambiguously land on either — the full 5-phase lifecycle
+# OR the delegation sub-strategy that keeps Phase 2 lean. BM25 cannot resolve this
+# without runtime context.
+workflow-development, workflow-delegated-implementation
+
+# language-python and language-rust both have async/concurrent programming content.
+# Rust describes "async Rust" and Python describes "asyncio, generators" — BM25 cannot
+# resolve which language a prompt targets without the import statements or file extension.
+# A prompt like "how do I write an async generator with proper cancellation handling using
+# asyncio" is unambiguously Python at runtime, but BM25 scores both language descriptions
+# similarly on "async" + "generator" tokens; Rust can outrank Python on high-IDF matches.
+language-python, language-rust
+
+# principle-performance and workflow-performance-investigation share the "performance"
+# and "profile" trigger surface: principle-performance covers design-time discipline
+# (Big-O, allocation, N+1) while workflow-performance-investigation is the investigation
+# runbook for a live bottleneck (profiling, flame graphs, hotspot ranking, before/after
+# measurement). A prompt like "this endpoint is slow, how do I find and fix the bottleneck"
+# legitimately belongs to either skill — the design-time vs runtime distinction is context
+# the BM25 ranker cannot resolve.
+principle-performance, workflow-performance-investigation
+
+# principle-resiliency and principle-distributed-systems share idempotency trigger
+# surface: principle-distributed-systems covers at-least-once delivery via
+# `## Idempotency Across the Network`, while principle-resiliency covers the dedup-store
+# implementation that makes retries safe. A prompt like "my payment service double-
+# charges on retries — how do I implement exactly-once semantics with idempotency"
+# legitimately belongs to either skill — the delivery-layer vs dedup-store distinction
+# cannot be resolved by BM25 alone.
+principle-resiliency, principle-distributed-systems

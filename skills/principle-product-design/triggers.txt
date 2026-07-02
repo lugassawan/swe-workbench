@@ -1,0 +1,25 @@
+check usability heuristics on this component
+is the visual hierarchy clear
+evaluate the information architecture
+review interaction design patterns
+does this follow Nielsen's heuristics
+check design system compliance
+check usability of loading and empty states in this component
+review the form validation UX
+does this follow the design system tokens
+audit the responsive design
+are there any usability violations
+review the UX before shipping
+review the layout visual weight
+check usability heuristic violations in this UI
+does the visual hierarchy guide attention correctly
+is the information architecture logical for users
+apply Nielsen's ten usability heuristics
+check interaction design for usability issues
+design system compliance check
+does the layout have proper visual hierarchy
+usability heuristic check for this component
+information architecture review
+interaction design quality check
+UX usability heuristic violations
+visual hierarchy and spacing review

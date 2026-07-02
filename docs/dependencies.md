@@ -4,11 +4,23 @@
 
 | Plugin | Source | Used for | Required? |
 |---|---|---|---|
-| `superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | Skills invoked via Skill tool (from `skills/workflow-development/`, `commands/implement.md`, `agents/debugger.md`): `using-git-worktrees` (fallback when rimba is absent), `executing-plans`, `subagent-driven-development`, `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `finishing-a-development-branch`, `dispatching-parallel-agents`, `systematic-debugging`, `writing-plans`, `code-reviewer`. | Required for the `workflow-development` skill to function end-to-end. |
+| `superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | Skills invoked via Skill tool (from `skills/workflow-development/`, `commands/implement.md`, `agents/debugger.md`): `using-git-worktrees` (fallback when rimba is absent), `executing-plans`, `subagent-driven-development`, `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `finishing-a-development-branch`, `dispatching-parallel-agents`, `systematic-debugging`, `writing-plans`. | Required for the `workflow-development` skill to function end-to-end. |
 | `rimba` | [lugassawan/rimba](https://github.com/lugassawan/rimba) | Optional worktree-lifecycle provider. When available (on PATH or at `~/.local/bin/rimba`, `~/go/bin/rimba`), `workflow-development` Phase 1 uses `rimba add <task>` instead of `superpowers:using-git-worktrees`, and `workflow-cleanup-merged` uses `rimba remove <task>` instead of raw `git worktree` shell commands. Ships a built-in MCP server (`rimba mcp`) for AI-tool integration. Install: `go install github.com/lugassawan/rimba@latest` or download from the releases page. | Optional. Falls back to `superpowers:using-git-worktrees` / `git worktree` when absent. |
 | `claude-plugins-official` | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Official Anthropic plugin collection — install if you need any of its bundled tools. | Optional. |
 
 Install them via `/plugin marketplace add …` + `/plugin install …` before using the `workflow-development` skill.
+
+## Browser automation (optional, feature-gated)
+
+The following MCP servers enable browser-driven E2E testing and console/network diagnostics. All three are **optional** and **hard-gated**: if the required server is absent when a browser feature is invoked, the command returns a `BLOCKED:` message with a per-backend install hint rather than silently degrading.
+
+| Server | Source | Used by | Install | Required? |
+|---|---|---|---|---|
+| Playwright MCP | [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp) | `/swe-workbench:test --mode e2e` — browser snapshot → interact → assert spec authoring via `e2e-test-writer`; also an either-or backend for `/swe-workbench:test --mode e2e-live`'s ephemeral browser walkthrough | `claude mcp add playwright npx @playwright/mcp@latest` | Required **only** for `/swe-workbench:test --mode e2e` (hard-gated: absent → `BLOCKED:`). For `/swe-workbench:test --mode e2e-live`, optional — either this or Claude-in-Chrome satisfies its gate. |
+| Chrome DevTools MCP | [`ChromeDevTools/chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) | `/swe-workbench:debug` console/network/perf diagnostics for web-UI symptoms via `read_console_messages` + `read_network_requests` | `claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest` | Optional; one Chrome backend required for `/swe-workbench:debug` browser diagnostics (hard-gated) |
+| Claude-in-Chrome | In-harness (`mcp__claude-in-chrome__*`) | `/swe-workbench:debug` console/network capture when the Claude browser extension is connected — alternative to chrome-devtools-mcp; also an either-or backend for `/swe-workbench:test --mode e2e-live`'s ephemeral browser walkthrough (adds GIF recording via `gif_creator`) | None (provided by the Claude Code harness) | Optional alternative to chrome-devtools-mcp for `/swe-workbench:debug` browser diagnostics. For `/swe-workbench:test --mode e2e-live`, optional — either this or Playwright MCP satisfies its gate. |
+
+**Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … run \`claude mcp add …\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/swe-workbench:test` (unit) and non-web-UI `/swe-workbench:debug` are completely unaffected by these servers.
 
 ## Claude Code native tools
 

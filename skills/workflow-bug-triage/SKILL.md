@@ -19,7 +19,7 @@ orchestrator: true
 
 - The user wants a fix **now** → use `/swe-workbench:debug` (counterpart skill that ends in code change + regression test).
 - The root cause is already known and only the fix is needed → use `/swe-workbench:debug`.
-- The user is capturing a feature request, idea, or improvement (not a bug) → use the `/capture` command directly.
+- The user is capturing a feature request, idea, or improvement (not a bug) → use the `/swe-workbench:capture` command directly.
 - The user is reviewing already-merged code for retroactive issues → use `/swe-workbench:review` first.
 
 ## Iron Law
@@ -45,6 +45,10 @@ A symptom is not a cause. A patch that hides a symptom is a regression hiding be
 For the inner investigation loop (read-before-guessing, reproduce-before-theorizing, falsify-before-fixing), defer to `superpowers:systematic-debugging` via the `Skill` tool — same delegation pattern as `agents/debugger.md`.
 
 If `superpowers:systematic-debugging` is unavailable, run the same loop inline — never skip it.
+
+## Checkpoint behavior
+
+After entering each phase, write the workflow state file so the investigation can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). After Phase 4 (issue filed), delete the state file.
 
 ## 4-phase flow
 
@@ -86,10 +90,12 @@ If the hypothesis fails to explain one symptom, return to Phase 1 with that symp
 Goal: produce a structured GitHub issue that documents the diagnosis.
 
 1. **Discover the issue template.** Read `.github/ISSUE_TEMPLATE/bug_report.md` if it exists. If not, use the default body shape below.
+
+   **Discover labels.** Run `gh label list --json name -q '.[].name'`. Bug-triage defaults to `bug`. If `bug` exists in the repo label list, use it. If not, pick the first label whose name case-insensitively contains "bug" (e.g. `bug-report`, `kind/bug`). If still no match, omit `--label` and warn in the preview ("No bug-like label found; filing without label"). Surface the chosen label (or absence) in the preview so the user can change it before replying `confirm`.
 2. **Augment the template** by prepending the Root-Cause / Pattern-Analysis / Impact sections. **Do NOT use `gh issue create --template`** — that gives the user no in-skill editing. Use `--body-file` instead, mirroring `agents/product-manager.md`.
 3. **Render the body** using the schema below.
 4. **Preview-gate-then-confirm.** Print the body, the title, the target repo, and the `gh issue create` command. Wait for user to reply `confirm`. **Do NOT** run `gh issue create` until the user replies.
-5. **On `confirm`**, run the printed command and return the issue URL.
+5. **On `confirm`**, run the **exact** `gh issue create` command as printed in the preview above — do not regenerate or rephrase it. Return the issue URL.
 
 ## Output: issue body schema
 
@@ -139,16 +145,19 @@ or `/swe-workbench:implement` invocation.>
 ```bash
 gh issue create \
   --title "[bug] <short subject>" \
-  --body-file /tmp/swe-workbench-bug-triage-<repo-slug>-<unix-ts>.md
+  --body-file /tmp/swe-workbench-bug-triage-<repo-slug>-<unix-ts>.md \
+  --label "bug"
 ```
+
+Omit `--label` when no `bug`-like label exists in the repo.
 
 Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST:
 1. Run `gh repo view --json nameWithOwner -q '.nameWithOwner'` to confirm target repo.
-2. Print: filing target, title, body (code-fenced), and the exact command.
+2. Print: filing target, title, **chosen label** (or "none — no matching label"), body (code-fenced), and the exact command. Tell the user they may change the label before replying `confirm`.
 3. Wait for `confirm`. Reject any other reply (re-prompt).
 4. On `confirm`, run the command and return the issue URL.
 
-## Boundary vs `/debug`
+## Boundary vs `/swe-workbench:debug`
 
 | Aspect | `/swe-workbench:debug` | `workflow-bug-triage` |
 |--------|------------------------|------------------------|
@@ -157,7 +166,7 @@ Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST
 | Use when | Bug is yours, fix-now is the goal | Bug needs documentation, fix-planning is separate |
 | Composes | `superpowers:systematic-debugging` | `superpowers:systematic-debugging` |
 
-If you start in `/debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `workflow-bug-triage`?"
+If you start in `/swe-workbench:debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `workflow-bug-triage`?"
 
 ## Common mistakes
 

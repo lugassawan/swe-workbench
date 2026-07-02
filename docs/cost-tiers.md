@@ -7,7 +7,7 @@ Forward-looking convention for model assignment in swe-workbench agents. For the
 | Tier | Alias | When to use | Examples |
 |---|---|---|---|
 | S (small) | `haiku` | Single-purpose fetch, format, or extract. Deterministic output from well-specified input. No cross-file reasoning or correctness judgment. | product-manager, tech-writer, test-writer, dependency-auditor |
-| M (medium) | `sonnet` | Mechanical but judgment-bearing. Must weigh trade-offs, apply a pattern catalog, or preserve an invariant across steps. | debugger, refactorer, performance-tuner, accessibility-auditor |
+| M (medium) | `sonnet` | Mechanical but judgment-bearing. Must weigh trade-offs, apply a pattern catalog, or preserve an invariant across steps. | debugger, refactorer, performance-tuner, accessibility-auditor, product-designer |
 | L (large) | `sonnet` (default) or `opus` (with evidence) | High-stakes reasoning. Security exploitability, multi-system architecture, or correctness in concurrent / distributed settings. Opus only when measurable improvement is demonstrated. | reviewer, security-auditor, architect, senior-engineer |
 
 **Default:** when in doubt, start at Tier M (`sonnet`). Downgrade to haiku only after confirming the task is mechanical. Promote to opus only with a measured A/B result.

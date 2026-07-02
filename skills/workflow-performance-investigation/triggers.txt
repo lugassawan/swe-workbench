@@ -1,0 +1,4 @@
+this endpoint is slow, how do I profile it and find the bottleneck
+find the performance hotspot with a flame graph and confirm the fix before/after
+capture a CPU profile and flame graph, identify the bottleneck, and measure the hotspot improvement against the baseline
+my service has a CPU hotspot, how do I structure the investigation and add a regression guard

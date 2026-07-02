@@ -63,11 +63,16 @@ let total: u32 = orders.iter()
 - `ok_or_else`, `map_err`, `and_then`, `unwrap_or_else` — chain, don't match.
 - Reserve `unwrap`/`expect` for truly unreachable cases; always prefer `expect("why")` over `unwrap` in production.
 
+## Tooling
+- **Imports/Auto-fix:** `cargo fix --allow-dirty` (applies all auto-fixable rustc/Clippy lints — review the full diff before staging; not suitable as an unattended CI step)
+- **Format:** `cargo fmt` (set `imports_granularity` in `rustfmt.toml` for import grouping; `cargo fmt --check` in CI)
+- **Lint:** `cargo clippy -- -D warnings`
+- **Test:** `cargo test` (see Testing below)
+
 ## Testing
 - `#[cfg(test)] mod tests { ... }` at the bottom of each file for unit tests.
 - Integration tests in `tests/`.
 - `#[should_panic(expected = "...")]` for panic paths.
-- `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` in CI.
 
 ## Async
 - Pick one runtime (usually `tokio`) and stay there.

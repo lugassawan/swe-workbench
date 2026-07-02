@@ -6,13 +6,20 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  validate-schemas:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Validate JSON well-formedness
         run: |
@@ -20,13 +27,13 @@ jobs:
           jq empty .claude-plugin/marketplace.json
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.12'
 
       - name: Validate manifests against vendored JSON schemas
         run: |
-          python3 -m pip install --quiet 'jsonschema==4.23.0'
+          python3 -m pip install --require-hashes -r tests/release-requirements.lock
           python3 - <<'PY'
           import json, sys
           from jsonschema import Draft7Validator
@@ -62,10 +69,23 @@ jobs:
             exit 1
           fi
 
+  publish-release:
+    needs: validate-schemas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          # gh release view exits 1 when the release doesn't exist; stderr is
+          # intentionally preserved so auth/network errors remain visible.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null; then
+            echo "Release $GITHUB_REF_NAME already exists — skipping."
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          fi

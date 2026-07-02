@@ -4,3 +4,5 @@ I want to write the failing test first before writing code, what should the test
 how do I write a unit test following the Arrange Act Assert structure for this function
 what are the fast isolated repeatable self-validating timely properties of well-written unit tests
 how do I use TDD red green refactor to drive the design of a new class before coding it
+should I use a mock or a stub or a fake for this collaborator in my test
+in TDD my mock setup is growing painful and complex is that a design signal that the seam is wrong

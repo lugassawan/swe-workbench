@@ -14,6 +14,25 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
+# Pin gh to the same remote git uses everywhere else in this script.
+# Avoids "No default remote repository has been set" on multi-remote clones
+# (e.g. when `gh repo fork` has added sibling remotes).
+ORIGIN_URL=$(git remote get-url origin 2>/dev/null || true)
+if [[ -z "$ORIGIN_URL" ]]; then
+  echo "Error: 'origin' remote is not configured." >&2
+  exit 1
+fi
+# Normalise SSH (git@github.com:owner/repo[.git]) and HTTPS
+# (https://github.com/owner/repo[.git]) into owner/repo.
+GH_REPO=$(printf '%s\n' "$ORIGIN_URL" \
+  | sed -E 's#^git@github\.com:#https://github.com/#' \
+  | sed -E 's#^https://github\.com/##; s#\.git$##')
+if [[ ! "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "Error: could not derive owner/repo from origin URL '${ORIGIN_URL}'." >&2
+  exit 1
+fi
+export GH_REPO
+
 if ! jq --version &>/dev/null; then
   echo "Error: jq is required. Install with: brew install jq" >&2
   exit 1
@@ -30,7 +49,11 @@ case "$CURRENT_BRANCH" in
   main) ;;
   chore/bump-v*)
     echo "Detected in-progress release branch '${CURRENT_BRANCH}'. Switching to main."
-    git checkout main
+    if ! git checkout main; then
+      echo "Error: could not switch to main (checked out in another worktree?)." >&2
+      echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
+      exit 1
+    fi
     ;;
   *)
     echo "Error: must run from main or a 'chore/bump-v*' resume branch (currently on '${CURRENT_BRANCH}')." >&2
@@ -125,6 +148,10 @@ fi
 
 # ── PR (reuse if open, create otherwise) ─────────────────────
 
+# EXISTING_PR resolves to the literal string "null" via two independent paths:
+#   1. gh succeeds but finds no open PRs → `--jq '.[0]'` on an empty array emits "null"
+#   2. gh itself fails (auth error, network, etc.) → `|| echo "null"` fires
+# The `!= "null"` guard below catches both; do not simplify this without preserving both paths.
 EXISTING_PR=$(gh pr list --head "$BRANCH" --base main --state open --json number,url --jq '.[0]' 2>/dev/null || echo "null")
 if [[ -n "$EXISTING_PR" && "$EXISTING_PR" != "null" ]]; then
   PR_NUM=$(echo "$EXISTING_PR" | jq -r .number)
@@ -164,8 +191,12 @@ else
   ELAPSED=0
   HEARTBEAT=60
   LAST_HEARTBEAT=0
+  MAX_TRANSIENT=10
+  TRANSIENT_COUNT=0
 
   while true; do
+    TOTAL=0; PENDING=0; FAILED=0
+
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
       echo "Error: timed out waiting for CI on PR #${PR_NUM} after $((TIMEOUT / 60)) minutes." >&2
       echo "Check status at: ${PR_URL}" >&2
@@ -175,13 +206,52 @@ else
       exit 1
     fi
 
-    PENDING=$(gh pr checks "$PR_NUM" --json state \
-      --jq '[.[] | select(.state == "PENDING" or .state == "IN_PROGRESS" or .state == "QUEUED" or .state == "WAITING")] | length' 2>/dev/null || echo "0")
+    set +e
+    CHECKS_JSON=$(gh pr checks "$PR_NUM" --json bucket 2>/dev/null)
+    CHECKS_RC=$?
+    set -e
 
-    if [[ "$PENDING" -eq 0 ]]; then
-      FAILED=$(gh pr checks "$PR_NUM" --json conclusion \
-        --jq '[.[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length' 2>/dev/null || echo "0")
+    if [[ $CHECKS_RC -ne 0 && $CHECKS_RC -ne 8 ]]; then
+      TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+      if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+        echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
+        echo "Check status at: ${PR_URL}" >&2
+        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        exit 1
+      fi
+      echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}, attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
+      sleep 10
+      ELAPSED=$((ELAPSED + 10))
+      continue
+    fi
 
+    if [[ $CHECKS_RC -eq 8 && -z "$CHECKS_JSON" ]]; then
+      TRANSIENT_COUNT=$((TRANSIENT_COUNT + 1))
+      if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
+        echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
+        echo "Check status at: ${PR_URL}" >&2
+        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
+        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        exit 1
+      fi
+      echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output (attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
+      sleep 10
+      ELAPSED=$((ELAPSED + 10))
+      continue
+    fi
+
+    TRANSIENT_COUNT=0
+
+    TOTAL=$(printf '%s' "${CHECKS_JSON:-[]}" | jq 'length')
+    PENDING=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "pending")] | length')
+    FAILED=$(printf '%s' "${CHECKS_JSON:-[]}" | jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length')
+
+    if [[ "$TOTAL" -eq 0 ]]; then
+      : # No checks registered yet — treat as pending and continue polling
+    elif [[ "$PENDING" -eq 0 ]]; then
       if [[ "$FAILED" -gt 0 ]]; then
         echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
         echo "Fix the failures at: ${PR_URL}" >&2
@@ -241,10 +311,30 @@ fi
 
 # ── Sync main + verify merge SHA ─────────────────────────────
 
-git checkout main
+if ! git checkout main; then
+  echo "Error: could not switch to main (checked out in another worktree?)." >&2
+  echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
+  exit 1
+fi
 git pull --ff-only origin main
 
-MERGE_SHA=$(gh pr view "$PR_NUM" --json mergeCommit -q '.mergeCommit.oid')
+MERGE_SHA=""
+POLL_TIMEOUT=60
+POLL_ELAPSED=0
+while [[ $POLL_ELAPSED -lt $POLL_TIMEOUT ]]; do
+  MERGE_SHA=$(gh pr view "$PR_NUM" --json mergeCommit -q '.mergeCommit.oid' 2>/dev/null || true)
+  [[ -n "$MERGE_SHA" ]] && break
+  echo "[$(date '+%H:%M:%S')] mergeCommit.oid not yet available (${POLL_ELAPSED}s elapsed); retrying..."
+  sleep 3
+  POLL_ELAPSED=$((POLL_ELAPSED + 3))
+done
+
+if [[ -z "$MERGE_SHA" ]]; then
+  echo "Error: GitHub did not return mergeCommit.oid for PR #${PR_NUM} within ${POLL_TIMEOUT}s." >&2
+  echo "PR is merged; tagging skipped. Re-run this script — it is safe and idempotent." >&2
+  exit 1
+fi
+
 LOCAL_SHA=$(git rev-parse HEAD)
 
 if [[ "$LOCAL_SHA" != "$MERGE_SHA" ]]; then
@@ -281,4 +371,4 @@ echo ""
 echo "Done!"
 echo "  PR:       ${PR_URL}"
 echo "  Tag:      ${TAG}"
-echo "  Release:  https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/${TAG}"
+echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${TAG}"

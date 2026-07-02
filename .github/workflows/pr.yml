@@ -5,9 +5,20 @@ on:
     types: [opened, edited, synchronize]
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Validate PR title
         env:
@@ -30,6 +41,21 @@ jobs:
           TRIMMED=$(echo "$PR_BODY" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           if [ -z "$TRIMMED" ]; then
             echo "::error::PR description must not be empty"
+            exit 1
+          fi
+
+      - name: Validate commit authorship
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BAD=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/commits" \
+            --jq '.[].commit.author.email' \
+            | grep -E '^(test@example\.com|t@t(\.com)?)$' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::PR contains commits from a placeholder test identity: $BAD"
+            echo "Rewrite with: git rebase main --exec 'git commit --amend --reset-author --no-edit'"
             exit 1
           fi
 
@@ -71,17 +97,23 @@ jobs:
 
   validate-plugin-files:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Validate plugin files
         run: bash scripts/validate.sh
 
   shellcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Run shellcheck (warning+ on all *.sh + githooks)
-        uses: ludeeus/action-shellcheck@2.0.0
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         with:
           severity: warning
           additional_files: 'commit-msg pre-commit pre-push'
@@ -89,21 +121,40 @@ jobs:
 
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.12'
-      - run: pip install -r tests/requirements.txt
+      - run: pip install --require-hashes -r tests/requirements.lock
       - run: pytest tests/ -v
+
+  lockfile-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Verify lockfiles are up to date
+        run: bash scripts/lock-pip-requirements.sh --check
 
   markdown-links:
     name: Markdown link check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Check markdown links (lychee)
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411  # v2.8.0
         with:
           args: --config .lychee.toml './**/*.md'
           fail: true

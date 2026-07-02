@@ -1,0 +1,157 @@
+"""Structural tests — language-skill under-selection fix.
+
+T1: Every code-touching agent body contains @./shared/languages.md.
+T2: Every code-touching agent body directly contains a mandatory language-skill
+    gate marker (`language-*`) in its consultation section, signalling required
+    (not optional) language-skill loading.
+T4: Every principle-*/language-* SKILL.md description field contains
+    'Auto-load when'.
+
+Tests T1 and T2 fail today (before implementation). T4 fails for
+principle-communication and principle-data-modeling.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).parent.parent
+AGENTS_DIR = ROOT / "agents"
+SKILLS_DIR = ROOT / "skills"
+
+# Agents that review, write, or diagnose code — must consult language skills.
+# product-manager is excluded (files GitHub issues; never touches source).
+CODE_TOUCHING_AGENTS = [
+    "accessibility-auditor",
+    "architect",
+    "auditor",
+    "code-impl",
+    "contributor-auditor",
+    "debugger",
+    "dependency-auditor",
+    "migrator",
+    "performance-tuner",
+    "refactorer",
+    "reviewer",
+    "security-auditor",
+    "senior-engineer",
+    "tech-writer",
+    "test-reviewer",
+    "test-writer",
+    "product-designer",
+]
+
+
+def _agent_text(name: str) -> str:
+    path = AGENTS_DIR / f"{name}.md"
+    assert path.exists(), f"agents/{name}.md does not exist"
+    return path.read_text(encoding="utf-8")
+
+
+# ──────────────────────────────────────────────────────────────
+# T1 — @./shared/languages.md present in every code-touching agent
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("agent_name", CODE_TOUCHING_AGENTS)
+def test_agent_has_languages_catalog_include(agent_name):
+    """T1: code-touching agent body must contain @./shared/languages.md."""
+    text = _agent_text(agent_name)
+    assert "@./shared/languages.md" in text, (
+        f"agents/{agent_name}.md is missing '@./shared/languages.md'. "
+        "All code-touching agents must include the language-skill catalog."
+    )
+
+
+# ──────────────────────────────────────────────────────────────
+# T2 — mandatory language-skill gate present in consultation section
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("agent_name", CODE_TOUCHING_AGENTS)
+def test_agent_has_mandatory_language_gate(agent_name):
+    """T2: consultation section must gate on language-* (required, not optional)."""
+    text = _agent_text(agent_name)
+    # The mandatory gate paragraph uses `language-*` (with the asterisk) to
+    # indicate the required invocation pattern. This is the specific signal
+    # added by the fix; it is NOT present in the @./shared/languages.md include.
+    assert "language-*" in text, (
+        f"agents/{agent_name}.md is missing a mandatory language-skill gate "
+        "('language-*'). Add a required consultation paragraph that instructs "
+        "the agent to detect the language and invoke the matching language-* skill."
+    )
+
+
+# ──────────────────────────────────────────────────────────────
+# T4 — 'Auto-load when' present in every principle-*/language-* SKILL.md
+# ──────────────────────────────────────────────────────────────
+
+
+def _skill_dirs_with_prefix(prefix: str):
+    if not SKILLS_DIR.is_dir():
+        return []
+    return [p for p in SKILLS_DIR.iterdir() if p.is_dir() and p.name.startswith(prefix)]
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _skill_dirs_with_prefix("principle-") + _skill_dirs_with_prefix("language-"),
+    ids=lambda p: p.name,
+)
+def test_skill_description_has_autoload_clause(skill_dir):
+    """T4: every principle-*/language-* SKILL.md frontmatter description must contain 'Auto-load when'.
+
+    Scans only the YAML frontmatter (between the first two '---' delimiters) so
+    that a body-only occurrence does not produce a false pass — the harness reads
+    the `description:` field, not the body, for auto-triggering.
+    """
+    skill_md = skill_dir / "SKILL.md"
+    assert skill_md.exists(), f"{skill_dir.name}/SKILL.md does not exist"
+    text = skill_md.read_text(encoding="utf-8")
+    parts = text.split("---", 2)
+    frontmatter = parts[1] if len(parts) >= 3 else ""
+    assert re.search(r"auto-load when", frontmatter, re.IGNORECASE), (
+        f"skills/{skill_dir.name}/SKILL.md description: field is missing an "
+        "'Auto-load when ...' clause. Add it to the YAML frontmatter description "
+        "field (not just the body) so the harness can discover the skill."
+    )
+
+
+# ──────────────────────────────────────────────────────────────
+# T5 — language-* skills registered in catalog.md and skill_autoload_hint.sh
+# ──────────────────────────────────────────────────────────────
+
+CATALOG_MD = ROOT / "docs" / "catalog.md"
+HOOK_SH = ROOT / "hooks" / "skill_autoload_hint.sh"
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _skill_dirs_with_prefix("language-"),
+    ids=lambda p: p.name,
+)
+def test_language_skill_in_catalog(skill_dir):
+    """T5a: every language-* skill must have a row marker in docs/catalog.md."""
+    skill_name = skill_dir.name
+    catalog_text = CATALOG_MD.read_text(encoding="utf-8")
+    row_marker = f"| `{skill_name}` |"
+    assert row_marker in catalog_text, (
+        f"docs/catalog.md is missing a row for '{skill_name}'. "
+        "Add the skill to the Languages table."
+    )
+
+
+@pytest.mark.parametrize(
+    "skill_dir",
+    _skill_dirs_with_prefix("language-"),
+    ids=lambda p: p.name,
+)
+def test_language_skill_in_hook(skill_dir):
+    """T5b: every language-* skill must appear in hooks/skill_autoload_hint.sh."""
+    skill_name = skill_dir.name
+    hook_text = HOOK_SH.read_text(encoding="utf-8")
+    assert skill_name in hook_text, (
+        f"hooks/skill_autoload_hint.sh is missing '{skill_name}'. "
+        "Add the skill to the ext_to_skill() case map."
+    )
