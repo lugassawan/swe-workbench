@@ -182,7 +182,11 @@ def test_report_issue_step9_cleanup_on_success_only():
 def _branch_b_slice(text):
     pos = text.find("### Branch B")
     assert pos != -1, "commands/report-issue.md must contain a '### Branch B' heading"
-    return text[pos:]
+    end = text.find("Delegate to the `product-manager` subagent", pos)
+    assert end != -1, (
+        "commands/report-issue.md must contain the delegation block after Branch B"
+    )
+    return text[pos:end]
 
 
 def test_report_issue_step0_offers_mode_selector():
@@ -245,6 +249,9 @@ def test_report_issue_synthesize_ranks_by_prevalence():
     assert "5–7" in branch_b or "5-7" in branch_b, (
         "Branch B must document keeping the top 5-7 insights"
     )
+    assert "do not pad to reach the 5–7 range" in branch_b, (
+        "Branch B step 4 must not pad the digest when fewer than 5 emergent clusters exist"
+    )
 
 
 def test_report_issue_synthesize_pick_then_confirm_order():
@@ -266,6 +273,10 @@ def test_report_issue_synthesize_pick_then_confirm_order():
     )
     assert numbers_pos < preview_pos < confirm_pos, (
         "Order must be: numbers-to-file digest -> final preview -> Reply 'confirm'"
+    )
+    assert "Print each selected body with its `Title:` / `Filing into:`" in branch_b, (
+        "Branch B step 7 must enumerate Title: and Filing into: as preview lines, "
+        "not just reference delegation step 1 by name"
     )
 
 
