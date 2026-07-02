@@ -157,6 +157,35 @@ def test_extend_command_no_open_pr_fallback():
     )
 
 
+def test_extend_command_inline_phases_2_through_5():
+    """extend.md must show Phases 2-5 inline (issue #476), mirroring implement.md.
+
+    Phase 1 (Branch) is intentionally skipped — the open PR branch is reused.
+    Phase 5 must update the existing PR via workflow-commit-and-pr, never gh pr create.
+    """
+    text = EXTEND_CMD.read_text()
+    for marker in (
+        "**Phase 2 — Implement**",
+        "**Phase 3 — Verify**",
+        "**Phase 4 — Review**",
+        "**Phase 5 — Deliver**",
+    ):
+        assert marker in text, f"extend.md must contain inline marker {marker!r}"
+
+    assert re.search(r'Phase 1.{0,80}\b(skipped|reused)\b', text, re.IGNORECASE | re.DOTALL), (
+        "extend.md must note that Phase 1 (Branch) is skipped/reused"
+    )
+
+    assert "swe-workbench:workflow-commit-and-pr" in text, (
+        "extend.md Phase 5 must invoke swe-workbench:workflow-commit-and-pr to update the existing PR"
+    )
+
+    assert "swe-workbench:workflow-extend" in text, (
+        "extend.md must still activate swe-workbench:workflow-extend — "
+        "the inline block is a visible contract, not a replacement"
+    )
+
+
 def test_extend_commit_format_sub_idea_prefix():
     """SKILL.md and template must both mandate the 'sub-idea:' commit prefix."""
     assert "sub-idea:" in SKILL_MD.read_text(), (
