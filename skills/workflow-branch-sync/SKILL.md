@@ -65,9 +65,11 @@ RIMBA=$(command -v rimba 2>/dev/null \
 
 `no_push: true` / `--no-push` is passed **always**, regardless of strategy — the push happens only in Step 6, only if the user opts in.
 
-- **rimba MCP server active** → invoke the `sync` tool with the table above.
-- **`$RIMBA` non-empty (binary found) AND the current worktree is a rimba-managed task worktree** → run the table's binary form.
-- **rimba absent, OR the current branch/worktree was not created by rimba** → shell fallback:
+**Try rimba first, fall back on "not a rimba worktree" — never pre-check.** Whether the current branch is a rimba-managed task worktree is not knowable in advance without an extra round-trip; instead, attempt the call and read the failure:
+
+- **rimba MCP server active** → invoke the `sync` tool with the table above. If it errors indicating the worktree/task was not found, fall through to the shell fallback below.
+- **`$RIMBA` non-empty (binary found)** → run the table's binary form. The binary exits non-zero with `Error: worktree not found for task "<task>"` when `CURRENT_BRANCH`'s derived task isn't a rimba-managed worktree — on exactly that message, fall through to the shell fallback below. Any other non-zero exit is a real sync failure (see Failure Mode Table) and must not fall through.
+- **rimba absent, or the rimba call above fell through on "worktree not found"** → shell fallback:
   ```bash
   git fetch origin "$DEFAULT_BRANCH"
   git merge origin/"$DEFAULT_BRANCH"     # default (merge)
@@ -78,9 +80,12 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ### Step 4 — Detect Result
 
 ```bash
-eval "$("$_SCRIPTS/detect-conflicts.sh" | head -1)"
-UNMERGED=$("$_SCRIPTS/detect-conflicts.sh" | tail -n +2)
+_DETECT_OUT="$("$_SCRIPTS/detect-conflicts.sh")"
+eval "$(head -1 <<<"$_DETECT_OUT")"
+UNMERGED=$(tail -n +2 <<<"$_DETECT_OUT")
 ```
+
+Capture the script's output **once** into `_DETECT_OUT`, then split it — do not invoke `detect-conflicts.sh` twice; a second `git diff --diff-filter=U` call could observe different repo state if anything mutates the index between the two calls.
 
 `OPERATION` is `merge`, `rebase`, or `none` (via `.git/MERGE_HEAD` vs `.git/rebase-merge`/`.git/rebase-apply`). `UNMERGED` lists conflicted paths, one per line, from `git diff --name-only --diff-filter=U` — treat these as **raw file paths, never eval them**.
 
@@ -99,7 +104,7 @@ For **each** file in `UNMERGED`:
      "$_SCRIPTS/apply-resolution.sh" "<file>" "<mine|main>" "<merge|rebase>"
      ```
      This script does the ours/theirs translation (see Common Mistakes) and stages the file — do not call `git checkout --ours/--theirs` directly from this skill.
-   - **manual**: open the file in place for the user to edit, wait for confirmation, then `git add "<file>"`.
+   - **manual**: open the file in place for the user to edit, wait for confirmation. Before staging, verify no conflict markers remain: `grep -qE '^(<{7}|={7}|>{7})' "<file>"` must find **nothing**. If a marker is still present, do not stage — warn the user and re-prompt for confirmation instead of silently committing broken content. Once clean, `git add "<file>"`.
 
 After every file in `UNMERGED` has been resolved and staged:
 
@@ -128,6 +133,8 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Rebase pauses again after `git rebase --continue` | Fresh `OPERATION=rebase` with non-empty `UNMERGED` from Step 4 | Loop back into Step 5. Do not treat the first `--continue` as completion. |
 | User declines to stash a dirty tree | User says no at Step 1 | Abort. Do not force-stash. |
 | rimba worktree but binary/MCP both unavailable mid-session | `$RIMBA` empty and MCP not active | Fall through to the shell fallback — never block on rimba's absence. |
+| Derived task isn't a rimba-managed worktree | `Error: worktree not found for task "<task>"` from the rimba binary (or the MCP equivalent) | Fall through to the shell fallback — this is expected for branches not created via `rimba add`, not a sync failure. |
+| A conflicting file was deleted on the chosen side | `apply-resolution.sh` reports `git checkout` failed with "does not have our/their version" | Handled in-script: resolves as `git rm` instead of aborting — no skill-level action needed. |
 | Push requested after a rebase without `--force-with-lease` | N/A — this skill always uses `--force-with-lease` under rebase | N/A — documented so a future edit doesn't regress to plain `--force`. |
 
 ## Common Mistakes
@@ -141,3 +148,5 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Resolve a file without showing both sides | Always present both sides plus the `conflict-resolver` subagent's per-hunk rationale before prompting keep-mine/keep-main/manual — resolving is review-and-confirm, not a guess. |
 | Push automatically once conflicts are resolved | Never. Step 6 always stops and prompts — the result is left local until the user explicitly opts in. |
 | Use plain `git push --force` after a rebase | Always `--force-with-lease` — it aborts if the remote moved since the last fetch, instead of silently clobbering someone else's push. |
+| Stage a manually-edited file on confirmation alone | Grep for `<<<<<<<`/`=======`/`>>>>>>>` markers first — a premature confirmation or a missed hunk can leave literal conflict-marker text in the file, which stages and commits broken content. |
+| Pre-check whether the branch is "a rimba worktree" before calling `rimba sync` | Don't — try the call and read the failure. The binary's `Error: worktree not found for task "<task>"` (or the MCP equivalent) is the signal to fall through to shell, not an upfront probe. |

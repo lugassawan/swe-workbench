@@ -148,6 +148,119 @@ class TestApplyResolutionRebase:
         assert _is_staged(repo, CONFLICT_FILE)
 
 
+def _build_delete_modify_repo(base: Path, *, feature_deletes: bool) -> Path:
+    """main + feature diverge on shared.txt where one side deletes it and the
+    other modifies it — a delete/modify conflict, distinct from the
+    both-modified conflicts the other fixtures use.
+    """
+    repo = base / "repo"
+    _run("git", "init", str(repo), cwd=base)
+    _run("git", "config", "user.email", "test@example.com", cwd=repo)
+    _run("git", "config", "user.name", "Test", cwd=repo)
+    no_hooks = base / ".nohooks"
+    no_hooks.mkdir(exist_ok=True)
+    _run("git", "config", "core.hooksPath", str(no_hooks), cwd=repo)
+
+    (repo / CONFLICT_FILE).write_text("base\n")
+    _run("git", "add", CONFLICT_FILE, cwd=repo)
+    _run("git", "commit", "-m", "init", cwd=repo)
+    _run("git", "branch", "-M", "main", cwd=repo)
+
+    _run("git", "checkout", "-b", "feature", cwd=repo)
+    if feature_deletes:
+        _run("git", "rm", CONFLICT_FILE, cwd=repo)
+        _run("git", "commit", "-m", "feature deletes", cwd=repo)
+    else:
+        (repo / CONFLICT_FILE).write_text(MINE_CONTENT)
+        _run("git", "add", CONFLICT_FILE, cwd=repo)
+        _run("git", "commit", "-m", "feature modifies", cwd=repo)
+
+    _run("git", "checkout", "main", cwd=repo)
+    if feature_deletes:
+        (repo / CONFLICT_FILE).write_text(MAIN_CONTENT)
+        _run("git", "add", CONFLICT_FILE, cwd=repo)
+        _run("git", "commit", "-m", "main modifies", cwd=repo)
+    else:
+        _run("git", "rm", CONFLICT_FILE, cwd=repo)
+        _run("git", "commit", "-m", "main deletes", cwd=repo)
+
+    _run("git", "checkout", "feature", cwd=repo)
+    return repo
+
+
+class TestApplyResolutionDeleteModifyConflict:
+    """Regression: the chosen side may have deleted the file, in which case
+    `git checkout --ours/--theirs` has no blob to check out and fails with
+    'does not have our/their version' — must resolve as `git rm`, not abort.
+    """
+
+    def test_merge_keep_mine_when_feature_modified_main_deleted(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=False)
+        _induce_merge_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "mine", "merge")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=ours"
+        assert (repo / CONFLICT_FILE).read_text() == MINE_CONTENT
+        assert _is_staged(repo, CONFLICT_FILE)
+
+    def test_merge_keep_main_when_feature_modified_main_deleted(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=False)
+        _induce_merge_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "main", "merge")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=theirs"
+        assert not (repo / CONFLICT_FILE).exists()
+        assert _is_staged(repo, CONFLICT_FILE)
+
+    def test_merge_keep_mine_when_feature_deleted_main_modified(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=True)
+        _induce_merge_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "mine", "merge")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=ours"
+        assert not (repo / CONFLICT_FILE).exists()
+        assert _is_staged(repo, CONFLICT_FILE)
+
+    def test_merge_keep_main_when_feature_deleted_main_modified(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=True)
+        _induce_merge_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "main", "merge")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=theirs"
+        assert (repo / CONFLICT_FILE).read_text() == MAIN_CONTENT
+        assert _is_staged(repo, CONFLICT_FILE)
+
+    def test_rebase_keep_mine_when_feature_modified_main_deleted(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=False)
+        _induce_rebase_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "mine", "rebase")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=theirs"
+        assert (repo / CONFLICT_FILE).read_text() == MINE_CONTENT
+        assert _is_staged(repo, CONFLICT_FILE)
+
+    def test_rebase_keep_main_when_feature_modified_main_deleted(self, tmp_path):
+        repo = _build_delete_modify_repo(tmp_path, feature_deletes=False)
+        _induce_rebase_conflict(repo)
+
+        result = _run_script(repo, CONFLICT_FILE, "main", "rebase")
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "GIT_SIDE=ours"
+        assert not (repo / CONFLICT_FILE).exists()
+        assert _is_staged(repo, CONFLICT_FILE)
+
+
 class TestApplyResolutionInvalidArgs:
     def test_rejects_unknown_side(self, tmp_path):
         repo = _build_repo(tmp_path)

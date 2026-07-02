@@ -145,3 +145,59 @@ def test_failure_mode_table_present():
 def test_when_to_invoke_references_sync_command():
     body = _body()
     assert "/swe-workbench:sync" in body
+
+
+def test_step3_task_id_derivation_documents_known_prefixes():
+    """Regression: the task-ID derivation logic must pin the exact prefix
+    list so it can't silently drift from workflow-development's branch-prefix
+    taxonomy (feature/, bugfix/, hotfix/, docs/, test/, chore/)."""
+    body = _body()
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "task identifier" in step3.lower()
+    for prefix in ("feature/", "bugfix/", "hotfix/", "docs/", "test/", "chore/"):
+        assert f"`{prefix}`" in step3, f"Step 3 must document stripping the `{prefix}` prefix"
+
+
+def test_step3_rimba_routing_is_try_then_fallback_not_precheck():
+    """Regression: Step 3 must not gate the binary path on an unverifiable
+    'is this a rimba worktree' precheck — it must try the call and fall
+    through on rimba's actual 'worktree not found' error."""
+    body = _body()
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "never pre-check" in step3.lower() or "not knowable in advance" in step3.lower()
+    assert "worktree not found for task" in step3
+    assert "fall through" in step3.lower()
+    # The old ambiguous precheck phrasing must be gone.
+    assert "current worktree is a rimba-managed task worktree" not in step3
+
+
+def test_step4_captures_detect_conflicts_output_once():
+    """Regression: detect-conflicts.sh must be invoked once and split, not
+    called twice (which could observe different repo state between calls)."""
+    body = _body()
+    step4 = body.split("### Step 4")[1].split("### Step 5")[0]
+    # Count actual invocations (the $_SCRIPTS/... call form), not prose mentions
+    # of the filename in the explanatory sentence.
+    assert step4.count("$_SCRIPTS/detect-conflicts.sh") == 1
+    assert "_DETECT_OUT" in step4
+
+
+def test_step5_manual_path_checks_for_conflict_markers_before_staging():
+    """Regression: staging a manually-resolved file on confirmation alone can
+    commit literal conflict-marker text if a hunk was missed."""
+    body = _body()
+    step5 = body.split("### Step 5")[1].split("### Step 6")[0]
+    assert "manual" in step5.lower()
+    manual_line = next(
+        (ln for ln in step5.splitlines() if "**manual**:" in ln), ""
+    )
+    assert manual_line, "Step 5 must have a '- **manual**: ...' bullet"
+    assert "marker" in manual_line.lower()
+    assert "grep" in manual_line.lower()
+
+
+def test_failure_mode_table_documents_delete_modify_and_rimba_fallback():
+    body = _body()
+    table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+    assert "worktree not found for task" in table
+    assert "does not have our/their version" in table or "does not have" in table

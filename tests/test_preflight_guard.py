@@ -130,6 +130,28 @@ class TestPreflightGuardDefaultBranchNotHardcoded:
         assert fields["IS_DEFAULT"] == "0"
 
 
+class TestPreflightGuardEvalSafety:
+    """Regression: CURRENT_BRANCH must be %q-quoted — the caller evals stdout,
+    and git branch names may legally contain shell metacharacters ($, `, etc)."""
+
+    def test_malicious_branch_name_does_not_execute_on_eval(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        # Space is invalid in a git ref (git-check-ref-format); this payload
+        # is space-free but still a syntactically valid command substitution.
+        malicious_branch = "feature/x$(id>pwned_marker)"
+        _run("git", "checkout", "-b", malicious_branch, cwd=repo)
+
+        # Mirror the production consumption pattern: eval "$(preflight-guard.sh)"
+        runner = f'eval "$(bash "{SCRIPT}")"'
+        subprocess.run(["bash", "-c", runner], cwd=str(repo), capture_output=True, text=True, env=_NO_GH_ENV)
+
+        marker = repo / "pwned_marker"
+        assert not marker.exists(), (
+            "eval-ing preflight-guard.sh output executed a command embedded in the "
+            "branch name — CURRENT_BRANCH must be %q-quoted"
+        )
+
+
 class TestPreflightGuardNotAGitRepo:
     def test_exits_nonzero_outside_git_repo(self, tmp_path):
         not_a_repo = tmp_path / "plain"

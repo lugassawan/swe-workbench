@@ -34,8 +34,11 @@ IS_DEFAULT=0
 
 DIRTY=$(git status --porcelain | wc -l | tr -d ' ')
 
-printf 'CURRENT_BRANCH=%s\n' "$CURRENT_BRANCH"
-printf 'DEFAULT_BRANCH=%s\n' "$DEFAULT_BRANCH"
+# %q-quote the two string fields — git branch names may legally contain
+# shell metacharacters ($, `, ;, etc; see git-check-ref-format), and this
+# output is eval'd by the caller. Numeric fields need no quoting.
+printf 'CURRENT_BRANCH=%q\n' "$CURRENT_BRANCH"
+printf 'DEFAULT_BRANCH=%q\n' "$DEFAULT_BRANCH"
 printf 'IS_DEFAULT=%s\n' "$IS_DEFAULT"
 printf 'DETACHED=%s\n' "$DETACHED"
 printf 'DIRTY=%s\n' "$DIRTY"
