@@ -1,6 +1,6 @@
 ---
 name: language-go
-description: Go idioms, error handling, concurrency, and standard library usage. Auto-load when working with .go files, go.mod, go.sum, or when the user mentions Go, Golang, goroutines, channels, interfaces, context, or error wrapping.
+description: Go idioms — error handling, concurrency, and standard library usage. Auto-load when working with .go files, go.mod, go.sum, or when the user mentions Go, Golang, goroutines, channels, interfaces, context, or error wrapping.
 ---
 
 # Go
@@ -42,7 +42,32 @@ if err := g.Wait(); err != nil { return err }
 - Never store `context.Context` in a struct field.
 - Don't use `context.Value` for required parameters — only cross-cutting concerns like request IDs.
 
-## Tests
+## Code generation
+- A `// Code generated ... DO NOT EDIT.` header means the file is output, not source. Never hand-edit it — edits are clobbered on the next run and drift from their input.
+- Edit the generator's input, then regenerate with `go generate ./...` (or the tool directly). Commit the regenerated file with the source change.
+- Applies to `stringer`, `mockgen`, `sqlc`, `protoc-gen-go`, and **google/wire**.
+
+**google/wire** — detected by a `wire.go` tagged `//go:build wireinject` plus a `wire_gen.go` carrying the Wire `DO NOT EDIT.` header. To change dependency injection:
+- Edit provider sets / injectors in `wire.go` only — never `wire_gen.go`.
+- Regenerate with `go generate ./...` (or `wire ./...`), then stage the updated `wire_gen.go`. If `go generate ./...` produces no diff, `wire.go` likely lacks a `//go:generate wire` directive — run `wire ./...` directly.
+
+```go
+//go:build wireinject
+
+// wire.go — edit here: provider sets and injector signatures.
+func InitApp(ctx context.Context) (*App, error) {
+    wire.Build(configSet, storeSet, NewApp)
+    return nil, nil // wire fills the body in wire_gen.go
+}
+```
+
+## Tooling
+- **Imports:** `goimports -w .`
+- **Format:** `gofmt -w .` (redundant if running goimports; keep for explicit CI parity)
+- **Lint:** `go vet ./...` + `golangci-lint run`
+- **Test:** `go test ./...` (see Testing below)
+
+## Testing
 - Table-driven tests are the default.
 - `t.Run(name, ...)` for subtests.
 - `t.Cleanup` beats `defer` for shared fixtures.

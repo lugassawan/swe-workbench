@@ -89,7 +89,12 @@ val prices: Flow<BigDecimal> = priceRepo.watch(symbol)
     .distinctUntilChanged()
 ```
 
-## Tests
+## Tooling
+- **Imports/Format:** `./gradlew ktlintFormat` / `ktlint -F` (standalone binary)
+- **Lint:** `detekt` / `./gradlew detekt`
+- **Test:** `./gradlew test` (see Testing below)
+
+## Testing
 - JUnit 5 or Kotest for test structure; MockK for Kotlin-friendly mocking.
 - `runTest { }` from `kotlinx-coroutines-test` for coroutine tests — no manual dispatchers.
 

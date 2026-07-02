@@ -26,6 +26,8 @@ Document how contexts relate: Partnership, Customer/Supplier, Conformist, Antico
 ### Entity
 Identity persists through change. `User{id, name}` — renaming doesn't change the user.
 
+Entities own their behaviour — **tell, don't ask**. Logic that enforces an entity's invariants belongs on the entity, not in a service that reads its fields and mutates them from outside. An entity that is pure data with all logic elsewhere is an **anemic domain model** — an anti-pattern. (See `principle-solid` § "If You Catch Yourself Thinking…" for the reflection-table form.)
+
 ### Value object
 Identity-less, immutable, compared by value. `Money{amount, currency}`, `EmailAddress`, `DateRange`. Prefer aggressively — eliminates primitive obsession bugs.
 
@@ -68,3 +70,5 @@ Stateless domain logic that does not belong on a single entity (e.g., a transfer
 | **Complex invariants** | Aggregates, domain events, specifications | Interface + unit of work | Portfolio rebalancing with multi-asset constraints |
 
 **Light DDD is the floor when business rules exist**: entity behavior + repository interfaces + value objects for constrained types are non-negotiable even for "simple" cases.
+
+> See `examples/` for a worked Light DDD Order-aggregate implementation (Money value object, aggregate root enforcing one invariant, repository port) in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).

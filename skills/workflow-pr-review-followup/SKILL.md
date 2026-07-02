@@ -31,32 +31,20 @@ This skill orchestrates; analysis is delegated to:
 ### Step 1 — Pre-flight
 
 ```bash
-gh auth status >/dev/null || { echo "gh not authenticated. Run 'gh auth login'."; exit 1; }
-CURRENT_USER=$(gh api /user -q .login)
-mkdir -p /tmp/swe-workbench-pr-review
-gh pr view "$PR" --json state,number,headRefName,baseRefName,headRefOid,title,body,author \
-  > "/tmp/swe-workbench-pr-review/${PR}-followup.json"
-[ -s "/tmp/swe-workbench-pr-review/${PR}-followup.json" ] || { echo "PR #$PR not found or not accessible."; exit 1; }
-```
-
-Extract fields from the JSON. The state file is stored under `${PR}-followup.json` (distinct from `${PR}.json` used by the primary review) to allow both to coexist.
-
-```bash
-JSON="/tmp/swe-workbench-pr-review/${PR}-followup.json"
-BASE=$(jq -r .baseRefName "$JSON")
-HEAD_SHA=$(jq -r .headRefOid "$JSON")
-AUTHOR_LOGIN=$(jq -r .author.login "$JSON")
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name   -q .name)
-if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
-  echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
   exit 1
-fi
+}
+JSON="/tmp/swe-workbench-pr-review/${PR}-followup.json"
+eval "$("$_RT/runtime/preflight-pr.sh" "$PR" "$JSON")"
+CURRENT_USER=$(gh api /user -q .login)
 ```
+
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON` (stored under `${PR}-followup.json` — distinct from `${PR}.json` used by the primary review to allow both to coexist), and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments.
 
 Check that the PR is open before proceeding:
 ```bash
-STATE=$(jq -r .state "$JSON")
 [ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — follow-up review only applies to open PRs."; exit 1; }
 ```
 
@@ -75,7 +63,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}-followup"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null
+  git worktree remove --force "$WT" 2>/dev/null || bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-followup-${PR}" --force
@@ -90,11 +78,11 @@ Identical to `workflow-pr-review` Step 3. Read `title` and `body` from the saved
 
 Pass the agent:
 - Working-directory hint: absolute path of the worktree (`$WT`).
-- Diff: `git -C "$WT" diff "$BASE"..HEAD`.
+- Before diffing, refresh the remote base so already-merged commits are excluded (best-effort — a fetch failure is non-fatal): `git -C "$WT" fetch origin "$BASE" --quiet || true`
+- Diff: `git -C "$WT" diff "origin/$BASE"...HEAD` (three-dot = merge-base; only commits unique to the PR branch).
 - Repo-relative-path instruction (load-bearing): emit **repo-relative** paths (e.g. `src/foo.ts:42`, NOT `$WT/src/foo.ts:42`). The orchestrator uses these paths to position GitHub comments.
 - Footer instruction (opt-in per `## Decision footer`): end with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**`. Never `REQUEST_CHANGES`.
 - Blocking-scope instruction (opt-in per `## Blocking-scope verdict`): classify each Critical/High as in-diff (`+` lines) or out-of-diff; mark out-of-diff with `**Informational (out-of-diff):** `; emit `**Blocking Scope: NONE|OUT-OF-DIFF-ONLY|IN-DIFF**` before the footer. APPROVE/COMMENT rule unchanged.
-- Narrative instruction (opt-in per `## Review Summary`): begin with `## Review Summary` (2–4 sentences: posture, positives, concerns); used as PR review body for cross-author reviews.
 - Ticket-context prelude (if Step 3 produced one).
 
 ### Step 5 — Parse decision footer + blocking-scope verdict
@@ -173,7 +161,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 ### Step 7 — Submit + cleanup
 
-Build `$SUMMARY` from `$REVIEWER_OUTPUT` (captured in Step 4):
+Build the lean review body `$SUMMARY` — decision line + byline (+ optional informational notes for out-of-diff findings). Findings already posted as inline comments in Step 6 must NOT be restated here:
 
 ```bash
 if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
@@ -188,23 +176,12 @@ if [ "$DECISION" = "COMMENT" ] && [ "$BLOCKING_SCOPE" = "OUT-OF-DIFF-ONLY" ] \
   DECISION=APPROVE
 fi
 
-NARRATIVE=$(awk '
-  /^[[:space:]]*(Critical|High|Medium|Low|Severity)[[:space:]]*\|/ { exit }
-  /^###[[:space:]]+(Critical|High|Medium|Low)\b/ { exit }
-  /^\*\*Blocking Scope:/ { exit }
-  /^\*\*Review Decision:/ { exit }
-  { print }
-' <<< "$REVIEWER_OUTPUT" | sed -e '/^[[:space:]]*$/d' -e '/^## Review Summary[[:space:]]*$/d')
-HAS_NARRATIVE="$([ -n "$(echo "$NARRATIVE" | tr -d '[:space:]')" ] && echo true || echo false)"
-
 BYLINE="_Re-reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench)). Posted ${posted} inline comments, deduped ${deduped}._"
 INFORMATIONAL_SECTION=""
 [ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
-if [ "$HAS_NARRATIVE" = true ] && [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '## Review Summary\n\n%s\n\nDetailed feedback in inline comments.\n\n**Review Decision: %s**\n\n---\n%s%s\n' \
-    "$NARRATIVE" "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
-elif [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY="$BYLINE"; [ -n "$INFORMATIONAL_SECTION" ] && SUMMARY="${SUMMARY}${INFORMATIONAL_SECTION}"
+if [ "$IS_SELF_REVIEW" = false ]; then
+  SUMMARY=$(printf '**Review Decision: %s**\n\n%s%s\n' \
+    "$DECISION" "$BYLINE" "$INFORMATIONAL_SECTION")
 else
   SUMMARY=""
 fi
@@ -221,28 +198,41 @@ Skip when `IS_SELF_REVIEW = true`. **Never** use `--request-changes`.
 ```json
 {
   "questions": [{
-    "question": "Want me to help address this feedback? Start /address-feedback <N>?",
+    "question": "Want me to help address this feedback? Start /swe-workbench:address-feedback <N>?",
     "header": "Next step",
     "multiSelect": false,
     "options": [
-      { "label": "Yes — address feedback", "description": "Starts /address-feedback <N> to drive fixes end-to-end." },
+      { "label": "Yes — address feedback", "description": "Starts /swe-workbench:address-feedback <N> to drive fixes end-to-end." },
       { "label": "No thanks",              "description": "Stay here; no further action." }
     ]
   }]
 }
 ```
 
-Substitute the real PR number for `<N>` in the question text and in the `Yes — address feedback` option description. On `Yes — address feedback` → invoke `/address-feedback <N>`. On `No thanks` (or any other answer) → no further action.
+Substitute the real PR number for `<N>` in the question text and in the `Yes — address feedback` option description. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or any other answer) → no further action.
 
-Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/address-feedback` is the natural next step regardless of authorship.
+Identity does not gate the CTA — when the user has invoked Claude to review their own PR, they have explicitly opted into Claude's help; if findings are actionable, offering to drive `/swe-workbench:address-feedback` is the natural next step regardless of authorship.
 
 Suppress this CTA silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` — a clean approval with no feedback has nothing to address; the CTA misrepresents the review.
+
+Foreground state-file reap — runs before worktree teardown; failures surface (no `2>/dev/null` or `|| true`):
+
+```bash
+bash "$_RT/runtime/clean-state-files.sh" \
+  "/tmp/swe-workbench-pr-review/${PR}-followup.json" \
+  "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json"
+for f in "/tmp/swe-workbench-pr-review/${PR}-followup.json" "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json"; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
+```
+
+Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:
 
 ```bash
 ( rimba remove "pr-followup-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-followup-$PR" 2>/dev/null; \
-       bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/scripts/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
+       bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
 ```
 
 ## Footer parsing contract
@@ -290,10 +280,8 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Use `--task "pr-review-$PR"` for the worktree | Use `--task "pr-followup-$PR"` to avoid colliding with a still-active primary-review worktree. |
 | Omit the footer instruction in Step 4 | Without it, the agent does NOT emit the footer. Step 5 will then abort. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise. |
-| Skip the narrative instruction in Step 4 | Without it, the reviewer does NOT emit `## Review Summary` (per its `## Review Summary (when instructed)` block). Step 7 falls back to the BYLINE-only branch silently — body is not wrong but loses the prose narrative for cross-author reviews (self-review intentionally produces BYLINE-only; see "Post `## Review Summary` on self-review" row). |
 | Emit the address-feedback CTA when there is nothing to address | The CTA is gated on outcome only: call `AskUserQuestion` when `DECISION = COMMENT` OR `posted > 0` OR `deduped > 0`. Suppress on clean approvals (APPROVE with `posted = 0` and `deduped = 0`). Self-review is NOT a suppression trigger. |
 | Emit the CTA as plain text instead of `AskUserQuestion` | Always use the `AskUserQuestion` tool for the CTA — it gives the user a clickable button and eliminates the "type yes" friction. Never emit a free-text prompt asking the user to reply `yes`. |
-| Post `## Review Summary` on self-review | Step 7 gates narrative inclusion on `IS_SELF_REVIEW = false`. This is a distinct policy axis from the address-feedback CTA, which is gated on outcome only (not identity). The narrative is still presented in the author's Claude session; only the GitHub-posted body is BYLINE-only. |
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. See [Diff-scoping flip contract](#diff-scoping-flip-contract). |
 | Apply the diff-scoping flip when identity is unknown | `IDENTITY_KNOWN = false` when `$CURRENT_USER` or `$AUTHOR_LOGIN` is empty. The flip does NOT fire — stay COMMENT. Never auto-approve when you can't verify the authorship axis. |
-| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/address-feedback` to act on. |
+| Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/swe-workbench:address-feedback` to act on. |

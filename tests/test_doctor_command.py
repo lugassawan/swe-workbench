@@ -25,7 +25,7 @@ def test_doctor_mentions_probe_targets():
     """commands/doctor.md must reference the probe script and each tool name."""
     assert DOCTOR_CMD.exists(), "commands/doctor.md must exist"
     text = DOCTOR_CMD.read_text()
-    assert "scripts/doctor.sh" in text, "doctor.md must reference scripts/doctor.sh"
+    assert "runtime/doctor.sh" in text, "doctor.md must reference runtime/doctor.sh"
     for tool in ("gh", "git", "jq", "rimba", "claude"):
         assert tool in text, f"doctor.md must mention probe target '{tool}'"
 
@@ -69,4 +69,15 @@ def test_doctor_in_readme():
     )
     assert "/swe-workbench:doctor" in commands_line, (
         "README.md '- **Commands**' bullet must include /swe-workbench:doctor"
+    )
+
+
+def test_doctor_invokes_script_portably():
+    """doctor.md must invoke the script via $CLAUDE_PLUGIN_ROOT (portable for plugin installs, #328)."""
+    text = DOCTOR_CMD.read_text()
+    assert "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh" in text, (
+        "doctor.md must invoke the script via $CLAUDE_PLUGIN_ROOT for plugin-install portability"
+    )
+    assert "bash scripts/doctor.sh" not in text, (
+        "doctor.md must not invoke the script via a non-portable bare relative path"
     )

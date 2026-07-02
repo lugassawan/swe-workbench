@@ -102,7 +102,12 @@ fi
 - `#!/bin/sh` only when strict POSIX portability is required — drop all bash-isms.
 - Run `shellcheck --shell=bash` (or `--shell=sh`) to enforce the declared contract.
 
-## Tests
+## Tooling
+- **Format:** `shfmt -w .`
+- **Lint:** `git ls-files -z '*.sh' '*.bash' | xargs -0 shellcheck` (null-delimited — handles filenames with spaces; covers both `.sh` and `.bash` extensions)
+- **Test:** `bats` (see Testing below)
+
+## Testing
 - `bats-core` for non-trivial scripts: one assertion per test, temp dirs for isolation.
 - For inline assertions in one-shot scripts:
 ```bash

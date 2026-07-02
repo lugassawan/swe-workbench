@@ -77,6 +77,7 @@ It checks:
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
 - `skills/*/triggers.txt` — every skill must have a sibling `triggers.txt` with ≥2 non-empty non-comment lines (each ≤200 chars).
 - `skills/*/examples/**/*.md` — companion example files must be ≤120 lines each. See `docs/extending.md` for the full `examples/` convention (multi-fence `// file:` header rule, visibility ordering).
+- Dependency-flow graph (`check_no_cycles`) — action-cued `` `swe-workbench:<id>` `` activations must not form cycles across commands, skills, and agents. See `docs/extending.md` (`## Dependency flow`) for the allowed layering rules that this check enforces.
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 
@@ -101,7 +102,7 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` �
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
-**Skill catalog**: `agents/shared/skills.md` is the single-source index of every skill in this plugin. When you add a new skill, add a corresponding entry there (format: `- \`swe-workbench:<name>\` — <one-line description>`). The validator's `check_catalog_completeness()` enforces that the catalog matches on-disk skills and that every agent file includes it via `@./shared/skills.md`. See `docs/extending.md` for the full recipe.
+**Skill catalog**: The catalog is split across three slice files under `agents/shared/`: `principles.md`, `languages.md`, and `workflows.md`. When you add a new skill, add a corresponding entry in the appropriate slice (format: `- \`swe-workbench:<name>\` — <one-line description>`). The slice is determined by the skill-name prefix: `principle-*` → `principles.md`; `language-*` → `languages.md`; `workflow-*` and `ticket-context` → `workflows.md`; any other prefix defaults to `principles.md`. The validator's `check_catalog_completeness()` enforces that each slice exactly matches the on-disk skills in its prefix group, and that every agent file includes at least one slice via `@./shared/principles.md`, `@./shared/languages.md`, or `@./shared/workflows.md`. Code-touching agents that include `@./shared/principles.md` must also include `@./shared/languages.md` so language-specific skills are always in scope. If the new agent never touches source code, add its stem to the `_NON_CODE_AGENTS` set at the top of `scripts/validate.py` to suppress this check. See `docs/extending.md` for the full recipe.
 
 ## Cutting a release
 

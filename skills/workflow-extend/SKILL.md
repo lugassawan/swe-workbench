@@ -68,11 +68,13 @@ Hand off to `swe-workbench:workflow-development` Mode B starting at **Phase 2 (I
 
 **Phase 3 (Verify):** Run `superpowers:verification-before-completion`. Do not advance until all format / lint / test steps pass with evidence.
 
-**Phase 4 (Review):** Dispatch both reviewers:
-- `superpowers:code-reviewer` — plan-alignment and standards
-- `swe-workbench:reviewer` — diff correctness/security/design
+**Phase 4 (Review):** Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment and standards
+- `swe-workbench:reviewer` (a **subagent**) — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
 
-The reviewer must additionally check: **does the diff scope match the captured AC?** Flag scope creep as `Severity: High | scope-creep | <files>` and ask user to confirm or carve out before proceeding.
+Running the Skill inline and skipping the `swe-workbench:reviewer` subagent (or vice-versa) does **not** satisfy this phase.
+
+The `swe-workbench:reviewer` subagent must additionally check: **does the diff scope match the captured AC?** Flag scope creep as `Severity: High | scope-creep | <files>` and ask user to confirm or carve out before proceeding.
 
 Do not advance to Phase D until Phase C review passes clean or all issues are resolved.
 
@@ -85,6 +87,25 @@ Commit body must include `Ref: extend-${TS}` on its own line.
 Push. Then invoke `swe-workbench:workflow-commit-and-pr`. That skill will surface an **"Update existing PR"** AskUserQuestion — the user must select it. **Never call `gh pr create`** when an open PR exists for this branch. Tell the user to expect this prompt and select "Update existing PR".
 
 Optional: if the user opts in ("append follow-on section"), fetch the current PR body first (`gh pr view --json body -q .body`), append the `## Follow-on` section, write to a tempfile, then `gh pr edit --body-file <tmp>` — this avoids overwriting collaborator edits.
+
+Before any script call in Phase B (when `$TS` is first written), bind the plugin root:
+
+```bash
+_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/clean-state-files.sh" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+  exit 1
+}
+```
+
+After Phase D delivery succeeds, delete the spec temp file. The reap runs foreground without suppression:
+
+```bash
+bash "$_RT/runtime/clean-state-files.sh" "/tmp/extend-${TS}.md"
+[ -e "/tmp/extend-${TS}.md" ] && echo "⚠ state file NOT reaped: /tmp/extend-${TS}.md" >&2 || echo "✓ state file reaped: /tmp/extend-${TS}.md"
+```
+
+The `Ref: extend-${TS}` commit traceability string remains in git history; only the temp file is removed. On abort before delivery, leave the file for inspection.
 
 ## Project Detection
 
@@ -106,7 +127,7 @@ Inherits detections from `workflow-development` for shared markers; adds extend-
 | Failure | Signal | Action |
 |---|---|---|
 | PR detection fails at skill entry | PR_NUM/HEAD_REF/PR_URL absent from context | Fail loudly with diagnostic hint. |
-| PR merged mid-flow | `gh pr view` returns `MERGED` at Phase D | Abort. Print PR URL. Suggest `/implement` for a follow-up PR. |
+| PR merged mid-flow | `gh pr view` returns `MERGED` at Phase D | Abort. Print PR URL. Suggest `/swe-workbench:implement` for a follow-up PR. |
 | Push rejected (non-FF) | `git push` non-zero | Abort. Tell user: `git pull --rebase`. Never force-push. |
 | Scope creep flagged in review | Reviewer flags `Severity: High | scope-creep` | Ask user to confirm scope or carve out before proceeding. |
 | Dirty working tree at invocation | `git status --porcelain` non-empty | Abort. Prompt user to commit or stash uncommitted changes. |

@@ -323,6 +323,20 @@ class TestCheckAgents:
         validate.check_agents()
         assert len(validate.FAILURES) == 0
 
+    def test_skill_ref_without_tools_line_passes(self, reset_validate):
+        """Omitting tools: entirely grants all tools (Skill implicitly available) — no failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: An agent\n---\n"
+            "\nUse `swe-workbench:foo` to do things.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agents()
+        assert len(validate.FAILURES) == 0
+
 
 # ──────────────────────────────────────────────
 # performance-tuner agent structural assertions
@@ -377,32 +391,43 @@ class TestPerformanceTunerAgent:
             "agents/performance-tuner.md must have a '## Boundaries vs. other agents' table section (O7)"
         )
 
-    def test_shared_agent_boundaries_file_exists(self):
+    def test_shared_agent_boundaries_file_absent(self):
         shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
-        assert shared.exists(), (
-            "agents/shared/agent-boundaries.md must exist as canonical source (O7, issue #235)"
+        assert not shared.exists(), (
+            "agents/shared/agent-boundaries.md was an orphan with 0 consumers and has been removed. "
+            "The inline table in performance-tuner.md is the sole source of truth (issue #337)."
         )
 
-    def test_boundaries_table_content_parity(self):
-        """Every agent-name cell in agent-boundaries.md must appear in performance-tuner.md.
+    def test_boundaries_table_completeness(self):
+        """The inline '## Boundaries vs. other agents' table is the sole source of truth.
 
-        Since @./ is pointer-only (not runtime-transclusion), the inline table in
-        performance-tuner.md is the source the model sees. This test detects silent drift
-        between the canonical shared doc and its inline copy.
+        agents/shared/agent-boundaries.md was removed in issue #337 (0 @-include consumers).
+        This test asserts the expected boundary agents are present in the table section so
+        drift is still caught — without needing a second copy of the data.
         """
         import re
-        shared = self.AGENT_PATH.parent / "shared" / "agent-boundaries.md"
-        shared_text = shared.read_text(encoding="utf-8")
         perf_text = self.AGENT_PATH.read_text(encoding="utf-8")
-        # Extract the first cell (agent name) of each data row in the shared table.
-        # Table rows look like: | `agent-name` | ... | ... |
-        agent_cells = re.findall(r'^\|\s*(`[^`]+`)\s*\|', shared_text, re.MULTILINE)
-        assert agent_cells, "agent-boundaries.md must contain at least one table row"
-        missing = [cell for cell in agent_cells if cell not in perf_text]
+        section_match = re.search(
+            r"## Boundaries vs\. other agents\n(.*?)(?=\n+## |\Z)",
+            perf_text,
+            re.DOTALL,
+        )
+        assert section_match, (
+            "## Boundaries vs. other agents section not found in performance-tuner.md"
+        )
+        section_text = section_match.group(1)
+        expected_agents = [
+            "`reviewer`",
+            "`auditor`",
+            "`architect`",
+            "`debugger`",
+            "`dependency-auditor`",
+            "`refactorer`",
+        ]
+        missing = [agent for agent in expected_agents if agent not in section_text]
         assert not missing, (
             f"performance-tuner.md is missing boundary rows for: {missing}. "
-            "Update the inline '## Boundaries vs. other agents' table to match "
-            "agents/shared/agent-boundaries.md (canonical source)."
+            "The inline '## Boundaries vs. other agents' table is the sole source of truth."
         )
 
     def test_profile_first_rule_present(self):
@@ -637,7 +662,25 @@ class TestCheckAgentSkillRefs:
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
-        assert any("does not exist" in f for f in validate.FAILURES)
+        assert any("no matching artifact found" in f for f in validate.FAILURES)
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """An agent referencing another agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "bar.md").write_text(
+            "---\nname: bar\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
+            "\nUse `swe-workbench:bar` subagent.\n"
+            "\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+        validate.check_agent_skill_refs()
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -666,7 +709,7 @@ class TestCheckCommandSkillRefs:
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
-        assert any("nonexistent" in f and "does not exist" in f for f in validate.FAILURES)
+        assert any("nonexistent" in f and "no matching artifact found" in f for f in validate.FAILURES)
 
     def test_typoed_skill_id_among_valid_refs_fails(self, reset_validate):
         root = reset_validate
@@ -680,7 +723,7 @@ class TestCheckCommandSkillRefs:
         )
         validate.check_command_skill_refs()
         assert len(validate.FAILURES) == 1
-        assert "fooo" in validate.FAILURES[0] and "does not exist" in validate.FAILURES[0]
+        assert "fooo" in validate.FAILURES[0] and "no matching artifact found" in validate.FAILURES[0]
         assert "swe-workbench:foo'" not in validate.FAILURES[0]
 
     def test_command_with_no_skill_refs_passes_silently(self, reset_validate):
@@ -688,6 +731,22 @@ class TestCheckCommandSkillRefs:
         make_plugin_tree(root)
         (root / "commands" / "my-cmd.md").write_text(
             "---\ndescription: d\n---\n\nNo plugin references here.\n",
+            encoding="utf-8",
+        )
+        validate.check_command_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_agent_file_passes(self, reset_validate):
+        """A command referencing an agent via swe-workbench: must pass
+        when the target exists as agents/<id>.md (not just skills/<id>/)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "reviewer.md").write_text(
+            "---\nname: reviewer\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nDispatch `swe-workbench:reviewer` subagent.\n",
             encoding="utf-8",
         )
         validate.check_command_skill_refs()
@@ -835,6 +894,143 @@ class TestCheckCatalogCompleteness:
         catalog_path.unlink()
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_skill_skill_refs
+# ──────────────────────────────────────────────
+
+class TestCheckSkillSkillRefs:
+    def test_ref_to_existing_skill_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:target-skill`.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_agent_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:some-agent`.\n"},
+        )
+        (root / "agents" / "some-agent.md").write_text(
+            "---\nname: some-agent\ndescription: d\ntools: Read\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_existing_command_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:some-cmd`.\n"},
+        )
+        (root / "commands" / "some-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nCommand body.\n",
+            encoding="utf-8",
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_ref_to_nonexistent_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nUse `swe-workbench:ghost`.\n"},
+        )
+        validate.check_skill_skill_refs()
+        assert any("ghost" in f and "does not exist" in f for f in validate.FAILURES)
+
+    def test_skill_with_no_refs_passes_silently(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: d\n---\n\nNo plugin refs here.\n"},
+        )
+        validate.check_skill_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_skill_skill_refs_live_tree_passes(self, reset_validate, monkeypatch):
+        """All swe-workbench refs in real skills must resolve to skill dirs, agents, or commands."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_skill_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_workflow_development_activation_contract
+# ──────────────────────────────────────────────
+
+class TestCheckWorkflowDevelopmentActivationContract:
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def _make_wf_dev_skill(self, root, activators):
+        """Write a minimal workflow-development SKILL.md listing given activators."""
+        skill_dir = root / "skills" / "workflow-development"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        listed = ", ".join(f"/swe-workbench:{a}" for a in activators)
+        desc = f"Activated by {listed} when the plan modifies the codebase."
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: workflow-development\ndescription: {desc}\n---\n\nBody.\n",
+            encoding="utf-8",
+        )
+
+    def test_listed_and_activating_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert len(validate.FAILURES) == 0
+
+    def test_listed_but_not_activating_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["mycmd"])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nNo workflow-development mention here.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_activating_but_not_listed_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, [])
+        (root / "commands" / "mycmd.md").write_text(
+            "---\ndescription: d\n---\n\nActivate `swe-workbench:workflow-development`.\n",
+            encoding="utf-8",
+        )
+        validate.check_workflow_development_activation_contract()
+        assert any("mycmd" in f for f in validate.FAILURES)
+
+    def test_unknown_command_in_description_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._make_wf_dev_skill(root, ["typoedcmd"])
+        validate.check_workflow_development_activation_contract()
+        assert any("typoedcmd" in f and "unknown" in f for f in validate.FAILURES)
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """workflow-development SKILL.md 'Activated by' list must match actual activators in commands/."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.FAILURES.clear()
+        val.check_workflow_development_activation_contract()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
     # O3 — slice-specific tests (issue #235)
 
@@ -1650,3 +1846,717 @@ class TestCheckTestSubprocessEnv:
         )
         validate.check_test_subprocess_env()
         assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
+# check_no_cycles
+# ──────────────────────────────────────────────
+
+def _make_cycle_tree(root):
+    """Create the minimum required directories for check_no_cycles tests."""
+    (root / "agents" / "shared").mkdir(parents=True, exist_ok=True)
+    (root / "commands").mkdir(exist_ok=True)
+    (root / "skills").mkdir(exist_ok=True)
+
+
+class TestCheckNoCycles:
+    """Dependency-flow cycle detection (issue #371)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    def test_green_baseline_live_repo(self, reset_validate, monkeypatch):
+        """Live repo activation graph must have zero cycles."""
+        monkeypatch.setattr(validate, "ROOT", self.REAL_ROOT)
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_skill_to_skill_cycle_detected(self, reset_validate):
+        """skill A action-invokes skill B and B action-invokes A → cycle reported."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:b`\n",
+            encoding="utf-8",
+        )
+        (root / "skills" / "b").mkdir()
+        (root / "skills" / "b" / "SKILL.md").write_text(
+            "---\nname: b\ndescription: d\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert len(validate.FAILURES) >= 1
+        combined = " ".join(validate.FAILURES)
+        assert "a" in combined and "b" in combined
+
+    def test_prose_cross_ref_no_cycle(self, reset_validate):
+        """See `swe-workbench:X` lines are pointer cues, not activations — no edge emitted."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\nSee `swe-workbench:b` for details.\n",
+            encoding="utf-8",
+        )
+        (root / "skills" / "b").mkdir()
+        (root / "skills" / "b" / "SKILL.md").write_text(
+            "---\nname: b\ndescription: d\n---\nSee `swe-workbench:a` for details.\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_slash_handoff_no_cycle(self, reset_validate):
+        """Slash-command handoffs in skills are excluded; command→skill edge alone is not a cycle."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\nWhen done, run `/review` next.\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "review.md").write_text(
+            "---\ndescription: review\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_self_mention_no_edge(self, reset_validate):
+        """A skill action-invoking its own id must not produce a self-edge or cycle."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:a` directly.\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert validate.FAILURES == []
+
+    def test_agent_mediated_cycle_detected(self, reset_validate):
+        """skill A → agent X → skill A is a cycle and must be reported."""
+        root = reset_validate
+        _make_cycle_tree(root)
+        (root / "skills" / "a").mkdir()
+        (root / "skills" / "a" / "SKILL.md").write_text(
+            "---\nname: a\ndescription: d\n---\ninvoke `swe-workbench:x`\n",
+            encoding="utf-8",
+        )
+        (root / "agents" / "x.md").write_text(
+            "---\nname: x\ndescription: d\n---\ninvoke `swe-workbench:a`\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_no_cycles(cache=cache)
+        assert len(validate.FAILURES) >= 1
+        combined = " ".join(validate.FAILURES)
+        assert "a" in combined and "x" in combined
+
+
+# ──────────────────────────────────────────────
+# No dead superpowers:code-reviewer references
+# ──────────────────────────────────────────────
+
+
+class TestNoDeadCodeReviewerRef:
+    """superpowers:code-reviewer does not exist; all sites must use
+    superpowers:requesting-code-review (issue #333)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+    DEAD_REF = "superpowers:code-reviewer"
+
+    def test_dead_ref_absent_from_md_files(self):
+        """No *.md file in the repo may reference the non-existent skill name.
+
+        Scope: *.md files only (where all current skill references live).
+        Skill refs in *.py fixture strings are covered by isolation tests.
+        """
+        hits = [
+            str(p.relative_to(self.REAL_ROOT))
+            for p in self.REAL_ROOT.rglob("*.md")
+            if ".git" not in p.parts
+            and self.DEAD_REF in p.read_text(encoding="utf-8", errors="replace")
+        ]
+        assert hits == [], (
+            f"Found dead skill ref '{self.DEAD_REF}' in {len(hits)} file(s):\n"
+            + "\n".join(f"  {h}" for h in sorted(hits))
+        )
+
+
+class TestNoPhantomSkillsCatalogRef:
+    """agents/shared/skills.md never existed after the catalog was split into
+    principles.md / languages.md / workflows.md (issue #334). No doc may send
+    contributors to it, and the onboarding docs must point at a real slice."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+    PHANTOM_REF = "shared/skills.md"
+    ONBOARDING_DOCS = ("CONTRIBUTING.md", "docs/extending.md")
+    SLICE_FILES = ("principles.md", "languages.md", "workflows.md")
+
+    def test_phantom_ref_absent_from_md_files(self):
+        hits = [
+            str(p.relative_to(self.REAL_ROOT))
+            for p in self.REAL_ROOT.rglob("*.md")
+            if ".git" not in p.parts
+            and self.PHANTOM_REF in p.read_text(encoding="utf-8", errors="replace")
+        ]
+        assert hits == [], (
+            f"Found phantom catalog ref '{self.PHANTOM_REF}' in {len(hits)} file(s):\n"
+            + "\n".join(f"  {h}" for h in sorted(hits))
+        )
+
+    def test_onboarding_docs_point_at_real_slice(self):
+        failures = []
+        for rel in self.ONBOARDING_DOCS:
+            text = (self.REAL_ROOT / rel).read_text(encoding="utf-8")
+            if not any(f"shared/{s}" in text for s in self.SLICE_FILES):
+                failures.append(rel)
+        assert not failures, (
+            f"Missing real catalog slice reference in: {', '.join(failures)}. "
+            f"Expected one of: {', '.join(self.SLICE_FILES)}"
+        )
+
+
+# ──────────────────────────────────────────────
+# check_plan_mode_workflow_embedding (#423)
+# ──────────────────────────────────────────────
+
+class TestCheckPlanModeWorkflowEmbedding:
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def test_missing_exit_plan_mode_clause_fails(self, reset_validate):
+        """A command that activates workflow-development Mode A without the
+        ExitPlanMode robustness clause must be flagged (#423)."""
+        root = reset_validate
+        make_plugin_tree(root)
+        # Command references workflow-development + Mode A but lacks the clause
+        (root / "commands" / "badcmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in **Mode A** "
+            "before finalizing the plan.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert any("#423" in f for f in validate.FAILURES), (
+            f"Expected a failure mentioning #423 but got: {validate.FAILURES}"
+        )
+
+    def test_with_exit_plan_mode_clause_passes(self, reset_validate):
+        """A command that includes the ExitPlanMode robustness clause must pass."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "goodcmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in **Mode A** "
+            "whether saved to a plan file or passed to `ExitPlanMode`.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert len(validate.FAILURES) == 0
+
+    def test_wf_ref_without_mode_a_no_failure(self, reset_validate):
+        """A command that references workflow-development but contains no 'Mode A' token is not flagged."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "modebtoo.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Activate `swe-workbench:workflow-development` in Mode B.\n",
+            encoding="utf-8",
+        )
+        validate.check_plan_mode_workflow_embedding()
+        assert len(validate.FAILURES) == 0
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """All real Mode-A activators must carry the ExitPlanMode robustness clause."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.check_plan_mode_workflow_embedding()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_browser_tool_gate
+# ──────────────────────────────────────────────
+
+class TestCheckBrowserToolGate:
+    """check_browser_tool_gate: agents/commands referencing browser MCP tools must carry
+    a BLOCKED: sentinel and a per-backend install hint (#364)."""
+
+    _REPO_ROOT = Path(__file__).parent.parent
+
+    def test_browser_snapshot_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_browser_snapshot_with_blocked_and_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot to capture the page.\n\n"
+            "BLOCKED: Playwright MCP not connected — install with `npx @playwright/mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_playwright_mcp_ref_in_command_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Requires @playwright/mcp for E2E testing.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_read_console_messages_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call read_console_messages to get browser logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_blocked_with_chrome_devtools_hint_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Capture read_console_messages for diagnostics.\n\n"
+            "BLOCKED: No Chrome backend connected — install with `npx chrome-devtools-mcp@latest`.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_blocked_without_install_hint_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Use browser_snapshot to explore the UI.\n\n"
+            "BLOCKED: Playwright MCP not connected.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("install hint" in f for f in validate.FAILURES)
+
+    def test_read_network_requests_without_blocked_fails(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n"
+            "Capture read_network_requests to inspect XHR calls.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+    def test_no_browser_refs_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "This agent does not reference any browser tools.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_emits_failure(self, reset_validate):
+        """None sentinel in the agent cache (unreadable file) must emit a failure, not silently skip."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        # Write a file that would pass the gate if readable — but the cache marks it unreadable.
+        agent_path.write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\nnpx @playwright/mcp@latest\n",
+            encoding="utf-8",
+        )
+        cache = ({agent_path: None}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        assert any("could not read file" in f for f in validate.FAILURES), (
+            f"Expected 'could not read file' failure for None sentinel; got: {validate.FAILURES}"
+        )
+
+    def test_cache_hit_with_valid_content_passes(self, reset_validate):
+        """Valid-text cache hit (agent satisfies gate) must not emit any failure."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        agent_path = agents_dir / "my-agent.md"
+        content = (
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Use browser_snapshot.\nBLOCKED: ...\n"
+            "claude mcp add playwright npx @playwright/mcp@latest\n"
+        )
+        agent_path.write_text(content, encoding="utf-8")
+        cache = ({agent_path: content}, {})
+        validate.check_browser_tool_gate(cache=cache)
+        assert len(validate.FAILURES) == 0, (
+            f"Expected no failures for cached valid content; got: {validate.FAILURES}"
+        )
+
+    def test_live_tree_passes(self, reset_validate, monkeypatch):
+        """All real agents/commands referencing browser MCP tools must carry BLOCKED: + install hint."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self._REPO_ROOT)
+        val.check_browser_tool_gate()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+    def test_claude_in_chrome_only_passes(self, reset_validate):
+        """File referencing only mcp__claude-in-chrome__* is exempt from the install-hint requirement."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages to get logs.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert len(validate.FAILURES) == 0
+
+    def test_claude_in_chrome_plus_browser_snapshot_requires_blocked(self, reset_validate):
+        """File mixing mcp__claude-in-chrome__* with another browser signal must still carry BLOCKED:."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n"
+            "Call mcp__claude-in-chrome__read_console_messages and also browser_snapshot.\n",
+            encoding="utf-8",
+        )
+        validate.check_browser_tool_gate()
+        assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# e2e-test-writer agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestWriterAgent:
+    """Integration tests: assert agents/e2e-test-writer.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-writer.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-writer.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-writer" in fm_text
+        assert "description:" in fm_text
+        assert "model: sonnet" in fm_text
+        assert re.search(r"tools:.*\bSkill\b", fm_text), "tools: must include Skill"
+
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, "agent must carry a BLOCKED: hard-gate sentinel"
+
+    def test_playwright_mcp_install_hint_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "claude mcp add" in text and "@playwright/mcp" in text, (
+            "agent must include the Playwright MCP install hint (claude mcp add ... @playwright/mcp)"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# e2e-test-verifier agent structural assertions
+# ──────────────────────────────────────────────
+
+class TestE2eTestVerifierAgent:
+    """Integration tests: assert agents/e2e-test-verifier.md satisfies structural invariants (#364)."""
+
+    AGENT_PATH = Path(__file__).parent.parent / "agents" / "e2e-test-verifier.md"
+
+    def test_file_exists(self):
+        assert self.AGENT_PATH.exists(), "agents/e2e-test-verifier.md must exist"
+
+    def test_frontmatter_fields(self):
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        assert "name: e2e-test-verifier" in fm_text
+        assert "description:" in fm_text
+        assert "model: haiku" in fm_text
+        assert re.search(r"tools:.*\bRead\b", fm_text)
+        assert re.search(r"tools:.*\bBash\b", fm_text), "tools: must include Bash (runs specs)"
+        assert re.search(r"tools:.*\bSkill\b", fm_text)
+
+    def test_no_browser_mcp_tools_in_frontmatter(self):
+        """Verifier uses the CLI runner, not browser MCP — tools: must not list MCP browser tools."""
+        import re
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        assert match, "frontmatter block not found"
+        fm_text = match.group(1)
+        tools_line = next(
+            (line for line in fm_text.splitlines() if line.startswith("tools:")), ""
+        )
+        assert "browser_snapshot" not in tools_line
+        assert "mcp__" not in tools_line
+
+    def test_blocked_sentinel_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "BLOCKED:" in text, (
+            "agent must include a BLOCKED: sentinel for the missing-runner case"
+        )
+
+    def test_boundary_section_present(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "Boundary vs. `test-reviewer`" in text, (
+            "agent must have a Boundary vs. test-reviewer section"
+        )
+
+    def test_principle_testing_wired(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "`swe-workbench:principle-testing`" in text, (
+            "agent must reference swe-workbench:principle-testing"
+        )
+
+    def test_shared_skills_include(self):
+        text = self.AGENT_PATH.read_text(encoding="utf-8")
+        assert "@./shared/principles.md" in text, (
+            "agent must include @./shared/principles.md"
+        )
+        assert "@./shared/languages.md" in text, (
+            "agent must include @./shared/languages.md"
+        )
+
+    def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
+        """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", self.AGENT_PATH.parent.parent)
+        val.FAILURES.clear()
+        cache = val._build_cache()
+        val.check_agents(cache=cache)
+        val.check_agent_skill_refs(cache=cache)
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_workflow_full_fidelity_mandate
+# ──────────────────────────────────────────────
+
+class TestCheckWorkflowFullFidelityMandate:
+    """Guards the Mode A full-fidelity mandate in SKILL.md and the template header (#455)."""
+
+    def _write_skill(self, root, mode_a_body):
+        skill_dir = root / "skills" / "workflow-development"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        content = (
+            "## Plan-Time Behavior (Mode A)\n"
+            + mode_a_body
+            + "\n## Implementation-Time Behavior (Mode B)\n"
+        )
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+    def _write_template(self, root, header):
+        tmpl_dir = root / "skills" / "workflow-development" / "templates"
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+        content = header + "\n\n````markdown\n## Workflow\n````\n"
+        (tmpl_dir / "plan-workflow-section.md").write_text(content, encoding="utf-8")
+
+    def test_both_files_correct_passes(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert validate.FAILURES == [], f"Expected no failures but got: {validate.FAILURES}"
+
+    def test_skill_md_file_absent_fails(self, reset_validate):
+        root = reset_validate
+        # Neither SKILL.md nor the template exists — the missing-file branch fires.
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("missing" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'missing' when SKILL.md does not exist"
+        )
+
+    def test_skill_md_missing_in_full_and_verbatim_fails(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Substitute [[detect:KEY]] markers only.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when Mode A mandate tokens are absent"
+        )
+
+    def test_skill_md_missing_verbatim_fails(self, reset_validate):
+        root = reset_validate
+        # Has "in full" but NOT "verbatim"
+        self._write_skill(root, "Reproduce the template in full — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure containing 'full-fidelity mandate' when 'verbatim' token is absent"
+        )
+
+    def test_skill_md_missing_in_full_fails(self, reset_validate):
+        root = reset_validate
+        # Has "verbatim" but NOT "in full" — mirrors test_skill_md_missing_verbatim_fails
+        # to guard both halves of the `or` in the guard condition independently.
+        self._write_skill(root, "Reproduce verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section — do not abridge.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("full-fidelity mandate" in f for f in validate.FAILURES), (
+            "Expected a failure when 'in full' is absent from Mode A paragraph"
+        )
+
+    def test_template_missing_no_abridge_fails(self, reset_validate):
+        root = reset_validate
+        self._write_skill(root, "Reproduce in full and verbatim — substitute [[detect:KEY]] markers.\n")
+        self._write_template(root, "Copy this section into your plan.")
+        validate.check_workflow_full_fidelity_mandate()
+        assert any("do not abridge" in f for f in validate.FAILURES), (
+            "Expected a failure naming 'do not abridge' when that phrase is missing from template header"
+        )
+
+    def test_real_repo_passes(self, reset_validate, monkeypatch):
+        """After applying changes #1 and #2, the real files must pass cleanly."""
+        import validate as val
+        real_root = Path(__file__).parent.parent
+        monkeypatch.setattr(val, "ROOT", real_root)
+        val.check_workflow_full_fidelity_mandate()
+        assert val.FAILURES == [], f"validate.py failures on real repo: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────────────────────
+# Phase 4 dispatches BOTH reviewers in parallel (#458)
+# ──────────────────────────────────────────────────────────────
+
+
+class TestPhase4DispatchesBothReviewers:
+    """Every Phase 4 dispatch site must name both reviewers AND the word
+    'parallel', ensuring neither can be omitted and they run concurrently.
+
+    Regression guard for issue #458.
+    """
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    # (file_path_relative, phase4_start_marker, terminator_prefix)
+    SITES = [
+        (
+            "skills/workflow-development/SKILL.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "commands/implement.md",
+            "**Phase 4 — Review**",
+            "**Phase 5",
+        ),
+        (
+            "skills/workflow-development/templates/plan-workflow-section.md",
+            "### Phase 4: Review",
+            "### Phase 5",
+        ),
+        (
+            "skills/workflow-extend/SKILL.md",
+            "**Phase 4 (Review):**",
+            "## Phase D",
+        ),
+        (
+            "commands/extend.md",
+            "**Phase 4 — Review**",
+            "**Phase 5",
+        ),
+    ]
+
+    REQUIRED_TOKENS = [
+        "superpowers:requesting-code-review",
+        "swe-workbench:reviewer",
+        "parallel",
+    ]
+
+    def _extract_phase4_section(self, text: str, start_marker: str, terminator: str) -> str:
+        """Return the text from start_marker up to (but not including) terminator."""
+        start = text.find(start_marker)
+        if start == -1:
+            return ""  # all required tokens register as missing → clear assertion failure
+        end = text.find(terminator, start + len(start_marker))
+        if end == -1:
+            return text[start:]
+        return text[start:end]
+
+    def test_all_dispatch_sites_name_both_reviewers_and_parallel(self):
+        """Each Phase 4 section must contain both reviewer identifiers and 'parallel'."""
+        failures = []
+        for rel_path, start_marker, terminator in self.SITES:
+            full_path = self.REAL_ROOT / rel_path
+            text = full_path.read_text(encoding="utf-8")
+            section = self._extract_phase4_section(text, start_marker, terminator)
+            section_lower = section.lower()
+            missing = [
+                token
+                for token in self.REQUIRED_TOKENS
+                if token.lower() not in section_lower
+            ]
+            if missing:
+                failures.append(
+                    f"{rel_path}: missing {missing} in Phase 4 section"
+                )
+        assert not failures, (
+            "Phase 4 dispatch sites are missing required tokens (#458):\n"
+            + "\n".join(f"  {f}" for f in failures)
+        )

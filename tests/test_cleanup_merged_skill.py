@@ -130,3 +130,44 @@ def test_phase1_template_rimba_is_primary_not_peer():
             "(preceded by a conditional like 'else', 'fallback', 'absent', etc.), "
             f"not as a peer primary option. Context: '{context_around}'"
         )
+
+
+def test_cleanup_merged_step5_delegates_to_delete_branches_script():
+    """Step 5 must delegate branch deletion to delete-branches.sh via eval.
+
+    The inline git branch -D / git push origin --delete commands were extracted
+    into delete-branches.sh (issue #449). The skill slice for Step 5 must
+    reference the script and document both KEY=VALUE outputs; the old inline
+    commands must not appear within the Step 5 slice (they may still appear in
+    prose tables elsewhere, so the check is slice-scoped).
+    """
+    body = SKILL.read_text()
+
+    assert "### Step 5 — Delete Branches" in body, (
+        "Step 5 heading must be '### Step 5 — Delete Branches'"
+    )
+    assert "### Step 6 — Report" in body, (
+        "Step 7 must be renumbered to Step 6 after the merge"
+    )
+
+    step5_slice = body.split("### Step 5 — Delete Branches")[1].split("### Step 6")[0]
+
+    assert "delete-branches.sh" in step5_slice, (
+        "Step 5 slice must reference delete-branches.sh"
+    )
+    assert "LOCAL_DELETED" in step5_slice, (
+        "Step 5 slice must document LOCAL_DELETED output"
+    )
+    assert "REMOTE_DELETED" in step5_slice, (
+        "Step 5 slice must document REMOTE_DELETED output"
+    )
+
+    # The old inline commands must not appear within Step 5 (they were extracted)
+    assert "git branch -D <headRefName>" not in step5_slice, (
+        "git branch -D <headRefName> must not appear inline in Step 5 — "
+        "it was extracted into delete-branches.sh"
+    )
+    assert "git push origin --delete <headRefName>" not in step5_slice, (
+        "git push origin --delete <headRefName> must not appear inline in Step 5 — "
+        "it was extracted into delete-branches.sh"
+    )

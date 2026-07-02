@@ -56,4 +56,4 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
    ```
    When no label was matched, drop the `--label "<chosen-label>"` segment from the `Command:` line. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL.
+9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" "/tmp/capture-<repo-slug>-<unix-timestamp>.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 8). On failure, leave the files for retry.

@@ -228,13 +228,48 @@ def test_step7_deferred_informational_appended_to_summary(skill_path):
 
 
 @pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_awk_excludes_blocking_scope_line_from_narrative(skill_path):
-    """The awk narrative-extraction block must exclude the Blocking Scope verdict line."""
+def test_step7_lean_body_no_narrative(skill_path):
+    """Step 7 non-self-review body must use the lean form: no ## Review Summary, no
+    'Detailed feedback in inline comments.', no NARRATIVE extraction variables."""
     text = skill_path.read_text()
-    assert re.search(r"\*\*Blocking Scope:", text), (
-        f"{skill_path.parent.name}: the awk block that extracts $NARRATIVE must contain "
-        "a guard like '/^\\*\\*Blocking Scope:/ {{ exit }}' so the verdict line is "
-        "never captured into the posted review summary"
+    assert "## Review Summary" not in text, (
+        f"{skill_path.parent.name}: '## Review Summary' must not appear — the narrative "
+        "is fully removed; the review body carries only the decision + byline + informational notes."
+    )
+    assert "Detailed feedback in inline comments." not in text, (
+        f"{skill_path.parent.name}: 'Detailed feedback in inline comments.' must not appear — "
+        "this phrase belonged to the removed narrative branch."
+    )
+    assert "HAS_NARRATIVE" not in text, (
+        f"{skill_path.parent.name}: HAS_NARRATIVE variable must be removed along with the "
+        "NARRATIVE extraction block."
+    )
+    assert "Narrative instruction" not in text, (
+        f"{skill_path.parent.name}: 'Narrative instruction' Step-4 bullet must be removed — "
+        "the reviewer is no longer instructed to emit a narrative section."
+    )
+    assert "$REVIEWER_OUTPUT" not in text, (
+        f"{skill_path.parent.name}: '$REVIEWER_OUTPUT' is a dangling reference left by the "
+        "narrative removal (#391) — the lean body is built from $DECISION/$BYLINE only, not "
+        "from reviewer output. Remove the stale Step 7 prose that names it."
+    )
+    assert "decision line + byline" in text, (
+        f"{skill_path.parent.name}: Step 7 prose must affirm the lean-body intent — "
+        "'decision line + byline' directive is missing. Findings must not be restated in the body."
+    )
+
+
+def test_reviewer_no_review_summary_section():
+    """agents/reviewer.md must no longer contain the ## Review Summary (when instructed) section."""
+    text = REVIEWER_MD.read_text()
+    assert "## Review Summary" not in text, (
+        "agents/reviewer.md still contains '## Review Summary' — delete the entire "
+        "'## Review Summary (when instructed)' block; the orchestrator no longer requests it."
+    )
+    assert "orchestrator extracts these paragraphs" not in text, (
+        "agents/reviewer.md still contains explanatory prose from the deleted "
+        "'## Review Summary (when instructed)' block — the full section must be removed, "
+        "not just the heading."
     )
 
 
@@ -246,4 +281,37 @@ def test_diff_scoping_contract_subsection_exists(skill_path):
         f"{skill_path.parent.name}: must contain a 'Diff-scoping flip contract' subsection "
         "documenting the flip gate, self-review exclusion, identity-unknown fail-safe, "
         "and the out-of-diff 422 reroute"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stale-base fix (#414) — fetch + three-dot merge-base diff
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
+def test_step4_fetches_base_before_diff(skill_path):
+    """Step 4 must fetch origin/$BASE in the worktree context before computing the diff."""
+    text = skill_path.read_text()
+    assert re.search(r'git -C "\$WT" fetch origin "\$BASE" --quiet \|\| true', text), (
+        f"{skill_path.parent.name}: Step 4 must run "
+        "'git -C \"$WT\" fetch origin \"$BASE\" --quiet || true' (in the worktree, with "
+        "non-fatal guard) before the diff so already-merged commits on the remote base "
+        "are excluded (fix for #414)"
+    )
+
+
+@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
+def test_step4_diff_uses_three_dot_remote_tracking_ref(skill_path):
+    """Step 4 diff must use three-dot merge-base against origin/$BASE, not two-dot against local $BASE."""
+    text = skill_path.read_text()
+    assert re.search(r'diff "origin/\$BASE"\.\.\.HEAD', text), (
+        f"{skill_path.parent.name}: Step 4 diff must be "
+        "'git -C \"$WT\" diff \"origin/$BASE\"...HEAD' (three-dot = merge-base, "
+        "remote-tracking ref) — not two-dot against local $BASE (fix for #414)"
+    )
+    assert not re.search(r'diff "\$BASE"\.\.HEAD', text), (
+        f"{skill_path.parent.name}: Step 4 must NOT use 'diff \"$BASE\"..HEAD' "
+        "(two-dot against local ref) — it produces a stale diff when the remote base "
+        "has advanced past the feature branch's fork point (fix for #414)"
     )

@@ -42,3 +42,17 @@ The `workflow-codebase-audit` skill (via the `auditor` subagent) produces a rank
 - **Next-action recommendations** — top-N actionable fixes the team should address first, keyed to finding IDs.
 
 In `--depth deep`, the `security-auditor` additionally deep-dives the top-N security findings and the `debugger` attempts to reproduce the top-N reliability findings; their outputs are appended as sub-sections.
+
+## Step 4 — Offer to emit findings as GitHub issues
+
+After the audit output is rendered, check the finding count:
+
+- **If 0 findings** — stop. Do not make the offer.
+- **If ≥1 finding** — ask:
+
+  > "Found N findings across M subsystems. File them as context-grouped GitHub issues? (y/n)"
+
+  - **On `y` (accept):** invoke `swe-workbench:workflow-audit-emit-issues`. Pass the
+    finding count and subsystem breakdown as context. The skill handles grouping,
+    template discovery, label selection, and the preview-confirm gate.
+  - **On `n` (decline) or no response:** stop. The audit result stands as-is.

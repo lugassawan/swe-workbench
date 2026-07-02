@@ -26,6 +26,10 @@ _FAKE_AKIA = "AKIA" + "D" * 16                              # nosecret
 _FAKE_AWS_SECRET = "E" * 40                                  # nosecret
 _FAKE_API_KEY_VAL = "F" * 20                                 # nosecret
 _FAKE_SECRET_VAL = "G" * 12                                  # nosecret
+_FAKE_PEM_RSA       = "-----BEGIN RSA PRIVATE KEY-----"      # nosecret
+_FAKE_PEM_PKCS8     = "-----BEGIN PRIVATE KEY-----"          # nosecret
+_FAKE_PEM_ENCRYPTED = "-----BEGIN ENCRYPTED PRIVATE KEY-----"  # nosecret
+_FAKE_PEM_SSH2      = "-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----"  # nosecret
 
 
 def run_guard(payload: dict) -> subprocess.CompletedProcess:
@@ -97,6 +101,10 @@ class TestHighPatterns:
         (f'token = "{_FAKE_GHP}"', "github-pat ghp_"),
         (f'token = "{_FAKE_PAT}"', "github-fine-grained-pat"),
         (f'key_id = "{_FAKE_AKIA}"', "aws-access-key-id"),
+        (_FAKE_PEM_RSA, "private-key-pem rsa"),
+        (_FAKE_PEM_PKCS8, "private-key-pem bare pkcs8"),
+        (_FAKE_PEM_ENCRYPTED, "private-key-pem encrypted"),
+        (_FAKE_PEM_SSH2, "private-key-pem ssh2 encrypted"),
     ])
     def test_blocked(self, content, label):
         result = run_guard(write_payload(content))
@@ -171,6 +179,13 @@ class TestNosecretSuppression:
         content = f'{_FAKE_AKIA}  # nosecret'
         result = run_guard(write_payload(content))
         assert result.returncode == 2
+
+    def test_high_tier_pem_nosecret_does_not_suppress(self):
+        """PEM header + # nosecret must still be BLOCKED — HIGH-tier is un-suppressible."""
+        content = f'{_FAKE_PEM_RSA}  # nosecret'  # nosecret
+        result = run_guard(write_payload(content))
+        assert result.returncode == 2
+        assert "BLOCKED" in result.stderr
 
     def test_high_tier_nosecret_no_space_does_not_suppress(self):
         """#nosecret (no space) on HIGH-tier still blocks."""

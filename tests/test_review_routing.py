@@ -22,7 +22,7 @@ class TestReviewModeRouting:
     def test_all_modes_present(self):
         text = REVIEW_PATH.read_text(encoding="utf-8")
         for mode in ("general", "security", "accessibility", "dependency", "performance", "tests",
-                     "contributor-trust"):
+                     "contributor-trust", "ux"):
             assert mode in text, f"--mode {mode} must be documented"
 
     def test_short_aliases_present(self):
@@ -34,7 +34,7 @@ class TestReviewModeRouting:
         text = REVIEW_PATH.read_text(encoding="utf-8")
         for agent in ("reviewer", "security-auditor", "accessibility-auditor",
                       "dependency-auditor", "performance-tuner", "test-reviewer",
-                      "contributor-auditor"):
+                      "contributor-auditor", "product-designer"):
             assert agent in text, f"auditor '{agent}' must be referenced"
 
     def test_auto_inference_output_format(self):

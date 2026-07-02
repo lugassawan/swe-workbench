@@ -45,7 +45,7 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
    - `type(scope): subject` (Conventional Commits)
    - `JIRA-123: subject` (JIRA-prefix style)
    Apply whichever convention the hook enforces for this host repo.
-2. If no commit-msg hook exists, infer convention from `git log --oneline -10`. Default to Conventional Commits if no pattern dominates.
+2. If no commit-msg hook exists, run `git log --oneline -20` and tally leading prefix shapes: `[type]` → swe-workbench; `type(scope):` / `type:` → Conventional Commits; `TICKET-123:` → JIRA-prefix. Pick the **dominant** shape (plurality wins); note **scope** usage (when >50% of Conventional Commits samples carry a `(scope)`, include a scope in generated commit messages, derived from the changed subsystem or file path). Default to Conventional Commits only when no shape reaches a plurality.
 3. If both fail (new repo, empty history), ask the user which convention to follow.
 
 **When the host repo uses the swe-workbench plugin's `[type] Subject` convention**, the enforcing regex is (load-bearing — quote, do not re-derive):
@@ -76,14 +76,16 @@ Ambiguous wording: **default to preview-only** and ask the user to escalate.
 **Trailer hygiene.** Never emit a `Co-authored-by`, `Signed-off-by`, or similar trailer in the commit message body or PR body **unless the user explicitly asked for it in this turn**. Do not derive trailers from `git config user.email` / `user.name`, the harness environment, or any auto-detected identity. If the staged work has multiple genuine authors, ask the user whether to attribute them rather than guessing.
 **Sync source:** `.githooks/commit-msg` is canonical. If a commit fails the hook, re-read the hook (don't guess).
 
-## Branch-naming check
+## Branch-convention detection
 
-Convention: `<type>/<kebab-description>` where `<type>` is the same set as commit types.
+Detect the host repo's branch convention via 3-tier probe. **Tier 1:** run `git branch -a`, strip the `remotes/<remote>/` prefix, and tally `<prefix>/` on non-default branches (plurality wins). **Tier 2:** if Tier 1 yielded fewer than 3 non-default branch samples, derive from the commit type-set (e.g. `[feat]` → `feature/`, `[fix]` → `bugfix/`; for unmapped types fall through to Tier 3). **Tier 3 fallback:** default to `<type>/<kebab>`; warn when convention is ambiguous or undetectable.
 
-Behaviour:
-- If current branch is `main` or `master` → **warn** the user (`.githooks/pre-commit` will block the commit anyway): "You're on `main`. Switch to a feature branch first: `git checkout -b feat/<topic>`."
-- If branch doesn't match `<type>/<kebab>` → **warn-only** (don't auto-rename): "Branch `<name>` doesn't match the `<type>/<kebab>` convention. Continue anyway? Reply `yes` or rename first."
-- If branch matches → silent.
+**Current-branch evaluation:**
+- `main`/`master` → warn: "You're on `main`. Switch to a feature branch first."
+- `worktree-*` pattern (EnterWorktree-mangled) → non-conforming; pointer: "Use `rimba add <task> [--bugfix|--hotfix|--docs|--test|--chore]` for canonical prefixes (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`)." Stop evaluation here; do not offer a rename.
+- Mismatch with detected convention → offer rename (see below). Matches → silent.
+
+**Rename offer:** Before `git branch -m`, check safety: `git rev-parse @{upstream} 2>/dev/null` (exit 0 = already pushed / has upstream); `gh pr view --json state` (open PR check). When pushed or open PR → suggest-only (print compliant name, skip rename). Otherwise call `AskUserQuestion` with **Rename** (`git branch -m <current> <compliant>`) / **Keep as-is** options.
 
 ## Pre-commit gate: suspicious staged files
 
@@ -213,7 +215,7 @@ Seed `## Test Plan` with type-tailored bullets BEFORE `gh pr create --body-file 
 
 After `gh pr create` succeeds and prints the PR URL, append:
 
-> "Want me to run `/review` on this PR? Reply `yes` to proceed."
+> "Want me to run `/swe-workbench:review` on this PR? Reply `yes` to proceed."
 
 If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR number.
 

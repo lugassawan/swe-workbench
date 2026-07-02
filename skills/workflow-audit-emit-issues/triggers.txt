@@ -1,0 +1,5 @@
+file these audit findings as grouped github issues
+emit the audit results as issues grouped by subsystem
+turn the codebase audit findings into github issues
+file the findings as github issues
+create github issues from the audit results

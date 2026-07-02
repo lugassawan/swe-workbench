@@ -157,6 +157,35 @@ def test_extend_command_no_open_pr_fallback():
     )
 
 
+def test_extend_command_inline_phases_2_through_5():
+    """extend.md must show Phases 2-5 inline (issue #476), mirroring implement.md.
+
+    Phase 1 (Branch) is intentionally skipped — the open PR branch is reused.
+    Phase 5 must update the existing PR via workflow-commit-and-pr, never gh pr create.
+    """
+    text = EXTEND_CMD.read_text()
+    for marker in (
+        "**Phase 2 — Implement**",
+        "**Phase 3 — Verify**",
+        "**Phase 4 — Review**",
+        "**Phase 5 — Deliver**",
+    ):
+        assert marker in text, f"extend.md must contain inline marker {marker!r}"
+
+    assert re.search(r'Phase 1.{0,80}\b(skipped|reused)\b', text, re.IGNORECASE | re.DOTALL), (
+        "extend.md must note that Phase 1 (Branch) is skipped/reused"
+    )
+
+    assert "swe-workbench:workflow-commit-and-pr" in text, (
+        "extend.md Phase 5 must invoke swe-workbench:workflow-commit-and-pr to update the existing PR"
+    )
+
+    assert "swe-workbench:workflow-extend" in text, (
+        "extend.md must still activate swe-workbench:workflow-extend — "
+        "the inline block is a visible contract, not a replacement"
+    )
+
+
 def test_extend_commit_format_sub_idea_prefix():
     """SKILL.md and template must both mandate the 'sub-idea:' commit prefix."""
     assert "sub-idea:" in SKILL_MD.read_text(), (
@@ -193,4 +222,49 @@ def test_extend_skill_under_orchestrator_cap():
     assert line_count <= 300, (
         f"skills/workflow-extend/SKILL.md has {line_count} lines — "
         f"exceeds the 300-line orchestrator cap"
+    )
+
+
+# --- State-file cleanup assertions (issue #428) ---
+
+def test_extend_skill_phase_d_deletes_tmp_file():
+    """SKILL.md Phase D must invoke clean-state-files.sh on /tmp/extend-${TS}.md after delivery."""
+    text = SKILL_MD.read_text()
+    assert "clean-state-files.sh" in text, (
+        "SKILL.md Phase D must call runtime/clean-state-files.sh to remove /tmp/extend-${TS}.md "
+        "after successful delivery"
+    )
+    assert "/tmp/extend-${TS}.md" in text, (
+        "SKILL.md must pass /tmp/extend-${TS}.md to clean-state-files.sh"
+    )
+
+
+def test_extend_skill_cleanup_after_delivery():
+    """SKILL.md: clean-state-files.sh call must appear AFTER Phase D delivery text (success-only)."""
+    text = SKILL_MD.read_text()
+    phase_d_idx = text.find("## Phase D")
+    cleanup_idx = text.find("clean-state-files.sh")
+    assert phase_d_idx != -1, "SKILL.md must have a Phase D section"
+    assert cleanup_idx != -1, "SKILL.md must reference clean-state-files.sh"
+    assert cleanup_idx > phase_d_idx, (
+        "clean-state-files.sh call must appear within/after Phase D — "
+        "cleanup runs on the success delivery path only"
+    )
+
+
+# ── Foreground-reap assertions (Fix C, recurrence of #428/#429) ─────────────
+
+
+def test_extend_skill_reap_no_suppression():
+    """The clean-state-files.sh call in Phase D must have NO 2>/dev/null suppression.
+
+    The reap must run without error suppression so orphaned spec-temp files surface as failures.
+    """
+    text = SKILL_MD.read_text()
+    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
+    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
+    assert not suppressed, (
+        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "foreground reap must surface failures:\n" + "\n".join(suppressed)
     )

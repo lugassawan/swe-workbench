@@ -1,6 +1,6 @@
 ---
 name: language-csharp
-description: C# and .NET idioms — .NET 8 LTS, csproj, C# NRT, records, value semantics, switch expressions, async/await, Task, ValueTask, CancellationToken, ConfigureAwait, dependency injection, IOptions<T>, LINQ, and performance. Auto-load when working with .cs files, .csproj, .sln, Directory.Build.props, or when the user mentions C#, dotnet, .NET 8, C# NRT, NRT, records, value semantics, switch expressions, Task, ValueTask, CancellationToken, ConfigureAwait, IOptions, or LINQ.
+description: C# and .NET idioms — .NET 8 LTS, csproj, C# NRT, records, value semantics, switch expressions, async/await, Task, ValueTask, CancellationToken, ConfigureAwait, dependency injection, IOptions<T>, LINQ, Span<T>, ArrayPool, hot path, allocation profiling, and performance. Auto-load when working with .cs files, .csproj, .sln, Directory.Build.props, or when the user mentions C#, dotnet, .NET 8, C# NRT, NRT, records, value semantics, switch expressions, Task, ValueTask, CancellationToken, ConfigureAwait, IOptions, LINQ, Span, or hot-path code.
 ---
 
 # C# / .NET
@@ -103,6 +103,11 @@ var activeEmails = users
     .Select(user => user.Email)
     .ToArray();
 ```
+
+## Tooling
+- **Imports/Format:** `dotnet format`
+- **Lint:** Roslyn analyzers (`<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>` in csproj); `dotnet format --verify-no-changes` as formatting gate in CI
+- **Test:** `dotnet test` (see Testing below)
 
 ## Testing
 - xUnit, NUnit, and MSTest are all fine; follow the repository's existing framework.

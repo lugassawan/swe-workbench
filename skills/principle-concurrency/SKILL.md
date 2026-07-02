@@ -69,6 +69,7 @@ Unbounded queues hide a broken producer/consumer balance until memory is exhaust
 **Costs:** starvation possible without fair queueing.
 
 > For Go-specific idioms (goroutine lifecycles, channel patterns, `sync` package): see `language-go`.
+> See `examples/` for a worked bounded fan-out (bounded concurrency + ordered collection) implementation in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
 
 ## When Concurrency is Overkill
 

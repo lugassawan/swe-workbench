@@ -25,6 +25,7 @@ the git `pre-commit` hook is absent or bypassed.
 | `github-pat` | `ghp_[A-Za-z0-9]{36}` |
 | `github-fine-grained-pat` | `github_pat_[A-Za-z0-9_]{82}` |
 | `aws-access-key-id` | `AKIA[0-9A-Z]{16}` |
+| `private-key-pem` | `-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----` |
 
 **NEEDS-CONTEXT** — block only when a key name is adjacent to a literal value;
 skipped automatically on lines that contain an environment-variable reference
@@ -50,8 +51,8 @@ BOOTSTRAP_TOKEN = "<placeholder>"  # nosecret
 Only that exact line is suppressed. Adjacent lines are checked normally.
 
 > **Note:** `# nosecret` has **no effect** on HIGH-confidence patterns (`github-pat`,
-> `github-fine-grained-pat`, `aws-access-key-id`). Those patterns are always blocked.
-> If you have a genuine fixture that looks like a GitHub PAT or AWS key, add the file
+> `github-fine-grained-pat`, `aws-access-key-id`, `private-key-pem`). Those patterns are always blocked.
+> If you have a genuine fixture that looks like a GitHub PAT, AWS key, or PEM header, add the file
 > path to `_ALLOWLIST_SUFFIXES` instead.
 
 ### Filename allowlist
@@ -79,7 +80,7 @@ to extend `_REF_PATTERN` in `hooks/secret_guard.py`.
 **The hook is blocking a test fixture**
 
 For NEEDS-CONTEXT patterns: add `# nosecret` on each fixture line.
-For HIGH-confidence patterns (GitHub PAT, AWS key ID): `# nosecret` has no effect —
+For HIGH-confidence patterns (GitHub PAT, AWS key ID, PEM private-key header): `# nosecret` has no effect —
 add the file's absolute path to `_ALLOWLIST_SUFFIXES` instead.
 
 **The hook seems to do nothing**

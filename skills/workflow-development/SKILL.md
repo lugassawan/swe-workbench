@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, and /swe-workbench:test when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C).
+description: "Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end — delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C)."
 orchestrator: true
 ---
 
@@ -17,7 +17,8 @@ Single source of truth for how development work flows. Three modes:
 ## When This Skill Activates
 
 - **Mode A:** Writing or finalizing an implementation plan (before `ExitPlanMode`)
-- **Mode B:** User says "implement this", "build this" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
+- **Mode B:** User says "implement this", "build this", "execute this plan", "run the implementation plan end to end" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
+  - **Prefer entering here rather than calling `superpowers:executing-plans` directly** — Phase 2 already delegates to it while adding the surrounding Branch → Verify → Review → Deliver lifecycle.
 - **Mode C:** User says "orchestrate these issues", "run in parallel", multi-issue campaigns with >3 issues
 
 ## Sub-Skill Integration Map
@@ -30,8 +31,9 @@ Mode B — Single Implementation:
                           └─ swe-workbench:principle-tdd (per unit)
                           └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
   Phase 3 (Verify)    → superpowers:verification-before-completion
-  Phase 4 (Review)    → superpowers:code-reviewer (plan-alignment)
-                          └─ swe-workbench:reviewer (diff correctness/security/design)
+  Phase 4 (Review)    → BOTH in parallel (neither optional):
+                          ├─ superpowers:requesting-code-review (Skill — plan-alignment)
+                          └─ swe-workbench:reviewer (subagent — diff correctness/security/design)
   Phase 5 (Deliver)   → swe-workbench:workflow-commit-and-pr
 
 Mode C — Orchestration: see orchestration.md
@@ -69,7 +71,10 @@ Also check CLAUDE.md for project-specific conventions.
 | `package.json` | `npx organize-imports-cli` (always works); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` configured | check `scripts.format`/`prettier` | check `scripts.lint`/`eslint` | check `scripts.test` |
 | `Cargo.toml` | `cargo fix --allow-dirty` (removes unused imports — review output before staging); configure `imports_granularity` in `rustfmt.toml` then `cargo fmt` | `cargo fmt` | `cargo clippy` | `cargo test` |
 | `pyproject.toml` | `ruff check --select I --fix` (legacy: `isort .` + `autoflake -r --remove-all-unused-imports .`) | `ruff format` or `black .` | `ruff check` | `pytest` |
-| `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin; Gradle: `./gradlew check`) | `mvn test` |
+| `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin) | `mvn test` |
+| `build.gradle` / `build.gradle.kts` | `./gradlew spotlessApply` (Spotless: importOrder + removeUnusedImports) | `./gradlew spotlessApply` (or ktlint / google-java-format) | `./gradlew check` (Kotlin: `detekt`; Java: `checkstyleMain`) | `./gradlew test` |
+
+> **Authoritative per-language tool list:** this table covers manifest-detected projects (Go, JS/TS, Rust, Python, Java, Kotlin). For the full, canonical command set for any language — including languages without a manifest row (C#, Ruby, Swift, SQL, Bash) — consult the matching `swe-workbench:language-<lang>` skill (e.g. `swe-workbench:language-csharp`).
 
 > **`quality-command` fallback** is in the table below — intentionally separate because Quality is multi-tool by nature and a single cell would be unreadably wide.
 
@@ -82,6 +87,7 @@ Also check CLAUDE.md for project-specific conventions.
 | `Cargo.toml` | `cargo clippy -- -W clippy::cognitive_complexity` • (duplication: no OSS first-party tool; `jscpd` covers cross-language including Rust; `simian` is cross-language but commercial) • `cargo clippy -- -W clippy::too_many_lines` (per-function length; no file-level enforcer in first-party Rust) |
 | `pyproject.toml` | `radon cc -n B -s` (grade ≥ B = complexity ≥ 6) and `lizard -CCN 15 -L 50` • `pylint --disable=all --enable=duplicate-code` • `radon mi -n B` |
 | `pom.xml` | `mvn pmd:check` • `mvn pmd:cpd-check` • `checkstyle` (FileLengthCheck, MethodLengthCheck) |
+| `build.gradle` / `build.gradle.kts` | `./gradlew detekt` (Kotlin) or `./gradlew pmdMain` (Java) • `./gradlew cpdCheck` (de.aaschmid.cpd; or `jscpd`) • `./gradlew checkstyleMain` (Method/FileLength) |
 
 **PR template:** check `cat .github/pull_request_template.md 2>/dev/null` (and common variants: `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`). If found, record the **absolute path** — pass it to `gh pr create --body-file <path>` in Phase 5. Before invoking, replace the literal `Closes #` placeholder with the resolved issue (`Closes #123`) or remove it and write a standalone `Issue: N/A — <one-line reason>` line. Never leave `Closes #` empty.
 
@@ -104,6 +110,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
   || { [ -x "$HOME/.local/bin/rimba" ] && echo "$HOME/.local/bin/rimba"; } \
   || { [ -x "$HOME/go/bin/rimba" ]     && echo "$HOME/go/bin/rimba"; } \
   || true)
+[ -n "$RIMBA" ] && "$RIMBA" version 2>/dev/null || true   # confirm binary; never `--version`
 ```
 
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
@@ -131,10 +138,20 @@ Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMB
 
 Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land. If two services tie, prefer the service that owns the primary interface changed (e.g. the API layer for a contract change, the UI layer for a rendering change); only omit the scope entirely if no service file is touched at all (e.g. a root-only CI config change).
 
-**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree (steps that can take minutes for Go/Node/Python projects). The session must not move to Phase 2 until `rimba add` prints `Path: <abs-path>` and exits.
+**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree. `Path: <abs-path>` is printed **before deps** install begins (after the create + copy steps). Coding may start as soon as `Path:` appears; running the test suite requires installed packages, so wait for `rimba add` to fully complete before running tests.
 
-- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before entering Phase 2. This applies regardless of whether the plan is TDD-first — if the test suite needs installed packages, rimba must finish first.
+- **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before running the test suite. This applies regardless of whether the plan is TDD-first — if tests need installed packages, rimba must finish first.
 - **No deps needed:** pass `--skip-deps` and `--skip-hooks` only when the test suite requires no installation step (e.g. pure shell scripts, documentation assertion tests). Never skip deps and then reinstall them manually — rimba's pipeline already handles it correctly.
+
+**Reclaim install time (large/monorepo deps)** — `Path:` is available before deps finish, so on a long install you can implement during the wait:
+1. Run `rimba add`; if install will take a while, let it continue in the **background** (the Bash tool backgrounds long-running commands) so the session is free to code.
+2. As soon as `Path: <abs-path>` appears, enter the worktree and implement the planned changes.
+3. **Do not run the test suite until `rimba add` has fully completed** — RED/GREEN need installed deps.
+4. Once rimba finishes, reconcile with TDD: `git stash` the implementation you wrote in step 2 → write the failing test → run (**RED** — fails with implementation stashed, confirming the test exercises the new behaviour) → `git stash pop` → run again (**GREEN**).
+
+Skip this optimisation when install is fast, `--skip-deps`/`--skip-hooks` already apply (no wait), or `post_create` hooks rewrite the files you'd edit (let hooks finish first).
+
+**Enter the worktree:** After `Path: <abs-path>` appears, try `EnterWorktree(path=<abs-path>)`. From the main session this works for any git-registered worktree (including rimba's `../<repo>-worktrees/` layout). If rejected because the session is already inside a **different worktree** (target path outside `.claude/worktrees/`), the primary remedy is `ExitWorktree(action=keep)` → return to main → retry `EnterWorktree(path=<abs-path>)` (re-anchors session caches). Fall back to `cd <abs-path>` via Bash only as a last resort for non-rimba checkouts with no `.claude/worktrees` infrastructure; `cd` only anchors the Bash persistent cwd and does not re-anchor session-level caches the way `EnterWorktree` does. On any resumed or continued session, try `EnterWorktree(path=<worktree-path>)` first; if rejected because the session is already inside a different worktree, call `ExitWorktree(action=keep)` → retry; otherwise re-`cd <worktree-path>` as a last resort for non-rimba checkouts only (Bash cwd does not persist across session resume, so `cd` must be re-issued each time — unlike `EnterWorktree`, which restores it automatically).
 
 Verify baseline tests pass before writing any code.
 
@@ -185,15 +202,17 @@ Invoke `superpowers:verification-before-completion`.
 
 **Goal:** Catch design and quality issues before delivery.
 
-Dispatch both reviewers — they answer different questions:
-- `superpowers:code-reviewer` — plan-alignment: does this match the plan and meet standards?
-- `swe-workbench:reviewer` subagent — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**. They are different unit types:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment: does this match the plan and meet standards?
+- `swe-workbench:reviewer` (a **subagent**) — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+
+Running the Skill inline and skipping the subagent (or vice-versa) does **not** satisfy this phase.
 
 Act on feedback:
 - **Critical/Important:** fix → re-verify (Phase 3) → re-review
 - **Minor:** note or fix inline, proceed
 
-**Skip condition:** If Phase 2 sub-skill already ran two-stage code review with evidence, mark as "completed by sub-skill" and proceed.
+**Skip condition:** Only skip with explicit named evidence that **both** stages already ran — a plan-alignment verdict from `superpowers:requesting-code-review` AND a `Severity | File:Line | …` diff review from `swe-workbench:reviewer`. Cite both when marking "completed by sub-skill". A single combined or one-sided review does not qualify.
 
 ---
 
@@ -222,10 +241,12 @@ Two existing skills provide deeper verification when warranted — invoke ad hoc
 
 When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute every `[[detect:KEY]]` marker with concrete values from Project Detection. **Before saving, grep your rendered draft for `[[detect:` — if any match remains, you skipped Project Detection; redo it.**
 
+Reproduce the template's `## Workflow` body **in full and verbatim** — copy every phase and line. The **only** permitted edit is substituting `[[detect:KEY]]` markers with concrete values; do **not** summarize, paraphrase, abridge, or collapse steps.
+
 ## Implementation-Time Behavior (Mode B)
 
 1. **Announce transitions**: `Phase N complete — <summary>. Moving to Phase N+1: <name>.`
-2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). At Phase 5 success, delete the state file.
+2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). Populate `context.worktree_root` with `git rev-parse --show-toplevel` at the Phase 1 checkpoint (omit when working in the main checkout). At Phase 5 success, delete the state file.
 3. **Delegate to sub-skills**: don't re-implement what a sub-skill already does.
 4. **Track phase state** — sub-skill completed Phases 3 or 4 with evidence → mark them "completed by sub-skill".
 5. **Handle failures and no phase skipping** combined:
@@ -251,6 +272,7 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | Plan that introduces file edits without Workflow section | Always add the Workflow section (Mode A) — skip only for pure design / analysis output |
 | Jump straight to coding | Always start at Phase 1 |
 | Ignore PR template, use generic format | Check for PR template first; fill every section |
+| Render a summarized / short Workflow section | Copy the template body verbatim — substitute only `[[detect:]]` markers (Mode A) |
 
 ### Red Flags — Never
 
@@ -270,3 +292,4 @@ When writing or finalizing a plan, add a `## Workflow` section using the templat
 | "Phase 2 sub-skill did everything" | Verify it provided evidence for Phases 3-4 |
 | "This is a small fix, no need for the full lifecycle" | Small fixes still need verify + review |
 | "The plan doesn't need a Workflow section" | If the plan introduces file edits, it does. Add one (Mode A). Skip only for pure design / analysis output. |
+| "The plan only needs the gist of the Workflow steps" | Reproduce the template in full — a summary drops the exact guidance that prevents mistakes. |

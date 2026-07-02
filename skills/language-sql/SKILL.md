@@ -1,6 +1,6 @@
 ---
 name: language-sql
-description: SQL idioms - query tuning, EXPLAIN plans, table definitions, constraints, indexes, transactions, window functions, CTEs, and pagination. Auto-load when working with .sql files or migrations, or when the user mentions SQL syntax, SELECT, JOIN, EXPLAIN, CTE, window functions, transaction isolation, deadlocks, or SQL indexes.
+description: SQL idioms — query tuning, EXPLAIN plans, table definitions, constraints, indexes, transactions, window functions, CTEs, and pagination. Auto-load when working with .sql files or migrations, or when the user mentions SQL syntax, SELECT, JOIN, EXPLAIN, CTE, window functions, transaction isolation, deadlocks, or SQL indexes.
 ---
 
 # SQL
@@ -68,6 +68,11 @@ WHERE (created_at, id) < (:last_created_at, :last_id)
 ORDER BY created_at DESC, id DESC
 LIMIT 50;
 ```
+
+## Tooling
+- **Format:** `sqlfluff fix --dialect <dialect> .` (replace `<dialect>` with e.g. `ansi`, `postgres`, `bigquery` — check `.sqlfluff` config or project README)
+- **Lint:** `sqlfluff lint --dialect <dialect> .`
+- **Test:** engine-specific (pgTAP for PostgreSQL, `dbt test` if using dbt)
 
 ## Avoid
 - Schema changes without rollback or compatibility planning.

@@ -42,7 +42,7 @@ One behaviour per test. Test names read as sentences in the language's idiom (`t
 
 Mock only at trust / IO boundaries: network, clock, filesystem (sometimes), random, external services.
 
-Never mock internal functions, classes, or modules of the system under test. If a collaborator is hard to instantiate, that is a design signal — note it and recommend `/refactor`; do not paper over with a mock.
+Never mock internal functions, classes, or modules of the system under test. If a collaborator is hard to instantiate, that is a design signal — note it and recommend `/swe-workbench:refactor`; do not paper over with a mock.
 
 The boundary line: domain ↔ infrastructure is the only seam where test doubles belong (Clean Architecture's dependency rule). Everything inside the domain boundary is instantiated for real.
 
@@ -61,7 +61,7 @@ The boundary line: domain ↔ infrastructure is the only seam where test doubles
 - No mocks for internal collaborators.
 - No testing private implementation details — tests bind to behaviour, not structure.
 - Test names are sentences in the language's idiom.
-- If the code under test is untestable as written, say so plainly and recommend `/refactor` — do not bend the test around the design.
+- If the code under test is untestable as written, say so plainly and recommend `/swe-workbench:refactor` — do not bend the test around the design.
 
 ## Output contract
 

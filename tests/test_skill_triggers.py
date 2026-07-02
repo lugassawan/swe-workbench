@@ -162,9 +162,8 @@ def test_prompt_ranks_target_skill_top1(
     )
     assert target_rank is not None, f"skill `{skill_name}` not found in corpus"
 
-    my_siblings = next(
-        (s for s in sibling_sets if skill_name in s), {skill_name}
-    )
+    _all_groups = [s for s in sibling_sets if skill_name in s]
+    my_siblings = set().union(*_all_groups) if _all_groups else {skill_name}
 
     if target_rank == 0:
         # Score-margin guard: catch near-ties from IDF drift before they flip.
@@ -223,4 +222,65 @@ def test_deliberately_vague_description_is_flagged():
     assert ranked[0][0] == "synthetic-specific-skill", (
         f"synthetic-vague-skill unexpectedly ranked #1 (score {ranked[0][1]:.2f}) — "
         "BM25 IDF weighting may be broken."
+    )
+
+
+# ── Plan-execution trigger: wrapper must outrank leaf ─────────────────────
+
+def test_plan_execution_prompt_prefers_wrapper():
+    """workflow-development must rank above executing-plans for plan-execution prompts.
+
+    Uses a self-contained two-skill corpus: the live workflow-development description
+    is loaded from the real SKILL.md so the test bites both before (fails) and after
+    (passes) the description fix. The competitor is a frozen snapshot of the
+    superpowers:executing-plans description — frozen so the test doesn't depend on a
+    vendored cache path and remains stable if the upstream skill is updated.
+
+    Discoverability snapshot (do not edit without re-verifying the test still fails
+    before the workflow-development description fix):
+      superpowers:executing-plans description =
+        "Use when you have a written implementation plan to execute in a separate
+         session with review checkpoints"
+    """
+    from validate import parse_frontmatter  # already on sys.path via conftest
+
+    skill_md = _SKILLS_DIR / "workflow-development" / "SKILL.md"
+    fm = parse_frontmatter(skill_md)
+    assert fm and "description" in fm, "workflow-development SKILL.md missing description"
+
+    # Calibration (pre-fix): old description scored wf≈2.26, ep≈4.91 — executing-plans won.
+    # After fix: wf≈4.74, ep≈2.91 — margin ~1.82, well above _SCORE_MARGIN=0.1.
+    #
+    # Frozen snapshot — intentionally not read from the vendored cache.
+    # Snapshot taken 2026-06-01. Re-verify if superpowers:executing-plans description changes.
+    executing_plans_frozen = (
+        "Use when you have a written implementation plan to execute "
+        "in a separate session with review checkpoints"
+    )
+
+    synthetic_corpus = {
+        "workflow-development": _tokenize(fm["description"]),
+        "executing-plans": _tokenize(executing_plans_frozen),
+    }
+    index = _build_bm25_index(synthetic_corpus)
+
+    prompt = (
+        "i already have a written implementation plan execute it end to end "
+        "with branch verify review and pr"
+    )
+    ranked = _rank_skills(prompt, synthetic_corpus, index)
+    scores = dict(ranked)
+
+    assert ranked[0][0] == "workflow-development", (
+        f"`executing-plans` outranked `workflow-development` "
+        f"(scores: workflow-development={scores['workflow-development']:.2f}, "
+        f"executing-plans={scores['executing-plans']:.2f}). "
+        "Add 'execute a written implementation plan' to the workflow-development "
+        "description so the wrapper claims its own trigger surface."
+    )
+    margin = scores["workflow-development"] - scores.get("executing-plans", 0.0)
+    assert margin >= _SCORE_MARGIN, (
+        f"workflow-development ranks #1 but margin over executing-plans is only "
+        f"{margin:.3f} (< {_SCORE_MARGIN}). IDF drift may flip this — "
+        "tighten the workflow-development description."
     )

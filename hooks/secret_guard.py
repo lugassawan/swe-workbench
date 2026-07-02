@@ -63,6 +63,9 @@ _PATTERNS: list[tuple[str, re.Pattern, bool]] = [
     ("aws-access-key-id",
      re.compile(r"AKIA[0-9A-Z]{16}"),
      False),
+    ("private-key-pem",
+     re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
+     False),
 
     # NEEDS-CONTEXT – require a key name + literal value structure
     ("aws-secret-access-key",

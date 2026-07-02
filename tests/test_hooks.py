@@ -117,6 +117,12 @@ class TestForcePushBlocker:
         "git push --force origin feature:main",
         "git push --force origin HEAD:master",
         "git push origin main --force",
+        # release/* cases (issue #341)
+        "git push --force origin release/1.2",
+        "git push -f origin release/2025-01",
+        "git push --force origin HEAD:release/1.2",
+        "git push --force origin release/1.2:release/1.2",
+        "git push --force origin release/x:main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -135,6 +141,9 @@ class TestForcePushBlocker:
         "git push --force-with-lease origin master",
         "git push --force-if-includes origin main",
         "git push --force-with-lease=origin/main origin main",
+        # no false positives for similar-looking branch names (issue #341)
+        "git push --force origin prerelease/x",
+        "git push --force-with-lease origin release/1.2",
     ])
     def test_allowed(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
