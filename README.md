@@ -4,7 +4,7 @@
 
 ## What it is
 
-`swe-workbench` bundles the reasoning a careful senior engineer does every day: architectural judgement (Clean Architecture, DDD, SOLID), test discipline (TDD, F.I.R.S.T.), pattern fluency (GoF and beyond), and idiomatic expertise in Bash, C#, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, and TypeScript. Principle and language skills auto-hint by trigger (a non-blocking hint fires when a matching file is touched); commands and subagents are there when you want explicit help.
+`swe-workbench` bundles the reasoning a careful senior engineer does every day: architectural judgement (Clean Architecture, DDD, SOLID), test discipline (TDD, F.I.R.S.T.), pattern fluency (GoF and beyond), and idiomatic expertise in Bash, C#, Dart, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, and TypeScript. Principle and language skills auto-hint by trigger (a non-blocking hint fires when a matching file is touched); commands and subagents are there when you want explicit help.
 
 ## Install
 
@@ -29,7 +29,7 @@ cd swe-workbench
 - **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor` — see [docs/catalog.md](docs/catalog.md).
 - **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `code-impl`, `conflict-resolver`, `contributor-auditor`, `debugger`, `dependency-auditor`, `migrator`, `performance-tuner`, `product-designer`, `product-manager`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-reviewer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security, product design — auto-hint by trigger keyword.
-- **Languages** — Bash, C#, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript — auto-hint by file extension (subagents load deterministically via catalog injection).
+- **Languages** — Bash, C#, Dart, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript — auto-hint by file extension (subagents load deterministically via catalog injection).
 - **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.
 - **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle; `workflow-audit-emit-issues` files grouped GitHub issues from codebase audit findings.
 
