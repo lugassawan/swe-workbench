@@ -280,6 +280,19 @@ def test_report_issue_synthesize_pick_then_confirm_order():
     )
 
 
+def test_report_issue_synthesize_no_insights_remain_exit():
+    """Branch B must exit cleanly (not silently no-op) when no picks remain to file."""
+    branch_b = _branch_b_slice(REPORT_ISSUE_MD.read_text())
+    assert branch_b.count("No insights remain to file") == 2, (
+        "Branch B must handle both an empty picked set (after the step-6 re-prompt) "
+        "and a drop N that empties the pick set, each with a 'No insights remain to file' exit"
+    )
+    assert "after the one re-prompt from step 6" in branch_b, (
+        "The empty-picked-set exit at the start of step 7 must fire only after step 6's "
+        "own re-prompt has already failed once, not on the raw Turn 1 reply"
+    )
+
+
 def test_report_issue_synthesize_no_premature_filing():
     """Branch B must explicitly forbid filing on both Turn 1 and Turn 2."""
     branch_b = _branch_b_slice(REPORT_ISSUE_MD.read_text())
