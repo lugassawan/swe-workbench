@@ -61,6 +61,9 @@ compile() {
     existing_stripped=$(mktemp)
     new_stripped=$(mktemp)
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    # Compiling into an empty mktemp file (not --output-file "$out") means there's no
+    # existing pin to seed from, so this resolution is fresh by construction and needs
+    # no --upgrade (unlike the generate branch below). See #481.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
       --allow-unsafe \
@@ -84,7 +87,11 @@ compile() {
     echo "$out is up to date."
   else
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    # --upgrade forces a fresh re-resolution: without it, pip-compile treats the
+    # existing --output-file as a pin seed and keeps stale-but-still-valid pins
+    # (the --check branch avoids this by compiling into an empty mktemp). See #481.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
+      --upgrade \
       --generate-hashes \
       --allow-unsafe \
       --resolver=backtracking \
