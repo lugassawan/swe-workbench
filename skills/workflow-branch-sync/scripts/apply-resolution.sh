@@ -41,7 +41,9 @@ else
   [ "$SIDE" = "mine" ] && GIT_SIDE="theirs" || GIT_SIDE="ours"
 fi
 
-CHECKOUT_ERR=$(git checkout "--$GIT_SIDE" -- "$FILE" 2>&1) && git add -- "$FILE" || {
+if CHECKOUT_ERR=$(git checkout "--$GIT_SIDE" -- "$FILE" 2>&1); then
+  git add -- "$FILE"
+else
   case "$CHECKOUT_ERR" in
     *"does not have our version"*|*"does not have their version"*)
       git rm -- "$FILE" >/dev/null
@@ -51,6 +53,6 @@ CHECKOUT_ERR=$(git checkout "--$GIT_SIDE" -- "$FILE" 2>&1) && git add -- "$FILE"
       exit 1
       ;;
   esac
-}
+fi
 
 printf 'GIT_SIDE=%s\n' "$GIT_SIDE"
