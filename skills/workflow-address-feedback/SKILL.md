@@ -214,7 +214,7 @@ bash "$_RT/runtime/reply-and-resolve.sh" \
 ```
 After all replies and resolutions land, emit the follow-up CTA:
 
-> "Want me to ping the reviewer to re-check? Reply `yes` to run `/review --check-followup <N>`."
+> "Want me to ping the reviewer to re-check? Reply `yes` to run `/swe-workbench:review --check-followup <N>`."
 
 On the Phase 5 success path, delete the address-feedback state files. The reap runs foreground; failures surface (no `2>/dev/null`):
 ```bash

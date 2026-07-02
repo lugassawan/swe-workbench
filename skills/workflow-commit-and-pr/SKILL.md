@@ -215,7 +215,7 @@ Seed `## Test Plan` with type-tailored bullets BEFORE `gh pr create --body-file 
 
 After `gh pr create` succeeds and prints the PR URL, append:
 
-> "Want me to run `/review` on this PR? Reply `yes` to proceed."
+> "Want me to run `/swe-workbench:review` on this PR? Reply `yes` to proceed."
 
 If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR number.
 

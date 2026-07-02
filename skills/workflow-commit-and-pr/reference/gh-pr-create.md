@@ -30,7 +30,7 @@ If an OPEN PR is found, call `AskUserQuestion` with:
 }
 ```
 
-- **`Update existing PR`** → skip `gh pr create`. Use the existing PR URL in all output. Run the Post-create CTA (offer `/review`) against the existing PR number.
+- **`Update existing PR`** → skip `gh pr create`. Use the existing PR URL in all output. Run the Post-create CTA (offer `/swe-workbench:review`) against the existing PR number.
 - **`Cancel`** → abort. Print the existing PR URL for reference.
 
 If no OPEN PR is found → proceed to the `## Draft vs ready prompt` step normally.
