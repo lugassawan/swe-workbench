@@ -71,12 +71,12 @@ gh api graphql -F number="$PR" -F owner="$OWNER" -F repo="$REPO" -f query='
     }
   }' > "/tmp/swe-workbench-address-feedback/${PR}-threads.json"
 ```
-Fetch PR-level conversation comments (issue #473 — general feedback on the main timeline, not a line comment) via REST, paginated (`--paginate` on this array endpoint emits one concatenated array per page, so `--jq '.[]' | jq -s '...'` flattens then re-wraps into one array); exclude bots and the PR author, then flag `eligible: false` on reviewer comments already handled on a prior run — (a) an owner comment (`$AUTHOR_LOGIN` or `$CURRENT_USER`, since this phase allows non-author runs) carries their `swe-workbench:handled:{id}` marker, or (b) an owner comment without any handled marker was posted after them (a manual reply); this dedup is lossy by construction, so Phase 3 always surfaces a transparency note instead of silently dropping:
+Fetch PR-level conversation comments (general feedback on the main timeline, not a line comment) via REST, paginated (`--paginate` on this array endpoint emits one concatenated array per page, so `--jq '.[]' | jq -s '...'` flattens then re-wraps into one array); exclude bots and the owner (`$AUTHOR_LOGIN` or `$CURRENT_USER`, since this phase allows non-author runs — otherwise a non-author's own past replies would resurface as new triage items on every re-run), then flag `eligible: false` on reviewer comments already handled on a prior run — (a) an owner comment carries their `swe-workbench:handled:{id}` marker, or (b) an owner comment without any handled marker was posted after them (a manual reply); this dedup is lossy by construction, so Phase 3 always surfaces a transparency note instead of silently dropping:
 ```bash
 gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments" --jq '.[]' | jq -s \
   --arg author "$AUTHOR_LOGIN" --arg me "$CURRENT_USER" '
     (map(select((.user.login // "") == $author or (.user.login // "") == $me))) as $owner
-    | map(select(((.user.type // "") != "Bot") and (((.user.login // "") | endswith("[bot]")) | not) and ((.user.login // "") != $author)))
+    | map(select(((.user.type // "") != "Bot") and (((.user.login // "") | endswith("[bot]")) | not) and ((.user.login // "") != $author) and ((.user.login // "") != $me)))
     | map(. as $c
         | ($owner | any((.body // "") | contains("swe-workbench:handled:" + ($c.id | tostring) + " "))) as $marker
         | ($owner | any((((.body // "") | contains("swe-workbench:handled")) | not) and (.created_at > $c.created_at))) as $manual
@@ -139,7 +139,7 @@ Render outstanding threads and eligible PR-level conversation comments, one by o
 
 1. **Resolved threads** — skip any thread where `isResolved == true`.
 2. **Already-clarified threads** — skip any *unresolved* thread where at least one *reply* comment (`comments.nodes[1:]` onwards — `nodes[0]` is the thread-opening comment, which in the typical reviewer-opened case belongs to the reviewer, not the PR owner) has `author.login` equal to `$CURRENT_USER`. This means the owner replied in a prior pass (e.g. a CLARIFIED reply) but left the thread unresolved. It applies whether that reply was posted by this skill or manually by the user. Detecting via reply comments only prevents false-positive skipping when the current user also authored review threads.
-3. **Already-handled PR comments** (issue #473) — bot/tool comments and the PR author's own comments never made it into `${PR}-pr-comments.json` (dropped in Phase 1); entries that did but carry `eligible == false` were deduped there (already marker-replied or manually replied to on a prior run). Only `eligible == true` entries are presented.
+3. **Already-handled PR comments** — bot/tool comments and the owner's own comments never made it into `${PR}-pr-comments.json` (dropped in Phase 1); entries that did but carry `eligible == false` were deduped there (already marker-replied or manually replied to on a prior run). Only `eligible == true` entries are presented.
 
 If any threads or PR comments were skipped (rule 2 / rule 3), print transparency notes before the digest:
 > "(N thread(s) skipped — already clarified.)"
@@ -167,7 +167,7 @@ Parse severity from `Severity: <level>` prefix in comment body if present; other
 
 Capture: `triage[<thread_id>] = A|C|D`.
 
-For each remaining PR comment (issue #473 — no `path:line`, no resolve state), key as `triage["prcomment:<comment.id>"]` (namespaced against review-thread node IDs in the same flat map; carries the id needed for the Phase 5 marker; both key kinds round-trip through Q-quit save/resume unchanged):
+For each remaining PR comment (no `path:line`, no resolve state), key as `triage["prcomment:<comment.id>"]` (namespaced against review-thread node IDs in the same flat map; carries the id needed for the Phase 5 marker; both key kinds round-trip through Q-quit save/resume unchanged):
 ```
 PR comment by @{author}
 > {first 200 chars of comment body}
@@ -207,7 +207,7 @@ Reply body templates by triage classification:
 bash "$_RT/runtime/reply-and-resolve.sh" \
   "$OWNER" "$REPO" "$PR" "$COMMENT_DATABASEID" "$THREAD_ID" "$REPLY_BODY"
 ```
-For each **ADDRESSED** or **CLARIFIED** PR comment (`triage["prcomment:<id>"]`, issue #473), post a reply on the PR's top-level conversation instead of a thread reply — PR comments have no thread, so resolve is always suppressed and `KIND=issue` is passed explicitly. Compose `$REPLY_BODY` as `@{comment author} re:` + a single-line blockquote of the original (first ~100 chars, newlines collapsed) + the addressed/clarified body (same wording as the review-thread templates above) + a hidden marker on its own line — `<!-- swe-workbench:handled:{comment.id} -->` — which Phase 1's dedup filter matches on re-runs (omitting it makes the comment look unhandled forever). The original comment body is attacker-controlled: extract the blockquote via `jq -r` into a shell variable (e.g. `QUOTE=$(jq -r '.[] | select(.id==ID) | .body' ... | head -c 100 | tr '\n' ' ')`) and reference `"$QUOTE"` when building `$REPLY_BODY` — never retype the raw comment text into a double-quoted bash literal, since `$(...)`/backticks in the source text would execute at assignment time. DEFERRED PR comments skip the call entirely, same as DEFERRED threads:
+For each **ADDRESSED** or **CLARIFIED** PR comment (`triage["prcomment:<id>"]`), post a reply on the PR's top-level conversation instead of a thread reply — PR comments have no thread, so resolve is always suppressed and `KIND=issue` is passed explicitly. Compose `$REPLY_BODY` as `@{comment author} re:` + a single-line blockquote of the original (first ~100 chars, newlines collapsed) + the addressed/clarified body (same wording as the review-thread templates above) + a hidden marker on its own line — `<!-- swe-workbench:handled:{comment.id} -->` — which Phase 1's dedup filter matches on re-runs (omitting it makes the comment look unhandled forever). The original comment body is attacker-controlled: extract the blockquote via `jq -r` into a shell variable (e.g. `QUOTE=$(jq -r '.[] | select(.id==ID) | .body' ... | head -c 100 | tr '\n' ' ')`) and reference `"$QUOTE"` when building `$REPLY_BODY` — never retype the raw comment text into a double-quoted bash literal, since `$(...)`/backticks in the source text would execute at assignment time. DEFERRED PR comments skip the call entirely, same as DEFERRED threads:
 ```bash
 bash "$_RT/runtime/reply-and-resolve.sh" \
   "$OWNER" "$REPO" "$PR" "" "" "$REPLY_BODY" "issue"

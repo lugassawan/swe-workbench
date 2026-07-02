@@ -629,6 +629,25 @@ def test_pr_comments_jq_filter_drops_bots_and_author():
 
 
 @pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_drops_current_user_on_non_author_run():
+    """Regression test: on a non-author run, the runner's own past marker-bearing
+    reply must not resurface as a fresh triage candidate (duplicate-reply spam)."""
+    comments = [
+        {"id": 20, "user": {"login": "reviewer6", "type": "User"}, "body": "please fix V", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done <!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="maintainer-x")
+    by_id = {c["id"]: c for c in result}
+    assert 21 not in by_id, (
+        "comment 21 was authored by $me (the non-author runner) and must be dropped "
+        "as a candidate entirely, not resurface with eligible: false"
+    )
+    assert by_id[20]["eligible"] is False, (
+        "comment 20 must still be marker-deduped via owner comment 21's marker"
+    )
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
 def test_pr_comments_jq_filter_marker_dedup():
     comments = [
         {"id": 5, "user": {"login": "reviewer2", "type": "User"}, "body": "please fix Y", "created_at": "2026-01-01T00:00:00Z"},
