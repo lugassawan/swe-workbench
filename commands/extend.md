@@ -33,6 +33,24 @@ If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into c
 
 Then activate `swe-workbench:workflow-extend` with all four values.
 
+The list below is a visible contract of the phases `workflow-extend` runs — it does **not** replace the skill activation above. Execute phases 2–5 in order. **Phase 1 (Branch) is intentionally skipped** — the open PR branch is reused, so no new branch or worktree is created.
+
+**Phase 2 — Implement**
+Execute the plan via `superpowers:executing-plans` or `superpowers:subagent-driven-development`. Apply `swe-workbench:principle-tdd` per unit: red → green → refactor.
+
+**Phase 3 — Verify**
+Run `superpowers:verification-before-completion` before claiming any phase done. Do not advance to Phase 4 until format / lint / test pass with evidence.
+
+**Phase 4 — Review**
+Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**:
+- `superpowers:requesting-code-review` (a **Skill**) — plan-alignment, standards
+- `swe-workbench:reviewer` (a **subagent**) — diff correctness/security/design in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+
+Running the Skill inline and skipping the `swe-workbench:reviewer` subagent (or vice-versa) does **not** satisfy this phase. Do not advance to Phase 5 until review passes clean or all raised issues are resolved.
+
+**Phase 5 — Deliver**
+Invoke `swe-workbench:workflow-commit-and-pr` to update the **existing** PR — never `gh pr create`, never a second PR.
+
 If `PR_STATE` is not `"OPEN"` (empty, `"CLOSED"`, `"MERGED"`, or `gh` error): surface the following `AskUserQuestion` and **return** — do **not** activate `workflow-extend`:
 
 ```json

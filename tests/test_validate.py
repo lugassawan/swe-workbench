@@ -2516,6 +2516,11 @@ class TestPhase4DispatchesBothReviewers:
             "**Phase 4 (Review):**",
             "## Phase D",
         ),
+        (
+            "commands/extend.md",
+            "**Phase 4 — Review**",
+            "**Phase 5",
+        ),
     ]
 
     REQUIRED_TOKENS = [
