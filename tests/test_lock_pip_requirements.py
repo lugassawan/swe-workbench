@@ -53,7 +53,7 @@ _LATEST_LOCK_BODY = (
 )
 
 
-def _make_repo(tmp_path: Path, *, upgrade_aware: bool = False) -> dict:
+def _make_repo(tmp_path: Path) -> dict:
     """Scaffold a hermetic temp repo with a stubbed python3.12.
 
     REPO_ROOT is resolved from the script's own location (scripts/../), so
@@ -63,13 +63,19 @@ def _make_repo(tmp_path: Path, *, upgrade_aware: bool = False) -> dict:
     Drift (extra dependency line in fresh compile output) is controlled by
     setting DRIFT_TEST=1 in the subprocess environment at call time, not here.
 
-    upgrade_aware=True swaps in a pip-compile stub that models real seeding
-    semantics for generate mode (issue #481): with --upgrade it overwrites
-    --output-file with the "latest resolution" fixture; without --upgrade it
-    leaves --output-file untouched, since in generate mode --output-file
-    points at the committed lock itself (pip-compile treats it as a pin
-    seed).  The default (False) path's stub script content is byte-for-byte
-    unchanged, so TestCheckDriftGate and TestArgParsing are unaffected.
+    The pip-compile stub has two runtime behaviors selected by the
+    UPGRADE_AWARE subprocess environment variable (default unset/"0"):
+    - UPGRADE_AWARE unset — mimics pip-compile --no-header on the committed
+      lock (TestCheckDriftGate, TestArgParsing); DRIFT_TEST=1 appends a
+      spurious dependency line to simulate drift.
+    - UPGRADE_AWARE=1 — models real pip-compile seeding semantics for
+      generate mode (issue #481): with --upgrade it overwrites --output-file
+      with the "latest resolution" fixture; without --upgrade it leaves
+      --output-file untouched, since in generate mode --output-file points
+      at the committed lock itself (pip-compile treats it as a pin seed).
+      Used by TestGenerateRefreshesStalePins.
+
+    Callers that don't set UPGRADE_AWARE are unaffected by its branch.
     """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
@@ -91,56 +97,44 @@ def _make_repo(tmp_path: Path, *, upgrade_aware: bool = False) -> dict:
     pip_stub.write_text("#!/usr/bin/env bash\nexit 0\n")
     pip_stub.chmod(0o755)
 
-    # Fake pip-compile — emits the committed lock minus column-0 # lines
-    # (mimics pip-compile --no-header).  An extra drift line is appended when
-    # the caller sets DRIFT_TEST=1 in the subprocess environment.
+    # Fake pip-compile — branches on UPGRADE_AWARE (see docstring above).
+    # Default branch emits the committed lock minus column-0 # lines (mimics
+    # pip-compile --no-header); an extra drift line is appended when the
+    # caller sets DRIFT_TEST=1.  UPGRADE_AWARE=1 branch models real
+    # pip-compile seeding semantics for generate mode (issue #481): reads
+    # the "latest resolution" content from a separate fixture file (never
+    # `grep committed > committed`: in generate mode --output-file *is* the
+    # committed lock, so redirecting into it would truncate it before it
+    # could be read).
     pip_compile_lines = [
         "#!/usr/bin/env bash",
-        "output='' src=''",
-        "while [[ $# -gt 0 ]]; do",
-        "    case \"$1\" in",
-        "        --output-file) output=\"$2\"; shift 2 ;;",
-        "        --*) shift ;;",
-        "        *) src=\"$1\"; shift ;;",
-        "    esac",
-        "done",
-        'lock="${src%.txt}.lock"',
-        # lock resolves correctly only when CWD is the repo root — the real
-        # script guarantees this via (cd "$REPO_ROOT" && pip-compile ...).
-        "grep -v '^#' \"$lock\" | grep -v '^$' > \"$output\" || true",
-        "if [[ \"${DRIFT_TEST:-0}\" == '1' ]]; then",
-        "    printf '%s\\n' 'driftpkg==9.9.9 \\\\' >> \"$output\"",
-        "    printf '    --hash=sha256:0000000000000000000000000000000000000000000000000000000000000001\\n' >> \"$output\"",
-        "fi",
-    ]
-    # Upgrade-aware stub for generate-mode tests (issue #481): parses
-    # --output-file and --upgrade, and only overwrites the output when
-    # --upgrade is present — modeling pip-compile keeping a seeded pin
-    # otherwise.  Reads the "latest resolution" content from a separate
-    # fixture file (never `grep committed > committed`: in generate mode
-    # --output-file *is* the committed lock, so redirecting into it would
-    # truncate it before it could be read).
-    pip_compile_upgrade_lines = [
-        "#!/usr/bin/env bash",
-        "output='' upgrade=0",
+        "output='' src='' upgrade=0",
         "while [[ $# -gt 0 ]]; do",
         "    case \"$1\" in",
         "        --output-file) output=\"$2\"; shift 2 ;;",
         "        --upgrade) upgrade=1; shift ;;",
         "        --*) shift ;;",
-        "        *) shift ;;",
+        "        *) src=\"$1\"; shift ;;",
         "    esac",
         "done",
-        "if [[ \"$upgrade\" == '1' ]]; then",
-        "    cp \"${LATEST_FIXTURE}\" \"$output\"",
+        "if [[ \"${UPGRADE_AWARE:-0}\" == '1' ]]; then",
+        "    if [[ \"$upgrade\" == '1' ]]; then",
+        "        cp \"${LATEST_FIXTURE}\" \"$output\"",
+        "    fi",
+        "else",
+        '    lock="${src%.txt}.lock"',
+        # lock resolves correctly only when CWD is the repo root — the real
+        # script guarantees this via (cd "$REPO_ROOT" && pip-compile ...).
+        "    grep -v '^#' \"$lock\" | grep -v '^$' > \"$output\" || true",
+        "    if [[ \"${DRIFT_TEST:-0}\" == '1' ]]; then",
+        "        printf '%s\\n' 'driftpkg==9.9.9 \\\\' >> \"$output\"",
+        "        printf '    --hash=sha256:0000000000000000000000000000000000000000000000000000000000000001\\n' >> \"$output\"",
+        "    fi",
         "fi",
     ]
 
     pip_compile_stub = stub_dir / "_pip_compile"
-    if upgrade_aware:
-        pip_compile_stub.write_text("\n".join(pip_compile_upgrade_lines) + "\n")
-    else:
-        pip_compile_stub.write_text("\n".join(pip_compile_lines) + "\n")
+    pip_compile_stub.write_text("\n".join(pip_compile_lines) + "\n")
     pip_compile_stub.chmod(0o755)
 
     # python3.12 stub: on -m venv <dir>, populate <dir>/bin/ with the fake
@@ -349,7 +343,7 @@ class TestGenerateRefreshesStalePins:
     """
 
     def test_generate_refreshes_stale_pin(self, tmp_path):
-        paths = _make_repo(tmp_path, upgrade_aware=True)
+        paths = _make_repo(tmp_path)
         lock_file = paths["repo"] / "tests" / "requirements.lock"
         assert "fakepkg==1.0.0" in lock_file.read_text()
 
@@ -358,6 +352,7 @@ class TestGenerateRefreshesStalePins:
             "PATH": f"{paths['stub_dir']}:{_CLEAN_ENV['PATH']}",
             "STUB_DIR": str(paths["stub_dir"]),
             "LATEST_FIXTURE": str(paths["latest_fixture"]),
+            "UPGRADE_AWARE": "1",
         }
         result = subprocess.run(
             ["bash", str(paths["script"])],
