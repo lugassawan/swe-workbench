@@ -14,6 +14,9 @@ for arg in "$@"; do
       echo "  and tests/build-requirements.lock from their source files using"
       echo "  pip-compile --generate-hashes, targeting Python 3.12 (matching CI)."
       echo ""
+      echo "  Without --check, this always performs a full --upgrade re-resolution,"
+      echo "  so transitive pins may bump even if you only touched one source file."
+      echo ""
       echo "  --check  Verify lockfiles are up-to-date (CI-friendly, exits 1 if drift)."
       exit 0
       ;;
@@ -61,6 +64,9 @@ compile() {
     existing_stripped=$(mktemp)
     new_stripped=$(mktemp)
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    # Compiling into an empty mktemp file (not --output-file "$out") means there's no
+    # existing pin to seed from, so this resolution is fresh by construction and needs
+    # no --upgrade (unlike the generate branch below). See #481.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
       --generate-hashes \
       --allow-unsafe \
@@ -84,7 +90,13 @@ compile() {
     echo "$out is up to date."
   else
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
+    # --upgrade forces a fresh re-resolution: without it, pip-compile treats the
+    # existing --output-file as a pin seed and keeps stale-but-still-valid pins
+    # (the --check branch avoids this by compiling into an empty mktemp). See #481.
+    # This re-resolves ALL three lockfiles' transitive pins on every run (not just
+    # ones affected by a source-file change) — see --help for the user-facing note.
     (cd "$REPO_ROOT" && "$VENV_DIR/bin/pip-compile" \
+      --upgrade \
       --generate-hashes \
       --allow-unsafe \
       --resolver=backtracking \

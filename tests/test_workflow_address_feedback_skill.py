@@ -2,10 +2,16 @@
 
 """Tests for the workflow-address-feedback skill (closes #218)."""
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 import validate
+from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SKILL_DIR = ROOT / "skills" / "workflow-address-feedback"
@@ -460,4 +466,243 @@ def test_address_feedback_skill_phase5_reap_has_post_check():
     assert re.search(r'✓ state file reaped:', text), (
         "SKILL.md Phase 5 must include a post-reap report line "
         "'✓ state file reaped: ...' so operators can verify cleanup completed"
+    )
+
+
+# --- PR-level conversation comments (issue #473) ---
+
+
+def test_address_feedback_skill_fetches_pr_comments_paginated():
+    """Phase 1 must fetch PR-level conversation comments via the paginated issues comments endpoint."""
+    text = SKILL_MD.read_text()
+    assert "issues/${PR}/comments" in text, (
+        "SKILL.md Phase 1 must fetch repos/{owner}/{repo}/issues/${PR}/comments "
+        "(PR-level conversation comments, distinct from review-thread comments)"
+    )
+    assert "--paginate" in text, (
+        "SKILL.md Phase 1 must paginate the issues/comments fetch (--paginate) — "
+        "a PR can have more than one page of conversation comments"
+    )
+
+
+def test_address_feedback_skill_early_exit_accounts_for_pr_comments():
+    """Phase 1 early-exit must also gate on eligible PR comments, not just unresolved threads."""
+    text = SKILL_MD.read_text()
+    assert "ELIGIBLE_PR_COMMENTS" in text, (
+        "SKILL.md Phase 1 must compute $ELIGIBLE_PR_COMMENTS so the early-exit can "
+        "account for PR-level comments, not only review threads"
+    )
+    early_exit_idx = text.find("No open threads — nothing to address")
+    assert early_exit_idx != -1, "SKILL.md must contain the early-exit message"
+    preceding = text[:early_exit_idx]
+    assert "ELIGIBLE_PR_COMMENTS" in preceding[-600:], (
+        "SKILL.md early-exit gate must reference $ELIGIBLE_PR_COMMENTS just before "
+        "the 'No open threads — nothing to address' message"
+    )
+
+
+def test_address_feedback_skill_excludes_bots_and_author_from_pr_comments():
+    """Phase 1's PR-comment filter must exclude bot comments and the PR author's own comments."""
+    text = SKILL_MD.read_text()
+    assert "Bot" in text and "[bot]" in text, (
+        "SKILL.md must describe excluding bot comments (user.type == Bot or a "
+        "login ending in [bot]) from PR-level comment triage"
+    )
+    assert "AUTHOR_LOGIN" in text and "eligible" in text, (
+        "SKILL.md must describe excluding the PR author's own comments "
+        "(user.login == $AUTHOR_LOGIN) via the eligible filter"
+    )
+
+
+def test_address_feedback_skill_renders_pr_comment_block():
+    """Phase 3 must render a distinct 'PR comment by @{author}' block with an [A] menu that skips resolve."""
+    text = SKILL_MD.read_text()
+    assert "PR comment by @{author}" in text, (
+        "SKILL.md Phase 3 must render PR-level comments in a distinct "
+        "'PR comment by @{author}' block (no path:line)"
+    )
+    pr_block_idx = text.find("PR comment by @{author}")
+    assert pr_block_idx != -1
+    following = text[pr_block_idx:pr_block_idx + 600]
+    assert re.search(r"\[A\]ddressed.*no.*resolve|\[A\]ddressed.*no thread to resolve", following, re.IGNORECASE), (
+        "SKILL.md PR comment menu's [A]ddressed option must state that PR comments "
+        "have no thread to resolve — resolve must be suppressed"
+    )
+
+
+def test_address_feedback_skill_keys_pr_comments_namespaced():
+    """Phase 3 must key PR comments as triage["prcomment:<id>"], namespaced from thread node IDs."""
+    text = SKILL_MD.read_text()
+    assert 'triage["prcomment:' in text, (
+        'SKILL.md Phase 3 must key PR comments as triage["prcomment:<comment.id>"] — '
+        "namespaced so they cannot collide with GraphQL review-thread node IDs in the same map"
+    )
+
+
+def test_address_feedback_skill_phase5_dispatches_issue_kind():
+    """Phase 5 must dispatch reply-and-resolve.sh with KIND=issue and empty comment-id/thread-id for PR comments."""
+    text = SKILL_MD.read_text()
+    assert re.search(r'reply-and-resolve\.sh.*\n.*"\$OWNER" "\$REPO" "\$PR" "" "" "\$REPLY_BODY" "issue"', text), (
+        'SKILL.md Phase 5 must call reply-and-resolve.sh with '
+        '"$OWNER" "$REPO" "$PR" "" "" "$REPLY_BODY" "issue" for PR comments — '
+        "empty COMMENT_DATABASEID/THREAD_ID (PR comments have no thread) and explicit issue KIND"
+    )
+
+
+def test_address_feedback_skill_reply_body_embeds_handled_marker():
+    """Phase 5 PR-comment reply body must embed the swe-workbench:handled:{id} marker used for re-run dedup."""
+    text = SKILL_MD.read_text()
+    assert "swe-workbench:handled:" in text, (
+        "SKILL.md Phase 5 must compose the PR-comment reply body with a hidden "
+        "<!-- swe-workbench:handled:{comment.id} --> marker — Phase 1's dedup filter "
+        "matches on this marker to skip already-replied comments on re-runs"
+    )
+
+
+def test_address_feedback_skill_pr_comments_state_file_in_reap():
+    """Phase 5 reap must include ${PR}-pr-comments.json in both the clean-state-files.sh call and the report loop."""
+    text = SKILL_MD.read_text()
+    assert "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" in text, (
+        "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-pr-comments.json "
+        "for state-file cleanup"
+    )
+    lines_with_path = [ln for ln in text.splitlines() if "${PR}-pr-comments.json" in ln]
+    assert len(lines_with_path) >= 2, (
+        "SKILL.md must reference ${PR}-pr-comments.json at least twice — once in the "
+        "clean-state-files.sh call and once in the post-reap report loop"
+    )
+
+
+def test_address_feedback_skill_pr_comment_skipped_transparency_note():
+    """Phase 3 must emit a transparency note for PR comments skipped as already-handled."""
+    text = SKILL_MD.read_text()
+    assert "PR comment(s) skipped" in text, (
+        "SKILL.md Phase 3 must emit a transparency note like "
+        "'(N PR comment(s) skipped — already handled.)' since the marker/manual-reply "
+        "dedup is lossy by construction"
+    )
+
+
+# --- Executable coverage of the embedded Phase 1 jq filter (issue #473) ---
+#
+# The filter's exclusion/dedup logic lives inside a jq program embedded in SKILL.md
+# prose, not in a standalone script. Regex assertions on the surrounding text can't
+# catch a logic bug inside that program (e.g. an unanchored substring match). These
+# tests extract the actual program text and run it through real jq, so a regression
+# in the embedded logic fails here instead of shipping silently.
+
+_JQ_AVAILABLE = shutil.which("jq") is not None
+
+
+def _extract_pr_comments_jq_program() -> str:
+    text = SKILL_MD.read_text()
+    block = re.search(r"```bash\ngh api --paginate.*?\n```", text, re.DOTALL)
+    assert block, "Phase 1 PR-comments fetch code block not found in SKILL.md"
+    program = re.search(r'--arg me "\$CURRENT_USER" \'\n(.*?)\n  \' >', block.group(0), re.DOTALL)
+    assert program, "jq program not found within the Phase 1 fetch code block"
+    return program.group(1)
+
+
+def _run_pr_comments_filter(comments: list[dict], author: str, me: str) -> list[dict]:
+    program = _extract_pr_comments_jq_program()
+    result = subprocess.run(
+        ["jq", "--arg", "author", author, "--arg", "me", me, program],
+        input=json.dumps(comments), capture_output=True, text=True,
+        env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0, f"jq filter failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_drops_bots_and_author():
+    comments = [
+        {"id": 1, "user": {"login": "some-bot", "type": "Bot"}, "body": "lgtm", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 2, "user": {"login": "renovate[bot]", "type": "User"}, "body": "bump", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 3, "user": {"login": "pr-author", "type": "User"}, "body": "self note", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 4, "user": {"login": "reviewer1", "type": "User"}, "body": "please fix X", "created_at": "2026-01-01T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
+    ids = {c["id"] for c in result}
+    assert ids == {4}, f"bot/[bot]/author comments must be dropped entirely; got ids {ids}"
+    assert result[0]["eligible"] is True
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_drops_current_user_on_non_author_run():
+    """Regression test: on a non-author run, the runner's own past marker-bearing
+    reply must not resurface as a fresh triage candidate (duplicate-reply spam)."""
+    comments = [
+        {"id": 20, "user": {"login": "reviewer6", "type": "User"}, "body": "please fix V", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done <!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="maintainer-x")
+    by_id = {c["id"]: c for c in result}
+    assert 21 not in by_id, (
+        "comment 21 was authored by $me (the non-author runner) and must be dropped "
+        "as a candidate entirely, not resurface with eligible: false"
+    )
+    assert by_id[20]["eligible"] is False, (
+        "comment 20 must still be marker-deduped via owner comment 21's marker"
+    )
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_marker_dedup():
+    comments = [
+        {"id": 5, "user": {"login": "reviewer2", "type": "User"}, "body": "please fix Y", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
+    by_id = {c["id"]: c for c in result}
+    assert by_id[5]["eligible"] is False, "a comment whose own marker is present must be ineligible"
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_marker_match_is_anchored():
+    """Regression test: a marker for id 1234 must not dedup-suppress unrelated id 123
+    via an unanchored substring match (id 123 is a numeric prefix of 1234)."""
+    comments = [
+        {"id": 123, "user": {"login": "reviewer3", "type": "User"}, "body": "please fix Z", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
+    by_id = {c["id"]: c for c in result}
+    assert by_id[123]["eligible"] is True, (
+        "comment 123 must stay eligible — the owner's marker is for a different "
+        "comment (1234) that merely shares a numeric prefix; an unanchored "
+        "contains() match would incorrectly suppress it"
+    )
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_manual_reply_dedup():
+    comments = [
+        {"id": 7, "user": {"login": "reviewer4", "type": "User"}, "body": "please fix W", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 8, "user": {"login": "pr-author", "type": "User"}, "body": "thanks, will look", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
+    by_id = {c["id"]: c for c in result}
+    assert by_id[7]["eligible"] is False, (
+        "a marker-less owner comment posted after the reviewer comment counts as a "
+        "manual reply and must dedup-suppress it"
+    )
+
+
+@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
+def test_pr_comments_jq_filter_own_marker_replies_excluded_from_manual_heuristic():
+    """A prior marker-bearing tool reply must not itself count as a 'manual reply' that
+    over-suppresses a different, still-open reviewer comment posted before it."""
+    comments = [
+        {"id": 9, "user": {"login": "reviewer5", "type": "User"}, "body": "issue A", "created_at": "2026-01-01T00:00:00Z"},
+        {"id": 10, "user": {"login": "reviewer5", "type": "User"}, "body": "issue B", "created_at": "2026-01-01T01:00:00Z"},
+        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
+    ]
+    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
+    by_id = {c["id"]: c for c in result}
+    assert by_id[10]["eligible"] is False, "comment 10's own marker must dedup-suppress it"
+    assert by_id[9]["eligible"] is True, (
+        "comment 9 must stay eligible — the only later owner comment is a "
+        "marker-bearing tool reply for a different comment, which the manual-reply "
+        "heuristic must ignore (it only counts marker-less owner comments)"
     )
