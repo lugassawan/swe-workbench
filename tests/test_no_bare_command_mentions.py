@@ -32,6 +32,7 @@ COMMANDS = [
     "report-issue",
     "review",
     "security-review",
+    "sync",
     "test",
 ]
 
