@@ -13,7 +13,7 @@ Parse `$ARGUMENTS` for `--mode e2e-live`, `--mode e2e`, or `--e2e`. Match `--mod
 
 - **E2E-live mode** (`--mode e2e-live` present): strip the flag from the target and follow the **E2E-live path** below.
 - **E2E mode** (`--mode e2e` or `--e2e` present): strip the flag from the target and follow the **E2E path** below. This also means a bare `--e2e-live` attempt (unsupported — only `--mode e2e-live` is recognized) must not be treated as `--e2e`.
-- **Default mode** (no flag): follow the **Unit path** below.
+- **Default mode** (no flag, or any unrecognized flag such as a bare `--e2e-live`): follow the **Unit path** below with the unrecognized token left in the target text — there is no dedicated error path for unsupported flags.
 
 ---
 
