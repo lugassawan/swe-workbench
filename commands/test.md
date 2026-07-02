@@ -12,7 +12,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 Parse `$ARGUMENTS` for `--mode e2e-live`, `--mode e2e`, or `--e2e`. Match `--mode e2e-live` by exact token **first** — a substring match on `e2e` would false-trip the e2e branch since `e2e-live` contains `e2e`:
 
 - **E2E-live mode** (`--mode e2e-live` present): strip the flag from the target and follow the **E2E-live path** below.
-- **E2E mode** (`--mode e2e` or `--e2e` present): strip the flag from the target and follow the **E2E path** below.
+- **E2E mode** (`--mode e2e` or `--e2e` present): strip the flag from the target and follow the **E2E path** below. This also means a bare `--e2e-live` attempt (unsupported — only `--mode e2e-live` is recognized) must not be treated as `--e2e`.
 - **Default mode** (no flag): follow the **Unit path** below.
 
 ---
