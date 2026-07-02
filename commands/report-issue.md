@@ -15,6 +15,21 @@ The user wants to file a plugin issue: $ARGUMENTS
 
 If `$ARGUMENTS` is **empty**, do NOT error. Instead:
 
+### Step 0a — Mode selector
+
+Ask the user to choose a mode, then wait for the reply:
+```
+How would you like to find a plugin-related thought to report?
+
+1. Quick pick — up to 3 raw candidates from this session/memory
+2. Synthesize — aggregate all memory into ranked, themed enhancement insights
+
+Reply with 1 (quick pick) or 2 (synthesize).
+```
+Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesize**.
+
+### Branch A — Quick pick
+
 1. **Scan the current conversation** for actionable plugin-related thoughts: frustrations, lessons learned, complaints about plugin behaviour, feature ideas, or pain points. Collect up to 3 candidates with a one-line framing each.
 
 2. If conversation yields fewer than 3, **scan memory** at `~/.claude/projects/<project-slug>/memory/MEMORY.md` (where `<project-slug>` is derived from the current working directory path by replacing each `/` with `-`, then stripping any resulting leading `-`; e.g. `/Users/foo/bar` → `Users-foo-bar`). Follow symlinks to `feedback_*.md` and `project_*.md` entries referenced there. Collect additional candidates until you have up to 3, prioritising entries that mention the plugin, commands, agents, or skills by name.
@@ -33,6 +48,48 @@ If `$ARGUMENTS` is **empty**, do NOT error. Instead:
 
 4. If neither conversation nor memory yields anything plugin-related, exit cleanly:
    > No plugin-related thought found in conversation or memory. Try `/swe-workbench:report-issue <your thought>`.
+
+---
+
+### Branch B — Synthesize
+
+**Granularity:** exactly one issue per selected insight — never bundle multiple insights into a single issue.
+
+1. **Load all memory.** Use the same path recipe as Branch A: `~/.claude/projects/<project-slug>/memory/`. Read `MEMORY.md`, then follow its links to every `feedback_*.md` and `project_*.md` entry it points at. Capture each entry's `name`, `description`, body, and its `type` value (older entries carry a top-level `type:`; newer entries nest it under `metadata:` — read whichever is present). Preserve `MEMORY.md`'s listed order — it is the only recency signal available (no date frontmatter exists on memory entries).
+
+2. **Harvest conversation signal.** Separately note which plugin-related themes the current conversation itself touches. Keep this as its own set — it feeds the recency boost in step 4, it is not merged into the memory set.
+
+3. **Cluster into emergent themes.** Group the loaded entries by the semantic theme carried in their `description`/body — clusters emerge from the content itself. This is NOT a fixed taxonomy and not a path-prefix grouping (memory entries have no paths); invent a short theme label per cluster rather than picking from a predefined list. Each cluster becomes one candidate insight.
+
+4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in `MEMORY.md` order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
+
+5. **Draft one preview body per insight**, using the Synthesis issue body shape below. Run the **Version capture** once, and the **Redaction pass** (delegation step 7) once over every drafted body — both before any display.
+
+6. **Turn 1 — ranked digest.** Print insights numbered 1..N, most-prevalent first; each entry shows its theme label, a one-line rationale, the memory entries cited (`name` + `type`), its drafted `Title:`, and its fenced preview body. End with:
+   ```
+   Reply with the numbers to file (e.g. `1,3`), or `none`.
+   ```
+   **Write no temp files and run no `gh` command this turn.** An out-of-range number or `none` re-prompts once, then exits without filing.
+
+7. **Turn 2 — final preview of picks.** Parse the reply into the set of picked digest numbers. If, after the one re-prompt from step 6, the picked set is still empty, exit cleanly with "No insights remain to file" instead of proceeding. Run delegation step 1 (auth + repo check) once. Branch B never runs delegation step 4 (template discovery) and never adopts a repo template's body shape — every picked insight always uses the fixed Synthesis issue body shape below. Per pick, run: label discovery seeded directly at delegation step 5c's commit-tag mapping (the title always starts with `[feat]`, mapping to `enhancement`, then the verbatim/substring match chain against the repo's label list — no match found still omits `--label`, same as delegation step 5d), and delegation step 6 (duplicate scan). Capture one shared `date +%s` timestamp. For each pick `<n>` (its digest number), write its body via the **Write** tool to `/tmp/report-issue-lugassawan-swe-workbench-<ts>-<n>.md`. Write ONE shared `.cmd` sidecar at `/tmp/report-issue-lugassawan-swe-workbench-<ts>.cmd`, containing one `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path-n> [--label "enhancement"]` line per pick — one enhancement issue per pick, never bundled. Print each selected body with its `Title:` / `Filing into:` / `Redacted:` / `Label:` / `Possibly related:` lines, then:
+   ```
+   Reply 'confirm' to file all, or `drop N` / `edit N`.
+   ```
+   **Wait for `confirm`. Do NOT run `gh issue create` on this turn.** After `drop N` or `edit N`, re-print the updated preview and wait for `confirm` again — never file immediately after an edit. If `drop N` empties the pick set, exit cleanly with "No insights remain to file" instead of re-prompting for `confirm`.
+
+8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `runtime/clean-state-files.sh`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry.
+
+**Edge cases:**
+- **No memory found, or the memory directory is missing:** fall back to the conversation-only signal from step 2; if that is also empty, exit cleanly exactly like Branch A step 4 ("No plugin-related thought found…").
+- **1–2 entries — too few entries to synthesize themes:** skip clustering and present each entry directly as its own insight; fewer than 5 is fine here — don't pad the digest to reach a minimum.
+- **Conversation-only signal:** if memory is empty but the conversation touches plugin themes, build insights from the conversation signal alone.
+- **`gh` unauthenticated:** print the same token-scope warning as delegation step 1, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
+- **Out-of-range number or `none`:** re-prompt once; file nothing.
+
+**Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
+- **Title:** `[feat] <theme>: <concise enhancement>` — the `[feat]` tag drives label discovery to `enhancement` via delegation step 5c.
+- **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets citing the memory entries feeding this theme, by `name` + `type`) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
+- **Footer:** the same `_Reported via ... plugin v<version>, Claude Code <cli-version>._` footer, version captured once and shared across all picked insights.
 
 ---
 
