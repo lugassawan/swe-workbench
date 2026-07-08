@@ -15,6 +15,7 @@ KIND="${7:-review}"
 case "$KIND" in
   issue)
     [ -n "$REPLY_BODY" ] || exit 0
+    # -f (raw), not -F: an @author-prefixed body would be @-file-expanded by -F. See docs/gh-api-field-flags.md
     gh api "repos/${OWNER}/${REPO}/issues/${PR}/comments" -f body="$REPLY_BODY"
     exit 0 ;;
   review) : ;;
@@ -22,6 +23,7 @@ case "$KIND" in
 esac
 if [ -n "$REPLY_BODY" ]; then
   [ -n "$COMMENT_DATABASEID" ] || { echo "reply-and-resolve: REPLY_BODY set but COMMENT_DATABASEID is empty" >&2; exit 1; }
+  # -f (raw), not -F: an @author-prefixed body would be @-file-expanded by -F. See docs/gh-api-field-flags.md
   gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments/${COMMENT_DATABASEID}/replies" -f body="$REPLY_BODY"
 fi
 if [ -n "$THREAD_ID" ]; then
