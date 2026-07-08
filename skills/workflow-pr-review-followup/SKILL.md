@@ -150,12 +150,19 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
      ```bash
      gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments" \
-       -F body="$BODY" \
+       -f body="$BODY" \
        -F path="$REPO_PATH" \
        -F line="$LINE" \
        -F side=RIGHT \
        -F commit_id="$HEAD_SHA"
      ```
+
+     **Why `-f body=`, not `-F body=`:** `gh`'s `-F`/`--field` treats a value beginning with `@` as a
+     file path to read (and `@-` as stdin); a finding body that starts with `@author…` would be
+     silently `@`-expanded into a file read and post garbage. Use `-f` (raw string) for any free-form
+     body. Conversely, `@file` expansion (reading a body *from* a file) requires `-F` — `-f body=@x`
+     posts the literal `@x`. See [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md).
+     **Spot-check** any body sourced from a file: `gh api <endpoint>/{id} -q '.body'`.
 
 3. Track counts: `posted=N`, `deduped=M`. Initialise `DEFERRED_INFORMATIONAL=""` before the loop. On HTTP 422: out-of-diff informational findings → `DEFERRED_INFORMATIONAL` (not stale-SHA; expected for context-line refs); in-diff findings on 422 → skip/log, stale-SHA counted.
 
@@ -285,3 +292,4 @@ Match against ANY author. On match, skip posting AND add 👍 to the thread head
 | Apply the diff-scoping flip on self-review | The flip is gated on `IS_SELF_REVIEW = false`. A self-review with out-of-diff-only Critical/High findings stays `COMMENT`. See [Diff-scoping flip contract](#diff-scoping-flip-contract). |
 | Apply the diff-scoping flip when identity is unknown | `IDENTITY_KNOWN = false` when `$CURRENT_USER` or `$AUTHOR_LOGIN` is empty. The flip does NOT fire — stay COMMENT. Never auto-approve when you can't verify the authorship axis. |
 | Fire the CTA after the diff-scoping flip when `DECISION=APPROVE`, `posted=0`, `deduped=0` | CTA suppression is evaluated post-flip. After a flip to `APPROVE`, `posted=0`, `deduped=0` → suppress. The informational findings land in the summary body (not inline threads); there is nothing for `/swe-workbench:address-feedback` to act on. |
+| `-F body="$BODY"` on a finding that starts with `@` → silent `@`-file-expansion | Use `-f body=` (raw). See [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). |
