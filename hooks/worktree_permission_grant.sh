@@ -106,18 +106,15 @@ while IFS= read -r entry; do
                     P="**"
                     ;;
                 "$parent"/*)
-                    # Sibling worktree grant — remap to the current worktree.
+                    # Sibling worktree grant — remap the sub-path to THIS worktree.
+                    # A bare grant (no sub-path) or empty remainder grants NOTHING:
+                    # collapsing to "**" would broaden a *different* worktree's root
+                    # grant to the entire current worktree (fail-open, #501).
                     remainder="${abs_glob#"$parent"/}"
-                    # remainder = "<sibling-name>/rest" or "<sibling-name>"
                     case "$remainder" in
-                        */*)
-                            P="${remainder#*/}"
-                            ;;
-                        *)
-                            P="**"
-                            ;;
+                        */?*) P="${remainder#*/}" ;;
+                        *)    continue ;;
                     esac
-                    [ -z "$P" ] && P="**"
                     ;;
                 *)
                     # Unrelated absolute path (e.g. //tmp/x/**) — skip.
@@ -137,16 +134,13 @@ while IFS= read -r entry; do
                     P="**"
                     ;;
                 "$parent"/*)
+                    # Sibling worktree grant — see the //* branch above for rationale
+                    # on why a bare/empty remainder must fail closed (grant nothing).
                     remainder="${abs_glob#"$parent"/}"
                     case "$remainder" in
-                        */*)
-                            P="${remainder#*/}"
-                            ;;
-                        *)
-                            P="**"
-                            ;;
+                        */?*) P="${remainder#*/}" ;;
+                        *)    continue ;;
                     esac
-                    [ -z "$P" ] && P="**"
                     ;;
                 *)
                     continue
