@@ -5,6 +5,7 @@
 set -euo pipefail
 PR="${1:?sync-pr-metadata: PR number required}"
 NEW_TITLE="${2:-}"; BODY_FILE="${3:-}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 args=()
 [ -n "$NEW_TITLE" ] && args+=(--title "$NEW_TITLE")
 if [ -n "$BODY_FILE" ]; then
@@ -12,4 +13,4 @@ if [ -n "$BODY_FILE" ]; then
   args+=(--body-file "$BODY_FILE")
 fi
 [ ${#args[@]} -gt 0 ] || { echo "sync-pr-metadata: nothing to update (no title, no body)" >&2; exit 1; }
-gh pr edit "$PR" "${args[@]}"
+bash "$SCRIPT_DIR/gh-timeout.sh" pr edit "$PR" "${args[@]}"

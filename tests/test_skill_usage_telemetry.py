@@ -64,13 +64,18 @@ def _env(plugin_root: Path, cache_dir: Path) -> dict:
     return env
 
 
-def _run_record(stdin_json: dict, plugin_root: Path, cache_dir: Path) -> subprocess.CompletedProcess:
+def _run_record(
+    stdin_json: dict, plugin_root: Path, cache_dir: Path, extra_env: dict | None = None
+) -> subprocess.CompletedProcess:
+    env = _env(plugin_root, cache_dir)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["bash", str(RECORD_SH)],
         input=json.dumps(stdin_json),
         capture_output=True,
         text=True,
-        env=_env(plugin_root, cache_dir),
+        env=env,
     )
 
 
@@ -201,7 +206,10 @@ class TestRecordHook:
         assert _buffer_files(cache_dir) == []
 
     def test_sweep_removes_old_buffers(self, plugin_root, cache_dir):
-        """Files older than 24h are swept on each hook invocation."""
+        """Files older than 24h are swept when the throttle fires (issue #501:
+        the sweep is throttled to ~1-in-50 calls; force it here with
+        SKILL_SWEEP_EVERY=1 so the assertion stays deterministic).
+        """
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         old_file = skill_cache / "20240101-old-agent.txt"
@@ -218,11 +226,14 @@ class TestRecordHook:
             },
             plugin_root,
             cache_dir,
+            extra_env={"SKILL_SWEEP_EVERY": "1"},
         )
         assert not old_file.exists(), "Old buffer should have been swept"
 
     def test_sweep_removes_old_errors_log(self, plugin_root, cache_dir):
-        """Stale .errors.log older than 24h is swept alongside old buffer files."""
+        """Stale .errors.log older than 24h is swept alongside old buffer
+        files when the throttle fires (forced via SKILL_SWEEP_EVERY=1).
+        """
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         errors_log = skill_cache / ".errors.log"
@@ -238,11 +249,14 @@ class TestRecordHook:
             },
             plugin_root,
             cache_dir,
+            extra_env={"SKILL_SWEEP_EVERY": "1"},
         )
         assert not errors_log.exists(), "Stale .errors.log should have been swept"
 
     def test_sweep_retains_fresh_errors_log(self, plugin_root, cache_dir):
-        """A recent .errors.log (< 24h old) must NOT be swept."""
+        """A recent .errors.log (< 24h old) must NOT be swept, even when the
+        throttle is forced to fire on every call.
+        """
         skill_cache = _skill_cache(cache_dir)
         skill_cache.mkdir(parents=True)
         errors_log = skill_cache / ".errors.log"
@@ -259,8 +273,55 @@ class TestRecordHook:
             },
             plugin_root,
             cache_dir,
+            extra_env={"SKILL_SWEEP_EVERY": "1"},
         )
         assert errors_log.exists(), "Fresh .errors.log must be retained"
+
+    def test_sweep_suppressed_by_throttle(self, plugin_root, cache_dir):
+        """SKILL_SWEEP_EVERY=0 deterministically disables the sweep — an old
+        buffer survives the call every time (issue #501 finding #4). A large
+        divisor like 999999 would only make firing *improbable* (RANDOM can
+        still draw exactly 0), so 0 is the seam that guarantees suppression.
+        """
+        skill_cache = _skill_cache(cache_dir)
+        skill_cache.mkdir(parents=True)
+        old_file = skill_cache / "20240101-old-agent.txt"
+        old_file.write_text("old-skill\n")
+        old_mtime = time.time() - 25 * 3600
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        result = _run_record(
+            {
+                "agent_id": "new-999",
+                "agent_type": "reviewer",
+                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+            },
+            plugin_root,
+            cache_dir,
+            extra_env={"SKILL_SWEEP_EVERY": "0"},
+        )
+        assert old_file.exists(), "Throttle should have suppressed the sweep"
+        assert result.stderr == "", f"SKILL_SWEEP_EVERY=0 must not error: {result.stderr!r}"
+
+    def test_append_path_unaffected_by_throttle(self, plugin_root, cache_dir):
+        """The current-day buffer append must happen regardless of whether
+        the sweep throttle fires on this particular call.
+        """
+        for sweep_every in ("1", "999999"):
+            result = _run_record(
+                {
+                    "agent_id": f"append-{sweep_every}",
+                    "agent_type": "reviewer",
+                    "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                },
+                plugin_root,
+                cache_dir,
+                extra_env={"SKILL_SWEEP_EVERY": sweep_every},
+            )
+            assert result.returncode == 0
+            matches = [b for b in _buffer_files(cache_dir) if b.name.endswith(f"-append-{sweep_every}.txt")]
+            assert len(matches) == 1, f"Expected buffer for SKILL_SWEEP_EVERY={sweep_every}"
+            assert "swe-workbench:principle-code-review" in matches[0].read_text()
 
 
 # ---------------------------------------------------------------------------

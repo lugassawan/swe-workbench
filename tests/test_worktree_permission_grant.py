@@ -284,6 +284,54 @@ class TestWorktreePermissionGrant:
         assert result.returncode == 0
         assert json.loads(result.stdout) == _ALLOW_JSON
 
+    def test_bare_sibling_grant_denies_current_worktree_root(self, wt_env):
+        """A sibling grant with NO sub-path must fail closed — it must not
+        remap to '**' and silently broaden to the current worktree's own
+        root (issue #501 finding #3).
+        """
+        wt, other = wt_env["wt"], wt_env["other"]
+        _settings(wt, [f"Read({_cc_abs(other)})"])
+        result = _run(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(wt / "README")},
+            }
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    def test_trailing_slash_sibling_grant_denies_current_worktree_root(self, wt_env):
+        """Same fail-closed behavior for a bare sibling grant with a
+        trailing slash and no further sub-path.
+        """
+        wt, other = wt_env["wt"], wt_env["other"]
+        _settings(wt, [f"Read({_cc_abs(other)}/)"])
+        result = _run(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(wt / "README")},
+            }
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    def test_sibling_subpath_grant_still_remaps(self, wt_env):
+        """A sibling grant WITH a sub-path must still remap correctly —
+        the fail-closed fix must not regress the existing remap behavior.
+        """
+        wt, other = wt_env["wt"], wt_env["other"]
+        _settings(wt, [f"Read({_cc_abs(other)}/src/**)"])
+        (wt / "src").mkdir()
+        (wt / "src" / "y.md").write_text("content")
+        result = _run(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(wt / "src" / "y.md")},
+            }
+        )
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == _ALLOW_JSON
+
     def test_single_slash_abs_glob_matches(self, wt_env):
         wt = wt_env["wt"]
         _settings(wt, [f"Read({str(wt)}/**)"])
