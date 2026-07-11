@@ -88,6 +88,7 @@ Delegate to the `debugger` subagent. Its output must include:
 4. **Minimal fix** — smallest behavior-changing patch that resolves the root cause; call out what it deliberately does NOT touch.
 5. **Regression test** — the test that fails before the fix and passes after. Name it and its location.
 6. **SOLID / Clean-Arch risks** — whether the bug's shape signals a principle violation, and whether the minimal fix papers over it.
+7. **Design fork (if any)** — surfaced for the orchestrator to act on; see the design-fork escalation note below.
 
 Absolute rule: no fix without a failing test first. This command changes behavior to match spec — it is not a refactor.
 
