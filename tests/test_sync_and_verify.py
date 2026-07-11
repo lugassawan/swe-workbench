@@ -261,6 +261,66 @@ class TestSyncAndVerifyWatchdog:
         )
         assert ps.returncode != 0, f"orphaned stub sleep process still running: {ps.stdout}"
 
+    def test_watchdog_timeout_concurrent_with_hook_interruption(self, git_repo, tmp_path):
+        """The exact scenario issue #496 was filed for: SYNC_TIMEOUT fires while a
+        registered worktree is simultaneously missing its directory on disk. Must
+        emit the timeout-specific stderr message (corroborated wording), not the
+        generic partial-deletion one — this exercises the `TIMED_OUT=1` branch of
+        Block D's message selection, which the non-combined tests above never hit
+        (one triggers only TIMED_OUT, the other only HOOK_INTERRUPTED)."""
+        real_git = shutil.which("git")
+        assert real_git, "git must be resolvable on PATH for this test"
+
+        stray_path = tmp_path / "wt-stray-timeout"
+        subprocess.run(
+            ["git", "worktree", "add", str(stray_path), "-b", "stray-timeout-branch"],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        shutil.rmtree(stray_path)
+
+        stub_dir = tmp_path / "stub_bin_combined"
+        stub_dir.mkdir()
+        stub_git = stub_dir / "git"
+        marker = tmp_path / "pull_started_combined"
+        stub_git.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "pull" ]; then\n'
+            f'  touch "{marker}"\n'
+            "  sleep 30\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n'
+        )
+        stub_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{stub_dir}{os.pathsep}{_CLEAN_ENV['PATH']}",
+            "SYNC_TIMEOUT": "1",
+        }
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
+        )
+
+        assert marker.exists(), "stub git pull was never invoked — test is vacuous"
+        _assert_contract(result, "0", hook_interrupted="1")
+        assert "internal timeout" in result.stderr, (
+            f"Expected the TIMED_OUT-corroborated message, got: {result.stderr!r}"
+        )
+        assert "a prior cleanup was likely interrupted" not in result.stderr, (
+            "Got the generic (non-timeout) partial-deletion message instead of "
+            f"the timeout-specific one: {result.stderr!r}"
+        )
+
 
 class TestSyncAndVerifySyncTimeoutValidation:
     """A malformed SYNC_TIMEOUT must not silently disable the watchdog.

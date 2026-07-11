@@ -248,10 +248,12 @@ A `SYNC_TIMEOUT` firing (or an external tool-call kill) can land mid-`rm` inside
 ```bash
 cd "$MAIN_REPO"
 # Identify which registered worktree(s) have no directory on disk (same
-# check Block D performs internally — a plain grep on porcelain output
-# cannot answer this, since "worktree <path>" lines don't self-report state):
-git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r w; do
-  [ -d "$w" ] || echo "MISSING: $w"
+# check Block D performs internally). Line-based, not awk field-splitting —
+# a path containing a space would silently vanish under `awk '{print $2}'`:
+git worktree list --porcelain | while IFS= read -r line; do
+  case "$line" in
+    "worktree "*) w=${line#worktree }; [ -d "$w" ] || echo "MISSING: $w" ;;
+  esac
 done
 git worktree prune                              # drops the stale registration(s) for the missing dir(s)
 git branch -D <stale-branch-name>                # the local ref that survived the interrupted rm
