@@ -1,6 +1,5 @@
 """Structural tests for agents/debugger.md (closes #404, #498)."""
 
-import re
 from pathlib import Path
 
 import validate
@@ -151,20 +150,17 @@ def test_output_contract_has_design_fork_slot():
     )
 
 
-def test_debugger_never_names_senior_engineer_as_consult_target():
-    """Regression guard: debugger.md must not instruct itself to consult/invoke senior-engineer.
+def test_debugger_never_names_senior_engineer():
+    """Regression guard: debugger.md must never name senior-engineer at all.
 
     The debugger has no `Agent` tool and cannot invoke subagents. Naming
-    senior-engineer as something the debugger consults/invokes re-opens the
-    impossible worker->peer consult that issue #498 reports. Only the
-    orchestrator (commands/debug.md, SKILL.md) may name senior-engineer as a
-    consult target.
+    senior-engineer anywhere in this file — as a consult target, an "escalate
+    to" pointer, or a bare reference — re-opens the impossible worker->peer
+    consult that issue #498 reports. Only the orchestrator (commands/debug.md,
+    SKILL.md) may name senior-engineer as a consult target.
     """
     body = _read()
-    pattern = re.compile(r"(consult|invoke)s?\s+.{0,20}senior-engineer", re.IGNORECASE)
-    match = pattern.search(body)
-    assert match is None, (
-        f"agents/debugger.md must not tell the debugger to consult/invoke "
-        f"senior-engineer directly (found: {match.group(0)!r} if it did) — "
+    assert "senior-engineer" not in body.lower(), (
+        "agents/debugger.md must not name senior-engineer anywhere — "
         "the debugger has no Agent tool; only the orchestrator may own that consult"
     )
