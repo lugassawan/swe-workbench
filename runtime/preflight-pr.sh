@@ -18,7 +18,7 @@ FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,r
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-gh auth status >/dev/null || {
+bash "$SCRIPT_DIR/gh-timeout.sh" auth status >/dev/null || {
   echo "gh not authenticated. Run 'gh auth login'." >&2
   exit 1
 }
@@ -38,8 +38,8 @@ for _var in BASE HEAD_SHA AUTHOR_LOGIN STATE; do
   fi
 done
 
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name   -q .name)
+OWNER=$(bash "$SCRIPT_DIR/gh-timeout.sh" repo view --json owner -q .owner.login)
+REPO=$(bash "$SCRIPT_DIR/gh-timeout.sh" repo view --json name   -q .name)
 if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
   echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
   exit 1
