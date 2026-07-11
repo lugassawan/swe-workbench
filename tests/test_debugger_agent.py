@@ -1,5 +1,6 @@
-"""Structural tests for agents/debugger.md (closes #404)."""
+"""Structural tests for agents/debugger.md (closes #404, #498)."""
 
+import re
 from pathlib import Path
 
 import validate
@@ -95,4 +96,75 @@ def test_principle_clean_architecture_referenced():
     assert "swe-workbench:principle-clean-architecture" in body, (
         "agents/debugger.md must reference 'swe-workbench:principle-clean-architecture' "
         "for the placement fallback when sibling structure is incoherent"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Design-fork escalation (closes #498)
+# ---------------------------------------------------------------------------
+
+
+def test_design_flaw_rule_surfaces_not_consults():
+    """The design-flaw rule must use surface/output wording, not 'consult'."""
+    body = _read()
+    section = _section(body, "Absolute rules")
+    lines = section.splitlines()
+    design_flaw_line = next(
+        (ln for ln in lines if "design flaw" in ln.lower()), ""
+    )
+    assert design_flaw_line, "'## Absolute rules' must have a design-flaw rule"
+    assert "surface" in design_flaw_line.lower(), (
+        "the design-flaw rule must tell the agent to surface the fork in its "
+        "output, not to consult a peer subagent it has no tool access to"
+    )
+    assert "design fork" in design_flaw_line.lower(), (
+        "the design-flaw rule must name the concept 'design fork' so it lines "
+        "up with the Output-contract slot and the orchestrator-side contract"
+    )
+
+
+def test_design_flaw_rule_states_no_agent_tool():
+    """The design-flaw rule must state the debugger cannot consult subagents itself."""
+    body = _read()
+    section = _section(body, "Absolute rules")
+    lines = section.splitlines()
+    design_flaw_line = next(
+        (ln for ln in lines if "design flaw" in ln.lower()), ""
+    )
+    assert "`Agent`" in design_flaw_line or "Agent tool" in design_flaw_line, (
+        "the design-flaw rule must state the structural fact that the debugger "
+        "does not hold the Agent tool"
+    )
+    assert "cannot consult" in design_flaw_line.lower(), (
+        "the design-flaw rule must state the debugger cannot consult other "
+        "subagents itself — deciding/running a consult is the orchestrator's job"
+    )
+
+
+def test_output_contract_has_design_fork_slot():
+    """The Output contract must carry a 'Design fork' slot."""
+    body = _read()
+    section = _section(body, "Output contract")
+    assert "design fork" in section.lower(), (
+        "'## Output contract' must include a 'Design fork' line so orchestrators "
+        "know to look for a surfaced fork in the debugger's output"
+    )
+
+
+def test_debugger_never_names_senior_engineer_as_consult_target():
+    """Regression guard: debugger.md must not instruct itself to consult/invoke senior-engineer.
+
+    The debugger has no `Agent` tool and cannot invoke subagents. Naming
+    senior-engineer as something the debugger consults/invokes re-opens the
+    impossible worker->peer consult that issue #498 reports. Only the
+    orchestrator (commands/debug.md, SKILL.md) may name senior-engineer as a
+    consult target.
+    """
+    body = _read()
+    pattern = re.compile(r"(consult|invoke)s?\s+.{0,20}senior-engineer", re.IGNORECASE)
+    match = pattern.search(body)
+    assert match is None, (
+        f"agents/debugger.md must not tell the debugger to consult/invoke "
+        f"senior-engineer directly (found: {match.group(0)!r} if it did) — "
+        "the debugger has no Agent tool; only the orchestrator may own that consult"
     )
