@@ -52,6 +52,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Minimal fix (diff summary + what it deliberately does NOT touch + placement choice if a new type was introduced)
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")
+- Design fork (if any) — surfaced for the orchestrator; you have no `Agent` tool and do not consult subagents yourself
 
 ## Principle consultation
 
@@ -73,5 +74,5 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 - No fix without a failing test first.
 - No behavior change beyond what the failing test demands.
 - No "while I'm here" refactors — note them, defer to `/swe-workbench:refactor`.
-- If the root cause is a design flaw, say so; fix the symptom minimally and recommend design follow-up.
+- If the root cause is a design flaw, fix the symptom minimally and surface the design fork in your output for the orchestrator to act on. You do not hold the `Agent` tool and cannot consult other subagents yourself — flagging the fork is your responsibility; deciding and running any advisory consult is the orchestrator's.
 - If a fix genuinely requires a new type: (1) scan sibling source files — if empty/absent, apply `swe-workbench:principle-clean-architecture` layering directly; if coherent, match the observed convention; if incoherent, apply best practice via `swe-workbench:principle-clean-architecture`. (2) Note the placement choice in the Minimal-fix output line. (3) Never let placement reasoning widen the diff.
