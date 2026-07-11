@@ -45,7 +45,7 @@ If the rimba MCP server is active in the session, invoke its `conflict-check` to
 
 **Resolve strategy** from the invoking command into `SYNC_STRATEGY=merge|rebase` — default is **merge**; `--rebase` selects **rebase**. Keep `SYNC_STRATEGY` separate from `OPERATION` (Step 4): `OPERATION` means "conflict resolution currently in progress" (and is `none` on a clean sync — the common case), not "which strategy was used." Step 6's push branching reads `SYNC_STRATEGY`, never `OPERATION`.
 
-**Derive the task identifier** for rimba from `CURRENT_BRANCH` by stripping a known type prefix (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`) if present; otherwise use `CURRENT_BRANCH` as-is.
+**Derive the task identifier** for rimba from `CURRENT_BRANCH` by stripping a known type prefix (`feature/`, `bugfix/`, `fix/`, `hotfix/`, `docs/`, `test/`, `chore/`) if present — `fix/` is accepted as an input alias for hand-named branches even though rimba's canonical output prefix is `bugfix/`; otherwise use `CURRENT_BRANCH` as-is.
 
 **Provider detection** (mirror the rimba MCP → binary → shell ordering of `skills/workflow-development/SKILL.md`):
 

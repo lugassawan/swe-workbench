@@ -190,11 +190,13 @@ def test_when_to_invoke_references_sync_command():
 def test_step3_task_id_derivation_documents_known_prefixes():
     """Regression: the task-ID derivation logic must pin the exact prefix
     list so it can't silently drift from workflow-development's branch-prefix
-    taxonomy (feature/, bugfix/, hotfix/, docs/, test/, chore/)."""
+    taxonomy (feature/, bugfix/, hotfix/, docs/, test/, chore/), plus the
+    `fix/` input alias — accepted here for hand-named branches even though it
+    is not part of workflow-development's output taxonomy."""
     body = _body()
     step3 = body.split("### Step 3")[1].split("### Step 4")[0]
     assert "task identifier" in step3.lower()
-    for prefix in ("feature/", "bugfix/", "hotfix/", "docs/", "test/", "chore/"):
+    for prefix in ("feature/", "bugfix/", "fix/", "hotfix/", "docs/", "test/", "chore/"):
         assert f"`{prefix}`" in step3, f"Step 3 must document stripping the `{prefix}` prefix"
 
 
