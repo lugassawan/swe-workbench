@@ -82,7 +82,7 @@ Detect the host repo's branch convention via 3-tier probe. **Tier 1:** run `git 
 
 **Current-branch evaluation:**
 - `main`/`master` → warn: "You're on `main`. Switch to a feature branch first."
-- `worktree-*` pattern (EnterWorktree-mangled) → non-conforming; pointer: "Use `rimba add <task> [--bugfix|--hotfix|--docs|--test|--chore]` for canonical prefixes (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`)." Stop evaluation here; do not offer a rename.
+- `worktree-*` pattern (EnterWorktree-mangled) → non-conforming; pointer: "Use `rimba add <task> [--bugfix|--fix|--hotfix|--docs|--test|--chore]` for canonical prefixes (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`); `--fix` is an alias for `--bugfix` — both produce `bugfix/`." Stop evaluation here; do not offer a rename.
 - Mismatch with detected convention → offer rename (see below). Matches → silent.
 
 **Rename offer:** Before `git branch -m`, check safety: `git rev-parse @{upstream} 2>/dev/null` (exit 0 = already pushed / has upstream); `gh pr view --json state` (open PR check). When pushed or open PR → suggest-only (print compliant name, skip rename). Otherwise call `AskUserQuestion` with **Rename** (`git branch -m <current> <compliant>`) / **Keep as-is** options.

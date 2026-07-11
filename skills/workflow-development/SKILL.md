@@ -123,7 +123,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 | Work type | rimba flag | Branch prefix | Commit-tag |
 |---|---|---|---|
 | New feature *(default)* | *(none)* | `feature/<task>` | `[feat]` |
-| Bug fix | `--bugfix` | `bugfix/<task>` | `[fix]` |
+| Bug fix | `--bugfix` (alias `--fix`) | `bugfix/<task>` | `[fix]` |
 | Hotfix | `--hotfix` | `hotfix/<task>` | `[hotfix]` |
 | Documentation | `--docs` | `docs/<task>` | `[docs]` |
 | Tests | `--test` | `test/<task>` | `[test]` |

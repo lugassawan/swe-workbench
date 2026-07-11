@@ -123,6 +123,7 @@ def test_worktree_mangled_pattern_guard():
     1. 'worktree-' pattern is explicitly mentioned.
     2. 'rimba' is referenced as the canonical branch-creation tool.
     3. All six canonical rimba prefixes are listed: feature/, bugfix/, hotfix/, docs/, test/, chore/.
+    4. The '--fix' flag alias for '--bugfix' is listed alongside the other flags.
     """
     body = SKILL_PATH.read_text()
     section = _section_body(body, BRANCH_SECTION_HEADING)
@@ -140,6 +141,10 @@ def test_worktree_mangled_pattern_guard():
         assert prefix in section, (
             f"Canonical rimba prefix '{prefix}' must be listed in the branch section"
         )
+
+    assert "--fix" in section, (
+        "Branch section's rimba flag list must include '--fix' (alias for '--bugfix')"
+    )
 
 
 # ---------------------------------------------------------------------------
