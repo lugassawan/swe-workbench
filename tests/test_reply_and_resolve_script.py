@@ -11,6 +11,7 @@ Behavioral paths under test:
   - Missing COMMENT_DATABASEID when REPLY_BODY set: exit 1, error on stderr, gh not called
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -230,9 +231,16 @@ def test_body_flag_is_lowercase_f_not_uppercase_f():
     reviewer's handle. The recording gh stub used elsewhere in this file only
     logs "$1 $2" (sub-command + URL), not flags, so it can't catch a regression
     here — this test reads the script source directly instead.
+
+    Call sites go through the gh-timeout.sh wrapper (issue #504), so the
+    literal substring "gh api" no longer appears on these lines — match the
+    wrapper invocation pattern instead.
     """
     text = SCRIPT.read_text()
-    body_lines = [ln for ln in text.splitlines() if "body=" in ln and "gh api" in ln]
+    body_lines = [
+        ln for ln in text.splitlines()
+        if "body=" in ln and re.search(r'gh-timeout\.sh"\s+api\b', ln)
+    ]
     assert len(body_lines) == 2, f"expected exactly 2 gh api body= call sites, found {len(body_lines)}: {body_lines}"
     for ln in body_lines:
         assert "-f body=" in ln, f"expected -f body= (raw string), got: {ln!r}"

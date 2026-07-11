@@ -5,6 +5,7 @@ set -euo pipefail
 PR="${1:?Usage: fetch-pr.sh <PR> <out_path> <json_fields>}"
 OUT="${2:?Usage: fetch-pr.sh <PR> <out_path> <json_fields>}"
 FIELDS="${3:?Usage: fetch-pr.sh <PR> <out_path> <json_fields>}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$(dirname "$OUT")"
-gh pr view "$PR" --json "$FIELDS" > "$OUT" || { echo "PR #$PR not found or not accessible." >&2; exit 1; }
+bash "$SCRIPT_DIR/gh-timeout.sh" pr view "$PR" --json "$FIELDS" > "$OUT" || { echo "PR #$PR not found or not accessible." >&2; exit 1; }
 [ -s "$OUT" ] || { echo "PR #$PR returned empty JSON." >&2; exit 1; }
