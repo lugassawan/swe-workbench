@@ -36,18 +36,38 @@ extract_top_level() {
   ' | sort -u
 }
 
+# ── All-packages extractor ─────────────────────────────────────────────────
+# Same package set, but ignores the -r *.txt predicate — every pinned
+# package (top-level or transitive) is included.
+
+extract_all_packages() {
+  awk '
+    /^[A-Za-z0-9._-]+==/ {
+      name = $1
+      sub(/==.*/, "", name)
+      if (name != "") print name
+    }
+  ' | sort -u
+}
+
 # ── Per-lockfile check ─────────────────────────────────────────────────────
 
 failed=0
 
 for lock in "$@"; do
   # Base set: HEAD content (pre-regen, pre-commit).
+  # NOTE: baseline is HEAD, not main — on a `synchronize` after the bot has
+  # already committed a regen to this branch, a transitive package warned on
+  # in an earlier push won't re-warn. Acceptable: this signal is non-blocking.
   # When the lockfile is new (absent from HEAD), every package is treated as an
   # addition — this is intentional; a new lockfile always requires human review.
   if git cat-file -e "HEAD:${lock}" 2>/dev/null; then
-    base=$(git show "HEAD:${lock}" | extract_top_level)
+    base_content=$(git show "HEAD:${lock}")
+    base=$(printf '%s\n' "${base_content}" | extract_top_level)
+    base_all=$(printf '%s\n' "${base_content}" | extract_all_packages)
   else
     base=""
+    base_all=""
   fi
 
   # New set: working-tree content (post-regen).
@@ -57,6 +77,7 @@ for lock in "$@"; do
     continue
   fi
   new=$(extract_top_level < "${lock}")
+  new_all=$(extract_all_packages < "${lock}")
 
   # Additions: packages in new that are absent from base.
   # Filter empty lines so an empty base doesn't false-positive.
@@ -70,6 +91,29 @@ for lock in "$@"; do
       echo "  ${pkg}" >&2
     done <<< "${added}"
     failed=1
+  fi
+
+  # Transitive additions: new packages (any provenance) minus new top-level
+  # additions already reported above. Non-blocking — surfaced for visibility
+  # only, so the Dependabot auto-commit step keeps running.
+  added_all=$(comm -13 \
+    <(printf '%s\n' "${base_all}" | grep -v '^$') \
+    <(printf '%s\n' "${new_all}"  | grep -v '^$'))
+  added_transitive=$(comm -23 \
+    <(printf '%s\n' "${added_all}" | grep -v '^$') \
+    <(printf '%s\n' "${added}"     | grep -v '^$'))
+
+  if [[ -n "${added_transitive}" ]]; then
+    # `paste -d` treats a multi-char delimiter as a per-gap cycling list, not a
+    # joint string (e.g. `paste -sd ', '` on 3 items yields "a,b c", not
+    # "a, b, c") — join on a single char, then expand to ", " afterwards.
+    names=$(paste -sd ',' - <<< "${added_transitive}")
+    names=${names//,/, }
+    echo "::warning::${lock}: new transitive package(s) pinned — review: ${names}"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      echo "- ⚠️ \`${lock}\`: new transitive package(s) pinned — review: ${names}" \
+        >> "${GITHUB_STEP_SUMMARY}"
+    fi
   fi
 done
 

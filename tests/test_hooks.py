@@ -75,6 +75,7 @@ class TestRmRfBlocker:
         # same separator alphabet as the grep detector (issue #501)
         "echo hi\nrm -rf ~",
         "echo hi\trm -rf /",
+        "true\trm -rf /",
         "true;\nrm -Rf $HOME",
         # comment-strip must run BEFORE the newline fold, else an early
         # comment on line 1 would swallow a destructive rm on line 2
@@ -112,6 +113,8 @@ class TestRmRfBlocker:
         "rm -r ./dist",
         "rm -rf /UsersHome",
         "rm -rf /homestead",
+        "echo hi\nrm -rf ./build",
+        "true\trm -rf ./build",
     ])
     def test_allowed(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)

@@ -15,6 +15,13 @@ import pytest
 # suppresses commit.gpgsign so tests don't fail on machines with GPG signing
 # enabled in ~/.gitconfig (which GIT_CONFIG_NOSYSTEM does not cover).
 #
+# GITHUB_STEP_SUMMARY is also stripped: GitHub Actions sets it for every step
+# of a job, not just steps that opt in. Without stripping it, tests that spawn
+# scripts writing to that path (e.g. check-lockfile-additions.sh) would leak
+# fabricated content into the real pytest job's Job Summary when this suite
+# runs in CI. Tests that want to exercise that write path opt back in via
+# env={**_CLEAN_ENV, "GITHUB_STEP_SUMMARY": str(tmp_file)}.
+#
 # Snapshot: built once from os.environ at pytest collection time. Session-scoped
 # fixtures that mutate GIT_* vars after import will not be reflected here.
 #
@@ -22,7 +29,11 @@ import pytest
 #   subprocess.run([...], env=_CLEAN_ENV, ...)
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
 _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
-    {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("GIT_") and k != "GITHUB_STEP_SUMMARY"
+    }
     | {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "T",
