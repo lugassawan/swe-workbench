@@ -14,6 +14,7 @@ RUNTIME_SCRIPTS = [
     "clean-state-files.sh",
     "doctor.sh",
     "fetch-pr.sh",
+    "gh-timeout.sh",
     "preflight-pr.sh",
     "reply-and-resolve.sh",
     "sync-pr-metadata.sh",

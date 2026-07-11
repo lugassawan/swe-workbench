@@ -71,6 +71,8 @@ class TestRmRfBlocker:
         "ls;rm -rf /",
         "ls;rm -rf /Users/foo",
         "ls&&rm -rf /home/foo",
+        "echo hi\nrm -rf ~",
+        "true\trm -rf /",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -91,6 +93,8 @@ class TestRmRfBlocker:
         "rm -r ./dist",
         "rm -rf /UsersHome",
         "rm -rf /homestead",
+        "echo hi\nrm -rf ./build",
+        "true\trm -rf ./build",
     ])
     def test_allowed(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)

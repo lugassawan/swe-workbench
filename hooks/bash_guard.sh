@@ -19,8 +19,9 @@ if ! cmd=$(jq -r '.tool_input.command // ""'); then
   exit 2
 fi
 
-# Normalise shell separators to spaces so rm/git after ; | & are still detected.
-_norm=$(printf '%s' "$cmd" | tr ';|&' '   ')
+# Normalise shell separators (incl. newline/tab) to spaces so rm/git after
+# ; | & ␊ ␉ are still detected.
+_norm=$(printf '%s' "$cmd" | tr ';|&\n\t' '     ')
 
 case "$_norm" in
   rm\ *|*\ rm\ *|*\(*rm\ *|*git*) ;;

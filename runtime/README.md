@@ -19,6 +19,7 @@ the swe-workbench plugin and are invoked at runtime by skills, commands, and age
 | `clean-state-files.sh` | Safe `rm -f` for per-invocation `/tmp` state files |
 | `doctor.sh` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) |
 | `fetch-pr.sh` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
+| `gh-timeout.sh` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |
 | `preflight-pr.sh` | Consolidated pre-flight for PR-review skills: `gh auth` gate → `fetch-pr.sh` → emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as `printf %q`-quoted eval-able `KEY=VALUE` lines |
 | `reply-and-resolve.sh` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
 
