@@ -253,6 +253,14 @@ class TestSyncAndVerifyWatchdog:
             f"Full stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
         )
 
+        # TIMED_OUT=1 with HOOK_INTERRUPTED=0 (this case: no worktree was mid-
+        # deletion) must still surface a diagnostic — a killed checkout/pull is
+        # not silently indistinguishable from a fully successful sync.
+        assert "internal timeout" in result.stderr, (
+            f"A watchdog timeout with no hook interruption must still warn on "
+            f"stderr, got: {result.stderr!r}"
+        )
+
         # Confirm the stubbed sleep was actually reaped, not merely orphaned
         # after the parent exited (process-group kill, not just job kill).
         time.sleep(0.5)

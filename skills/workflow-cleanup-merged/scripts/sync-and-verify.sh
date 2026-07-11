@@ -50,7 +50,9 @@ pull_rc=0
 wait "$job" 2>/dev/null || pull_rc=$? # `wait; pull_rc=$?` on separate lines is unreachable under set -e
 set +m
 
-if [ "$TIMED_OUT" -eq 0 ] && [ "$pull_rc" -ne 0 ]; then
+if [ "$TIMED_OUT" -eq 1 ]; then
+  echo "sync-and-verify: internal timeout (${SYNC_TIMEOUT}s) killed the checkout/pull — $DEFAULT_BRANCH sync may be incomplete, verify manually" >&2
+elif [ "$pull_rc" -ne 0 ]; then
   echo "sync-main: best-effort failed — reconcile $DEFAULT_BRANCH manually (run git pull to see the underlying error)" >&2
 fi
 
