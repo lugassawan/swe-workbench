@@ -57,6 +57,41 @@ def test_skill_documents_all_five_branch_prefix_flags():
         )
 
 
+def test_skill_documents_fix_alias_for_bugfix():
+    """SKILL.md Phase 1 must document `--fix` as a flag alias for `--bugfix`.
+
+    rimba 1.10.0 added `--fix` as a documented alias for `--bugfix` (issue #495).
+    It must be surfaced as a flag alias only — never as a `fix/` branch prefix,
+    which rimba does not produce (see test_skill_no_longer_uses_wrong_feat_fix_prefixes).
+    """
+    body = SKILL.read_text()
+    phase1 = _phase1_section(body)
+
+    assert "--fix" in phase1, (
+        "SKILL.md Phase 1 must document the `--fix` alias for `--bugfix`"
+    )
+    assert "alias" in phase1.lower(), (
+        "SKILL.md Phase 1 must describe `--fix` as an alias, not a separate flag"
+    )
+
+
+def test_template_documents_fix_alias_for_bugfix():
+    """plan-workflow-section.md Phase 1 must document `--fix` as a flag alias for `--bugfix`.
+
+    Mirrors test_skill_documents_fix_alias_for_bugfix — the template is rendered
+    verbatim into every generated plan.
+    """
+    body = TEMPLATE.read_text()
+    phase1 = _phase1_section(body)
+
+    assert "--fix" in phase1, (
+        "plan-workflow-section.md Phase 1 must document the `--fix` alias for `--bugfix`"
+    )
+    assert "alias" in phase1.lower(), (
+        "plan-workflow-section.md Phase 1 must describe `--fix` as an alias, not a separate flag"
+    )
+
+
 def test_skill_no_longer_uses_wrong_feat_fix_prefixes():
     """SKILL.md Phase 1 must not claim rimba produces `feat/` or `fix/` prefixes.
 
