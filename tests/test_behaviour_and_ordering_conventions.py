@@ -6,6 +6,9 @@ Acceptance criteria:
   'public → protected → private' and mentions modifier-less languages (Go, Rust, or Python).
 - agents/reviewer.md Principle consultation list references swe-workbench:principle-ddd.
 - agents/code-impl.md Principle consultation list references swe-workbench:principle-ddd.
+
+Acceptance criteria (#329):
+- Every skills/language-*/SKILL.md has a '## Testing' section before '## Avoid'.
 """
 
 import re
