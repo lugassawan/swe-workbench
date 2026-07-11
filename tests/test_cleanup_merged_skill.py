@@ -132,6 +132,33 @@ def test_phase1_template_rimba_is_primary_not_peer():
         )
 
 
+def test_cleanup_merged_documents_hook_interrupted_recovery():
+    """SKILL.md must document the HOOK_INTERRUPTED signal and its recovery (issue #496).
+
+    sync-and-verify.sh now emits a second stdout field, HOOK_INTERRUPTED=0|1, detecting
+    a registered worktree whose directory is missing on disk (a timeout or external kill
+    landed mid-rm inside the rimba post-merge hook). The skill must document the signal,
+    the Failure Mode Table row, and the manual `git worktree prune` recovery — the script
+    is verify-only and never auto-remediates.
+    """
+    body = SKILL.read_text()
+
+    assert "HOOK_INTERRUPTED" in body, (
+        "SKILL.md must mention the HOOK_INTERRUPTED stdout field"
+    )
+
+    assert "## Failure Mode Table" in body, "Failure Mode Table section must exist"
+    failure_table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+
+    assert "HOOK_INTERRUPTED=1" in failure_table, (
+        "Failure Mode Table must have a row keyed on HOOK_INTERRUPTED=1"
+    )
+    assert "git worktree prune" in failure_table, (
+        "Failure Mode Table's partial-deletion row must name the recovery command "
+        "git worktree prune"
+    )
+
+
 def test_cleanup_merged_step5_delegates_to_delete_branches_script():
     """Step 5 must delegate branch deletion to delete-branches.sh via eval.
 
