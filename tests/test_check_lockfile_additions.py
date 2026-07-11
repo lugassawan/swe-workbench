@@ -198,6 +198,31 @@ class TestLockfileAdditionsGuard:
         assert "::warning::" in result.stdout
         assert "attrs" in result.stdout
 
+    def test_transitive_promoted_to_top_level_exits_one_no_warning(self, tmp_path):
+        """A package that was transitive-only in the base lock (# via pytest) and
+        becomes top-level in the new lock (# via -r ...) is a top-level addition
+        (hard-fail) and must not ALSO be double-reported as a transitive one."""
+        lock_file = _make_git_repo(
+            tmp_path,
+            _BASE_LOCK + "iniconfig==2.0.0\n    # via pytest\n",
+        )
+        lock_file.write_text(
+            _BASE_LOCK
+            + "iniconfig==2.0.0\n"
+            + "    # via -r tests/requirements.txt\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 1
+        assert "iniconfig" in result.stderr
+        assert "::warning::" not in result.stdout
+
     def test_multiple_transitive_additions_warn_with_readable_separator(self, tmp_path):
         """Two+ new transitive packages must be joined as a readable ", "-separated
         list, not garbled by a delimiter that cycles per-gap (e.g. paste -d ', ')."""
