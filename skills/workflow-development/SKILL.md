@@ -178,6 +178,8 @@ Commit logically grouped changes as you go. Never bundle unrelated changes.
 | Tests | Test files and test utilities |
 | Wiring | Integration, routing, CLI registration |
 
+**Design-fork consult contract.** Worker subagents hold no `Agent` tool (verified: 0 of 21) — none can consult a peer subagent itself, regardless of what an individual agent's prompt text says. `debugger` follows this contract: it surfaces a design fork in its output rather than attempting the consult. (Other worker prompts may still self-instruct to consult a subagent directly — that is a pre-existing instance of the same bug class, not a license to violate the tool grant; fix on sight.) The orchestrator (the top-level context activating this skill, which holds `Agent`) owns the `senior-engineer` consult: it reads the surfaced fork, invokes `senior-engineer` for the boundary/trade-off read, validates the resulting direction, and folds it back into the plan before continuing.
+
 ---
 
 ### Phase 3: Verify
