@@ -93,16 +93,28 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_pr_review_skill_cleanup_deletes_pr_json():
-    """Step 7 success-path subshell must invoke clean-state-files.sh with the PR state files."""
+    """Step 7 success-path must invoke clean-state-files.sh with this skill's own
+    preflight state file. The threads-cache file moved to workflow-pr-review-post's
+    own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove per-run state files"
+        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove its own per-run state file"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to clean-state-files.sh"
     )
-    assert "/tmp/swe-workbench-pr-review/${PR}-threads.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-threads.json to clean-state-files.sh"
+
+
+def test_post_core_cleanup_deletes_own_threads_json():
+    """workflow-pr-review-post owns its own threads-cache reap, distinct from either
+    consumer's preflight-state file (issue #499)."""
+    text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
+    assert "clean-state-files.sh" in text, (
+        "workflow-pr-review-post/SKILL.md must call runtime/clean-state-files.sh to reap its own state"
+    )
+    assert "/tmp/swe-workbench-pr-review/${PR}-post-threads.json" in text, (
+        "workflow-pr-review-post/SKILL.md must pass its own "
+        "/tmp/swe-workbench-pr-review/${PR}-post-threads.json to clean-state-files.sh"
     )
 
 

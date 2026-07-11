@@ -71,12 +71,43 @@ class TestReviewModeRouting:
             assert indices[a] < indices[b], \
                 f"Inference rule '{a}' must precede '{b}' in the document"
 
-    def test_pr_mode_caveat_documented(self):
+    def test_pr_mode_specialist_post_subflow_documented(self):
+        """Since #499, postable specialist modes offer to post via workflow-pr-review-post
+        (behind a confirmation gate) instead of always skipping inline-comment posting."""
         text = REVIEW_PATH.read_text(encoding="utf-8")
         lower = text.lower()
-        # Must assert both that inline-comment posting is mentioned AND that it is skipped
-        assert "inline-comment posting" in lower and "skipped" in lower, \
-            "PR-mode + --mode must document that inline-comment posting is skipped"
+        assert "postable" in lower, \
+            "PR-mode + --mode must document which specialist modes are postable"
+        assert "reply `post`" in lower, \
+            "PR-mode + --mode must document the post/skip confirmation prompt"
+        assert "swe-workbench:workflow-pr-review-post" in text, \
+            "PR-mode + --mode specialist sub-flow must invoke swe-workbench:workflow-pr-review-post"
+
+    def test_contributor_trust_signal_only_documented(self):
+        """contributor-trust stays advisory-only — its own branch must state this,
+        distinct from the postable specialist set."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        trust_idx = text.find("`--mode contributor-trust`")
+        assert trust_idx != -1, "PR-mode contributor-trust branch not found"
+        paragraph_end = text.find("\n\n", trust_idx)
+        paragraph = text[trust_idx:paragraph_end if paragraph_end != -1 else None]
+        assert "advisory" in paragraph.lower(), (
+            "the contributor-trust paragraph itself must document its advisory-only, "
+            "never-post contract"
+        )
+        assert "sub-flow below entirely" in paragraph or "skips the sub-flow" in paragraph, (
+            "the contributor-trust paragraph must state it skips the postable sub-flow entirely"
+        )
+
+    def test_ux_in_postable_specialist_set(self):
+        """ux must be enumerated in the postable specialist set (not just the mode table)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        postable_idx = text.find("postable specialist value")
+        assert postable_idx != -1, "postable specialist set sentence not found"
+        # ux must appear in the same sentence/line as the postable set enumeration
+        line_end = text.find("\n", postable_idx)
+        assert "ux" in text[postable_idx:line_end], \
+            "ux must be enumerated in the postable specialist set"
 
     def test_existing_pr_mode_preserved(self):
         """Backward-compat: bare integer arg → PR mode still works."""

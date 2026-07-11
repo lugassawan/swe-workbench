@@ -69,10 +69,11 @@ def test_followup_skill_delegates_to_reviewer_agent():
 
 
 def test_followup_skill_documents_stale_commit_retry():
-    """SKILL.md failure modes must document the stale commit_id all-422 retry."""
-    text = SKILL_MD.read_text()
+    """The shared posting core's failure modes must document the stale commit_id
+    all-422 retry (moved out of this skill by #499 — both consumers delegate here)."""
+    text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
     assert "headRefOid" in text or "HEAD_SHA mismatch" in text, (
-        "SKILL.md failure modes must document the stale commit_id retry: "
+        "workflow-pr-review-post/SKILL.md failure modes must document the stale commit_id retry: "
         "re-fetch HEAD_SHA via headRefOid when all POSTs return 422"
     )
 
@@ -113,16 +114,15 @@ def test_followup_skill_has_owner_repo_guard_clause():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_followup_skill_cleanup_deletes_followup_json():
-    """Step 7 success-path subshell must invoke clean-state-files.sh with the followup state files."""
+    """Step 7 success-path must invoke clean-state-files.sh with this skill's own
+    preflight state file. The threads-cache file moved to workflow-pr-review-post's
+    own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
-        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove per-run followup state files"
+        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove its own per-run state file"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}-followup.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-followup.json to clean-state-files.sh"
-    )
-    assert "/tmp/swe-workbench-pr-review/${PR}-followup-threads.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}-followup-threads.json to clean-state-files.sh"
     )
 
 

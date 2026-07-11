@@ -18,8 +18,12 @@ principle-clean-architecture, principle-ddd, principle-event-driven
 # both are invoked by reviewers on a specific PR number and both run the reviewer
 # agent against the PR diff. A prompt like "review pull request #123" legitimately
 # belongs to either skill — the distinction (first-pass vs re-check) is determined
-# by context the BM25 ranker cannot resolve.
-workflow-pr-review, workflow-pr-review-followup
+# by context the BM25 ranker cannot resolve. workflow-pr-review-post joins the group
+# because it is the shared posting/dedup/submit mechanism both orchestrators delegate
+# to — it necessarily reuses the same dedup/inline-comment/decision vocabulary, so a
+# prompt like "dedupe and post review findings to this PR" legitimately lands on any
+# of the three; only the caller (first-pass, re-check, or specialist sub-flow) differs.
+workflow-pr-review, workflow-pr-review-followup, workflow-pr-review-post
 
 # principle-data-modeling and principle-release-engineering both cover the
 # expand-contract pattern, but from different angles: principle-data-modeling owns

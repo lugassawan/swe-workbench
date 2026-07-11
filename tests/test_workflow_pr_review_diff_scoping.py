@@ -3,10 +3,13 @@
 """
 Tests for the diff-scoping leniency contract (issue #304).
 
-Three contract layers:
+Contract layers:
   Unit 1 — agents/reviewer.md  (scope classification, per-finding marker, verdict line)
-  Unit 2 — workflow-pr-review/SKILL.md and workflow-pr-review-followup/SKILL.md
-            (Step 4 instruction, Step 5 parse, Step 6 422 reroute, Step 7 flip + self-review gate)
+  Unit 2a — workflow-pr-review/SKILL.md and workflow-pr-review-followup/SKILL.md
+            (Step 4 instruction, Step 5 parse — consumer-owned, unchanged by #499)
+  Unit 2b — workflow-pr-review-post/SKILL.md (Step 2 422 reroute, Step 3 flip + self-review
+            gate, Step 4 lean body — moved here from both consumers by #499; pinned once
+            against the single shared core instead of twice against each duplicate)
 """
 
 import re
@@ -16,6 +19,7 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 REVIEWER_MD = ROOT / "agents" / "reviewer.md"
+POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
 SKILLS = [
     ROOT / "skills" / "workflow-pr-review" / "SKILL.md",
@@ -150,37 +154,34 @@ def test_step5_malformed_verdict_defaults_to_in_diff(skill_path):
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_flip_gate_conditions(skill_path):
-    """Step 7 flip must be gated on DECISION=COMMENT AND OUT-OF-DIFF-ONLY AND IS_SELF_REVIEW=false AND identity-known."""
-    text = skill_path.read_text()
+def test_post_core_flip_gate_conditions():
+    """The core's flip must be gated on DECISION=COMMENT AND OUT-OF-DIFF-ONLY AND IS_SELF_REVIEW=false AND identity-known."""
+    text = POST_CORE_SKILL.read_text()
     # All four conditions must appear near the flip block
     assert re.search(r'DECISION.*=.*COMMENT.*OUT-OF-DIFF-ONLY|OUT-OF-DIFF-ONLY.*DECISION.*=.*COMMENT', text), (
-        f"{skill_path.parent.name}: Step 7 flip must check DECISION=COMMENT AND BLOCKING_SCOPE=OUT-OF-DIFF-ONLY"
+        "workflow-pr-review-post: flip must check DECISION=COMMENT AND BLOCKING_SCOPE=OUT-OF-DIFF-ONLY"
     )
     assert re.search(r'IS_SELF_REVIEW.*false|IS_SELF_REVIEW.*=.*false', text), (
-        f"{skill_path.parent.name}: Step 7 flip must check IS_SELF_REVIEW=false (self-review AC#4)"
+        "workflow-pr-review-post: flip must check IS_SELF_REVIEW=false (self-review AC#4)"
     )
     assert re.search(r'IDENTITY_KNOWN', text), (
-        f"{skill_path.parent.name}: Step 7 flip must check IDENTITY_KNOWN=true to fail-safe "
+        "workflow-pr-review-post: flip must check IDENTITY_KNOWN=true to fail-safe "
         "when reviewer/author identity is unknown"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_flip_sets_decision_approve(skill_path):
+def test_post_core_flip_sets_decision_approve():
     """When flip fires, DECISION must be set to APPROVE."""
-    text = skill_path.read_text()
+    text = POST_CORE_SKILL.read_text()
     assert re.search(r"DECISION\s*=\s*APPROVE", text), (
-        f"{skill_path.parent.name}: Step 7 flip must set DECISION=APPROVE "
+        "workflow-pr-review-post: flip must set DECISION=APPROVE "
         "when all blocking findings are out-of-diff on a cross-author PR"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_self_review_regression_guard(skill_path):
+def test_post_core_self_review_regression_guard():
     """AC#4: self-review must never trigger the flip. IS_SELF_REVIEW=false must be in the flip condition."""
-    text = skill_path.read_text()
+    text = POST_CORE_SKILL.read_text()
     # The flip block must explicitly check IS_SELF_REVIEW = false.
     # We look for the condition in the if-block that also contains DECISION=APPROVE.
     flip_block = re.search(
@@ -188,73 +189,69 @@ def test_step7_self_review_regression_guard(skill_path):
         text, re.DOTALL
     )
     assert flip_block is not None, (
-        f"{skill_path.parent.name}: could not locate the DECISION=APPROVE flip block"
+        "workflow-pr-review-post: could not locate the DECISION=APPROVE flip block"
     )
     assert re.search(r'IS_SELF_REVIEW.*false', text), (
-        f"{skill_path.parent.name}: AC#4 — the DECISION=APPROVE flip block MUST reference "
+        "workflow-pr-review-post: AC#4 — the DECISION=APPROVE flip block MUST reference "
         "IS_SELF_REVIEW=false so self-reviews never auto-flip to APPROVE"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step6_out_of_diff_422_rerouted_to_summary(skill_path):
-    """Step 6: out-of-diff informational findings that 422 must be rerouted to summary, not cause abort."""
-    text = skill_path.read_text()
+def test_post_core_out_of_diff_422_rerouted_to_summary():
+    """Out-of-diff informational findings that 422 must be rerouted to summary, not cause abort."""
+    text = POST_CORE_SKILL.read_text()
     assert re.search(r"DEFERRED_INFORMATIONAL", text), (
-        f"{skill_path.parent.name}: Step 6 must accumulate out-of-diff 422'd findings "
+        "workflow-pr-review-post: must accumulate out-of-diff 422'd findings "
         "in DEFERRED_INFORMATIONAL for rerouting to the summary (not dropped or counted as stale-SHA)"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step6_stale_sha_detection_scoped_to_in_diff(skill_path):
+def test_post_core_stale_sha_detection_scoped_to_in_diff():
     """Stale-SHA (all 422) detection must apply only to in-diff findings, not out-of-diff 422s."""
-    text = skill_path.read_text()
+    text = POST_CORE_SKILL.read_text()
     assert re.search(r"(?i)in.diff.*422|stale.*in.diff|422.*in.diff", text), (
-        f"{skill_path.parent.name}: the stale-SHA / all-422 abort must be scoped to "
+        "workflow-pr-review-post: the stale-SHA / all-422 abort must be scoped to "
         "in-diff findings only — expected out-of-diff 422s must not trigger a false abort"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_deferred_informational_appended_to_summary(skill_path):
-    """When DEFERRED_INFORMATIONAL is non-empty, Step 7 must append an Informational section to summary."""
-    text = skill_path.read_text()
+def test_post_core_deferred_informational_appended_to_summary():
+    """When DEFERRED_INFORMATIONAL is non-empty, submit must append an Informational section to summary."""
+    text = POST_CORE_SKILL.read_text()
     assert re.search(r"(?i)Informational.*out-of-diff|out-of-diff.*Informational", text), (
-        f"{skill_path.parent.name}: Step 7 must append an '### Informational (out-of-diff)' "
+        "workflow-pr-review-post: must append an '### Informational (out-of-diff)' "
         "section to the summary when DEFERRED_INFORMATIONAL is non-empty, "
         "so no out-of-diff finding is silently dropped"
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_step7_lean_body_no_narrative(skill_path):
-    """Step 7 non-self-review body must use the lean form: no ## Review Summary, no
+def test_post_core_lean_body_no_narrative():
+    """The non-self-review body must use the lean form: no ## Review Summary, no
     'Detailed feedback in inline comments.', no NARRATIVE extraction variables."""
-    text = skill_path.read_text()
+    text = POST_CORE_SKILL.read_text()
     assert "## Review Summary" not in text, (
-        f"{skill_path.parent.name}: '## Review Summary' must not appear — the narrative "
+        "workflow-pr-review-post: '## Review Summary' must not appear — the narrative "
         "is fully removed; the review body carries only the decision + byline + informational notes."
     )
     assert "Detailed feedback in inline comments." not in text, (
-        f"{skill_path.parent.name}: 'Detailed feedback in inline comments.' must not appear — "
+        "workflow-pr-review-post: 'Detailed feedback in inline comments.' must not appear — "
         "this phrase belonged to the removed narrative branch."
     )
     assert "HAS_NARRATIVE" not in text, (
-        f"{skill_path.parent.name}: HAS_NARRATIVE variable must be removed along with the "
+        "workflow-pr-review-post: HAS_NARRATIVE variable must be removed along with the "
         "NARRATIVE extraction block."
     )
     assert "Narrative instruction" not in text, (
-        f"{skill_path.parent.name}: 'Narrative instruction' Step-4 bullet must be removed — "
+        "workflow-pr-review-post: 'Narrative instruction' Step-4 bullet must be removed — "
         "the reviewer is no longer instructed to emit a narrative section."
     )
     assert "$REVIEWER_OUTPUT" not in text, (
-        f"{skill_path.parent.name}: '$REVIEWER_OUTPUT' is a dangling reference left by the "
+        "workflow-pr-review-post: '$REVIEWER_OUTPUT' is a dangling reference left by the "
         "narrative removal (#391) — the lean body is built from $DECISION/$BYLINE only, not "
-        "from reviewer output. Remove the stale Step 7 prose that names it."
+        "from reviewer output. Remove the stale prose that names it."
     )
     assert "decision line + byline" in text, (
-        f"{skill_path.parent.name}: Step 7 prose must affirm the lean-body intent — "
+        "workflow-pr-review-post: submit prose must affirm the lean-body intent — "
         "'decision line + byline' directive is missing. Findings must not be restated in the body."
     )
 
@@ -273,14 +270,23 @@ def test_reviewer_no_review_summary_section():
     )
 
 
-@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
-def test_diff_scoping_contract_subsection_exists(skill_path):
-    """A ## Diff-scoping flip contract subsection must document the flip gate and self-review exclusion."""
-    text = skill_path.read_text()
-    assert re.search(r"(?i)Diff.scoping flip contract|diff.scoping", text), (
-        f"{skill_path.parent.name}: must contain a 'Diff-scoping flip contract' subsection "
-        "documenting the flip gate, self-review exclusion, identity-unknown fail-safe, "
+def test_diff_scoping_contract_documented_in_post_core():
+    """The core must document the diff-scoping flip gate and self-review exclusion."""
+    text = POST_CORE_SKILL.read_text()
+    assert re.search(r"(?i)diff.scoping", text), (
+        "workflow-pr-review-post: must document the diff-scoping flip contract — "
+        "the flip gate, self-review exclusion, identity-unknown fail-safe, "
         "and the out-of-diff 422 reroute"
+    )
+
+
+@pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
+def test_consumers_reference_post_core_instead_of_duplicating_contract(skill_path):
+    """The two consumers must delegate to the core, not restate its Step 6/7 mechanism."""
+    text = skill_path.read_text()
+    assert "swe-workbench:workflow-pr-review-post" in text, (
+        f"{skill_path.parent.name}: must invoke swe-workbench:workflow-pr-review-post "
+        "for dedup/posting/submit instead of duplicating that mechanism inline"
     )
 
 
