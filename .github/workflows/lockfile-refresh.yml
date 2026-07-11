@@ -1,0 +1,88 @@
+name: Lockfile Refresh
+
+on:
+  schedule:
+    # Weekly, offset a day from Dependabot's default Monday run (see
+    # .github/dependabot.yml) so a Monday transitive release has already
+    # landed on PyPI by the time this job re-resolves.
+    - cron: '0 6 * * 2'  # Tuesday 06:00 UTC
+  workflow_dispatch: {}
+
+# Default to least-privilege; the one job that writes elevates explicitly.
+permissions:
+  contents: read
+
+# A stable group (not keyed on github.ref, since schedule/workflow_dispatch
+# both resolve to the same ref) so overlapping runs queue instead of both
+# racing to push the same stable branch.
+concurrency:
+  group: lockfile-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh-lockfiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          # Pin explicitly: workflow_dispatch can be triggered from any branch via the
+          # GitHub UI, and we always want the drift check to run against main.
+          ref: main
+          persist-credentials: true
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Regenerate pip lockfiles
+        run: bash scripts/lock-pip-requirements.sh
+
+      - name: Guard against new top-level packages
+        # Keep this lockfile list in sync with the "Regenerate pip lockfiles" step above.
+        run: bash scripts/check-lockfile-additions.sh tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
+
+      - name: Check for an already-open refresh PR
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh pr list --head chore/lockfile-refresh --state open --json number --jq 'length')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, push, and open PR if lockfiles drifted
+        if: steps.existing_pr.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock; then
+            echo "Lockfiles are already up to date — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B chore/lockfile-refresh
+          git add tests/requirements.lock tests/release-requirements.lock tests/build-requirements.lock
+          git commit -m "[chore] Refresh pip lockfiles (transitive drift)"
+          git push --force origin chore/lockfile-refresh
+
+          # shellcheck disable=SC2016  # backticks below are markdown code spans, not command substitution
+          BODY=$(printf '%s\n' \
+            '## Summary' \
+            '- Scheduled drift check found one or more `tests/*.lock` files out of date against a transitive dependency release — a package pinned indirectly (not listed in any `tests/*-requirements.txt`) published a new version, which would otherwise silently fail the next unrelated PR'"'"'s `lockfile-check`.' \
+            '- Opened automatically by `.github/workflows/lockfile-refresh.yml`.' \
+            '' \
+            '## Test Plan' \
+            '- [x] `scripts/check-lockfile-additions.sh` passed — no new top-level packages.' \
+            '- [ ] `scripts/lock-pip-requirements.sh --check` will re-verify on this PR'"'"'s own `lockfile-check` run.' \
+            '- [ ]' \
+            '' \
+            'Issue: N/A — recurring automated lockfile drift, no specific issue')
+
+          gh pr create \
+            --title "[chore] Refresh pip lockfiles (transitive drift)" \
+            --body "$BODY"
