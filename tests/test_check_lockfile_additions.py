@@ -5,7 +5,9 @@ base lock), overwrites the working-tree lock to simulate a post-regen state,
 then runs the script via subprocess and asserts the exit code and output.
 
 The script reads HEAD:<lock> as the pre-regen baseline and compares top-level
-sets (packages whose # via block references -r *.txt).
+sets (packages whose # via block references -r *.txt). New top-level packages
+hard-fail (exit 1); new transitive packages (any other # via) are non-blocking
+and surfaced as a ::warning:: plus an optional $GITHUB_STEP_SUMMARY line.
 """
 
 import subprocess
@@ -152,7 +154,7 @@ class TestLockfileAdditionsGuard:
         assert result.returncode == 0, result.stderr
 
     def test_transitive_only_addition_exits_zero(self, tmp_path):
-        """A new package with # via <dep> (no -r) is transitive-only → exit 0."""
+        """A new package with # via <dep> (no -r) is transitive-only → exit 0, but warns."""
         lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
         lock_file.write_text(
             _BASE_LOCK
@@ -168,3 +170,73 @@ class TestLockfileAdditionsGuard:
             env=_CLEAN_ENV,
         )
         assert result.returncode == 0, result.stderr
+        assert "::warning::" in result.stdout
+        assert "attrs" in result.stdout
+
+    def test_transitive_and_top_level_addition_exits_one_and_warns(self, tmp_path):
+        """A new top-level package (hard-fail) alongside a new transitive package
+        (non-blocking warning) → exit 1 for the top-level addition, but the
+        transitive package is still named in a ::warning:: annotation."""
+        lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
+        lock_file.write_text(
+            _BASE_LOCK
+            + "requests==2.31.0\n"
+            + "    # via -r tests/requirements.txt\n"
+            + "attrs==23.1.0\n"
+            + "    # via pytest\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 1
+        assert "requests" in result.stderr
+        assert "::warning::" in result.stdout
+        assert "attrs" in result.stdout
+
+    def test_multiple_transitive_additions_warn_with_readable_separator(self, tmp_path):
+        """Two+ new transitive packages must be joined as a readable ", "-separated
+        list, not garbled by a delimiter that cycles per-gap (e.g. paste -d ', ')."""
+        lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
+        lock_file.write_text(
+            _BASE_LOCK
+            + "attrs==23.1.0\n"
+            + "    # via pytest\n"
+            + "iniconfig==2.0.0\n"
+            + "    # via pytest\n"
+        )
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "attrs, iniconfig" in result.stdout, result.stdout
+
+    def test_transitive_warning_written_to_step_summary(self, tmp_path):
+        """When GITHUB_STEP_SUMMARY is set, the transitive warning is also
+        appended there; when unset, the script still exits cleanly (set -u safe)."""
+        lock_file = _make_git_repo(tmp_path, _BASE_LOCK)
+        lock_file.write_text(
+            _BASE_LOCK
+            + "attrs==23.1.0\n"
+            + "    # via pytest\n"
+        )
+        summary_file = tmp_path / "step_summary.md"
+
+        result = subprocess.run(
+            ["bash", str(GUARD_SCRIPT), "tests/requirements.lock"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env={**_CLEAN_ENV, "GITHUB_STEP_SUMMARY": str(summary_file)},
+        )
+        assert result.returncode == 0, result.stderr
+        assert "attrs" in summary_file.read_text()
