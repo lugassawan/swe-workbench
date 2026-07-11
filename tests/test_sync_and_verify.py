@@ -11,8 +11,11 @@ Both were eval'd by the caller, causing "command not found" errors.
 This test pins the contract: stdout must be exactly one line.
 """
 
+import os
 import re
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -104,14 +107,18 @@ def _run_script(repo: Path, head_ref: str, default_branch: str = "main"):
     )
 
 
-def _assert_contract(result, expected: str) -> None:
+def _assert_contract(result, expected: str, hook_interrupted: str = "0") -> None:
     assert result.returncode == 0, (
         f"Script exited {result.returncode}\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
     lines = result.stdout.strip().splitlines()
-    assert lines == [f"WORKTREE_GONE={expected}"], (
-        f"Expected stdout=['WORKTREE_GONE={expected}'], got {lines!r}\n"
+    expected_lines = [
+        f"WORKTREE_GONE={expected}",
+        f"HOOK_INTERRUPTED={hook_interrupted}",
+    ]
+    assert lines == expected_lines, (
+        f"Expected stdout={expected_lines!r}, got {lines!r}\n"
         f"Full stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
     assert not SHA_PATTERN.search(result.stdout), (
@@ -166,6 +173,117 @@ class TestSyncAndVerifyNonMainDefaultBranch:
         )
         result = _run_script(git_repo_trunk, BRANCH, default_branch="trunk")
         _assert_contract(result, "1")
+
+
+class TestSyncAndVerifyHookInterruptedDetection:
+    """State-based detection (issue #496): a registered worktree whose directory
+    is missing on disk is the canonical signal that the rimba post-merge hook
+    (or a prior cleanup run) was interrupted mid-deletion — the worktree entry
+    and branch ref survive in .git, but the directory is gone from disk."""
+
+    def test_partial_deletion_detected(self, git_repo, tmp_path):
+        stray_path = tmp_path / "wt-stray"
+        subprocess.run(
+            ["git", "worktree", "add", str(stray_path), "-b", "stray-branch"],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        shutil.rmtree(stray_path)
+
+        result = _run_script(git_repo, BRANCH, default_branch="main")
+        _assert_contract(result, "0", hook_interrupted="1")
+
+
+class TestSyncAndVerifyWatchdog:
+    """The internal SYNC_TIMEOUT guard (issue #496) must reap a hung `git pull`
+    within the configured window — headless (no tty, no job control) — without
+    polluting stdout and without leaking the killed subprocess."""
+
+    def test_watchdog_kills_hung_pull_and_stays_clean(self, git_repo, tmp_path):
+        real_git = shutil.which("git")
+        assert real_git, "git must be resolvable on PATH for this test"
+
+        stub_dir = tmp_path / "stub_bin"
+        stub_dir.mkdir()
+        stub_git = stub_dir / "git"
+        marker = tmp_path / "pull_started"
+        stub_git.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "pull" ]; then\n'
+            f'  touch "{marker}"\n'
+            "  sleep 30\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n'
+        )
+        stub_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{stub_dir}{os.pathsep}{_CLEAN_ENV['PATH']}",
+            "SYNC_TIMEOUT": "1",
+        }
+
+        start = time.monotonic()
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
+        )
+        elapsed = time.monotonic() - start
+
+        assert marker.exists(), "stub git pull was never invoked — test is vacuous"
+        assert result.returncode == 0, (
+            f"Script exited {result.returncode}\n"
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+        assert elapsed < 10, (
+            f"watchdog (SYNC_TIMEOUT=1) should reap the hung pull well under "
+            f"10s, took {elapsed:.1f}s"
+        )
+
+        lines = result.stdout.strip().splitlines()
+        assert lines == ["WORKTREE_GONE=0", "HOOK_INTERRUPTED=0"], (
+            f"Expected clean two-line contract, got {lines!r}\n"
+            f"Full stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+        # Confirm the stubbed sleep was actually reaped, not merely orphaned
+        # after the parent exited (process-group kill, not just job kill).
+        time.sleep(0.5)
+        ps = subprocess.run(
+            ["pgrep", "-f", "sleep 30"], capture_output=True, text=True, env=_CLEAN_ENV
+        )
+        assert ps.returncode != 0, f"orphaned stub sleep process still running: {ps.stdout}"
+
+
+class TestSyncAndVerifySyncTimeoutValidation:
+    """A malformed SYNC_TIMEOUT must not silently disable the watchdog.
+
+    `[ "$elapsed" -ge "$SYNC_TIMEOUT" ]` errors on non-numeric input, which
+    evaluates as false under set -e inside an if condition — the loop would
+    never time out, reproducing the exact bug #496 exists to fix. The script
+    must fall back to the 90s default and warn on stderr instead.
+    """
+
+    def test_non_numeric_sync_timeout_falls_back_to_default(self, git_repo):
+        env = {**_CLEAN_ENV, "SYNC_TIMEOUT": "90s"}
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        _assert_contract(result, "0")
+        assert "invalid SYNC_TIMEOUT" in result.stderr, (
+            f"Expected a fallback warning on stderr, got: {result.stderr!r}"
+        )
 
 
 class TestSyncAndVerifyEvalSafety:
