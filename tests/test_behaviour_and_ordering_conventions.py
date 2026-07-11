@@ -6,10 +6,15 @@ Acceptance criteria:
   'public → protected → private' and mentions modifier-less languages (Go, Rust, or Python).
 - agents/reviewer.md Principle consultation list references swe-workbench:principle-ddd.
 - agents/code-impl.md Principle consultation list references swe-workbench:principle-ddd.
+
+Acceptance criteria (#329):
+- Every skills/language-*/SKILL.md has a '## Testing' section before '## Avoid'.
 """
 
 import re
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 
@@ -148,4 +153,35 @@ def test_code_impl_references_principle_ddd():
     assert "swe-workbench:principle-ddd" in body, (
         "agents/code-impl.md Principle consultation must reference 'swe-workbench:principle-ddd' "
         "so implementers place behaviour on entities and avoid anemic models"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AC 5 (#329) — every language-* skill has a '## Testing' section before '## Avoid'
+# ---------------------------------------------------------------------------
+
+LANGUAGE_SKILLS = sorted((ROOT / "skills").glob("language-*/SKILL.md"))
+
+
+@pytest.mark.parametrize("skill_path", LANGUAGE_SKILLS, ids=lambda p: p.parent.name)
+def test_language_skill_has_testing_section_before_avoid(skill_path):
+    """Every language-* skill must document a '## Testing' section ahead of '## Avoid'.
+
+    Exact heading match only: a prefix match would false-positive on
+    language-rust's '## Avoiding unnecessary clones' subsection.
+    """
+    lines = skill_path.read_text().splitlines()
+    stripped = [line.strip() for line in lines]
+
+    assert "## Testing" in stripped, (
+        f"{skill_path.relative_to(ROOT)} is missing a '## Testing' section"
+    )
+    assert "## Avoid" in stripped, (
+        f"{skill_path.relative_to(ROOT)} is missing an '## Avoid' section"
+    )
+
+    testing_index = stripped.index("## Testing")
+    avoid_index = stripped.index("## Avoid")
+    assert testing_index < avoid_index, (
+        f"{skill_path.relative_to(ROOT)}: '## Testing' must precede '## Avoid'"
     )

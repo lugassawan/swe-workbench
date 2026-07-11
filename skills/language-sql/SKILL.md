@@ -72,7 +72,28 @@ LIMIT 50;
 ## Tooling
 - **Format:** `sqlfluff fix --dialect <dialect> .` (replace `<dialect>` with e.g. `ansi`, `postgres`, `bigquery` — check `.sqlfluff` config or project README)
 - **Lint:** `sqlfluff lint --dialect <dialect> .`
-- **Test:** engine-specific (pgTAP for PostgreSQL, `dbt test` if using dbt)
+- **Test:** engine-specific (pgTAP for PostgreSQL, `dbt test` if using dbt) — see Testing below
+
+## Testing
+- pgTAP for in-database assertions (`results_eq`, `throws_ok`), run via `pg_prove`; `dbt test` for `unique`/`not_null`/`relationships` in transformation projects.
+- Wrap each test in `BEGIN … ROLLBACK` for isolation — no shared state or leftover rows between tests.
+- Seed deterministic fixtures per test; don't depend on ambient row counts or implicit ordering.
+- Assert on `EXPLAIN` output (index scan vs seq scan) to catch query-plan regressions.
+
+```sql
+BEGIN;
+SELECT plan(1);
+
+INSERT INTO users (id, active) VALUES (1, true), (2, true), (3, false);
+
+SELECT results_eq(
+    'SELECT count(*) FROM users WHERE active',
+    ARRAY[2::bigint]
+);
+
+SELECT * FROM finish();
+ROLLBACK;
+```
 
 ## Avoid
 - Schema changes without rollback or compatibility planning.
