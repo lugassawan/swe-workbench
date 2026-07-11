@@ -41,8 +41,14 @@ buffer="$cache_dir/$(date +%Y%m%d)-$agent_id.txt"
 # Append skill name. Dedup happens at flush time so this path stays fast.
 printf '%s\n' "$skill" >>"$buffer" 2>>"$cache_dir/.errors.log" || true
 
-# Opportunistic sweep: drop buffers older than 24h (-mmin +1440 is portable to
-# both GNU and BSD find and gives a true 24h sliding window).
-find "$cache_dir" -maxdepth 1 \( -name '*-*.txt' -o -name '.errors.log' \) -mmin +1440 -delete 2>/dev/null || true
+# Opportunistic sweep: drop buffers older than 24h. Throttled to ~1 in 50 calls
+# so this maintenance traversal doesn't ride every Skill dispatch on the telemetry
+# hot path (#501); orphans are still reaped within ~50 calls. SKILL_SWEEP_EVERY is
+# a test seam: 1 forces every call, 0 disables it deterministically (a large
+# divisor only makes firing improbable — RANDOM can still draw exactly 0).
+sweep_every="${SKILL_SWEEP_EVERY:-50}"
+if (( sweep_every > 0 )) && (( RANDOM % sweep_every == 0 )); then
+  find "$cache_dir" -maxdepth 1 \( -name '*-*.txt' -o -name '.errors.log' \) -mmin +1440 -delete 2>/dev/null || true
+fi
 
 exit 0
