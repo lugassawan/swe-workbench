@@ -98,8 +98,24 @@ Applies only to the postable specialist set (security, accessibility, dependency
 1. **Preflight:** reuse `runtime/preflight-pr.sh` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `workflow-pr-review`'s `${PR}.json` and `workflow-pr-review-followup`'s `${PR}-followup.json`, so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`.
 2. **Ephemeral worktree:** `rimba add pr:<N> --task "review-<mode>-<N>" --skip-deps --skip-hooks` when rimba is available. When rimba is absent, use the direct-git fallback from `workflow-pr-review` Step 2 but with the same mode-scoped naming as the rimba path — `WT="/tmp/swe-workbench-pr-review/<mode>-${PR}"`, branch `review-<mode>-${PR}` — so a specialist run's worktree/branch never collides with a general review's `pr-review-${PR}` or another specialist mode's own run.
 3. Run the specialist auditor against `git -C "$WT" diff "origin/$BASE"...HEAD`; print severity-organized findings (unchanged from the existing specialist output above).
-4. **Prompt:** "Reply `post` to submit these as inline comments + review decision, or `skip` to leave as-is." On `skip` (or any other reply), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — a `skip` is a clean exit, not an aborted-mid-scan state, so unlike `workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
-5. **On `post`:** normalize the auditor's documented finding rows into `FINDINGS[]` — `severity` and `body` (fold any extra columns, e.g. `test-reviewer`'s `Category`, into `body`) from every row; `path`/`line` from `File:Line` when present. Set `anchor=inline` when a `File:Line` exists AND the line falls on a `+` line (not a context line) in `git -C "$WT" diff "origin/$BASE"...HEAD`; `anchor=pr-level` otherwise — `dependency-auditor` rows have no `File:Line` and always anchor `pr-level`. Derive `DECISION`: at least one row with `severity ∈ {Critical, High}` → `COMMENT`; otherwise `APPROVE` (no footer to parse — these auditors don't emit one; this mirrors the general reviewer's own APPROVE-unless-Critical/High convention rather than flipping to `COMMENT` on any finding regardless of severity). Invoke `swe-workbench:workflow-pr-review-post` with:
+4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (matching the `AskUserQuestion` pattern `workflow-pr-review-post`'s own Step 5 CTA already uses, for the same reason: a clickable button beats "type a keyword"):
+
+   ```json
+   {
+     "questions": [{
+       "question": "Post these findings to PR #<N> as inline comments + a review decision?",
+       "header": "Post findings",
+       "multiSelect": false,
+       "options": [
+         { "label": "Post", "description": "Submit as inline comments + a review decision via workflow-pr-review-post (dedup-safe)." },
+         { "label": "Skip", "description": "Leave findings as printed above — nothing posted to the PR." }
+       ]
+     }]
+   }
+   ```
+
+   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — this is a clean exit, not an aborted-mid-scan state, so unlike `workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
+5. **On `Post`:** normalize the auditor's documented finding rows into `FINDINGS[]` — `severity` and `body` (fold any extra columns, e.g. `test-reviewer`'s `Category`, into `body`) from every row; `path`/`line` from `File:Line` when present. Set `anchor=inline` when a `File:Line` exists AND the line falls on a `+` line (not a context line) in `git -C "$WT" diff "origin/$BASE"...HEAD`; `anchor=pr-level` otherwise — `dependency-auditor` rows have no `File:Line` and always anchor `pr-level`. Derive `DECISION`: at least one row with `severity ∈ {Critical, High}` → `COMMENT`; otherwise `APPROVE` (no footer to parse — these auditors don't emit one; this mirrors the general reviewer's own APPROVE-unless-Critical/High convention rather than flipping to `COMMENT` on any finding regardless of severity). Invoke `swe-workbench:workflow-pr-review-post` with:
    - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
    - `DECISION` — as derived above.
    - `BLOCKING_SCOPE` — intentionally omitted; specialist auditors don't classify in-diff vs out-of-diff, so it falls back to the core's `IN-DIFF` fail-safe default and the diff-scoping flip never fires for specialist-mode reviews (unlike `workflow-pr-review`/`workflow-pr-review-followup`, which do set it from the reviewer agent's own classification).

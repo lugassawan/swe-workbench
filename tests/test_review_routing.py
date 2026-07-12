@@ -78,10 +78,32 @@ class TestReviewModeRouting:
         lower = text.lower()
         assert "postable" in lower, \
             "PR-mode + --mode must document which specialist modes are postable"
-        assert "reply `post`" in lower, \
-            "PR-mode + --mode must document the post/skip confirmation prompt"
         assert "swe-workbench:workflow-pr-review-post" in text, \
             "PR-mode + --mode specialist sub-flow must invoke swe-workbench:workflow-pr-review-post"
+
+    def test_specialist_subflow_post_confirmation_uses_ask_user_question(self):
+        """The post/skip confirmation must call AskUserQuestion with a valid schema, not a
+        free-text 'reply post/skip' prompt — matching the pattern workflow-pr-review-post's
+        own CTA already uses (PR #520 review feedback)."""
+        import json as _json
+        import re as _re
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "AskUserQuestion" in subflow_text, (
+            "Specialist post sub-flow must call AskUserQuestion for the post/skip confirmation — "
+            "not a free-text 'reply post/skip' prompt"
+        )
+        assert "reply `post`" not in subflow_text.lower(), (
+            "Specialist post sub-flow must not fall back to a free-text 'reply post' prompt"
+        )
+        json_match = _re.search(r"```json\s*(\{.*?\})\s*```", subflow_text, _re.DOTALL)
+        assert json_match, "Specialist post sub-flow must contain a fenced JSON block for AskUserQuestion"
+        parsed = _json.loads(json_match.group(1))
+        assert "questions" in parsed and parsed["questions"], (
+            "AskUserQuestion JSON block must have a non-empty 'questions' array"
+        )
 
     def test_contributor_trust_signal_only_documented(self):
         """contributor-trust stays advisory-only — its own branch must state this,
@@ -144,14 +166,14 @@ class TestReviewModeRouting:
             "Specialist post sub-flow must reap its own ${PR}-review-${MODE}.json via "
             "runtime/clean-state-files.sh"
         )
-        skip_idx = subflow_text.find("On `skip`")
-        post_idx = subflow_text.find("On `post`")
-        assert skip_idx != -1 and post_idx != -1, "skip/post branches not found"
+        skip_idx = subflow_text.find("On **Skip**")
+        post_idx = subflow_text.find("On `Post`")
+        assert skip_idx != -1 and post_idx != -1, "Skip/Post branches not found"
         assert "clean-state-files.sh" in subflow_text[skip_idx:post_idx], (
-            "The skip branch must reap its own state file before tearing down the worktree"
+            "The Skip branch must reap its own state file before tearing down the worktree"
         )
         assert "clean-state-files.sh" in subflow_text[post_idx:], (
-            "The post branch must reap its own state file before tearing down the worktree"
+            "The Post branch must reap its own state file before tearing down the worktree"
         )
 
     def test_existing_pr_mode_preserved(self):

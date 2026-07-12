@@ -197,12 +197,17 @@ def test_post_core_self_review_regression_guard():
     )
 
 
-def test_post_core_out_of_diff_422_rerouted_to_summary():
-    """Out-of-diff informational findings that 422 must be rerouted to summary, not cause abort."""
+def test_post_core_no_dead_out_of_diff_informational_mechanism():
+    """DEFERRED_INFORMATIONAL was removed as dead code (PR #520 round-3 review feedback):
+    anchor=inline is only ever assigned to findings already classified in-diff by both
+    callers' own anchor rules, so no row reaching the Step 2 inline loop can legitimately
+    422 as "out-of-diff" — the mechanism that rerouted such findings into an Informational
+    summary section belonged to the pre-#499 single-loop design and has no reachable path
+    in the anchor-partitioned refactor. Guards against reintroducing it."""
     text = POST_CORE_SKILL.read_text()
-    assert re.search(r"DEFERRED_INFORMATIONAL", text), (
-        "workflow-pr-review-post: must accumulate out-of-diff 422'd findings "
-        "in DEFERRED_INFORMATIONAL for rerouting to the summary (not dropped or counted as stale-SHA)"
+    assert "DEFERRED_INFORMATIONAL" not in text, (
+        "workflow-pr-review-post: DEFERRED_INFORMATIONAL is dead code under the anchor-based "
+        "design (anchor=inline guarantees in-diff) — do not reintroduce it"
     )
 
 
@@ -215,13 +220,14 @@ def test_post_core_stale_sha_detection_scoped_to_in_diff():
     )
 
 
-def test_post_core_deferred_informational_appended_to_summary():
-    """When DEFERRED_INFORMATIONAL is non-empty, submit must append an Informational section to summary."""
+def test_post_core_summary_has_no_informational_section():
+    """The core's Step 4 SUMMARY must NOT build an '### Informational (out-of-diff)' section
+    (PR #520 round-3 fix) — out-of-diff findings already get their own dedicated posting path
+    (the pr-level batch comment, Step 2), so there is nothing left to defer into the review body."""
     text = POST_CORE_SKILL.read_text()
-    assert re.search(r"(?i)Informational.*out-of-diff|out-of-diff.*Informational", text), (
-        "workflow-pr-review-post: must append an '### Informational (out-of-diff)' "
-        "section to the summary when DEFERRED_INFORMATIONAL is non-empty, "
-        "so no out-of-diff finding is silently dropped"
+    assert "Informational (out-of-diff)" not in text, (
+        "workflow-pr-review-post: must not build an Informational (out-of-diff) summary section — "
+        "that mechanism is dead now that out-of-diff findings post via the pr-level batch path instead"
     )
 
 

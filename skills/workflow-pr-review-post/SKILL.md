@@ -105,7 +105,7 @@ gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments" \
 `@`-expand it into a file read. See [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md).
 **Spot-check** any body sourced from a file: `gh api <endpoint>/{id} -q '.body'`.
 
-Track counts: `posted_inline=N`, `deduped=M`. Initialise `DEFERRED_INFORMATIONAL=""` before the loop. On HTTP 422: out-of-diff informational findings → `DEFERRED_INFORMATIONAL` (not stale-SHA; expected for context-line refs); in-diff findings on 422 → skip/log, stale-SHA counted (see Failure modes).
+Track counts: `posted_inline=N`, `deduped=M`. On HTTP 422: skip, log "skipped (line out of range)", count toward stale-SHA (see Failure modes) — `anchor=inline` is only ever assigned to findings already classified in-diff (both callers' anchor rules guarantee this before Step 2 runs), so no row reaching this loop is legitimately out-of-diff; a 422 here always means either a genuinely invalid line or a stale `commit_id`, never an expected context-line reference.
 
 ### PR-level findings (`anchor=pr-level`)
 
@@ -146,14 +146,14 @@ The review body is lean by design: decision line + byline (+ optional informatio
 
 ```bash
 BYLINE_FULL="${BYLINE} Posted ${posted_inline} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
-INFORMATIONAL_SECTION=""
-[ -n "$DEFERRED_INFORMATIONAL" ] && INFORMATIONAL_SECTION=$(printf '\n\n### Informational (out-of-diff)\n\n%s\n' "$DEFERRED_INFORMATIONAL")
 if [ "$IS_SELF_REVIEW" = false ]; then
-  SUMMARY=$(printf '**Review Decision: %s**\n\n%s%s\n' "$DECISION" "$BYLINE_FULL" "$INFORMATIONAL_SECTION")
+  SUMMARY=$(printf '**Review Decision: %s**\n\n%s\n' "$DECISION" "$BYLINE_FULL")
 else
   SUMMARY=""
 fi
 ```
+
+The lean body above has no out-of-diff carve-out section — that mechanism belonged to the pre-#499 single-loop design, where in-diff and out-of-diff findings shared one posting path. This refactor's `anchor` partition (Step 2) already gives out-of-diff findings their own dedicated path (the pr-level batch comment), so there is nothing left to defer into the review body.
 
 Submit when `IS_SELF_REVIEW = false` (GitHub blocks self-approval):
 - `APPROVE` → `gh pr review "$PR" --approve --body "$SUMMARY"`
@@ -203,7 +203,7 @@ A new finding `(path, line, body)` matches an existing thread `T` IFF: `T.path =
 
 | Failure | Signal | Action |
 |---|---|---|
-| Comment-post returns 422 (line out of range) | HTTP 422 | In-diff finding: skip, log "skipped (line out of range)", count toward stale-SHA. Out-of-diff informational: append to `DEFERRED_INFORMATIONAL`; do **not** count toward stale-SHA. |
+| Comment-post returns 422 (line out of range) | HTTP 422 | Skip, log "skipped (line out of range)", count toward stale-SHA — `anchor=inline` guarantees the line was in-diff when classified, so a 422 here is never an expected out-of-diff reference. |
 | All in-diff POSTs returned 422 (stale `commit_id`) | `posted == 0` AND every in-diff finding 422'd | Re-fetch `HEAD_SHA` via `gh pr view "$PR" --json headRefOid -q .headRefOid` and retry once. If still failing, abort with "HEAD_SHA mismatch — PR updated mid-review". |
 | All findings dedup-matched | `posted == 0` | Submit with body noting "no new findings — all previously raised". Decision unaffected. |
 | GraphQL pagination needed (PR > 100 threads) | `hasNextPage == true` | Loop with `after: endCursor`. Known v1 limit if not hit/implemented. |
