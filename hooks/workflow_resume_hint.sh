@@ -1,20 +1,50 @@
 #!/usr/bin/env bash
-# workflow_resume_hint.sh — SessionStart(compact) hook
+# workflow_resume_hint.sh — SessionStart(startup|resume|compact) hook
 #
-# Fires after auto-compaction. Detects a fresh, branch-matching workflow
-# checkpoint and injects a resume preamble so the model re-enters the
-# interrupted workflow at the correct phase.
+# Fires on cold launch, session continuation (--continue/--resume), and
+# auto-compaction. Detects a fresh, branch-matching workflow checkpoint and
+# injects a resume preamble so the model re-enters the interrupted workflow
+# at the correct phase. Wording is conditioned on the SessionStart `.source`
+# field so a non-compaction resume never falsely claims "this session was
+# compacted".
 #
 # Fail-open: exit 0 unconditionally. A broken hook must never block startup.
 
+# Sets advisory_lead/preamble_header/preamble_intro from $session_source.
+# Reads $session_source and writes into main()'s locals via dynamic scoping.
+set_framing() {
+    case "$session_source" in
+        compact)
+            advisory_lead="WORKTREE RE-ANCHOR ADVISORY: Compaction may have dropped EnterWorktree tracking"
+            preamble_header="[Workflow auto-resume after compaction]"
+            preamble_intro="This session was compacted."
+            ;;
+        resume)
+            advisory_lead="WORKTREE RE-ANCHOR ADVISORY: Resuming this session may have dropped EnterWorktree tracking"
+            preamble_header="[Workflow auto-resume after continuation]"
+            preamble_intro="This session was resumed/continued."
+            ;;
+        startup)
+            advisory_lead="WORKTREE RE-ANCHOR ADVISORY: This session is not EnterWorktree-anchored"
+            preamble_header="[Workflow auto-resume on startup]"
+            preamble_intro="This is a fresh session start."
+            ;;
+        *)
+            advisory_lead="WORKTREE RE-ANCHOR ADVISORY: EnterWorktree tracking may not be active"
+            preamble_header="[Workflow auto-resume]"
+            preamble_intro="This session resumed."
+            ;;
+    esac
+}
+
 # Shared advisory wording; $1 is the clause explaining why cwd is suspect.
-# Reads $root via dynamic scoping from main().
+# Reads $advisory_lead/$root via dynamic scoping from main().
 format_advisory() {
     local clause="$1"
     # Backticks below are literal markdown ticks, not command substitution.
     # shellcheck disable=SC2016
-    printf 'WORKTREE RE-ANCHOR ADVISORY: Compaction may have dropped EnterWorktree tracking even though your cwd (`%s`) %s. Call `EnterWorktree(path=%s)` to be safe — idempotent and harmless if you'"'"'re still anchored. A later `ExitWorktree` no-op is consistent with this, though not proof — cd-entry looks identical.' \
-        "$root" "$clause" "$root"
+    printf '%s even though your cwd (`%s`) %s. Call `EnterWorktree(path=%s)` to be safe — idempotent and harmless if you'"'"'re still anchored. A later `ExitWorktree` no-op is consistent with this, though not proof — cd-entry looks identical.' \
+        "$advisory_lead" "$root" "$clause" "$root"
 }
 
 # Nudges when cwd is a linked worktree but there's no usable checkpoint to
@@ -34,10 +64,13 @@ main() {
     local worktree_root real_wt_root real_live_root cmp_wt_root cmp_live_root reanchor_line
     local git_dir git_common_dir real_git_dir real_common_dir cmp_git_dir cmp_common_dir
     local is_linked_worktree
+    local session_source advisory_lead preamble_header preamble_intro
 
     input=$(cat)
     cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null) || return 0
     [ -n "$cwd" ] || cwd="$PWD"
+    session_source=$(printf '%s' "$input" | jq -r '.source // empty' 2>/dev/null) || session_source=""
+    set_framing
 
     # Resolve git root — absent in non-git directories, which is fine
     root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || return 0
@@ -153,9 +186,9 @@ $(format_advisory "is a linked worktree")
     fi
 
     # Build preamble
-    preamble="[Workflow auto-resume after compaction]
+    preamble="${preamble_header}
 
-This session was compacted. A workflow checkpoint was found for branch: ${branch}.
+${preamble_intro} A workflow checkpoint was found for branch: ${branch}.
 
 Skill:            ${skill}
 Current phase:    Phase ${phase}${phase_label:+ — ${phase_label}}${mode:+ (Mode ${mode})}
