@@ -1,0 +1,5 @@
+# Representative trigger prompts for comms-context
+pull the context from this Slack thread: https://acme.slack.com/archives/C123/p456 before I respond
+what's the status of PagerDuty incident #789, who's on call right now
+summarize the discussion in this Slack permalink before we make a decision
+check the timeline and participants for the PagerDuty page that fired last night
