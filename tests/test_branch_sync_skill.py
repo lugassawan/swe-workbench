@@ -318,6 +318,20 @@ class TestRedundancyAssessment:
         assert "ESCALATE" in step6
         assert "Remove" in step6 and "Keep" in step6 and "Edit" in step6
 
+    def test_step6_escalate_edit_path_commits_and_is_not_silently_dropped(self):
+        """Regression: an Edit resolution that only stages (never commits) is
+        invisible to Step 7's push and its commit-listing summary — a user
+        who picks Edit could believe the fix shipped when it's left dangling
+        in the index with no record."""
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        edit_clause = step6.split("Edit →")[1].split(".")[0] if "Edit →" in step6 else ""
+        assert edit_clause, "Step 6 must have an 'Edit →' clause describing the manual-edit outcome"
+        assert "commit" in edit_clause.lower(), (
+            "the Edit branch must commit its result — otherwise it never reaches Step 7's push "
+            "and is silently absent from the resolution summary"
+        )
+
     def test_step7_summary_lists_auto_applied_redundancy_commits(self):
         body = _body()
         step7 = body.split("### Step 7")[1].split("## ")[0]
@@ -328,6 +342,24 @@ class TestRedundancyAssessment:
         table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
         assert "unrelated histories" in table.lower()
         assert "CHECK_REDUNDANCY" in table or "redundancy-assessor" in table.lower()
+
+    def test_failure_mode_table_documents_step5_step6_add_add_overlap(self):
+        """A same-path add/add conflict is already interactively resolved in
+        Step 5 (with full keep-mine/keep-main context) — but it can still
+        surface as a Step 6 CANDIDATE. Document this narrow overlap rather
+        than leaving it a silent gap."""
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "step 5" in table.lower()
+        assert "already resolved" in table.lower() or "already-resolved" in table.lower()
+
+    def test_failure_mode_table_documents_missing_sentinel_for_enumerated_candidate(self):
+        """Symmetric case to the agent-invented-id row: the script enumerated
+        a candidate but the subagent never emitted a sentinel for it."""
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "no sentinel" in table.lower() or "missing sentinel" in table.lower() or "never emit" in table.lower()
+        assert "unresolved" in table.lower()
 
     def test_common_mistakes_documents_redundancy_guardrails(self):
         body = _body()

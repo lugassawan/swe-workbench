@@ -82,6 +82,47 @@ def _run_script(repo: Path, merge_base: str, pre_sync_head: str, default_ref: st
     )
 
 
+class TestRedundancyScopePostMerge:
+    """Regression: Step 6 calls this script AFTER Step 3's mechanical sync has
+    already merged main into the branch — the working tree at that point
+    contains BOTH the candidate and its main-side counterpart. The refs guard
+    must not count a candidate's own MAIN_ADD counterpart as a "reference";
+    otherwise a genuine whole-file duplicate always shows refs>0 and can
+    never reach the AUTO-APPLY tier it exists to enable."""
+
+    def test_refs_excludes_main_counterpart_after_actual_merge(self, tmp_path):
+        ctx = _build_repo(
+            tmp_path,
+            branch_adds={"utils/foo.sh": "echo foo\n"},
+            main_adds={"lib/foo.sh": "echo foo\n"},
+        )
+        _run("git", "merge", "-q", "main", "-m", "merge", cwd=ctx["repo"])
+
+        result = _run_script(ctx["repo"], ctx["merge_base"], ctx["pre_sync_head"])
+
+        assert result.returncode == 0, result.stderr
+        lines = result.stdout.strip().splitlines()
+        assert "CANDIDATE id=1 path=utils/foo.sh refs=0" in lines, lines
+
+    def test_refs_still_catches_genuine_third_party_reference_after_merge(self, tmp_path):
+        ctx = _build_repo(
+            tmp_path,
+            branch_adds={
+                "utils/foo.sh": "echo foo\n",
+                "consumer.sh": "source utils/foo.sh  # uses foo\n",
+            },
+            main_adds={"lib/foo.sh": "echo foo\n"},
+        )
+        _run("git", "merge", "-q", "main", "-m", "merge", cwd=ctx["repo"])
+
+        result = _run_script(ctx["repo"], ctx["merge_base"], ctx["pre_sync_head"])
+
+        lines = result.stdout.strip().splitlines()
+        assert any(
+            ln.startswith("CANDIDATE ") and "path=utils/foo.sh" in ln and "refs=1" in ln for ln in lines
+        ), lines
+
+
 class TestRedundancyScopeCandidates:
     def test_reports_candidate_with_zero_refs_and_main_add(self, tmp_path):
         ctx = _build_repo(
@@ -129,6 +170,21 @@ class TestRedundancyScopeCandidates:
         ids = sorted(int(ln.split("id=")[1].split()[0]) for ln in candidate_lines)
         assert ids == [1, 2]
         assert "CANDIDATES=2" in lines
+
+    def test_dotfile_candidate_does_not_collapse_stem_to_match_everything(self, tmp_path):
+        """Regression: basename(".env") stripped of its "extension" collapses
+        to an empty stem, turning the refs guard into `git grep -e ""`, which
+        matches every tracked file regardless of actual usage."""
+        ctx = _build_repo(
+            tmp_path,
+            branch_adds={"config/.env": "KEY=value\n"},
+            main_adds={},
+        )
+
+        result = _run_script(ctx["repo"], ctx["merge_base"], ctx["pre_sync_head"])
+
+        lines = result.stdout.strip().splitlines()
+        assert "CANDIDATE id=1 path=config/.env refs=0" in lines, lines
 
     def test_candidates_zero_when_branch_added_nothing(self, tmp_path):
         ctx = _build_repo(tmp_path, branch_adds={}, main_adds={"lib/foo.sh": "echo foo\n"})

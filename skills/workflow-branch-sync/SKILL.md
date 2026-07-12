@@ -134,14 +134,15 @@ Surfaces *functional* duplication a textual diff structurally cannot see — the
 2. **Gather** (deterministic):
    ```bash
    _REDUND_OUT="$("$_SCRIPTS/redundancy-scope.sh" "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
+   eval "$(grep -E '^(MERGE_BASE|CANDIDATES)=' <<<"$_REDUND_OUT")"
    ```
-   If the `CANDIDATES=0` line is present, report "no redundancy candidates found" and proceed to Step 7 — never dispatch the subagent for zero candidates.
+   Only the plain `MERGE_BASE=`/`CANDIDATES=` scalar lines are eval-safe and get eval'd here — the `CANDIDATE`/`MAIN_ADD` records are structured, not simple `KEY=VALUE`, and are parsed as data below, never eval'd. If `CANDIDATES=0`, report "no redundancy candidates found" and proceed to Step 7 — never dispatch the subagent for zero candidates.
 3. **Reason** (advisory, never mutates): dispatch the `swe-workbench:redundancy-assessor` subagent with the full `_REDUND_OUT` (every `CANDIDATE`/`MAIN_ADD` record) and the `MERGE_BASE..PRE_SYNC_HEAD` branch diff.
 4. **Validate before acting** — this is the load-bearing invariant of this step: the skill never trusts the subagent's free-text for an actionable path. Parse each `**Redundancy: AUTO-APPLY|ESCALATE|NONE** id=<n>` sentinel it emits, cross-check every `id` against the enumerated `CANDIDATE id=<n>` lines `redundancy-scope.sh` produced, and **reject any id the script did not enumerate** — never act on an agent-invented id. The actionable file path always comes from the script's own `CANDIDATE path=<p>` record for that id, never from the subagent's prose.
 5. **Tiered gate** — per validated finding:
    - `NONE` → no action.
    - `AUTO-APPLY` (script-confirmed whole-file candidate, `refs=0`) → `git rm <script-path>`, stage, then `git commit -m "[refactor] drop redundant <path>, superseded by main"`. List this commit explicitly in the Step 7 summary — that's the human-eyeball moment the never-auto-push gate exists for.
-   - `ESCALATE` → present the subagent's rationale, its recommendation (Remove / Keep-as-is / Edit-manually), and the superseding evidence; prompt the user for one of **Remove**, **Keep**, **Edit**. Remove → same `git rm` + `[refactor]` commit as AUTO-APPLY. Edit → open the file for the user, wait for confirmation, then stage whatever they leave behind. Keep → no-op.
+   - `ESCALATE` → present the subagent's rationale, its recommendation (Remove / Keep-as-is / Edit-manually), and the superseding evidence; prompt the user for one of **Remove**, **Keep**, **Edit**. Remove → same `git rm` + `[refactor]` commit as AUTO-APPLY. Edit → open the file for the user, wait for confirmation, then stage whatever they leave behind and commit with `git commit -m "[refactor] resolve redundant <path> (manual edit)"` — an Edit that only stages and never commits would never reach Step 7's push and would silently vanish from the summary below. Keep → no-op.
 6. The subagent never stages or commits anything itself — every mutation above is this skill's action, gated exactly like Step 5's resolve loop. Nothing here pushes; only Step 7 pushes, and only on explicit confirmation.
 
 ### Step 7 — Leave Local & Prompt Before Push
@@ -177,6 +178,8 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 7 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 | `--check-redundancy` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 6 with a one-line reason ("unrelated histories") — never crash, never treat this as a sync failure. |
 | `redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
+| `redundancy-scope.sh` enumerated a candidate but `redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
+| A branch and main both add the identical path (add/add conflict) | The path already appeared in Step 5's resolved `UNMERGED` list, yet also surfaces as a Step 6 `CANDIDATE` | Narrow overlap: the two steps can disagree since Step 6 reasons independently. Prefer the Step 5 resolution — Step 5's keep-mine/keep-main choice for a path already-resolved there takes precedence over a same-path Step 6 finding. |
 
 ## Common Mistakes
 

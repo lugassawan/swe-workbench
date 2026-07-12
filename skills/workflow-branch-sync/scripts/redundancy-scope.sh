@@ -9,20 +9,37 @@
 #   <merge-base> may be empty (unrelated-history repos) — the script then
 #   short-circuits with CANDIDATES=0 and no CANDIDATE/MAIN_ADD lines.
 #
-# Stdout contract (eval-safe KEY=VALUE, %q-quoted path fields):
+# Stdout contract: MERGE_BASE=<sha> and CANDIDATES=<n> are plain eval-safe
+# KEY=VALUE lines. CANDIDATE/MAIN_ADD lines are structured records, not
+# eval-safe as a whole — parse their fields; their path=%q value is quoted
+# only so it round-trips safely if a field is extracted and re-used as shell
+# input.
 #   MERGE_BASE=<sha>                        echoed back verbatim
 #   CANDIDATE id=<n> path=<p> refs=<count>  one per whole file the branch ADDED
 #                                            (git diff --diff-filter=A, renames
 #                                            excluded via -M so a relocated-but-
-#                                            unmodified file is never a candidate)
+#                                            unmodified file is never a candidate.
+#                                            Caveat: -M's similarity heuristic is
+#                                            content-based, not semantic — an
+#                                            unrelated add+delete in the same
+#                                            commit can score as a rename and
+#                                            silently skip CANDIDATE enumeration;
+#                                            accepted as a safe-direction miss,
+#                                            not a misfire.)
 #   CANDIDATES=<n>                          count of CANDIDATE lines above
 #   MAIN_ADD path=<p>                       one per file the default branch
 #                                            added or changed in the same window
 #
 # refs=<count> is an inbound-reference guard: how many other tracked files
-# mention the candidate's path-stem (basename without extension). refs=0 is
-# necessary (not sufficient) for the caller's auto-apply tier — any nonzero
-# refs must escalate to a human, never auto-apply.
+# mention the candidate's path-stem (basename without extension), EXCLUDING
+# the candidate itself and every MAIN_ADD path. The exclusion matters because
+# this script runs (via Step 6) after Step 3's mechanical sync has already
+# merged the default branch in — the working tree at that point contains
+# both the candidate and its main-side counterpart, and without the
+# exclusion a genuine whole-file duplicate always counts its own counterpart
+# as a "reference" and can never reach refs=0. refs=0 is necessary (not
+# sufficient) for the caller's auto-apply tier — any nonzero refs must
+# escalate to a human, never auto-apply.
 #
 # Exit non-zero only if the cwd is not inside a git work tree, or a required
 # argument is missing.
@@ -42,18 +59,33 @@ if [ -z "$MERGE_BASE" ]; then
   exit 0
 fi
 
+MAIN_ADD_PATHS=()
+while IFS=$'\t' read -r _status path; do
+  MAIN_ADD_PATHS+=("$path")
+done < <(git diff --name-status -M --diff-filter=AM "$MERGE_BASE".."$DEFAULT_REF")
+
 id=0
 while IFS=$'\t' read -r status path; do
   [ "$status" = "A" ] || continue
   id=$((id + 1))
   stem=$(basename "$path")
   stem="${stem%.*}"
-  refs=$(git grep -l --fixed-strings -e "$stem" -- ":(exclude,literal)$path" 2>/dev/null | wc -l | tr -d ' ') || true
+  [ -z "$stem" ] && stem=$(basename "$path")
+
+  exclude_args=(":(exclude,literal)$path")
+  if [ "${#MAIN_ADD_PATHS[@]}" -gt 0 ]; then
+    for main_path in "${MAIN_ADD_PATHS[@]}"; do
+      exclude_args+=(":(exclude,literal)$main_path")
+    done
+  fi
+  refs=$(git grep -l --fixed-strings -e "$stem" -- "${exclude_args[@]}" 2>/dev/null | wc -l | tr -d ' ') || true
   printf 'CANDIDATE id=%d path=%q refs=%d\n' "$id" "$path" "$refs"
 done < <(git diff --name-status -M "$MERGE_BASE".."$PRE_SYNC_HEAD")
 
 printf 'CANDIDATES=%d\n' "$id"
 
-while IFS=$'\t' read -r _status path; do
-  printf 'MAIN_ADD path=%q\n' "$path"
-done < <(git diff --name-status -M --diff-filter=AM "$MERGE_BASE".."$DEFAULT_REF")
+if [ "${#MAIN_ADD_PATHS[@]}" -gt 0 ]; then
+  for path in "${MAIN_ADD_PATHS[@]}"; do
+    printf 'MAIN_ADD path=%q\n' "$path"
+  done
+fi
