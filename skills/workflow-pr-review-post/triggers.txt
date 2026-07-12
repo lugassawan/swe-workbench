@@ -1,0 +1,5 @@
+# Trigger phrases for workflow-pr-review-post
+post these specialist review findings to the PR as inline comments and submit a decision
+take this normalized findings payload and dedupe, post, and submit the PR review
+post the dependency-auditor findings as a PR-level comment since there's no File:Line anchor
+submit APPROVE or COMMENT for this PR after posting the deduped inline comments

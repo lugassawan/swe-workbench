@@ -27,6 +27,7 @@ CLEANUP_MERGED_SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 SYNC_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sync-and-verify.sh"
 PR_REVIEW_SKILL = ROOT / "skills" / "workflow-pr-review" / "SKILL.md"
 PR_REVIEW_FOLLOWUP_SKILL = ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md"
+POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
 # Regex matching literal "main" used as a branch name in checkout/pull commands
 _LITERAL_MAIN_IN_GIT_CMD = re.compile(
@@ -224,25 +225,32 @@ def test_cleanup_merged_resolves_default_branch_dynamically():
 
 
 def test_pr_review_byline_and_summary_link_to_tool_repo():
-    """BYLINE and SUMMARY in both pr-review skills must link to the tool repo.
+    """BYLINE (both pr-review consumers) and SUMMARY (the shared posting core)
+    must link to the tool repo, not the PR's own repo.
 
     The bug: BYLINE used https://github.com/${OWNER}/${REPO} — the PR's repo —
     instead of the constant https://github.com/lugassawan/swe-workbench. The
     fallback SUMMARY had no URL at all (bare parenthetical "(swe-workbench)").
 
-    Assertions per file:
-    1. Templated URL ${OWNER}/${REPO} is gone — not present anywhere in the file.
+    Since #499, BYLINE is authored by each consumer (workflow-pr-review,
+    workflow-pr-review-followup) and handed to workflow-pr-review-post, which
+    builds $SUMMARY from it. So the templated-URL / bare-paren / canonical-link
+    checks apply to the consumers (they own BYLINE's content); the SUMMARY-
+    references-BYLINE check applies to the core (it owns SUMMARY construction).
+
+    Assertions:
+    1. Templated URL ${OWNER}/${REPO} is gone — not present anywhere in any file.
     2. No BYLINE= or SUMMARY= assignment contains a bare "(swe-workbench)" without
        a markdown link.
-    3. BYLINE carries the canonical markdown link (at least one occurrence).
-    4. The fallback SUMMARY reuses $BYLINE by variable reference, not by repeating
-       the URL string — i.e. SUMMARY="$BYLINE" is the expected form.
+    3. The canonical markdown link appears in each consumer's documented BYLINE.
+    4. The core's SUMMARY construction reuses $BYLINE (via $BYLINE_FULL) by
+       variable reference, not by repeating the URL string.
     """
     canonical = "[swe-workbench](https://github.com/lugassawan/swe-workbench)"
     buggy_url = "https://github.com/${OWNER}/${REPO}"
     bare_paren = re.compile(r'^(BYLINE|SUMMARY)=.*\(swe-workbench\)', re.MULTILINE)
 
-    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL):
+    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL, POST_CORE_SKILL):
         body = skill_path.read_text()
         skill_name = skill_path.parent.name
 
@@ -261,14 +269,23 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
             f"Replace with '[swe-workbench](https://github.com/lugassawan/swe-workbench)'."
         )
 
-        # 3. Canonical link must appear in BYLINE (at least once in the file)
+    # 3. Canonical link must appear in each consumer's documented BYLINE
+    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL):
+        body = skill_path.read_text()
         assert canonical in body, (
-            f"{skill_name}/SKILL.md does not contain the canonical link '{canonical}'.\n"
+            f"{skill_path.parent.name}/SKILL.md does not contain the canonical link '{canonical}'.\n"
             f"BYLINE must hardcode the tool URL, not interpolate the review-target repo."
         )
 
-        # 4. SUMMARY construction must reference "$BYLINE" (not duplicate the URL string)
-        assert re.search(r'SUMMARY=\$\(printf .+"\$BYLINE"', body, re.DOTALL), (
-            f"{skill_name}/SKILL.md SUMMARY construction does not reference \"$BYLINE\" in a printf call.\n"
-            f"Expected: SUMMARY=$(printf '...' ... \"$BYLINE\" ...) so the URL lives in one place."
-        )
+    # 4. The core's SUMMARY construction must reference $BYLINE via $BYLINE_FULL
+    # (not duplicate the URL string)
+    core_body = POST_CORE_SKILL.read_text()
+    assert re.search(r'BYLINE_FULL="\$\{BYLINE\}', core_body), (
+        f"{POST_CORE_SKILL.parent.name}/SKILL.md must derive BYLINE_FULL from \"${{BYLINE}}\" "
+        f"so the caller-supplied byline (and its hardcoded URL) flows through unchanged."
+    )
+    assert re.search(r'SUMMARY=\$\(printf .+"\$BYLINE_FULL"', core_body, re.DOTALL), (
+        f"{POST_CORE_SKILL.parent.name}/SKILL.md SUMMARY construction does not reference "
+        f"\"$BYLINE_FULL\" in a printf call.\n"
+        f"Expected: SUMMARY=$(printf '...' ... \"$BYLINE_FULL\" ...) so the URL lives in one place."
+    )

@@ -71,8 +71,28 @@ class TestRmRfBlocker:
         "ls;rm -rf /",
         "ls;rm -rf /Users/foo",
         "ls&&rm -rf /home/foo",
+        # newline/tab-separated rm — the fast-exit case gate must fold the
+        # same separator alphabet as the grep detector (issue #501)
         "echo hi\nrm -rf ~",
+        "echo hi\trm -rf /",
         "true\trm -rf /",
+        "true;\nrm -Rf $HOME",
+        # comment-strip must run BEFORE the newline fold, else an early
+        # comment on line 1 would swallow a destructive rm on line 2
+        "git push --force  # note\nrm -rf /",
+        # a trailing comment on the SAME line as rm must not hide it —
+        # the rm precedes the comment marker
+        "rm -rf / # cleanup",
+        # a '#' INSIDE a quoted string is not a real shell comment — the
+        # comment-strip must be quote-aware, or it silently truncates real
+        # command text after it (issue #501 review finding)
+        'echo "note # nope" && rm -rf ~',
+        # quote state must persist ACROSS an embedded newline inside a still-
+        # open quoted string (e.g. a multi-line -m commit message) — resetting
+        # quote tracking per-line would let a '#'-starting continuation line
+        # swallow real command text that follows on the SAME physical line
+        # (issue #501 re-review finding)
+        'git commit -m "line one\n# note" && rm -rf ~',
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -127,6 +147,10 @@ class TestForcePushBlocker:
         "git push --force origin HEAD:release/1.2",
         "git push --force origin release/1.2:release/1.2",
         "git push --force origin release/x:main",
+        # quote state spanning an embedded newline inside an open quote must
+        # not let a '#'-starting continuation line swallow the real force-push
+        # that follows on the same physical line (issue #501 re-review finding)
+        'git commit -m "line one\n# note" && git push --force origin main',
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -153,6 +177,162 @@ class TestForcePushBlocker:
         result = run_guard(guard_script, cmd)
         assert result.returncode == 0, (
             f"Expected exit 0 (ALLOWED) for {cmd!r}, got {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+
+# ──────────────────────────────────────────────
+# implicit-branch force-push — branch-aware (requires temp git repo)
+# ──────────────────────────────────────────────
+
+class TestImplicitForcePushBlocker:
+    """git push --force/-f with NO explicit refspec, relying on
+    push.default/upstream, from a protected branch (issue #501 Block 2).
+    """
+
+    @pytest.mark.parametrize("branch", ["main", "master", "release/2025-01"])
+    @pytest.mark.parametrize("cmd", ["git push --force", "git push -f"])
+    def test_blocked_on_protected_branch(self, guard_script, repo_on, branch, cmd):
+        repo = repo_on(branch)
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r} on branch {branch!r}, got exit "
+            f"{result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", ["git push --force", "git push -f"])
+    def test_allowed_on_feature_branch(self, guard_script, repo_on, cmd):
+        repo = repo_on("feature/x")
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {cmd!r} on feature/x, got exit "
+            f"{result.returncode}\nstderr: {result.stderr!r}"
+        )
+
+    def test_explicit_nonprotected_refspec_still_allowed(self, guard_script, repo_on):
+        """An explicit non-protected refspec must not regress — Block 1
+        already owns explicit protected refspecs, Block 2 only fires when
+        no refspec is present at all.
+        """
+        repo = repo_on("main")
+        result = run_guard(guard_script, "git push --force origin feat", cwd=str(repo))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+    def test_trailing_comment_false_positive_still_allowed(self, guard_script):
+        """A protected token in a trailing shell comment must not over-block
+        (no repo fixture needed — this never reaches the branch check).
+        """
+        result = run_guard(guard_script, "git push -f origin feat # rebased onto main")
+        assert result.returncode == 0, (
+            f"Expected ALLOWED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+    def test_quoted_hash_does_not_hide_implicit_force_push(self, guard_script, repo_on):
+        """A '#' inside a quoted string (e.g. a commit message referencing an
+        issue number) must not be treated as a comment — it must not hide a
+        chained implicit force-push from a protected branch.
+        """
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script, 'echo "see issue #501" && git push --force', cwd=str(repo)
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_chained_nonforce_push_does_not_hide_forced_push(self, guard_script, repo_on):
+        """An explicit, innocuous push chained BEFORE an implicit force-push
+        must not cause Block 2 to inspect the wrong invocation and miss the
+        dangerous one.
+        """
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script, "git push origin feature && git push --force", cwd=str(repo)
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_tab_separated_prefix_does_not_hide_forced_push(self, guard_script, repo_on):
+        """A tab-separated command prefix before the force-push must not leak
+        into the isolated push invocation and miscount positionals.
+        """
+        repo = repo_on("main")
+        result = run_guard(guard_script, "echo hi\tgit push --force", cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_separate_word_push_option_does_not_hide_implicit_force_push(
+        self, guard_script, repo_on
+    ):
+        """A separate-word push option (`-o ci.skip`) must not be miscounted
+        as the first positional (remote) — that would let the real remote
+        token flip has_refspec and silently allow the implicit force-push
+        (senior-engineer consult, issue #501).
+        """
+        repo = repo_on("main")
+        result = run_guard(guard_script, "git push -o ci.skip --force origin", cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_separate_word_push_option_repeated_still_blocked(self, guard_script, repo_on):
+        """Multiple unrecognized separate-word flags must each consume their
+        own value token, not accumulate into a false explicit-refspec read.
+        """
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "git push -o ci.skip -o merge_request.create --force origin",
+            cwd=str(repo),
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_separate_word_push_option_with_explicit_branch_still_allowed(
+        self, guard_script, repo_on
+    ):
+        """An explicit remote+branch after a separate-word option must still
+        count as an explicit refspec — the consume-next fix must not
+        over-block a genuinely explicit, non-protected destination.
+        """
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "git push -o ci.skip --force origin feat-branch",
+            cwd=str(repo),
+        )
+        assert result.returncode == 0, (
+            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+
+    @pytest.mark.parametrize("flag", ["-u", "--set-upstream", "-d", "--delete"])
+    def test_known_boolean_push_flag_does_not_over_block_explicit_refspec(
+        self, guard_script, repo_on, flag
+    ):
+        """A common boolean-only push flag (-u/--set-upstream/-d/--delete)
+        must not be mistaken for a value-taking flag — that would swallow the
+        real remote token and misclassify an explicit, non-protected refspec
+        as implicit, over-blocking legitimate work (re-review finding).
+        """
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script, f"git push {flag} origin feature-branch --force", cwd=str(repo)
+        )
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for flag {flag!r}, got exit {result.returncode}\n"
             f"stderr: {result.stderr!r}"
         )
 
