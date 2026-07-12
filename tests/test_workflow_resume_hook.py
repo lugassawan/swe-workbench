@@ -1,9 +1,10 @@
-"""Tests for hooks/workflow_resume_hint.sh — SessionStart compact hook.
+"""Tests for hooks/workflow_resume_hint.sh — SessionStart(startup|resume|compact) hook.
 
 Each test invokes hooks/workflow_resume_hint.sh directly with a JSON payload on
-stdin, mirroring how Claude Code calls the SessionStart hook after auto-compaction.
-Exit 0 always (fail-open). Injection only when a fresh, branch-matching v1 state
-file exists.
+stdin, mirroring how Claude Code calls the SessionStart hook on cold launch,
+continuation, or auto-compaction. Exit 0 always (fail-open). Injection only when
+a fresh, branch-matching v1 state file exists (or, for the standalone advisory,
+when cwd is a linked worktree).
 """
 
 import json
@@ -81,8 +82,11 @@ def _write_state(repo_dir: Path, state: dict, branch: str = _BRANCH) -> Path:
     return path
 
 
-def _run(script, cwd: str) -> subprocess.CompletedProcess:
-    payload = json.dumps({"cwd": cwd})
+def _run(script, cwd: str, source: str | None = None) -> subprocess.CompletedProcess:
+    payload_dict = {"cwd": cwd}
+    if source is not None:
+        payload_dict["source"] = source
+    payload = json.dumps(payload_dict)
     return subprocess.run(
         [str(script)],
         input=payload, text=True, capture_output=True,
@@ -95,28 +99,30 @@ def _run(script, cwd: str) -> subprocess.CompletedProcess:
 # ---------------------------------------------------------------------------
 
 class TestHookWiring:
-    """hooks.json has the right SessionStart entry; script exists and is executable."""
+    """hooks.json has the right SessionStart entries; script exists and is executable."""
 
     def test_session_start_entry_present(self):
         data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         entries = data["hooks"].get("SessionStart", [])
         assert entries, "SessionStart event missing from hooks.json"
 
-    def test_compact_matcher_present(self):
+    @pytest.mark.parametrize("matcher", ["startup", "resume", "compact"])
+    def test_matcher_present(self, matcher):
         data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         entries = data["hooks"].get("SessionStart", [])
-        compact = [e for e in entries if e.get("matcher") == "compact"]
-        assert compact, "No SessionStart entry with matcher='compact' in hooks.json"
+        matched = [e for e in entries if e.get("matcher") == matcher]
+        assert matched, f"No SessionStart entry with matcher='{matcher}' in hooks.json"
 
-    def test_hook_script_referenced(self):
+    @pytest.mark.parametrize("matcher", ["startup", "resume", "compact"])
+    def test_hook_script_referenced(self, matcher):
         data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         entries = data["hooks"].get("SessionStart", [])
-        compact = [e for e in entries if e.get("matcher") == "compact"]
+        matched = [e for e in entries if e.get("matcher") == matcher]
         assert any(
             "workflow_resume_hint.sh" in hook["command"]
-            for e in compact
+            for e in matched
             for hook in e.get("hooks", [])
-        ), "workflow_resume_hint.sh not referenced in SessionStart compact entry"
+        ), f"workflow_resume_hint.sh not referenced in SessionStart {matcher} entry"
 
     def test_hook_script_exists_and_executable(self):
         assert HOOK.exists(), f"Missing hook script: {HOOK}"
@@ -494,6 +500,26 @@ class TestLinkedWorktreeReanchor:
         assert result.returncode == 0
         assert result.stdout.strip() == ""
 
+    def test_standalone_nudge_source_compact_wording(self, hook_script, linked_worktree):
+        """No state file, cwd IS a linked worktree, source=compact → standalone
+        nudge uses the compaction-specific advisory_lead wording."""
+        result = _run(hook_script, str(linked_worktree), source="compact")
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Compaction may have dropped EnterWorktree tracking" in ctx
+        assert "not EnterWorktree-anchored" not in ctx
+
+    def test_standalone_nudge_source_resume_wording(self, hook_script, linked_worktree):
+        """No state file, cwd IS a linked worktree, source=resume → standalone
+        nudge uses the resume-specific advisory_lead wording, not compaction's."""
+        result = _run(hook_script, str(linked_worktree), source="resume")
+
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Resuming this session may have dropped EnterWorktree tracking" in ctx
+        assert "Compaction may have dropped" not in ctx
+
     def test_standalone_nudge_when_sidecar_stale(self, hook_script, linked_worktree):
         """Stale (>24h) same-branch sidecar in a linked worktree → still nudge.
 
@@ -544,3 +570,95 @@ class TestLinkedWorktreeReanchor:
         assert result.stdout.strip(), "Expected a nudge despite the branch mismatch"
         ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "WORKTREE RE-ANCHOR" in ctx
+
+    def test_standalone_nudge_source_startup_no_dropped_claim(self, hook_script, linked_worktree):
+        """source=startup, no sidecar, linked worktree → standalone nudge fires but
+        must not claim tracking was 'dropped' or that the session was 'compacted' —
+        a fresh cold-launch process never had a prior EnterWorktree session to lose."""
+        result = _run(hook_script, str(linked_worktree), source="startup")
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected a standalone nudge on cold startup"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx
+        assert "dropped" not in ctx.lower()
+        assert "compacted" not in ctx.lower()
+        assert "not EnterWorktree-anchored" in ctx
+
+
+# ---------------------------------------------------------------------------
+# Source-aware framing (#524): startup/resume never falsely claim compaction
+# ---------------------------------------------------------------------------
+
+class TestSourceAwareFraming:
+    """The full resume preamble's wording is conditioned on SessionStart's
+    `.source` field so a non-compaction resume never claims 'this session was
+    compacted'."""
+
+    def test_source_compact_wording_unchanged(self, hook_script, git_repo):
+        """source=compact must preserve the original compaction wording exactly."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo), source="compact")
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume after compaction]" in ctx
+        assert "This session was compacted." in ctx
+
+    def test_source_resume_wording(self, hook_script, git_repo):
+        """source=resume (--continue/--resume) must say 'resumed/continued', never
+        claim compaction happened."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo), source="resume")
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume after continuation]" in ctx
+        assert "This session was resumed/continued." in ctx
+        assert "compacted" not in ctx.lower()
+
+    def test_source_startup_wording(self, hook_script, git_repo):
+        """source=startup (cold launch) must not claim compaction or a dropped
+        session — there was no prior session to drop. `git_repo` is a plain
+        checkout, not a linked worktree, so the intro must not assert
+        worktree-specific facts either (that claim belongs to the separately
+        is_linked_worktree-gated reanchor_line/format_advisory, not the intro)."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo), source="startup")
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume on startup]" in ctx
+        assert "This is a fresh session start." in ctx
+        assert "compacted" not in ctx.lower()
+        assert "linked worktree" not in ctx.lower()
+
+    def test_absent_source_neutral_wording(self, hook_script, git_repo):
+        """No `.source` field at all (older harness payload) must default to
+        neutral wording, never asserting compaction happened."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume]" in ctx
+        assert "This session resumed." in ctx
+        assert "compacted" not in ctx.lower()
+
+    def test_unknown_source_value_falls_back_to_neutral(self, hook_script, git_repo):
+        """An unrecognized `.source` value must degrade to the neutral framing
+        rather than crashing or leaking the raw value into the preamble."""
+        _write_state(git_repo, VALID_STATE)
+        result = _run(hook_script, str(git_repo), source="some-future-source")
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume]" in ctx
+        assert "This session resumed." in ctx
+        assert "compacted" not in ctx.lower()
+
+    def test_non_scalar_source_falls_back_to_neutral(self, hook_script, git_repo):
+        """A `.source` that is a JSON object/array (malformed payload) must still
+        degrade to neutral wording, not crash or leak raw JSON into the preamble."""
+        _write_state(git_repo, VALID_STATE)
+        payload = json.dumps({"cwd": str(git_repo), "source": {"a": 1}})
+        result = subprocess.run(
+            [str(hook_script)], input=payload, text=True, capture_output=True, env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "[Workflow auto-resume]" in ctx
+        assert "This session resumed." in ctx
+        assert "compacted" not in ctx.lower()
+        assert '{"a"' not in ctx
