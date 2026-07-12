@@ -7,14 +7,22 @@
 #
 # Fail-open: exit 0 unconditionally. A broken hook must never block startup.
 
-# Emits a standalone re-anchor nudge when cwd is a linked worktree and no usable
-# checkpoint exists for this branch (missing, stale, wrong version, or wrong
-# branch — all "nothing to resume" cases). Relies on bash's dynamic scoping to
-# read is_linked_worktree/root/branch from the calling main() invocation.
+# Shared advisory wording; $1 is the clause explaining why cwd is suspect.
+# Reads $root via dynamic scoping from main().
+format_advisory() {
+    local clause="$1"
+    # Backticks below are literal markdown ticks, not command substitution.
+    # shellcheck disable=SC2016
+    printf 'WORKTREE RE-ANCHOR ADVISORY: Compaction may have dropped EnterWorktree tracking even though your cwd (`%s`) %s. Call `EnterWorktree(path=%s)` to be safe — idempotent and harmless if you'"'"'re still anchored. A later `ExitWorktree` no-op is consistent with this, though not proof — cd-entry looks identical.' \
+        "$root" "$clause" "$root"
+}
+
+# Nudges when cwd is a linked worktree but there's no usable checkpoint to
+# resume. Reads is_linked_worktree/root/branch via dynamic scoping from main().
 maybe_standalone_advisory() {
     [ "$is_linked_worktree" -eq 1 ] || return 0
     local advisory
-    advisory="WORKTREE RE-ANCHOR ADVISORY: This session resumed inside a linked worktree at \`${root}\` (branch ${branch}) after compaction. No usable workflow checkpoint was found for this branch, but compaction may still have dropped EnterWorktree tracking even though your cwd is already correct. Call \`EnterWorktree(path=${root})\` now to be safe — this is idempotent and harmless if you are still anchored. A later \`ExitWorktree\` no-op is consistent with this, though not proof — cd-entry looks identical."
+    advisory=$(format_advisory "is a linked worktree with no usable workflow checkpoint found for branch ${branch}")
     jq -cn --arg ctx "$advisory" \
         '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$ctx}}'
 }
@@ -38,13 +46,9 @@ main() {
     branch=$(git -C "$cwd" branch --show-current 2>/dev/null) || return 0
     [ -n "$branch" ] || return 0
 
-    # Linked-worktree probe (#497): --git-dir differs from --git-common-dir when
-    # cwd is a linked worktree rather than the main checkout. Runs independently of
-    # the sidecar gate below — a harness EnterWorktree session can be dropped by
-    # compaction even though cwd never moved and no checkpoint exists to resume.
-    # Uses python3 realpath for portability (GNU realpath -m absent on macOS);
-    # os.path.join treats an absolute second argument as already-resolved, so this
-    # also handles git returning an absolute --git-dir/--git-common-dir directly.
+    # --git-dir differs from --git-common-dir when cwd is a linked worktree,
+    # independent of any sidecar checkpoint. python3 realpath for portability
+    # (macOS lacks GNU realpath -m); os.path.join no-ops on an absolute 2nd arg.
     is_linked_worktree=0
     git_dir=$(git -C "$cwd" rev-parse --git-dir 2>/dev/null) || git_dir=""
     git_common_dir=$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null) || git_common_dir=""
@@ -74,13 +78,8 @@ main() {
         "$state_dir" 2>/dev/null) || return 0
     case "$real_state" in "$real_dir/"*) ;; *) return 0 ;; esac
 
-    # No sidecar checkpoint for this branch. Previously an unconditional no-op —
-    # now, if cwd is a linked worktree, emit a standalone defensive nudge: there is
-    # nothing to resume, but EnterWorktree tracking can still have been dropped.
-    # Every other "no usable checkpoint" gate below (stale, malformed, wrong
-    # version, wrong branch) is the same situation and gets the same nudge —
-    # otherwise a stale/invalid sidecar would silently reintroduce the no-op
-    # this hook exists to close.
+    # No usable checkpoint (missing, and below: stale/malformed/wrong
+    # version/wrong branch) still gets the standalone nudge if cwd is linked.
     if [ ! -f "$state_file" ]; then
         maybe_standalone_advisory
         return 0
@@ -95,8 +94,7 @@ main() {
         return 0
     fi
 
-    # Schema version gate — only v1 understood; unknown versions are ignored.
-    # A jq failure here also means "no usable checkpoint" (malformed JSON).
+    # Schema version gate — only v1 understood; jq failure means malformed JSON.
     version=$(jq -r '.version // empty' "$state_file" 2>/dev/null) || { maybe_standalone_advisory; return 0; }
     if [ "$version" != "1" ]; then
         maybe_standalone_advisory
@@ -120,17 +118,12 @@ main() {
     notes=$(jq -r '.context.notes // ""' "$state_file" 2>/dev/null) || notes=""
     worktree_root=$(jq -r '.context.worktree_root // ""' "$state_file" 2>/dev/null) || worktree_root=""
 
-    # Worktree re-anchor check: if the checkpoint recorded a worktree path that
-    # differs from the live root, emit a nudge to call EnterWorktree before resuming.
-    # Uses python3 realpath for portability (GNU realpath -m absent on macOS).
-    # Comparison is case-insensitive (tr lowercase) to avoid false positives on
-    # macOS APFS/HFS+ (case-insensitive filesystem) and bind-mount paths.
-    #
-    # Same-path case (#497): worktree_root matches the live root, but cwd is still
-    # a linked worktree — the mismatch check above finds nothing, yet compaction can
-    # drop EnterWorktree tracking without ever moving cwd. Fire a defensive advisory
-    # (distinct wording from the REQUIRED mismatch nudge, so it never fires when
-    # is_linked_worktree=0, e.g. plain non-worktree repos in tests).
+    # Worktree re-anchor check: nudge if the checkpoint's worktree path differs
+    # from the live root. python3 realpath for portability; comparison is
+    # case-insensitive (tr lowercase) for macOS APFS/HFS+ and bind-mount paths.
+    # When the path matches instead, still fire the (differently-worded)
+    # advisory if cwd is a linked worktree — tracking can be lost without cwd
+    # ever moving.
     reanchor_line=""
     if [ -n "$worktree_root" ]; then
         real_wt_root=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
@@ -150,12 +143,12 @@ WORKTREE RE-ANCHOR REQUIRED: Your checkpoint recorded work in a worktree at \`${
 "
         elif [ "$is_linked_worktree" -eq 1 ]; then
             reanchor_line="
-WORKTREE RE-ANCHOR ADVISORY: Compaction may have dropped EnterWorktree tracking even though your cwd (\`${root}\`) already matches the recorded worktree_root. Call \`EnterWorktree(path=${root})\` to be safe — idempotent and harmless if you're still anchored. A later \`ExitWorktree\` no-op is consistent with this, though not proof — cd-entry looks identical.
+$(format_advisory "already matches the recorded worktree_root")
 "
         fi
     elif [ "$is_linked_worktree" -eq 1 ]; then
         reanchor_line="
-WORKTREE RE-ANCHOR ADVISORY: Compaction may have dropped EnterWorktree tracking even though your cwd (\`${root}\`) is a linked worktree. Call \`EnterWorktree(path=${root})\` to be safe — idempotent and harmless if you're still anchored. A later \`ExitWorktree\` no-op is consistent with this, though not proof — cd-entry looks identical.
+$(format_advisory "is a linked worktree")
 "
     fi
 
