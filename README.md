@@ -27,10 +27,10 @@ cd swe-workbench
 ## What's inside
 
 - **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor` — see [docs/catalog.md](docs/catalog.md).
-- **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `code-impl`, `conflict-resolver`, `contributor-auditor`, `debugger`, `dependency-auditor`, `migrator`, `performance-tuner`, `product-designer`, `product-manager`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-reviewer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
+- **Subagents** — `accessibility-auditor`, `architect`, `auditor`, `code-impl`, `conflict-resolver`, `contributor-auditor`, `debugger`, `dependency-auditor`, `e2e-test-verifier`, `e2e-test-writer`, `migrator`, `performance-tuner`, `product-designer`, `product-manager`, `redundancy-assessor`, `refactorer`, `reviewer`, `security-auditor`, `senior-engineer`, `tech-writer`, `test-reviewer`, `test-writer` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security, product design — auto-hint by trigger keyword.
 - **Languages** — Bash, C#, Dart, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript — auto-hint by file extension (subagents load deterministically via catalog injection).
-- **Integrations** — `ticket-context` — auto-loads on ticket references (Jira, Confluence, GitHub) to feed the full spec into commands.
+- **Integrations** — external-service context skills (`ticket-context`, `observability-context`, `comms-context`) — auto-load on ticket references, Sentry links, Slack/PagerDuty links to feed the full context into commands — see [docs/catalog.md](docs/catalog.md).
 - **Workflows** — `development` orchestrator wrapping the full 5-phase implementation lifecycle; `workflow-audit-emit-issues` files grouped GitHub issues from codebase audit findings.
 
 Full reference tables → [docs/catalog.md](docs/catalog.md). Extending guide and philosophy → [docs/extending.md](docs/extending.md). Runtime dependencies → [docs/dependencies.md](docs/dependencies.md).
@@ -48,10 +48,12 @@ full pattern list, suppression options, and security notes.
 
 When Claude Code auto-compacts a long conversation, any in-progress `workflow-development`,
 `workflow-bug-triage`, or `workflow-pr-review` state is saved to a sidecar JSON file under
-`.claude/cache/workflow-state/`. A `SessionStart` hook detects this file after compaction
-and injects a resume preamble so the workflow continues at the correct phase — no manual
-restart needed. See [docs/workflow-state.md](docs/workflow-state.md) for the schema,
-lifecycle table, and a manual smoke test.
+`.claude/cache/workflow-state/`. A `SessionStart` hook detects this file and injects a
+resume preamble so the workflow continues at the correct phase — no manual restart needed.
+The hook fires on compaction as well as on plain session startup/resume, and also nudges a
+worktree re-anchor when the session's cwd has drifted from a linked worktree. See
+[docs/workflow-state.md](docs/workflow-state.md) for the schema, lifecycle table, and a
+manual smoke test.
 
 ## Skill-usage telemetry
 

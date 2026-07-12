@@ -21,7 +21,7 @@
 | `/swe-workbench:audit-codebase [--time-box <dur>] [--scope <list>] [--depth <quick\|standard\|deep>]` | Cold-start, time-boxed, multi-domain defect sweep — ranked findings with reasoning chains. Use for take-home assessments, post-acquisition reviews, and tech-debt sweeps. |
 | `/swe-workbench:codebase-knowledge [path]` | Present a structured knowledge document (architecture overview, module map, public API surfaces, patterns). Read-only, understanding-oriented. Distinct from `/swe-workbench:audit-codebase` (defect detection) and `/swe-workbench:document` (prose-doc generation). |
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
-| `/swe-workbench:sync [--rebase]` | Bring the current branch up to date with the default branch — delegates the mechanical merge/rebase to rimba (or git), then walks through any conflicts file-by-file with a `conflict-resolver` recommendation and rationale before applying. Never auto-pushes; push is a separate, prompted step. Default strategy is merge; pass `--rebase` to rebase instead. |
+| `/swe-workbench:sync [--rebase] [--check-redundancy]` | Bring the current branch up to date with the default branch — delegates the mechanical merge/rebase to rimba (or git), then walks through any conflicts file-by-file with a `conflict-resolver` recommendation and rationale before applying. Never auto-pushes; push is a separate, prompted step. Default strategy is merge; pass `--rebase` to rebase instead. `--check-redundancy` runs an opt-in `redundancy-assessor` pass surfacing functional duplication the default branch already provides. |
 | `/swe-workbench:doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of findings. |
 
 ## Subagents
@@ -36,10 +36,13 @@
 | `contributor-auditor` | Triaging external PRs for author signal, diff-shape coherence, repo posture, and pattern-risk signals before merge. Advisory only — never posts to the PR. Invoked by `/swe-workbench:review --mode contributor-trust`. |
 | `debugger` | Bug diagnosis and minimal fix — composes `superpowers:systematic-debugging`, layers principle lens. |
 | `dependency-auditor` | Supply-chain hygiene audit — outdated versions, license conflicts, transitive bloat, lockfile drift. Invoked by `/swe-workbench:review --mode deps`. |
+| `e2e-test-verifier` | Runs newly-authored E2E specs via the project's detected command, distrusts false-green passes, confirms each spec exercises the stated behaviour. Invoked by `/swe-workbench:test --mode e2e` after the writer. |
+| `e2e-test-writer` | Explores a live app via Playwright MCP, authors durable spec files, mandates browser teardown with per-step deadlines. Invoked by `/swe-workbench:test --mode e2e`. |
 | `migrator` | Plan and execute a multi-deployment migration: DB schema, framework upgrade, runtime, API/contract, or event-schema. Produces a five-phase (Expand → Backfill → Dual-write → Switch → Contract) plan with rollback gates. Invoked by `/swe-workbench:migrate`. |
 | `performance-tuner` | Profile-driven hotspot triage — ranks bottlenecks from a flame graph or benchmark and recommends targeted optimizations. Refuses speculative optimization without profiling evidence. |
 | `product-designer` | Depth-first UX and design quality review of frontend diffs — usability heuristics, visual hierarchy, information architecture, interaction design, design-system compliance. Invoked by `/swe-workbench:review --mode ux`. |
 | `product-manager` | Drafts a well-framed GitHub issue from a raw idea — product framing (problem, value, RICE-lite), template detection, duplicate scan, and confirm gate. Invoked by `/swe-workbench:capture`. |
+| `redundancy-assessor` | Reads whole-file candidates the branch added against what the default branch grew independently, recommends auto-apply/escalate/none per candidate; never removes a file itself. Invoked by `/swe-workbench:sync --check-redundancy`. |
 | `refactorer` | Cleaning up smells before adding a feature. |
 | `reviewer` | PR review, diff audit, post-feature sanity check. |
 | `security-auditor` | Depth-first security audit of a diff or file (OWASP Top 10, secrets, dependency CVEs). |
