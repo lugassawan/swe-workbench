@@ -12,3 +12,4 @@ scripts/__pycache__/
 .rimba/settings.local.toml
 .claude/cache/
 .superpowers/
+/docs/superpowers/
