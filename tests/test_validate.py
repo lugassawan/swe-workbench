@@ -1452,6 +1452,15 @@ class TestCheckAdapterBlocks:
         validate.check_adapter_blocks()
         assert validate.FAILURES == []
 
+    def test_empty_adapters_section_fails(self, reset_validate):
+        root = reset_validate
+        # '## Adapters' heading present but zero '### <Provider>' blocks inside it.
+        section = "## Adapters\n\nNothing here yet.\n\n## Other Section\n\nMore prose.\n"
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "at least one" in validate.FAILURES[0]
+
 
 # ──────────────────────────────────────────────
 # check_unwired_principle_skills

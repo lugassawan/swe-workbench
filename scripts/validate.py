@@ -491,6 +491,9 @@ def check_adapter_blocks(cache=None):
         section = text[heading.end():boundary.start()] if boundary else text[heading.end():]
 
         providers = list(_H3_PROVIDER_RE.finditer(section))
+        if not providers:
+            fail(skill_md.relative_to(ROOT), "'## Adapters' section has zero '### <Provider>' blocks; at least one is required")
+            continue
         for i, prov_match in enumerate(providers):
             provider = prov_match.group(1).strip()
             block_start = prov_match.end()
