@@ -304,6 +304,24 @@ class TestRedundancyAssessment:
         assert "never" in step6.lower()
         assert "redundancy-scope.sh" in step6
 
+    def test_step6_downgrades_auto_apply_to_escalate_when_refs_nonzero(self):
+        """Regression (PR #521 review): validating the sentinel's `id` against
+        the script's enumeration is not enough — the AUTO-APPLY tier label
+        itself is still the subagent's free text. The skill must also
+        re-derive that id's own `refs=<count>` from the script's CANDIDATE
+        line and downgrade to ESCALATE if refs is nonzero, rather than
+        trusting a subagent-asserted AUTO-APPLY at face value."""
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "refs" in step6
+        assert "downgrade" in step6.lower()
+        assert "ESCALATE" in step6
+        # The downgrade language must sit in the same numbered item as the
+        # id-validation invariant (item 4), not floating disconnected prose.
+        validate_step = step6.split("**Validate before acting**")[1].split("5. **Tiered gate**")[0]
+        assert "refs" in validate_step
+        assert "downgrade" in validate_step.lower()
+
     def test_step6_auto_apply_is_file_only_and_never_pushes(self):
         body = _body()
         step6 = body.split("### Step 6")[1].split("### Step 7")[0]
