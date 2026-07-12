@@ -410,3 +410,137 @@ class TestWorktreeRootReanchor:
             "Preamble must have a blank line between the re-anchor block and the "
             "'If the recorded state' safety gate."
         )
+
+
+# ---------------------------------------------------------------------------
+# Broadened prevention (#497): fire independent of the sidecar gate
+# ---------------------------------------------------------------------------
+
+class TestLinkedWorktreeReanchor:
+    """EnterWorktree tracking can be dropped by compaction even when cwd never
+    moved and there is no checkpoint to resume from. The hook must probe
+    --git-dir vs --git-common-dir directly and nudge whenever cwd is a linked
+    worktree — not only on a worktree_root path mismatch, and not only when a
+    fresh sidecar exists.
+    """
+
+    @pytest.fixture
+    def linked_worktree(self, tmp_path):
+        """Main repo plus a linked worktree checked out on _BRANCH."""
+        main_dir = tmp_path / "main"
+        main_dir.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main"],
+            cwd=main_dir, env=_CLEAN_ENV, check=True,
+        )
+        (main_dir / "README").write_text("init")
+        subprocess.run(["git", "add", "."], cwd=main_dir, env=_CLEAN_ENV, check=True)
+        subprocess.run(
+            ["git", "-c", "core.hooksPath=/dev/null",
+             "-c", "user.email=t@t.com", "-c", "user.name=T",
+             "commit", "-qm", "init"],
+            cwd=main_dir, env=_CLEAN_ENV, check=True,
+        )
+        wt_dir = tmp_path / "wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", _BRANCH, str(wt_dir)],
+            cwd=main_dir, env=_CLEAN_ENV, check=True,
+        )
+        return wt_dir
+
+    def test_same_path_nudge_when_linked_worktree(self, hook_script, linked_worktree):
+        """worktree_root == live root, cwd IS a linked worktree → nudge now fires.
+
+        Previously silent: the old mismatch-only check saw worktree_root == root
+        and skipped the nudge entirely, even though compaction can drop
+        EnterWorktree tracking without moving cwd at all.
+        """
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": str(linked_worktree)},
+        }
+        _write_state(linked_worktree, state)
+        result = _run(hook_script, str(linked_worktree))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected non-empty output for a linked worktree"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx, (
+            "Same-path resume inside a linked worktree must still get a defensive "
+            "re-anchor nudge — compaction can drop EnterWorktree tracking even "
+            "when cwd never moved."
+        )
+        assert "EnterWorktree" in ctx
+
+    def test_standalone_nudge_when_no_sidecar(self, hook_script, linked_worktree):
+        """No state file at all, cwd IS a linked worktree → standalone nudge emitted."""
+        result = _run(hook_script, str(linked_worktree))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), (
+            "Expected a standalone re-anchor nudge even with no workflow checkpoint"
+        )
+        data = json.loads(result.stdout)
+        assert "hookSpecificOutput" in data
+        ctx = data["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx
+        assert "EnterWorktree" in ctx
+        assert str(linked_worktree) in ctx
+
+    def test_main_checkout_no_sidecar_stays_silent(self, hook_script, git_repo):
+        """Regression: main checkout (not a linked worktree), no sidecar → still
+        empty output, exit 0."""
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_standalone_nudge_when_sidecar_stale(self, hook_script, linked_worktree):
+        """Stale (>24h) same-branch sidecar in a linked worktree → still nudge.
+
+        A stale sidecar is "no usable checkpoint," the same situation as no
+        sidecar at all — it must not silently swallow the linked-worktree signal.
+        """
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "worktree_root": str(linked_worktree)},
+        }
+        path = _write_state(linked_worktree, state)
+        old_mtime = os.path.getmtime(path) - 1441 * 60
+        os.utime(path, (old_mtime, old_mtime))
+
+        result = _run(hook_script, str(linked_worktree))
+
+        assert result.returncode == 0
+        assert not path.exists(), "Stale state file should still be deleted"
+        assert result.stdout.strip(), "Expected a nudge despite the stale sidecar"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx
+
+    def test_standalone_nudge_when_sidecar_wrong_version(self, hook_script, linked_worktree):
+        """Sidecar with an unsupported schema version in a linked worktree → still nudge."""
+        state = {
+            **VALID_STATE,
+            "version": 2,
+            "context": {**VALID_STATE["context"], "worktree_root": str(linked_worktree)},
+        }
+        _write_state(linked_worktree, state)
+        result = _run(hook_script, str(linked_worktree))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected a nudge despite the unsupported version"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx
+
+    def test_standalone_nudge_when_sidecar_branch_mismatch(self, hook_script, linked_worktree):
+        """Sidecar recorded for a different branch in a linked worktree → still nudge."""
+        state = {
+            **VALID_STATE,
+            "context": {**VALID_STATE["context"], "branch": "feature/other", "worktree_root": str(linked_worktree)},
+        }
+        _write_state(linked_worktree, state)
+        result = _run(hook_script, str(linked_worktree))
+
+        assert result.returncode == 0
+        assert result.stdout.strip(), "Expected a nudge despite the branch mismatch"
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "WORKTREE RE-ANCHOR" in ctx
