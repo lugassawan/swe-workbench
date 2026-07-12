@@ -451,6 +451,73 @@ def check_skill_trigger_fixtures():
                 )
 
 
+_ADAPTER_FIELD_LABELS = ("Trigger", "Fetch", "Extract → block fields", "Degrade")
+_ADAPTERS_HEADING_RE = re.compile(r'^##(?!#)[ \t]+Adapters[ \t]*$', re.MULTILINE)
+# Next top-level ('##', not '###+') heading — bounds the '## Adapters' section.
+_H2_BOUNDARY_RE = re.compile(r'^##(?!#)[ \t]+\S', re.MULTILINE)
+# One '### <Provider>' sub-heading starts one adapter block.
+_H3_PROVIDER_RE = re.compile(r'^###(?!#)[ \t]+(.+?)[ \t]*$', re.MULTILINE)
+
+
+def check_adapter_blocks(cache=None):
+    """Every skills/<name>/SKILL.md where <name> ends with '-context' (the
+    *-context family, e.g. ticket-context) must have a '## Adapters' section.
+
+    Within that section, each '### <Provider>' sub-heading starts one adapter
+    block (running to the next '###'/'##'/EOF) that must carry, in this exact
+    order, four bold-labeled fields: **Trigger**, **Fetch**,
+    **Extract → block fields**, **Degrade**.
+    """
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        skill_dir_name = skill_md.parent.name
+        if not skill_dir_name.endswith("-context"):
+            continue
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = skill_md.read_text(encoding="utf-8")
+
+        heading = _ADAPTERS_HEADING_RE.search(text)
+        if heading is None:
+            fail(skill_md.relative_to(ROOT), "missing required '## Adapters' section")
+            continue
+
+        boundary = _H2_BOUNDARY_RE.search(text, heading.end())
+        section = text[heading.end():boundary.start()] if boundary else text[heading.end():]
+
+        providers = list(_H3_PROVIDER_RE.finditer(section))
+        for i, prov_match in enumerate(providers):
+            provider = prov_match.group(1).strip()
+            block_start = prov_match.end()
+            block_end = providers[i + 1].start() if i + 1 < len(providers) else len(section)
+            _check_adapter_block_field_order(skill_md, provider, section[block_start:block_end])
+
+
+def _check_adapter_block_field_order(skill_md, provider, block):
+    """Confirm the 4 required bold-labeled fields appear in `block`, in order.
+
+    Searches for each label starting from just after the previous match, so a
+    label that is either absent or appears before an earlier label (i.e. out
+    of order) is reported the same way: as the first offending field.
+    """
+    cursor = 0
+    for label in _ADAPTER_FIELD_LABELS:
+        pat = re.compile(r'^[ \t]*-\s+\*\*' + re.escape(label) + r':\*\*', re.MULTILINE)
+        match = pat.search(block, cursor)
+        if match is None:
+            fail(
+                skill_md.relative_to(ROOT),
+                f"### {provider} adapter block missing or out-of-order required field: {label!r}",
+            )
+            return
+        cursor = match.end()
+
+
 def check_catalog_completeness(cache=None):
     """Per-slice catalogs under agents/shared/ must list every skill in the right slice,
     and every agent must reference at least one slice catalog.
@@ -458,7 +525,7 @@ def check_catalog_completeness(cache=None):
     Slice files and their skill-name prefix rules:
       principles.md  → skill names starting with 'principle-'
       languages.md   → skill names starting with 'language-'
-      workflows.md   → skill names starting with 'workflow-' plus 'ticket-context'
+      workflows.md   → skill names starting with 'workflow-' plus the '*-context' family
 
     Skills with unrecognised prefixes are assigned to principles.md by convention.
     """
@@ -491,7 +558,7 @@ def check_catalog_completeness(cache=None):
         for fname, prefixes in _SLICE_FILES.items():
             if any(sid.startswith(p) for p in prefixes):
                 return fname
-        if sid in _WORKFLOW_EXTRAS:
+        if sid in _WORKFLOW_EXTRAS or sid.endswith("-context"):
             return "workflows.md"
         return "principles.md"  # safe default for unrecognised prefixes
 
@@ -997,6 +1064,7 @@ def main():
     check_plan_mode_workflow_embedding()
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
+    check_adapter_blocks(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
