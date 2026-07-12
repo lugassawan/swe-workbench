@@ -11,6 +11,60 @@ To add a new language skill (say, Ruby or another language not already shipped):
 5. Add an entry to `agents/shared/languages.md` (the language slice of the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
 6. Commit; users who reinstall the plugin will pick it up.
 
+## Adding a context adapter
+
+The `*-context` skills (`ticket-context`, `observability-context`, `comms-context`) are
+ports in a ports-and-adapters pattern applied to prose: each skill detects a reference,
+fetches via a provider-specific recipe, and emits a shared output block. Adding support
+for a new provider — a new tracker, a new observability backend, a new comms tool — is
+almost always an **adapter-level change to an existing skill**, not a new skill. Only
+propose a new `*-context` skill when the provider represents a genuinely new *kind* of
+context (its output doesn't fit any existing skill's envelope).
+
+**To add a provider adapter to an existing `*-context` skill:**
+
+1. Open the skill's `SKILL.md` and add a new `### <Provider>` block under `## Adapters`,
+   using the canonical four-field template, **in this order**:
+
+   ```
+   ### <Provider>
+   - **Trigger:** URL/regex pattern that selects THIS adapter (the discriminator that
+     disambiguates it from every other adapter, in this skill and others — see the
+     Jira/Linear bare-key tiebreak in `skills/ticket-context/SKILL.md` for a worked
+     example of resolving a lexical collision between two providers).
+   - **Fetch:** the MCP tool / CLI call sequence. If the plugin ships no integration for
+     this provider, say so explicitly and mark the recipe aspirational — it activates
+     only if the user has a matching MCP tool connected.
+   - **Extract → block fields:** the mapping from the provider's response into the
+     skill's *existing* output block fields — never invent a new block shape for one
+     provider.
+   - **Degrade:** one condition → action row for when the tool/CLI is absent. Never
+     fabricate; emit a plain `<skill-id>: <provider> unavailable; proceeding without
+     context.` line and stop.
+   ```
+
+2. Do not touch the skill's `## Output format` envelope — the header (`## <Kind>
+   context: <ref>`), the mandatory `**Source:** <URL>` footer, the PII/secret-strip rule,
+   and the ~400-word cap are shared across every adapter in every `*-context` skill. A
+   provider that needs a genuinely new field belongs in a new skill, not a bent envelope.
+3. Add a trigger prompt for the new provider to the skill's `triggers.txt`
+   (≤200 chars), and re-run `pytest tests/test_skill_triggers.py -v` — adding vocabulary
+   can thin the BM25 margin (`_SCORE_MARGIN = 0.1`) for other skills' existing prompts via
+   IDF drift, not just this one. Fix a thinned margin by tightening the *description* (or
+   the drifted trigger prompt), never by weakening another skill's description.
+4. Run `bash scripts/validate.sh` — `check_adapter_blocks()` enforces the four-field
+   shape (present, in order) on every `skills/*-context/SKILL.md`; `check_catalog_completeness()`
+   requires every `*-context` skill (matched by `sid.endswith("-context")`) to have an
+   entry in `agents/shared/workflows.md`.
+5. Commit; users who reinstall the plugin will pick it up.
+
+**To add a new `*-context` skill (new kind, not a new provider):** copy
+`skills/observability-context/` as a template (single-adapter starting point) or
+`skills/comms-context/` (multi-adapter starting point), rename to `<kind>-context`, write
+its own output envelope, and add its catalog entry to `agents/shared/workflows.md` in the
+format `` - `swe-workbench:<kind>-context` — <one-line description> `` (the `*-context`
+family routes there regardless of the specific skill name).
+
 ## Philosophy
 
 Skills are intentionally small — each under 150 lines. A sharp, well-triggered skill teaches Claude the right thing at the right moment. A giant skill burns context on material the current task does not need. If a skill grows past 150 lines, split it.
