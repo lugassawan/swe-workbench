@@ -1093,7 +1093,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
         assert any("slice" in f.lower() for f in validate.FAILURES)
 
     def test_ticket_context_lands_in_workflows(self, reset_validate):
-        """ticket-context is a _WORKFLOW_EXTRAS member — must land in workflows.md, not principles.md."""
+        """ticket-context is a member of the '*-context' family — must land in workflows.md, not principles.md."""
         root = reset_validate
         make_plugin_tree(
             root,
@@ -1473,6 +1473,58 @@ class TestCheckAdapterBlocks:
         make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
         validate.check_adapter_blocks()
         assert validate.FAILURES == []
+
+    def test_fenced_heading_does_not_mask_a_real_malformed_block(self, reset_validate):
+        root = reset_validate
+        # A well-formed block, then a fenced illustrative example (as
+        # docs/extending.md instructs authors to include) containing a bare
+        # '## fake heading' — without fence-stripping, _H2_BOUNDARY_RE matches
+        # that fenced heading as the '## Adapters' section boundary, silently
+        # truncating the section BEFORE the real '### Bar' block that follows
+        # the fence — so a genuinely malformed block (missing Trigger) escapes
+        # detection entirely. Must still fail.
+        section = (
+            "## Adapters\n\n"
+            + _adapter_block("Foo")
+            + "\n"
+            "Example adapter shape for authors:\n\n"
+            "```\n"
+            "## fake heading inside fence\n"
+            "```\n\n"
+            "### Bar\n"
+            "- **Fetch:** y\n"
+            "- **Extract → block fields:** e\n"
+            "- **Degrade:** z\n"
+        )
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "'Trigger'" in validate.FAILURES[0]
+        assert "Bar" in validate.FAILURES[0]
+
+    def test_fenced_field_label_is_not_scanned_as_real(self, reset_validate):
+        root = reset_validate
+        # A block missing 'Degrade' for real, but with a fenced example
+        # afterwards that happens to contain a '- **Degrade:** ...' line.
+        # Without fence-stripping, the field-order scan (which searches the
+        # whole rest of the block's raw text) would find that fenced label and
+        # incorrectly consider the block complete.
+        block = (
+            "### Foo\n"
+            "- **Trigger:** t\n"
+            "- **Fetch:** f\n"
+            "- **Extract → block fields:** e\n"
+            "\n"
+            "Example:\n\n"
+            "```\n"
+            "- **Degrade:** this is inside a fence and must not count\n"
+            "```\n"
+        )
+        section = "## Adapters\n\n" + block
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "'Degrade'" in validate.FAILURES[0]
 
 
 # ──────────────────────────────────────────────

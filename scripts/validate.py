@@ -457,6 +457,24 @@ _ADAPTERS_HEADING_RE = re.compile(r'^##(?!#)[ \t]+Adapters[ \t]*$', re.MULTILINE
 _H2_BOUNDARY_RE = re.compile(r'^##(?!#)[ \t]+\S', re.MULTILINE)
 # One '### <Provider>' sub-heading starts one adapter block.
 _H3_PROVIDER_RE = re.compile(r'^###(?!#)[ \t]+(.+?)[ \t]*$', re.MULTILINE)
+# A fenced code block: opening ``` or ~~~ (3+) at some indent, any content,
+# then a closing fence of the SAME character and indent. DOTALL so '.' spans
+# newlines; non-greedy so an unrelated later fence doesn't get swallowed.
+_FENCE_RE = re.compile(r'^([ \t]*)(`{3,}|~{3,})[^\n]*\n.*?^\1\2[ \t]*$', re.MULTILINE | re.DOTALL)
+
+
+def _strip_fenced_code_blocks(text):
+    """Blank out the interior of fenced (``` / ~~~) code blocks.
+
+    Adapter authors illustrate the recipe template inside a fence (see
+    docs/extending.md); without this, a fenced '## X' or '- **Trigger:**'
+    example line is indistinguishable from real structure to the
+    heading/boundary/label regexes below — either truncating a section early
+    or masking a genuinely malformed block. Replaces each fenced span with
+    an equal number of blank lines so downstream regex *positions* (offsets
+    within the returned text) stay meaningful for anything derived from it.
+    """
+    return _FENCE_RE.sub(lambda m: '\n'.join('' for _ in m.group(0).split('\n')), text)
 
 
 def check_adapter_blocks(cache=None):
@@ -466,7 +484,9 @@ def check_adapter_blocks(cache=None):
     Within that section, each '### <Provider>' sub-heading starts one adapter
     block (running to the next '###'/'##'/EOF) that must carry, in this exact
     order, four bold-labeled fields: **Trigger**, **Fetch**,
-    **Extract → block fields**, **Degrade**.
+    **Extract → block fields**, **Degrade**. Fenced code blocks (used to show
+    authors the adapter template) are excluded from this structural scan —
+    see _strip_fenced_code_blocks.
     """
     skills_dir = ROOT / "skills"
     skills_cache = cache[1] if cache is not None else None
@@ -481,6 +501,7 @@ def check_adapter_blocks(cache=None):
                 continue
         else:
             text = skill_md.read_text(encoding="utf-8")
+        text = _strip_fenced_code_blocks(text)
 
         heading = _ADAPTERS_HEADING_RE.search(text)
         if heading is None:
@@ -537,7 +558,6 @@ def check_catalog_completeness(cache=None):
         "languages.md": ("language-",),
         "workflows.md": ("workflow-",),
     }
-    _WORKFLOW_EXTRAS = frozenset({"ticket-context"})
     _SLICE_REFS = frozenset({
         "@./shared/principles.md",
         "@./shared/languages.md",
@@ -561,7 +581,7 @@ def check_catalog_completeness(cache=None):
         for fname, prefixes in _SLICE_FILES.items():
             if any(sid.startswith(p) for p in prefixes):
                 return fname
-        if sid in _WORKFLOW_EXTRAS or sid.endswith("-context"):
+        if sid.endswith("-context"):
             return "workflows.md"
         return "principles.md"  # safe default for unrecognised prefixes
 
