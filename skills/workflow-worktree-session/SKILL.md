@@ -43,7 +43,24 @@ Defer entirely to `superpowers:using-git-worktrees`. That skill handles consent,
 
 Triggers: "exit the worktree", "go back", "leave this worktree", "return to main".
 
-Call `ExitWorktree(action: "keep")` by default. If uncertain whether the session was entered via `EnterWorktree` or the `cd` fallback, attempt `ExitWorktree(action=keep)` first — if it succeeds the session was `EnterWorktree`-anchored and exit is complete; if it reports a no-op (confirms `cd`-entry) or is unavailable (treat the following as a best-effort fallback — entry method is unknown) — run the following to return to the main repo root:
+Call `ExitWorktree(action: "keep")` by default. If it succeeds, the session was `EnterWorktree`-anchored and exit is complete.
+
+**If it reports a no-op:** a no-op means only *no active `EnterWorktree` session* — it does **not** by itself confirm `cd`-entry. Two causes present identically:
+
+1. **cd-entry** — the session was always anchored via the `cd` fallback and `EnterWorktree` was never called.
+2. **Compaction dropped tracking** — the session *was* `EnterWorktree`-anchored, but auto-compaction silently lost the harness's session-level anchoring while the Bash cwd stayed inside the worktree (issue #497). `EnterWorktree`/`ExitWorktree` are harness-owned tools — the plugin cannot change their output or make the harness persist this across compaction.
+
+Before assuming cd-entry, actively probe for context:
+
+```bash
+git rev-parse --git-dir --git-common-dir
+```
+
+If the two paths differ, cwd is genuinely inside a linked worktree (not the main checkout). This is necessary context but **not proof of which cause applies** — a `cd`-fallback entry produces the identical divergence, since cwd is physically inside the worktree either way. Additionally, check for a fresh `.claude/cache/workflow-state/<branch>.json` (see `docs/workflow-state.md`): a `context.worktree_root` matching the live cwd confirms this branch's workflow was operating in this worktree, but `worktree_root` is written via `git rev-parse --show-toplevel` regardless of entry method — so it does not discriminate either.
+
+Git state alone cannot distinguish cd-entry from compaction-dropped tracking; the harness's internal `EnterWorktree` session state is not observable from outside. When cwd resolves to a linked worktree, state the situation without asserting a definitive cause — e.g. **"tracking may have been lost to compaction — this cannot be confirmed from git state alone, since cd-entry produces identical evidence"** — citing the `--git-dir`/`--git-common-dir` divergence and/or the `worktree_root` match as the (non-discriminating) context, not proof. Either way, proceed to the same recovery below.
+
+**Recovery is the same regardless of which cause applies** — run the following to return to the main repo root:
 
 ```bash
 _GCD=$(git rev-parse --git-common-dir)
@@ -85,6 +102,6 @@ Do not call `ExitWorktree` proactively. Only call it when the user explicitly re
 | "resume in the worktree" | A | `EnterWorktree(path=<resolved>)` → if in different worktree: `ExitWorktree(keep)`+retry → `cd <path>` (last resort, no-infra only) |
 | "I've been cd-ing into the worktree" | A | `EnterWorktree(path=<resolved>)` → if in different worktree: `ExitWorktree(keep)`+retry → `cd <path>` (last resort, no-infra only) |
 | "in a fresh worktree" | B | defer to `superpowers:using-git-worktrees` |
-| "exit the worktree" | C | `ExitWorktree(action: "keep")` → else `cd <main-root>` (best-effort if tool unavailable; lock may remain) |
+| "exit the worktree" | C | `ExitWorktree(action: "keep")` → no-op ⇒ probe `--git-dir`/`--git-common-dir` + `worktree_root` (cd-entry **or** compaction-dropped tracking, not confirmed cd-entry) → `cd <main-root>` |
 | "delete this worktree and go back" | C | `ExitWorktree(action: "remove")` → else capture GCD, `git worktree remove <path>`, `cd <main-root>` |
 | "add a branch for this work" | — | **skill does not fire** (no "worktree" word) |

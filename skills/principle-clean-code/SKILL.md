@@ -12,10 +12,30 @@ description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction 
 | **Function length** | Prefer under 20 lines. Extract when doing two things. |
 | **Naming** | Name reveals intent. No abbreviations except universal ones (ctx, err, id). |
 | **Abstraction level** | One level per function. Don't mix SQL strings with business logic. |
-| **Comments** | Explain WHY, not WHAT. If code needs WHAT comments, rename or extract. |
+| **Comments** | Explain WHY, not WHAT. If code needs WHAT comments, rename or extract. See Comment discipline. |
 | **Error handling** | Handle at the appropriate layer. Don't swallow errors silently. |
 | **Argument count** | 0 is ideal; 1 is common; 2 is acceptable; 3+ is suspicious. A boolean flag argument is a hidden second function — split it. |
 | **Command-Query Separation** | A function either changes state or returns a value — not both. |
+
+## Comment discipline
+*A comment is a cost paid on every future read — spend the budget on WHY, not WHAT.*
+
+Doc-comment styles, named so authoring and review flows share one term set:
+
+| Style | Language | Soft cap |
+|-------|----------|----------|
+| Inline (`//`, `#`) | any | ≤2 lines |
+| godoc | Go | ~4 lines |
+| javadoc | Java, Kotlin | ~10 lines |
+| docstring | Python | ~8 lines |
+| rustdoc | Rust | ~8 lines |
+
+Caps are soft — a well-justified doc comment can exceed them, but a comment that runs long without adding information past the cap is a signal to trim.
+
+An **unnecessary comment** is any of:
+- **WHAT-not-WHY** — describes what the code does instead of why it does it; well-named code already says WHAT.
+- **Restates-the-code** — the comment is a paraphrase of the line(s) below it, adding no information a reader couldn't get from the code itself.
+- **Commented-out code** — dead code kept "just in case"; version control already keeps it.
 
 ## Naming reveals intent
 *Names are documentation that can't go stale.*
@@ -75,6 +95,6 @@ The second caller is not required. The boundary is.
 | 3+ arguments without a parameter object | Callers must remember order; test setup grows with every new param |
 | Function returns a value AND mutates state | Violates CQS; callers can't compose calls safely or predict side effects |
 | Hungarian or type prefixes (`strName`, `bActive`) | Type is already in the signature; name encodes noise, not intent |
-| Comment explains WHAT instead of WHY | Name the thing better; delete the comment |
+| Comment explains WHAT instead of WHY | Name the thing better; delete the comment — see Comment discipline |
 | Same literal in 3+ sites with no name | Rule of three — extract to a named constant |
 | Function name is a vague verb (`process`, `handle`, `manage`) | Reader can't predict behavior; use precise verbs that describe what changes or returns |

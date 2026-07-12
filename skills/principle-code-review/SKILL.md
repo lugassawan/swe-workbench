@@ -1,21 +1,22 @@
 ---
 name: principle-code-review
-description: Code review heuristics — four-axis review lens (correctness, security, design integrity, test coverage); confidence-based filtering (no finding without a concrete failure scenario); review comment tone (observation over accusation); nitpick filtering; what counts as a real finding vs linter noise. Auto-load when writing or framing a review comment, deciding whether a PR finding is worth surfacing, reviewing a diff for correctness, or filtering review nitpicks.
+description: Code review heuristics — five-axis review lens (correctness, security, design integrity, test coverage, comment quality); confidence-based filtering (no finding without a concrete failure scenario); review comment tone (observation over accusation); nitpick filtering; what counts as a real finding vs linter noise. Auto-load when writing or framing a review comment, deciding whether a PR finding is worth surfacing, reviewing a diff for correctness, or filtering review nitpicks.
 ---
 
 # Code Review
 
 Principles for high-signal code review. For tool-specific mechanics (diff-size routing, suggestion-block format, GitHub workflow), see the `reviewer` agent.
 
-## Four-Axis Review Lens
+## Five-Axis Review Lens
 
-Every review covers four axes:
+Every review covers five axes:
 
 - **Correctness** — off-by-ones, null paths, concurrency races, lost errors, unhandled edge cases, paired-guard predicate gaps (a check enforced by one sibling but missing in its pair).
 - **Security** — injection, auth/authz gaps, secrets in code, unsafe deserialization, SSRF, missing input validation at trust boundaries.
 - **Design integrity** — SOLID violations, leaky abstractions, tight coupling, circular deps, domain logic bleeding into infrastructure.
   *For complexity / duplication / length, prefer Quality-stage output over subjective comments — see `workflow-development`.*
 - **Tests** — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior.
+- **Comment quality** — unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code) and doc-comments over the per-language cap; hygiene-tier, in-diff `+` lines only, suggested-fix drop-or-simplify, never an auto-rewrite. Caps live in `principle-clean-code`.
 
 ## What's Not a Finding
 

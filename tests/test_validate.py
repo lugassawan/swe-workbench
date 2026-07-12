@@ -464,9 +464,9 @@ class TestPrincipleCodeReviewSkill:
         text = self.SKILL_PATH.read_text(encoding="utf-8")
         assert "name: principle-code-review" in text
 
-    def test_four_axis_section_present(self):
+    def test_five_axis_section_present(self):
         text = self.SKILL_PATH.read_text(encoding="utf-8")
-        assert "## Four-Axis Review Lens" in text
+        assert "## Five-Axis Review Lens" in text
 
     def test_confidence_filtering_section_present(self):
         text = self.SKILL_PATH.read_text(encoding="utf-8")
