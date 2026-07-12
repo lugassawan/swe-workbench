@@ -54,7 +54,7 @@ If the session is currently inside a worktree (e.g. entered via `EnterWorktree p
 - Releases the harness's session lock on the worktree so the rimba post-merge hook (fired by `git pull` in 3c) can remove it cleanly.
 - Ensures rimba's binary `remove` strategy (if reached) won't fire `git branch -D` from a deleted cwd.
 
-If the worktree was entered via the `cd` fallback (no active `EnterWorktree` session), `ExitWorktree` will report a no-op (confirming cd-entry) — instead, `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
+If `ExitWorktree` reports a no-op, that means only *no active `EnterWorktree` session* — caused by either `cd`-fallback entry **or** compaction dropping harness-level `EnterWorktree` tracking (indistinguishable from the tool's output alone; see `workflow-worktree-session` Mode C for the full ambiguity-aware diagnostic). Either way, recover the same way: `cd` to the main repo root before deriving `$MAIN_REPO` and running `git pull`:
 
 ```bash
 _GCD=$(git rev-parse --git-common-dir)
@@ -269,7 +269,7 @@ git branch -D <stale-branch-name>                # the local ref that survived t
 | Use lowercase `git branch -d` | Always use `-D`. Squash-merged branches are not merge ancestors of `main`. |
 | Force-delete a worktree with dirty state | Never. Batch A aborts before Batch B runs. |
 | Run cleanup from inside the worktree being deleted | Step 3 anchors cwd to $MAIN_REPO before the pull. If skipped, the rimba hook can delete the cwd mid-flight and strand subsequent commands with "fatal: not a git repository". |
-| Skip `ExitWorktree action=keep` in a session entered via `EnterWorktree` | Always call it as the first action of Step 3 when the tool is available. Without it, the harness session lock remains on the worktree when `git pull` fires the rimba hook — rimba's child process inherits a cwd that gets deleted mid-operation, leaving the branch undeleted and the session stranded at `$HOME`. For sessions entered via the `cd` fallback, `ExitWorktree` is a no-op — use the `cd`-to-main-root command in Step 3a instead. |
+| Skip `ExitWorktree action=keep` in a session entered via `EnterWorktree` | Always call it as the first action of Step 3 when the tool is available. Without it, the harness session lock remains on the worktree when `git pull` fires the rimba hook — rimba's child process inherits a cwd that gets deleted mid-operation, leaving the branch undeleted and the session stranded at `$HOME`. If `ExitWorktree` reports a no-op — cd-fallback entry **or** compaction dropped tracking, not confirmed cd-entry — use the `cd`-to-main-root command in Step 3a instead. |
 | Auto-trigger cleanup on merge | Never. Cleanup is user-initiated or explicitly orchestrated. No Stop hooks. |
 | Treat remote-404 as an error | It is success — `auto-delete-head-branches` already removed it. |
 | Use plain `git pull origin main` for the sync | Always `--ff-only`. Plain pull can synthesize a merge commit. |
