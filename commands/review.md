@@ -79,15 +79,53 @@ The user can override any inferred mode by re-invoking with an explicit `--mode`
 
 Ground judgements in SOLID and Clean Architecture principles. Do not nitpick formatting — that is the linter's job.
 
+**No posting prompt appears in this mode, ever** — there is no PR to post to. The post/skip `AskUserQuestion` confirmation (see `## Specialist post sub-flow` below) is exclusive to PR mode's postable specialist set; local-diff mode always just prints findings, unconditionally.
+
 ## PR mode
 
 **When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool, passing the resolved PR number.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `/tmp/swe-workbench-pr-review/<N>`, ticket-context chain, reviewer invocation with footer instruction, decision-footer parsing, GraphQL thread fetch + dedup + REST inline-comment post, `gh pr review --approve|--comment` submission, non-blocking cleanup. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and failure-mode handling.
 
-**When `--mode` is set to a non-general value (security, accessibility, dependency, performance, tests, contributor-trust) with a PR number:** fetch the PR diff via `gh pr diff <N>` and run the specialist auditor against it in local-diff style. **Inline-comment posting and APPROVE/COMMENT submission are skipped** — output is severity-organized findings only (same format as local-diff mode above). This avoids re-architecting `workflow-pr-review` to accept an auditor parameter; the full PR-review flow is reserved for the general reviewer.
+**When `--mode` is set to a postable specialist value (security, accessibility, dependency, performance, tests, ux) with a PR number:** fetch the PR diff via `gh pr diff <N>` and run the specialist auditor against it in local-diff style — severity-organized findings, same format as local-diff mode above. This mode is **postable**: after printing findings, offer to post them through the same dedup/post/submit machinery `workflow-pr-review` uses, rather than hand-constructing `gh api` calls that would bypass its dedup and thread-safety logic. See `## Specialist post sub-flow` below.
 
-If the PR number was obtained via auto-detect (user replied `yes` to the prompt in Step 1) rather than an explicit argument, the same branching applies: `--mode general` (or no `--mode`) delegates to `swe-workbench:workflow-pr-review`; non-general modes fetch `gh pr diff <N>` and run the specialist in local-diff style.
+**When `--mode contributor-trust`:** run `contributor-auditor` against the PR diff and print its findings (including the closing **Merge confidence** footer), then append: "Trust triage is advisory — not posted to the PR." **Stop** — `contributor-auditor`'s contract is advisory-only and never posts; this mode is signal-only and skips the sub-flow below entirely.
+
+If the PR number was obtained via auto-detect (user replied `yes` to the prompt in Step 1) rather than an explicit argument, the same branching applies: `--mode general` (or no `--mode`) delegates to `swe-workbench:workflow-pr-review`; `contributor-trust` is signal-only; every other mode is postable per the sub-flow below.
+
+## Specialist post sub-flow
+
+**The post/skip `AskUserQuestion` prompt below fires in exactly one case: a postable specialist mode (security, accessibility, dependency, performance, tests, ux) resolved in PR mode.** It never fires for `contributor-trust` (advisory-only, see above — stops before reaching this section) and never fires for local-diff mode (there is no PR to post to — see the explicit "no posting prompt" note in `## Local-diff mode` above). General mode has its own posting flow inside `workflow-pr-review` and does not go through this sub-flow either.
+
+1. **Preflight:** reuse `runtime/preflight-pr.sh` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `workflow-pr-review`'s `${PR}.json` and `workflow-pr-review-followup`'s `${PR}-followup.json`, so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`.
+2. **Ephemeral worktree:** `rimba add pr:<N> --task "review-<mode>-<N>" --skip-deps --skip-hooks` when rimba is available. When rimba is absent, use the direct-git fallback from `workflow-pr-review` Step 2 but with the same mode-scoped naming as the rimba path — `WT="/tmp/swe-workbench-pr-review/<mode>-${PR}"`, branch `review-<mode>-${PR}` — so a specialist run's worktree/branch never collides with a general review's `pr-review-${PR}` or another specialist mode's own run.
+3. Run the specialist auditor against `git -C "$WT" diff "origin/$BASE"...HEAD`; print severity-organized findings (unchanged from the existing specialist output above).
+4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (matching the `AskUserQuestion` pattern `workflow-pr-review-post`'s own Step 5 CTA already uses, for the same reason: a clickable button beats "type a keyword"):
+
+   ```json
+   {
+     "questions": [{
+       "question": "Post these findings to PR #<N> as inline comments + a review decision?",
+       "header": "Post findings",
+       "multiSelect": false,
+       "options": [
+         { "label": "Post", "description": "Submit as inline comments + a review decision via workflow-pr-review-post (dedup-safe)." },
+         { "label": "Skip", "description": "Leave findings as printed above — nothing posted to the PR." }
+       ]
+     }]
+   }
+   ```
+
+   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — this is a clean exit, not an aborted-mid-scan state, so unlike `workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
+5. **On `Post`:** normalize the auditor's documented finding rows into `FINDINGS[]` — `severity` and `body` (fold any extra columns, e.g. `test-reviewer`'s `Category`, into `body`) from every row; `path`/`line` from `File:Line` when present. Set `anchor=inline` when a `File:Line` exists AND the line falls on a `+` line (not a context line) in `git -C "$WT" diff "origin/$BASE"...HEAD`; `anchor=pr-level` otherwise — `dependency-auditor` rows have no `File:Line` and always anchor `pr-level`. Derive `DECISION`: at least one row with `severity ∈ {Critical, High}` → `COMMENT`; otherwise `APPROVE` (no footer to parse — these auditors don't emit one; this mirrors the general reviewer's own APPROVE-unless-Critical/High convention rather than flipping to `COMMENT` on any finding regardless of severity). Invoke `swe-workbench:workflow-pr-review-post` with:
+   - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
+   - `DECISION` — as derived above.
+   - `BLOCKING_SCOPE` — intentionally omitted; specialist auditors don't classify in-diff vs out-of-diff, so it falls back to the core's `IN-DIFF` fail-safe default and the diff-scoping flip never fires for specialist-mode reviews (unlike `workflow-pr-review`/`workflow-pr-review-followup`, which do set it from the reviewer agent's own classification).
+   - `BYLINE` — `` _Reviewed by `<auditor>` ([swe-workbench](https://github.com/lugassawan/swe-workbench))._ `` (the specific agent from the mode table, e.g. `security-auditor`).
+   - `CALLER_TAG` — the mode name (e.g. `security`).
+   - `FINDINGS[]` — as normalized above.
+
+   Then reap `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh` and tear down the worktree in the background using the same task name Step 2 created (as in the `skip` case above).
 
 ## Followup mode
 

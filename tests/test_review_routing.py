@@ -71,12 +71,141 @@ class TestReviewModeRouting:
             assert indices[a] < indices[b], \
                 f"Inference rule '{a}' must precede '{b}' in the document"
 
-    def test_pr_mode_caveat_documented(self):
+    def test_pr_mode_specialist_post_subflow_documented(self):
+        """Since #499, postable specialist modes offer to post via workflow-pr-review-post
+        (behind a confirmation gate) instead of always skipping inline-comment posting."""
         text = REVIEW_PATH.read_text(encoding="utf-8")
         lower = text.lower()
-        # Must assert both that inline-comment posting is mentioned AND that it is skipped
-        assert "inline-comment posting" in lower and "skipped" in lower, \
-            "PR-mode + --mode must document that inline-comment posting is skipped"
+        assert "postable" in lower, \
+            "PR-mode + --mode must document which specialist modes are postable"
+        assert "swe-workbench:workflow-pr-review-post" in text, \
+            "PR-mode + --mode specialist sub-flow must invoke swe-workbench:workflow-pr-review-post"
+
+    def test_specialist_subflow_post_confirmation_uses_ask_user_question(self):
+        """The post/skip confirmation must call AskUserQuestion with a valid schema, not a
+        free-text 'reply post/skip' prompt — matching the pattern workflow-pr-review-post's
+        own CTA already uses (PR #520 review feedback)."""
+        import json as _json
+        import re as _re
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "AskUserQuestion" in subflow_text, (
+            "Specialist post sub-flow must call AskUserQuestion for the post/skip confirmation — "
+            "not a free-text 'reply post/skip' prompt"
+        )
+        assert "reply `post`" not in subflow_text.lower(), (
+            "Specialist post sub-flow must not fall back to a free-text 'reply post' prompt"
+        )
+        json_match = _re.search(r"```json\s*(\{.*?\})\s*```", subflow_text, _re.DOTALL)
+        assert json_match, "Specialist post sub-flow must contain a fenced JSON block for AskUserQuestion"
+        parsed = _json.loads(json_match.group(1))
+        assert "questions" in parsed and parsed["questions"], (
+            "AskUserQuestion JSON block must have a non-empty 'questions' array"
+        )
+
+    def test_contributor_trust_signal_only_documented(self):
+        """contributor-trust stays advisory-only — its own branch must state this,
+        distinct from the postable specialist set."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        trust_idx = text.find("`--mode contributor-trust`")
+        assert trust_idx != -1, "PR-mode contributor-trust branch not found"
+        paragraph_end = text.find("\n\n", trust_idx)
+        paragraph = text[trust_idx:paragraph_end if paragraph_end != -1 else None]
+        assert "advisory" in paragraph.lower(), (
+            "the contributor-trust paragraph itself must document its advisory-only, "
+            "never-post contract"
+        )
+        assert "sub-flow below entirely" in paragraph or "skips the sub-flow" in paragraph, (
+            "the contributor-trust paragraph must state it skips the postable sub-flow entirely"
+        )
+
+    def test_ux_in_postable_specialist_set(self):
+        """ux must be enumerated in the postable specialist set (not just the mode table)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        postable_idx = text.find("postable specialist value")
+        assert postable_idx != -1, "postable specialist set sentence not found"
+        # ux must appear in the same sentence/line as the postable set enumeration
+        line_end = text.find("\n", postable_idx)
+        assert "ux" in text[postable_idx:line_end], \
+            "ux must be enumerated in the postable specialist set"
+
+    def test_local_diff_mode_states_no_posting_prompt(self):
+        """The ## Local-diff mode section must explicitly state that no posting prompt
+        ever appears there, not just rely on the Specialist post sub-flow's exclusion
+        clause to imply it (user-requested emphasis, PR #520)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        local_diff_idx = text.find("## Local-diff mode")
+        pr_mode_idx = text.find("## PR mode")
+        assert local_diff_idx != -1 and pr_mode_idx != -1, "section headers not found"
+        local_diff_text = text[local_diff_idx:pr_mode_idx]
+        assert "no posting prompt" in local_diff_text.lower(), (
+            "## Local-diff mode must explicitly state that no posting prompt appears in this mode"
+        )
+
+    def test_specialist_subflow_scope_line_names_all_exclusions(self):
+        """The Specialist post sub-flow's scope line must name all three excluded paths
+        (contributor-trust, local-diff mode, general mode) so the single-firing-condition
+        claim is airtight, not just a two-way exclusion (user-requested emphasis, PR #520)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        # "## Specialist post sub-flow" also appears as an inline backtick-quoted
+        # cross-reference earlier (in the PR mode section) — anchor on the actual
+        # ATX heading (start-of-line "## ") to skip past that inline mention.
+        heading_match = re.search(r"^## Specialist post sub-flow$", text, re.MULTILINE)
+        assert heading_match, "Specialist post sub-flow heading not found"
+        subflow_idx = heading_match.start()
+        paragraph_start = text.find("\n\n", subflow_idx) + 2  # skip past the heading's blank line
+        paragraph_end = text.find("\n\n", paragraph_start)
+        scope_text = text[paragraph_start:paragraph_end]
+        assert "contributor-trust" in scope_text, "must exclude contributor-trust"
+        assert "local-diff mode" in scope_text.lower(), "must exclude local-diff mode"
+        assert "general mode" in scope_text.lower(), "must exclude general mode"
+
+    def test_specialist_subflow_decision_gated_on_severity(self):
+        """DECISION must be derived from Critical/High severity, not mere non-emptiness
+        of FINDINGS[] — a run with only Low/Medium findings should APPROVE, mirroring
+        the general reviewer's own convention (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "Critical, High" in subflow_text or "Critical|High" in subflow_text, (
+            "Specialist post sub-flow must gate DECISION=COMMENT on at least one "
+            "Critical/High severity finding, not on FINDINGS[] non-emptiness alone"
+        )
+
+    def test_specialist_subflow_passes_caller_tag(self):
+        """The specialist sub-flow must pass CALLER_TAG (the mode name) to the posting
+        core so its threads-cache file never collides with a concurrent general/followup
+        review of the same PR (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        assert "CALLER_TAG" in text[subflow_idx:], (
+            "Specialist post sub-flow must pass CALLER_TAG to workflow-pr-review-post"
+        )
+
+    def test_specialist_subflow_reaps_own_state_file(self):
+        """The specialist sub-flow's own mode-scoped preflight JSON must be reaped via
+        clean-state-files.sh in both the skip and post branches (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "clean-state-files.sh" in subflow_text, (
+            "Specialist post sub-flow must reap its own ${PR}-review-${MODE}.json via "
+            "runtime/clean-state-files.sh"
+        )
+        skip_idx = subflow_text.find("On **Skip**")
+        post_idx = subflow_text.find("On `Post`")
+        assert skip_idx != -1 and post_idx != -1, "Skip/Post branches not found"
+        assert "clean-state-files.sh" in subflow_text[skip_idx:post_idx], (
+            "The Skip branch must reap its own state file before tearing down the worktree"
+        )
+        assert "clean-state-files.sh" in subflow_text[post_idx:], (
+            "The Post branch must reap its own state file before tearing down the worktree"
+        )
 
     def test_existing_pr_mode_preserved(self):
         """Backward-compat: bare integer arg → PR mode still works."""

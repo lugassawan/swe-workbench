@@ -40,6 +40,8 @@ gh api <endpoint>/<id> -q '.body'
 - `runtime/reply-and-resolve.sh` uses `-f body=` for both reply call sites (reply bodies start
   with `@{author}`); guarded by
   `tests/test_reply_and_resolve_script.py::test_body_flag_is_lowercase_f_not_uppercase_f`.
-- `skills/workflow-pr-review/SKILL.md` and `skills/workflow-pr-review-followup/SKILL.md` use
-  `-f body="$BODY"` in the Step 6 inline-comment POST (a reviewer finding can also start with
-  `@author`); guarded by `tests/test_pr_review_skill_body_flag.py`.
+- `skills/workflow-pr-review-post/SKILL.md` (the shared posting core used by
+  `workflow-pr-review`, `workflow-pr-review-followup`, and the `/swe-workbench:review`
+  specialist PR-mode sub-flow) uses `-f body="$BODY"` in its Step 2 inline-comment POST
+  (a reviewer finding can also start with `@author`); guarded by
+  `tests/test_pr_review_skill_body_flag.py`.
