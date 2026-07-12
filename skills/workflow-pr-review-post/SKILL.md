@@ -33,7 +33,7 @@ Before Step 1, verify every required field is present and well-formed. **Abort i
 | `CURRENT_USER`, `AUTHOR_LOGIN` | may be empty (identity-unknown is a valid state — see Step 3), but if provided must be plain login strings |
 | `DECISION` | exactly `APPROVE` or `COMMENT` |
 | `BYLINE` | non-empty, fully-formed markdown identity clause (e.g. `_Reviewed by \`reviewer\`_`) — **must NOT** embed `posted`/`deduped` counts; this skill appends its own stats clause in Step 4, since those counts aren't known until Step 2 runs |
-| `BLOCKING_SCOPE` | one of `NONE`, `OUT-OF-DIFF-ONLY`, `IN-DIFF`; default `IN-DIFF` if the caller omits it (fail-safe) |
+| `BLOCKING_SCOPE` | one of `NONE`, `OUT-OF-DIFF-ONLY`, `IN-DIFF`; default `IN-DIFF` if the caller omits it (fail-safe). `workflow-pr-review`/`workflow-pr-review-followup` set this from the reviewer agent's own in-diff/out-of-diff classification; the specialist PR-mode sub-flow intentionally omits it (specialist auditors don't classify diff-scope), which falls back to `IN-DIFF` — the diff-scoping flip (Step 3) accordingly never fires for specialist-mode reviews. This is a deliberate divergence, not an oversight. |
 | `FINDINGS[]` | each row has `severity`, `body`, and `anchor ∈ {inline, pr-level}`; `anchor=inline` rows must also have `path` and `line` |
 | `CALLER_TAG` | non-empty, one of `general`, `followup`, or the specialist mode name (e.g. `security`, `dependency`) — scopes this skill's own state file so two callers reviewing the same PR concurrently never share (and can't clobber) each other's threads cache |
 
