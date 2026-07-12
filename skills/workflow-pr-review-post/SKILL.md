@@ -35,6 +35,7 @@ Before Step 1, verify every required field is present and well-formed. **Abort i
 | `BYLINE` | non-empty, fully-formed markdown identity clause (e.g. `_Reviewed by \`reviewer\`_`) — **must NOT** embed `posted`/`deduped` counts; this skill appends its own stats clause in Step 4, since those counts aren't known until Step 2 runs |
 | `BLOCKING_SCOPE` | one of `NONE`, `OUT-OF-DIFF-ONLY`, `IN-DIFF`; default `IN-DIFF` if the caller omits it (fail-safe) |
 | `FINDINGS[]` | each row has `severity`, `body`, and `anchor ∈ {inline, pr-level}`; `anchor=inline` rows must also have `path` and `line` |
+| `CALLER_TAG` | non-empty, one of `general`, `followup`, or the specialist mode name (e.g. `security`, `dependency`) — scopes this skill's own state file so two callers reviewing the same PR concurrently never share (and can't clobber) each other's threads cache |
 
 Abort message: `"workflow-pr-review-post: invalid payload — <field> <problem>. Refusing to post."`
 
@@ -61,12 +62,12 @@ gh api graphql -F number="$PR" -F owner="$OWNER" -F repo="$REPO" -f query='
         }
       }
     }
-  }' > "/tmp/swe-workbench-pr-review/${PR}-post-threads.json"
+  }' > "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
 ```
 
 Pagination via `pageInfo { endCursor hasNextPage }` if a real PR exceeds 100 threads (known v1 limit — document, don't implement, unless it's actually hit).
 
-Uses its own `${PR}-post-threads.json` state file — distinct from any `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json` files the caller may hold, so this core never collides with a caller's own preflight state.
+Uses its own `${PR}-post-threads-${CALLER_TAG}.json` state file — scoped by `CALLER_TAG` so it's distinct both from any `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json` files the caller may hold, AND from another caller's own `${PR}-post-threads-*.json` reviewing the same PR concurrently (e.g. a general review and a specialist `--mode security` review both in flight — without the tag, both would share one cache file and one run's Step 6 reap could delete the other's cache mid-flight).
 
 ## Step 2 — Dedup + post
 
@@ -111,10 +112,15 @@ Track counts: `posted_inline=N`, `deduped=M`. Initialise `DEFERRED_INFORMATIONAL
 No thread to dedup against — `dependency-auditor` rows (no `File:Line`) and any inline row whose line fell out-of-diff both land here. Batch ALL pr-level findings into **one** general PR comment (not deduped across runs — see Common mistakes):
 
 ```bash
-gh pr comment "$PR" --body "$PR_LEVEL_BODY"
+if gh pr comment "$PR" --body "$PR_LEVEL_BODY"; then
+  posted_pr_level=$PR_LEVEL_FINDING_COUNT   # count each batched finding individually even though they share one API call
+else
+  posted_pr_level=0
+  echo "[warn] gh pr comment failed — pr-level batch of $PR_LEVEL_FINDING_COUNT finding(s) NOT posted." >&2
+fi
 ```
 
-Only issue this call when at least one pr-level finding exists. Track `posted_pr_level=N` — count each batched finding individually even though they share one API call. Maintain `posted=$((posted_inline + posted_pr_level))` as the combined total used by the CTA/suppression outcome-axis checks below (Steps 4–5); the byline in Step 4 reports the split counts separately so a dependency-mode run (pr-level only) doesn't misreport itself as having posted inline comments.
+Only issue this call when at least one pr-level finding exists. `posted_pr_level` must be set **after** the call, gated on its exit status — never increment it unconditionally before knowing whether the post actually landed, or a failed batch gets reported as posted in Step 4's byline and wrongly fires Step 5's CTA on a `posted > 0` that corresponds to nothing on the PR. Maintain `posted=$((posted_inline + posted_pr_level))` as the combined total used by the CTA/suppression outcome-axis checks below (Steps 4–5); the byline in Step 4 reports the split counts separately so a dependency-mode run (pr-level only) doesn't misreport itself as having posted inline comments.
 
 ## Step 3 — Self-review gate + diff-scoping flip
 
@@ -181,10 +187,10 @@ Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is i
 
 ```bash
 _RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-bash "$_RT/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-post-threads.json"
-[ -e "/tmp/swe-workbench-pr-review/${PR}-post-threads.json" ] \
-  && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads.json" >&2 \
-  || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads.json"
+bash "$_RT/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
+[ -e "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" ] \
+  && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" >&2 \
+  || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
 ```
 
 This skill never touches the caller's own worktree or preflight state files (e.g. `${PR}.json`, `${PR}-followup.json`) — those stay the caller's responsibility, cleaned up alongside its own worktree teardown after this skill returns.
@@ -210,7 +216,8 @@ A new finding `(path, line, body)` matches an existing thread `T` IFF: `T.path =
 | Dedup pr-level findings against `reviewThreads` | `reviewThreads` only covers inline comment threads; a pr-level finding has no `path`/`line` to match against. Batch and post once; re-running the same specialist mode on an unchanged PR will re-post the batch (known v1 limitation — no pr-level dedup yet). |
 | `-F body="$BODY"` on a finding that starts with `@` → silent `@`-file-expansion | Use `-f body=` (raw). See [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). |
 | Apply the diff-scoping flip on self-review or unknown identity | Gated on `IS_SELF_REVIEW=false` AND `IDENTITY_KNOWN=true`. Either false → no flip. |
-| Reuse the caller's own state-file names for the threads cache | This skill owns `${PR}-post-threads.json` specifically so it never collides with a caller's `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json`. |
+| Reuse the caller's own state-file names for the threads cache | This skill owns `${PR}-post-threads-${CALLER_TAG}.json` specifically so it never collides with a caller's `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json`, nor with another caller's own tagged threads cache for the same PR. |
+| Set `posted_pr_level` before checking whether `gh pr comment` succeeded | Gate the assignment on the call's exit status — a failed batch must leave `posted_pr_level=0`, not the finding count, or the byline/CTA misreport what was actually posted. |
 | Restate posted findings in the review `$SUMMARY` body | Findings live in inline comments / the pr-level batch comment; the summary is decision + byline (+ informational) only. |
 | Block on this skill's own cleanup before returning control | Step 6 reap is foreground (fast, single small file) — unlike worktree teardown, which the caller backgrounds separately. |
 | Report a dependency-mode (pr-level-only) run as "posted N inline comments" | The byline reports `posted_inline` and `posted_pr_level` separately — a run with zero inline posts must not claim it posted inline comments just because `posted` (the combined total) is non-zero. |

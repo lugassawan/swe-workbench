@@ -113,10 +113,19 @@ def test_followup_skill_has_owner_repo_guard_clause():
 
 # --- State-file cleanup assertions (issue #428) ---
 
+def test_followup_skill_passes_caller_tag_followup():
+    """workflow-pr-review-followup must pass CALLER_TAG=followup when invoking the posting core."""
+    text = SKILL_MD.read_text()
+    assert "CALLER_TAG" in text and "followup" in text, (
+        "workflow-pr-review-followup/SKILL.md must pass CALLER_TAG=followup to workflow-pr-review-post"
+    )
+
+
 def test_followup_skill_cleanup_deletes_followup_json():
     """Step 7 success-path must invoke clean-state-files.sh with this skill's own
     preflight state file. The threads-cache file moved to workflow-pr-review-post's
-    own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job."""
+    own reap (#499) — it owns a distinct CALLER_TAG-scoped ${PR}-post-threads-${CALLER_TAG}.json,
+    not this file's job."""
     text = SKILL_MD.read_text()
     assert "clean-state-files.sh" in text, (
         "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove its own per-run state file"

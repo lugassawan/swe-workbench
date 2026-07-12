@@ -108,6 +108,7 @@ Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `li
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
 - `BYLINE` — `_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench))._`
+- `CALLER_TAG` — `general` (scopes the core's own threads-cache filename so it never collides with a concurrent followup or specialist run on the same PR).
 - `FINDINGS[]` — as parsed above.
 
 The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.

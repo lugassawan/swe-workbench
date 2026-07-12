@@ -109,6 +109,51 @@ class TestReviewModeRouting:
         assert "ux" in text[postable_idx:line_end], \
             "ux must be enumerated in the postable specialist set"
 
+    def test_specialist_subflow_decision_gated_on_severity(self):
+        """DECISION must be derived from Critical/High severity, not mere non-emptiness
+        of FINDINGS[] — a run with only Low/Medium findings should APPROVE, mirroring
+        the general reviewer's own convention (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "Critical, High" in subflow_text or "Critical|High" in subflow_text, (
+            "Specialist post sub-flow must gate DECISION=COMMENT on at least one "
+            "Critical/High severity finding, not on FINDINGS[] non-emptiness alone"
+        )
+
+    def test_specialist_subflow_passes_caller_tag(self):
+        """The specialist sub-flow must pass CALLER_TAG (the mode name) to the posting
+        core so its threads-cache file never collides with a concurrent general/followup
+        review of the same PR (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        assert "CALLER_TAG" in text[subflow_idx:], (
+            "Specialist post sub-flow must pass CALLER_TAG to workflow-pr-review-post"
+        )
+
+    def test_specialist_subflow_reaps_own_state_file(self):
+        """The specialist sub-flow's own mode-scoped preflight JSON must be reaped via
+        clean-state-files.sh in both the skip and post branches (PR #520 review feedback)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow_idx = text.find("## Specialist post sub-flow")
+        assert subflow_idx != -1, "Specialist post sub-flow section not found"
+        subflow_text = text[subflow_idx:]
+        assert "clean-state-files.sh" in subflow_text, (
+            "Specialist post sub-flow must reap its own ${PR}-review-${MODE}.json via "
+            "runtime/clean-state-files.sh"
+        )
+        skip_idx = subflow_text.find("On `skip`")
+        post_idx = subflow_text.find("On `post`")
+        assert skip_idx != -1 and post_idx != -1, "skip/post branches not found"
+        assert "clean-state-files.sh" in subflow_text[skip_idx:post_idx], (
+            "The skip branch must reap its own state file before tearing down the worktree"
+        )
+        assert "clean-state-files.sh" in subflow_text[post_idx:], (
+            "The post branch must reap its own state file before tearing down the worktree"
+        )
+
     def test_existing_pr_mode_preserved(self):
         """Backward-compat: bare integer arg → PR mode still works."""
         text = REVIEW_PATH.read_text(encoding="utf-8")
