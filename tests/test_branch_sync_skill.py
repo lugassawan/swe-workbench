@@ -43,8 +43,8 @@ def test_rebase_push_uses_force_with_lease():
     assert "SYNC_STRATEGY` was `rebase`" in body or "sync_strategy was rebase" in body.lower()
 
 
-def test_step6_push_branches_on_sync_strategy_not_operation():
-    """Regression: Step 6 must branch push logic on SYNC_STRATEGY, never OPERATION —
+def test_step7_push_branches_on_sync_strategy_not_operation():
+    """Regression: Step 7 must branch push logic on SYNC_STRATEGY, never OPERATION —
     OPERATION is `none` on a clean sync (the common case), so an OPERATION-keyed
     branch has no push path at all for a clean --rebase sync."""
     body = _body()
@@ -52,8 +52,8 @@ def test_step6_push_branches_on_sync_strategy_not_operation():
     assert "SYNC_STRATEGY" in step3
     assert "merge|rebase" in step3 or "merge | rebase" in step3
 
-    step6 = body.split("### Step 6")[1].split("## ")[0]
-    push_lines = [ln for ln in step6.splitlines() if "git push" in ln]
+    step7 = body.split("### Step 7")[1].split("## ")[0]
+    push_lines = [ln for ln in step7.splitlines() if "git push" in ln]
     assert push_lines, "Step 6 must contain the push branching bullets"
     for ln in push_lines:
         # The decision clause is the first bolded span ("Yes, and X was Y") and
@@ -95,18 +95,18 @@ def test_common_mistakes_documents_ours_theirs_inversion():
     assert "apply-resolution.sh" in mistakes
 
 
-def test_step1_stash_sets_flag_and_step6_restores_it():
+def test_step1_stash_sets_flag_and_step7_restores_it():
     """Regression: a pre-sync stash must be restorable — Step 1 must set a
-    STASHED flag when it stashes, and Step 6 must pop it before reporting,
+    STASHED flag when it stashes, and Step 7 must pop it before reporting,
     handling a conflicting pop the same way a file conflict is surfaced."""
     body = _body()
     step1 = body.split("### Step 1")[1].split("### Step 2")[0]
     assert "STASHED=1" in step1
 
-    step6 = body.split("### Step 6")[1].split("## ")[0]
-    assert "STASHED=1" in step6
-    assert "git stash pop" in step6
-    assert "git stash drop" in step6, "a conflicting pop must be followed by an explicit drop after resolution"
+    step7 = body.split("### Step 7")[1].split("## ")[0]
+    assert "STASHED=1" in step7
+    assert "git stash pop" in step7
+    assert "git stash drop" in step7, "a conflicting pop must be followed by an explicit drop after resolution"
 
 
 def test_common_mistakes_documents_rimba_inverted_defaults():
@@ -169,12 +169,12 @@ def test_step5_shows_both_sides_before_prompting():
     assert "both sides" in step5.lower()
 
 
-def test_step6_never_auto_pushes():
+def test_step7_never_auto_pushes():
     body = _body()
-    assert "### Step 6" in body
-    step6 = body.split("### Step 6")[1].split("## ")[0]
-    assert "Never auto-push" in step6
-    assert "Push now?" in step6 or "push now" in step6.lower()
+    assert "### Step 7" in body
+    step7 = body.split("### Step 7")[1].split("## ")[0]
+    assert "Never auto-push" in step7
+    assert "Push now?" in step7 or "push now" in step7.lower()
 
 
 def test_failure_mode_table_present():
@@ -243,3 +243,145 @@ def test_failure_mode_table_documents_delete_modify_and_rimba_fallback():
     table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
     assert "worktree not found for task" in table
     assert "does not have our/their version" in table or "does not have" in table
+
+
+class TestRedundancyAssessment:
+    """Tests for the opt-in `sync --check-redundancy` pass (issue #510)."""
+
+    def test_step3_resolves_check_redundancy_flag_default_off(self):
+        body = _body()
+        step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+        assert "CHECK_REDUNDANCY" in step3
+        assert "on|off" in step3 or "on | off" in step3
+        assert "default" in step3.lower() and "off" in step3.lower()
+        assert "--check-redundancy" in step3
+
+    def test_step3_captures_merge_base_and_pre_sync_head_before_mechanical_sync(self):
+        """Regression: the merge-base baseline must be captured BEFORE the
+        mechanical sync — after merge/rebase, HEAD contains main's tip and
+        merge-base(HEAD, origin/main) collapses to main, making the branch's
+        own additions invisible."""
+        body = _body()
+        step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+        assert "MERGE_BASE" in step3
+        assert "PRE_SYNC_HEAD" in step3
+        assert "git merge-base" in step3
+
+        capture_idx = step3.find("MERGE_BASE=")
+        mechanical_idx = step3.find("Try rimba first")
+        assert capture_idx != -1 and mechanical_idx != -1
+        assert capture_idx < mechanical_idx, "merge-base capture must appear before the mechanical sync"
+
+    def test_step6_is_redundancy_assessment_and_flag_gated(self):
+        body = _body()
+        assert "### Step 6 — Redundancy Assessment" in body
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "CHECK_REDUNDANCY=off" in step6 or "CHECK_REDUNDANCY` is `off`" in step6
+        assert "skip" in step6.lower()
+        assert "unrelated histories" in step6.lower()
+        assert "MERGE_BASE" in step6
+
+    def test_step6_dispatches_scope_script_and_short_circuits_on_zero_candidates(self):
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "redundancy-scope.sh" in step6
+        assert "CANDIDATES=0" in step6
+        assert "never dispatch" in step6.lower()
+
+    def test_step6_dispatches_redundancy_assessor_subagent(self):
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "swe-workbench:redundancy-assessor" in step6
+
+    def test_step6_validates_ids_against_script_never_trusts_agent_id(self):
+        """Load-bearing invariant: the skill never evals or trusts agent
+        free-text for an actionable path — the actionable path always comes
+        from the deterministic script's enumerated record."""
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "reject" in step6.lower()
+        assert "id" in step6.lower()
+        assert "never" in step6.lower()
+        assert "redundancy-scope.sh" in step6
+
+    def test_step6_downgrades_auto_apply_to_escalate_when_refs_nonzero(self):
+        """Regression (PR #521 review): validating the sentinel's `id` against
+        the script's enumeration is not enough — the AUTO-APPLY tier label
+        itself is still the subagent's free text. The skill must also
+        re-derive that id's own `refs=<count>` from the script's CANDIDATE
+        line and downgrade to ESCALATE if refs is nonzero, rather than
+        trusting a subagent-asserted AUTO-APPLY at face value."""
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "refs" in step6
+        assert "downgrade" in step6.lower()
+        assert "ESCALATE" in step6
+        # The downgrade language must sit in the same numbered item as the
+        # id-validation invariant (item 4), not floating disconnected prose.
+        validate_step = step6.split("**Validate before acting**")[1].split("5. **Tiered gate**")[0]
+        assert "refs" in validate_step
+        assert "downgrade" in validate_step.lower()
+
+    def test_step6_auto_apply_is_file_only_and_never_pushes(self):
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "AUTO-APPLY" in step6
+        assert "git rm" in step6
+        assert "[refactor]" in step6
+        assert "git push" not in step6
+
+    def test_step6_escalate_prompts_remove_keep_edit(self):
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert "ESCALATE" in step6
+        assert "Remove" in step6 and "Keep" in step6 and "Edit" in step6
+
+    def test_step6_escalate_edit_path_commits_and_is_not_silently_dropped(self):
+        """Regression: an Edit resolution that only stages (never commits) is
+        invisible to Step 7's push and its commit-listing summary — a user
+        who picks Edit could believe the fix shipped when it's left dangling
+        in the index with no record."""
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        edit_clause = step6.split("Edit →")[1].split(".")[0] if "Edit →" in step6 else ""
+        assert edit_clause, "Step 6 must have an 'Edit →' clause describing the manual-edit outcome"
+        assert "commit" in edit_clause.lower(), (
+            "the Edit branch must commit its result — otherwise it never reaches Step 7's push "
+            "and is silently absent from the resolution summary"
+        )
+
+    def test_step7_summary_lists_auto_applied_redundancy_commits(self):
+        body = _body()
+        step7 = body.split("### Step 7")[1].split("## ")[0]
+        assert "refactor" in step7.lower()
+
+    def test_failure_mode_table_documents_redundancy_edge_cases(self):
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "unrelated histories" in table.lower()
+        assert "CHECK_REDUNDANCY" in table or "redundancy-assessor" in table.lower()
+
+    def test_failure_mode_table_documents_step5_step6_add_add_overlap(self):
+        """A same-path add/add conflict is already interactively resolved in
+        Step 5 (with full keep-mine/keep-main context) — but it can still
+        surface as a Step 6 CANDIDATE. Document this narrow overlap rather
+        than leaving it a silent gap."""
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "step 5" in table.lower()
+        assert "already resolved" in table.lower() or "already-resolved" in table.lower()
+
+    def test_failure_mode_table_documents_missing_sentinel_for_enumerated_candidate(self):
+        """Symmetric case to the agent-invented-id row: the script enumerated
+        a candidate but the subagent never emitted a sentinel for it."""
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "no sentinel" in table.lower() or "missing sentinel" in table.lower() or "never emit" in table.lower()
+        assert "unresolved" in table.lower()
+
+    def test_common_mistakes_documents_redundancy_guardrails(self):
+        body = _body()
+        mistakes = body.split("## Common Mistakes")[1]
+        assert "check-redundancy" in mistakes.lower() or "check_redundancy" in mistakes.lower()
+        assert "opt-in" in mistakes.lower()
+        assert "refs=0" in mistakes or "refs>0" in mistakes
