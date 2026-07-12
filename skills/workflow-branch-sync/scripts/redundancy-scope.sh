@@ -32,12 +32,16 @@
 #
 # refs=<count> is an inbound-reference guard: how many other tracked files
 # mention the candidate's path-stem (basename without extension), EXCLUDING
-# the candidate itself and every MAIN_ADD path. The exclusion matters because
-# this script runs (via Step 6) after Step 3's mechanical sync has already
-# merged the default branch in — the working tree at that point contains
-# both the candidate and its main-side counterpart, and without the
-# exclusion a genuine whole-file duplicate always counts its own counterpart
-# as a "reference" and can never reach refs=0. refs=0 is necessary (not
+# the candidate itself and main's newly-ADDED counterpart files (status A in
+# the MAIN_ADD diff — NOT every MAIN_ADD path, since a file main merely
+# MODIFIED for an unrelated reason can still carry a genuine live reference
+# to the candidate, and swallowing that into the exclusion set would hide a
+# real inbound reference). The exclusion matters because this script runs
+# (via Step 6) after Step 3's mechanical sync has already merged the default
+# branch in — the working tree at that point contains both the candidate and
+# its main-side counterpart, and without excluding that counterpart, a
+# genuine whole-file duplicate always counts its own counterpart as a
+# "reference" and can never reach refs=0. refs=0 is necessary (not
 # sufficient) for the caller's auto-apply tier — any nonzero refs must
 # escalate to a human, never auto-apply.
 #
@@ -60,8 +64,10 @@ if [ -z "$MERGE_BASE" ]; then
 fi
 
 MAIN_ADD_PATHS=()
-while IFS=$'\t' read -r _status path; do
+MAIN_NEW_PATHS=()
+while IFS=$'\t' read -r status path; do
   MAIN_ADD_PATHS+=("$path")
+  [ "$status" = "A" ] && MAIN_NEW_PATHS+=("$path")
 done < <(git diff --name-status -M --diff-filter=AM "$MERGE_BASE".."$DEFAULT_REF")
 
 id=0
@@ -73,8 +79,8 @@ while IFS=$'\t' read -r status path; do
   [ -z "$stem" ] && stem=$(basename "$path")
 
   exclude_args=(":(exclude,literal)$path")
-  if [ "${#MAIN_ADD_PATHS[@]}" -gt 0 ]; then
-    for main_path in "${MAIN_ADD_PATHS[@]}"; do
+  if [ "${#MAIN_NEW_PATHS[@]}" -gt 0 ]; then
+    for main_path in "${MAIN_NEW_PATHS[@]}"; do
       exclude_args+=(":(exclude,literal)$main_path")
     done
   fi

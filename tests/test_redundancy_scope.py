@@ -28,10 +28,13 @@ def _run(*args, cwd):
     )
 
 
-def _build_repo(base: Path, branch_adds: dict, main_adds: dict) -> dict:
+def _build_repo(base: Path, branch_adds: dict, main_adds: dict, base_files: dict | None = None) -> dict:
     """A merge-base commit, then `feature` and `main` each add distinct files.
 
-    branch_adds / main_adds: {filename: content}. Returns a dict with repo path,
+    branch_adds / main_adds: {filename: content}. base_files (optional):
+    {filename: content} committed as part of the merge-base itself — a
+    main_adds entry with the same filename becomes a *modification* (status
+    M) instead of an addition (status A). Returns a dict with repo path,
     merge_base sha, and feature-branch (pre-sync) head sha. Leaves HEAD on
     `feature` with nothing left uncommitted.
     """
@@ -45,6 +48,11 @@ def _build_repo(base: Path, branch_adds: dict, main_adds: dict) -> dict:
 
     (repo / "README.md").write_text("base\n")
     _run("git", "add", "README.md", cwd=repo)
+    for name, content in (base_files or {}).items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        _run("git", "add", name, cwd=repo)
     _run("git", "commit", "-m", "init", cwd=repo)
     _run("git", "branch", "-M", "main", cwd=repo)
     merge_base = _run("git", "rev-parse", "HEAD", cwd=repo).stdout.strip()
@@ -112,6 +120,29 @@ class TestRedundancyScopePostMerge:
                 "consumer.sh": "source utils/foo.sh  # uses foo\n",
             },
             main_adds={"lib/foo.sh": "echo foo\n"},
+        )
+        _run("git", "merge", "-q", "main", "-m", "merge", cwd=ctx["repo"])
+
+        result = _run_script(ctx["repo"], ctx["merge_base"], ctx["pre_sync_head"])
+
+        lines = result.stdout.strip().splitlines()
+        assert any(
+            ln.startswith("CANDIDATE ") and "path=utils/foo.sh" in ln and "refs=1" in ln for ln in lines
+        ), lines
+
+    def test_refs_catches_reference_added_in_a_file_main_only_modified(self, tmp_path):
+        """Regression: the refs-exclusion set must only cover main's newly
+        ADDED counterpart files, not every file main merely modified — a
+        live reference living in a pre-existing file that main happened to
+        touch (for any reason) in the same window must not be swallowed."""
+        ctx = _build_repo(
+            tmp_path,
+            branch_adds={"utils/foo.sh": "echo foo\n"},
+            main_adds={
+                "lib/foo.sh": "echo foo\n",
+                "consumer.sh": "source utils/foo.sh  # calls foo\n",
+            },
+            base_files={"consumer.sh": "echo placeholder\n"},
         )
         _run("git", "merge", "-q", "main", "-m", "merge", cwd=ctx["repo"])
 
