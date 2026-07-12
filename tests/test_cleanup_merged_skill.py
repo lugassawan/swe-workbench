@@ -198,3 +198,45 @@ def test_cleanup_merged_step5_delegates_to_delete_branches_script():
         "git push origin --delete <headRefName> must not appear inline in Step 5 — "
         "it was extracted into delete-branches.sh"
     )
+
+
+# ---------------------------------------------------------------------------
+# No-op ambiguity reframe (#497)
+# ---------------------------------------------------------------------------
+
+def test_step3_no_longer_claims_no_op_confirms_cd_entry():
+    """Step 3a must not assert an ExitWorktree no-op as definitive proof of cd-entry.
+
+    A no-op means only "no active EnterWorktree session" — caused by either
+    cd-fallback entry OR compaction dropping harness-level tracking (#497). The
+    two are indistinguishable from ExitWorktree's output alone.
+    """
+    body = SKILL.read_text()
+    assert "confirming cd-entry" not in body, (
+        "SKILL.md must not claim an ExitWorktree no-op confirms cd-entry with "
+        "certainty — compaction-dropped tracking presents identically."
+    )
+
+
+def test_step3_names_compaction_as_alternative_cause():
+    body = SKILL.read_text()
+    step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+    assert "compaction" in step3.lower(), (
+        "Step 3 must name compaction as an alternative cause of an ExitWorktree no-op."
+    )
+
+
+def test_common_mistakes_no_op_row_reframed():
+    """The Common Mistakes row about cd-fallback ExitWorktree must not assert
+    cd-entry with certainty either — same reframe as Step 3."""
+    body = SKILL.read_text()
+    assert "## Common Mistakes" in body, "Common Mistakes section must exist"
+    mistakes = body.split("## Common Mistakes")[1]
+    assert "confirming cd-entry" not in mistakes and "confirms cd-entry" not in mistakes, (
+        "Common Mistakes table must not assert an ExitWorktree no-op confirms "
+        "cd-entry with certainty."
+    )
+    assert "compaction" in mistakes.lower(), (
+        "Common Mistakes table must name compaction as an alternative cause "
+        "wherever it discusses the ExitWorktree no-op."
+    )

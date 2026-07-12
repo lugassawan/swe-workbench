@@ -128,3 +128,75 @@ class TestSwitchBetweenWorktreesRemedy:
 
     def test_already_inside_different_worktree_named(self):
         assert "different worktree" in _text().lower()
+
+
+# ---------------------------------------------------------------------------
+# No-op ambiguity diagnostic (#497)
+# ---------------------------------------------------------------------------
+
+class TestNoOpAmbiguityDiagnostic:
+    """Mode C must not assert an ExitWorktree no-op as definitive proof of cd-entry.
+
+    A no-op means only "no active EnterWorktree session" — caused by either
+    cd-entry OR compaction dropping harness-level EnterWorktree tracking, and the
+    two present identically from ExitWorktree's output alone. Mode C must instruct
+    an active probe (--git-dir vs --git-common-dir, plus a fresh sidecar's
+    worktree_root) before diagnosing which cause applies.
+    """
+
+    @staticmethod
+    def _mode_c_slice() -> str:
+        text = _text()
+        start = text.find("### Mode C")
+        end = text.find("## Forbidden pattern")
+        assert start != -1, "SKILL.md must contain a '### Mode C' section"
+        assert end != -1, "SKILL.md must contain a '## Forbidden pattern' section"
+        return text[start:end]
+
+    def test_no_op_not_asserted_as_definitive_cd_entry(self):
+        mode_c = self._mode_c_slice()
+        assert "(confirms cd-entry)" not in mode_c and "(confirms `cd`-entry)" not in mode_c, (
+            "Mode C must not assert an ExitWorktree no-op as definitive proof of "
+            "cd-entry — compaction-dropped tracking presents identically."
+        )
+
+    def test_compaction_named_as_alternative_cause(self):
+        mode_c = self._mode_c_slice()
+        assert "compaction" in mode_c.lower(), (
+            "Mode C must name compaction as an alternative cause of an ExitWorktree no-op."
+        )
+
+    def test_probe_instruction_present(self):
+        mode_c = self._mode_c_slice()
+        assert "--git-dir" in mode_c and "--git-common-dir" in mode_c, (
+            "Mode C must instruct probing `git rev-parse --git-dir --git-common-dir` "
+            "to determine whether cwd is a linked worktree."
+        )
+
+    def test_worktree_root_evidence_referenced(self):
+        mode_c = self._mode_c_slice()
+        assert "worktree_root" in mode_c, (
+            "Mode C must reference the sidecar's context.worktree_root as "
+            "corroborating evidence for diagnosing compaction-dropped tracking."
+        )
+
+    def test_likely_lost_to_compaction_framing_present(self):
+        mode_c = self._mode_c_slice()
+        assert "lost to compaction" in mode_c.lower(), (
+            "Mode C must state the diagnostic conclusion 'tracking likely lost to "
+            "compaction, not cd-entry' when probe evidence supports it."
+        )
+
+    def test_recovery_snippet_unchanged(self):
+        """Recovery command must still work for both causes, unchanged."""
+        mode_c = self._mode_c_slice()
+        assert "_GCD=$(git rev-parse --git-common-dir)" in mode_c
+        assert 'cd "${_GCD%/.git}"' in mode_c
+
+    def test_quick_reference_row_no_longer_asserts_cd_entry_certainty(self):
+        text = _text()
+        assert "## Quick reference" in text, "SKILL.md must contain a Quick reference section"
+        quick_ref = text.split("## Quick reference")[1]
+        assert "confirms cd-entry" not in quick_ref and "confirms `cd`-entry" not in quick_ref, (
+            "Quick reference row for Mode C must not assert cd-entry certainty either."
+        )

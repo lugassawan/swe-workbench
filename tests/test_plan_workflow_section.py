@@ -152,3 +152,44 @@ class TestSwitchRemedyInTemplate:
         text = _text()
         enter_bullet = text[text.find("Enter worktree"):text.find("Resume note")]
         assert "last resort" in enter_bullet.lower()
+
+
+# ---------------------------------------------------------------------------
+# Exit bullet no-op ambiguity (#497)
+# ---------------------------------------------------------------------------
+
+class TestExitBulletNoOpAmbiguity:
+    """The Exit bullet must not label the no-op case as confirmed cd-fallback.
+
+    A no-op from ExitWorktree means only "no active EnterWorktree session" —
+    caused by either cd-fallback entry OR compaction dropping harness-level
+    tracking (#497). The bullet heading previously baked in the cd-fallback
+    assumption as fact.
+    """
+
+    def _exit_bullet(self) -> str:
+        text = _text()
+        start = text.find("**Exit")
+        end = text.find("**Promote existing work")
+        assert start != -1, "Template must contain an **Exit ...** bullet"
+        assert end != -1, "Template must contain a **Promote existing work** bullet"
+        return text[start:end]
+
+    def test_exit_bullet_heading_not_cd_fallback_confirmed(self):
+        text = _text()
+        assert "**Exit (cd-fallback sessions):**" not in text, (
+            "Exit bullet heading must not assume cd-fallback with certainty — "
+            "a no-op also occurs when compaction drops EnterWorktree tracking."
+        )
+
+    def test_exit_bullet_mentions_compaction(self):
+        exit_bullet = self._exit_bullet()
+        assert "compaction" in exit_bullet.lower(), (
+            "Exit bullet must name compaction as an alternative cause of the no-op."
+        )
+
+    def test_exit_bullet_recovery_snippet_present(self):
+        exit_bullet = self._exit_bullet()
+        assert "_GCD=$(git rev-parse --git-common-dir)" in exit_bullet, (
+            "Exit bullet must still include the recovery snippet unchanged."
+        )
