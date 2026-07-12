@@ -3,3 +3,4 @@ fetch the context for PROJ-123 before I start implementing
 I need the details from GitHub issue #42 to understand the acceptance criteria
 pull the Jira ticket ENG-789 and summarize the requirements
 load context from this Confluence page before we design the solution
+load the Linear ticket at https://linear.app/acme/issue/ENG-42 and summarize the acceptance criteria

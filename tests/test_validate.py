@@ -1093,7 +1093,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
         assert any("slice" in f.lower() for f in validate.FAILURES)
 
     def test_ticket_context_lands_in_workflows(self, reset_validate):
-        """ticket-context is a _WORKFLOW_EXTRAS member — must land in workflows.md, not principles.md."""
+        """ticket-context is a member of the '*-context' family — must land in workflows.md, not principles.md."""
         root = reset_validate
         make_plugin_tree(
             root,
@@ -1111,6 +1111,33 @@ class TestCheckWorkflowDevelopmentActivationContract:
         assert "ticket-context" not in principles_text, (
             "ticket-context must not appear in principles.md (belongs in workflows.md)"
         )
+
+    def test_context_family_routes_to_workflows_generically(self, reset_validate):
+        """Any '*-context' skill id (not just the literal 'ticket-context') must be
+        expected in workflows.md, not principles.md — the routing rule is generic."""
+        root = reset_validate
+        # catalog= gives full manual control: principles.md gets this text, and
+        # languages.md/workflows.md become blank stubs (see helpers.make_plugin_tree),
+        # so on-disk 'fixture-context' is deliberately absent from every catalog file.
+        make_plugin_tree(
+            root,
+            skills={"fixture-context": "---\nname: fixture-context\ndescription: d\n---\n"},
+            catalog="# no entries\n",
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            encoding="utf-8",
+        )
+        validate.check_catalog_completeness()
+        assert any(
+            "agents/shared/workflows.md" in f and "swe-workbench:fixture-context" in f
+            for f in validate.FAILURES
+        ), f"expected a workflows.md 'missing entry' failure for fixture-context, got: {validate.FAILURES}"
+        assert not any(
+            "principles.md" in f and "fixture-context" in f for f in validate.FAILURES
+        ), f"fixture-context must not be routed to principles.md, got: {validate.FAILURES}"
 
     def test_stale_entry_in_wrong_slice_fails(self, reset_validate):
         """A language-* skill listed in principles.md (wrong slice) must fail."""
@@ -1343,6 +1370,181 @@ class TestCheckSkillTriggerFixtures:
         _skill_with_triggers(root, "my-skill", f"short prompt\n{long_line}\n")
         validate.check_skill_trigger_fixtures()
         assert any("line exceeds 200 chars" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_adapter_blocks
+# ──────────────────────────────────────────────
+
+def _adapter_block(provider="Foo", labels=("Trigger", "Fetch", "Extract → block fields", "Degrade")):
+    """Build a well-formed '### Provider' adapter block with the 4 required
+    bold-labeled fields, in the given order."""
+    lines = [f"### {provider}"]
+    for label in labels:
+        lines.append(f"- **{label}:** does something for {label.lower()}")
+    return "\n".join(lines) + "\n"
+
+
+class TestCheckAdapterBlocks:
+    def _skill_body(self, name, section):
+        return f"---\nname: {name}\ndescription: A skill\n---\n\n{section}"
+
+    def test_well_formed_block_passes(self, reset_validate):
+        root = reset_validate
+        section = "## Adapters\n\n" + _adapter_block("Foo") + "\n## Other Section\n\nMore prose.\n"
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert validate.FAILURES == []
+
+    def test_multiple_well_formed_blocks_pass(self, reset_validate):
+        root = reset_validate
+        section = (
+            "## Adapters\n\n"
+            + _adapter_block("Foo")
+            + "\n"
+            + _adapter_block("Bar")
+        )
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert validate.FAILURES == []
+
+    def test_missing_adapters_heading_fails(self, reset_validate):
+        root = reset_validate
+        section = "## Other Section\n\nNo adapters heading anywhere in this file.\n"
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert any("missing required '## Adapters' section" in f for f in validate.FAILURES)
+
+    def test_missing_label_fails_naming_it(self, reset_validate):
+        root = reset_validate
+        # Missing "Extract → block fields" entirely.
+        block = "### Foo\n- **Trigger:** x\n- **Fetch:** y\n- **Degrade:** z\n"
+        section = "## Adapters\n\n" + block
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "'Extract → block fields'" in validate.FAILURES[0]
+        assert "Foo" in validate.FAILURES[0]
+
+    def test_out_of_order_labels_fail(self, reset_validate):
+        root = reset_validate
+        # Fetch appears before Trigger — violates the required order.
+        block = (
+            "### Foo\n"
+            "- **Fetch:** y\n"
+            "- **Trigger:** x\n"
+            "- **Extract → block fields:** e\n"
+            "- **Degrade:** z\n"
+        )
+        section = "## Adapters\n\n" + block
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "missing or out-of-order" in validate.FAILURES[0]
+
+    def test_non_context_skill_without_adapters_section_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n\nNo adapters here.\n"},
+        )
+        validate.check_adapter_blocks()
+        assert validate.FAILURES == []
+
+    def test_empty_adapters_section_fails(self, reset_validate):
+        root = reset_validate
+        # '## Adapters' heading present but zero '### <Provider>' blocks inside it.
+        section = "## Adapters\n\nNothing here yet.\n\n## Other Section\n\nMore prose.\n"
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "at least one" in validate.FAILURES[0]
+
+    def test_malformed_h3_after_adapters_boundary_is_ignored(self, reset_validate):
+        root = reset_validate
+        # A '### <heading>' with none of the 4 required fields, placed AFTER the
+        # '## Adapters' section ends — must NOT be scanned as an adapter block.
+        section = (
+            "## Adapters\n\n"
+            + _adapter_block("Foo")
+            + "\n## Other Section\n\n### Not An Adapter\nSome unrelated prose.\n"
+        )
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert validate.FAILURES == []
+
+    def test_fenced_heading_does_not_mask_a_real_malformed_block(self, reset_validate):
+        root = reset_validate
+        # A well-formed block, then a fenced illustrative example (as
+        # docs/extending.md instructs authors to include) containing a bare
+        # '## fake heading' — without fence-stripping, _H2_BOUNDARY_RE matches
+        # that fenced heading as the '## Adapters' section boundary, silently
+        # truncating the section BEFORE the real '### Bar' block that follows
+        # the fence — so a genuinely malformed block (missing Trigger) escapes
+        # detection entirely. Must still fail.
+        section = (
+            "## Adapters\n\n"
+            + _adapter_block("Foo")
+            + "\n"
+            "Example adapter shape for authors:\n\n"
+            "```\n"
+            "## fake heading inside fence\n"
+            "```\n\n"
+            "### Bar\n"
+            "- **Fetch:** y\n"
+            "- **Extract → block fields:** e\n"
+            "- **Degrade:** z\n"
+        )
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "'Trigger'" in validate.FAILURES[0]
+        assert "Bar" in validate.FAILURES[0]
+
+    def test_fenced_field_label_is_not_scanned_as_real(self, reset_validate):
+        root = reset_validate
+        # A block missing 'Degrade' for real, but with a fenced example
+        # afterwards that happens to contain a '- **Degrade:** ...' line.
+        # Without fence-stripping, the field-order scan (which searches the
+        # whole rest of the block's raw text) would find that fenced label and
+        # incorrectly consider the block complete.
+        block = (
+            "### Foo\n"
+            "- **Trigger:** t\n"
+            "- **Fetch:** f\n"
+            "- **Extract → block fields:** e\n"
+            "\n"
+            "Example:\n\n"
+            "```\n"
+            "- **Degrade:** this is inside a fence and must not count\n"
+            "```\n"
+        )
+        section = "## Adapters\n\n" + block
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert len(validate.FAILURES) == 1
+        assert "'Degrade'" in validate.FAILURES[0]
+
+
+class TestStripFencedCodeBlocks:
+    """Unit tests for _strip_fenced_code_blocks, isolated from the full
+    check_adapter_blocks path (issue surfaced in PR #525 follow-up review)."""
+
+    def test_closing_fence_longer_than_opening_is_stripped(self):
+        # CommonMark allows the closing fence to be >= the opening length.
+        text = "before\n```\n## fake\n````\nafter\n"
+        stripped = validate._strip_fenced_code_blocks(text)
+        assert "## fake" not in stripped
+        assert "before" in stripped
+        assert "after" in stripped
+
+    def test_crlf_fenced_block_is_stripped(self):
+        text = "before\r\n```\r\n## fake\r\n```\r\nafter\r\n"
+        stripped = validate._strip_fenced_code_blocks(text)
+        assert "## fake" not in stripped
+        assert "before" in stripped
+        assert "after" in stripped
 
 
 # ──────────────────────────────────────────────

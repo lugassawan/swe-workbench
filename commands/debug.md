@@ -80,6 +80,15 @@ If the symptom is not performance-shaped: skip this step entirely.
 
 Non-web symptoms (backend panics, CLI failures, test assertion errors): skip this step entirely — no gate, no prompt.
 
+**Observability/comms context step (production or on-call symptoms only).** Before delegating, check whether the symptom references a production observability signal (a Sentry error, exception, stack trace, regression, or alert) or an on-call/comms reference (a Slack thread permalink, a PagerDuty incident). If it does:
+
+1. **Capture** — invoke `swe-workbench:observability-context` and/or `swe-workbench:comms-context`, whichever reference is present. Each skill applies its own trigger pattern and degrades gracefully if the relevant MCP tool isn't connected — no hard gate or `BLOCKED` sentinel is needed here, unlike the browser step above.
+2. **Prepend** any `## Observability context` / `## Comms context` block(s) returned to the delegation context below (same position as a ticket-context summary or the Browser evidence block).
+
+**Evidence-class caveat:** an `## Observability context` block always carries `**Evidence class:** production signal (Phase-1 framing) — NOT a profile`. Treat it as framing for the debugger's hypothesis step, never as a substitute for reading the actual stack trace, logs, or a reproduction.
+
+Non-production, non-on-call symptoms: skip this step entirely — no gate, no prompt.
+
 Delegate to the `debugger` subagent. Its output must include:
 
 1. **Repro** — exact steps, inputs, and the observed failure (command, stack trace, or assertion delta).

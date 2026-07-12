@@ -451,6 +451,123 @@ def check_skill_trigger_fixtures():
                 )
 
 
+_ADAPTER_FIELD_LABELS = ("Trigger", "Fetch", "Extract → block fields", "Degrade")
+_ADAPTERS_HEADING_RE = re.compile(r'^##(?!#)[ \t]+Adapters[ \t]*$', re.MULTILINE)
+# Next top-level ('##', not '###+') heading — bounds the '## Adapters' section.
+_H2_BOUNDARY_RE = re.compile(r'^##(?!#)[ \t]+\S', re.MULTILINE)
+# One '### <Provider>' sub-heading starts one adapter block.
+_H3_PROVIDER_RE = re.compile(r'^###(?!#)[ \t]+(.+?)[ \t]*$', re.MULTILINE)
+# Opening fence: ``` or ~~~ (3+) at some indent. Line-scanned (not matched
+# as one block regex) so the closing fence can be length-checked against the
+# opening length via a per-match compiled pattern — a plain backreference
+# can only require an EXACT repeat, but CommonMark allows the closer to be
+# >= the opener's length (e.g. open ``` / close ````).
+_FENCE_OPEN_RE = re.compile(r'^([ \t]*)(`{3,}|~{3,})')
+
+
+def _strip_fenced_code_blocks(text):
+    """Blank out the interior of fenced (``` / ~~~) code blocks.
+
+    Adapter authors illustrate the recipe template inside a fence (see
+    docs/extending.md); without this, a fenced '## X' or '- **Trigger:**'
+    example line is indistinguishable from real structure to the
+    heading/boundary/label regexes below — either truncating a section early
+    or masking a genuinely malformed block. Replaces every line spanned by a
+    fence (open through close, inclusive) with a blank line, so downstream
+    regex *positions* (offsets within the returned text) stay meaningful for
+    anything derived from it. Line-based (not a single whole-text regex) so
+    CRLF line endings and a closing fence longer than the opening one both
+    strip correctly; a fence left unterminated to EOF is blanked to EOF too,
+    matching CommonMark's own unterminated-fence behavior.
+    """
+    lines = text.split('\n')
+    out = []
+    i, n = 0, len(lines)
+    while i < n:
+        probe = lines[i][:-1] if lines[i].endswith('\r') else lines[i]
+        opener = _FENCE_OPEN_RE.match(probe)
+        if opener is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        fence_char, open_len = opener.group(2)[0], len(opener.group(2))
+        closer_re = re.compile(r'^[ \t]*' + re.escape(fence_char) + '{' + str(open_len) + r',}[ \t]*$')
+        out.append('')
+        i += 1
+        while i < n:
+            probe = lines[i][:-1] if lines[i].endswith('\r') else lines[i]
+            out.append('')
+            i += 1
+            if closer_re.match(probe):
+                break
+    return '\n'.join(out)
+
+
+def check_adapter_blocks(cache=None):
+    """Every skills/<name>/SKILL.md where <name> ends with '-context' (the
+    *-context family, e.g. ticket-context) must have a '## Adapters' section.
+
+    Within that section, each '### <Provider>' sub-heading starts one adapter
+    block (running to the next '###'/'##'/EOF) that must carry, in this exact
+    order, four bold-labeled fields: **Trigger**, **Fetch**,
+    **Extract → block fields**, **Degrade**. Fenced code blocks (used to show
+    authors the adapter template) are excluded from this structural scan —
+    see _strip_fenced_code_blocks.
+    """
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        skill_dir_name = skill_md.parent.name
+        if not skill_dir_name.endswith("-context"):
+            continue
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                fail(skill_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            text = skill_md.read_text(encoding="utf-8")
+        text = _strip_fenced_code_blocks(text)
+
+        heading = _ADAPTERS_HEADING_RE.search(text)
+        if heading is None:
+            fail(skill_md.relative_to(ROOT), "missing required '## Adapters' section")
+            continue
+
+        boundary = _H2_BOUNDARY_RE.search(text, heading.end())
+        section = text[heading.end():boundary.start()] if boundary else text[heading.end():]
+
+        providers = list(_H3_PROVIDER_RE.finditer(section))
+        if not providers:
+            fail(skill_md.relative_to(ROOT), "'## Adapters' section has zero '### <Provider>' blocks; at least one is required")
+            continue
+        for i, prov_match in enumerate(providers):
+            provider = prov_match.group(1).strip()
+            block_start = prov_match.end()
+            block_end = providers[i + 1].start() if i + 1 < len(providers) else len(section)
+            _check_adapter_block_field_order(skill_md, provider, section[block_start:block_end])
+
+
+def _check_adapter_block_field_order(skill_md, provider, block):
+    """Confirm the 4 required bold-labeled fields appear in `block`, in order.
+
+    Searches for each label starting from just after the previous match, so a
+    label that is either absent or appears before an earlier label (i.e. out
+    of order) is reported the same way: as the first offending field.
+    """
+    cursor = 0
+    for label in _ADAPTER_FIELD_LABELS:
+        pat = re.compile(r'^[ \t]*-\s+\*\*' + re.escape(label) + r':\*\*', re.MULTILINE)
+        match = pat.search(block, cursor)
+        if match is None:
+            fail(
+                skill_md.relative_to(ROOT),
+                f"### {provider} adapter block missing or out-of-order required field: {label!r}",
+            )
+            return
+        cursor = match.end()
+
+
 def check_catalog_completeness(cache=None):
     """Per-slice catalogs under agents/shared/ must list every skill in the right slice,
     and every agent must reference at least one slice catalog.
@@ -458,7 +575,7 @@ def check_catalog_completeness(cache=None):
     Slice files and their skill-name prefix rules:
       principles.md  → skill names starting with 'principle-'
       languages.md   → skill names starting with 'language-'
-      workflows.md   → skill names starting with 'workflow-' plus 'ticket-context'
+      workflows.md   → skill names starting with 'workflow-' plus the '*-context' family
 
     Skills with unrecognised prefixes are assigned to principles.md by convention.
     """
@@ -467,7 +584,6 @@ def check_catalog_completeness(cache=None):
         "languages.md": ("language-",),
         "workflows.md": ("workflow-",),
     }
-    _WORKFLOW_EXTRAS = frozenset({"ticket-context"})
     _SLICE_REFS = frozenset({
         "@./shared/principles.md",
         "@./shared/languages.md",
@@ -491,7 +607,7 @@ def check_catalog_completeness(cache=None):
         for fname, prefixes in _SLICE_FILES.items():
             if any(sid.startswith(p) for p in prefixes):
                 return fname
-        if sid in _WORKFLOW_EXTRAS:
+        if sid.endswith("-context"):
             return "workflows.md"
         return "principles.md"  # safe default for unrecognised prefixes
 
@@ -997,6 +1113,7 @@ def main():
     check_plan_mode_workflow_embedding()
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
+    check_adapter_blocks(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)

@@ -1,0 +1,5 @@
+# Representative trigger prompts for observability-context
+investigate this Sentry alert: https://acme.sentry.io/issues/12345/ before we ship the fix
+pull the Sentry issue at https://sentry.io/organizations/acme/issues/98765/ and summarize the stack trace
+we're seeing a spike in NullPointerException in production, pull the Sentry stack trace
+check the frequency and first-seen date for Sentry event abc123 tied to this regression

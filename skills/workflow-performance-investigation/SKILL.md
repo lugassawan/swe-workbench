@@ -25,14 +25,16 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 
 - **`swe-workbench:principle-performance`** — design-time discipline (Big-O, allocation, N+1, data locality). Run inline or hand off; never skip the discipline layer.
 - **`performance-tuner` agent** — ranked hotspot analysis given a captured profile. Hand the profile artifact at Phase 3; do not invoke before a profile exists.
+- **`swe-workbench:observability-context`** — production signal framing at Phase 1 only (a Sentry error rate, regression, or alert that motivated this investigation). Never invoke it at Phase 3 or later, and never let its output substitute for the profile artifact `performance-tuner` requires — see the Evidence-class caveat in Phase 1 below.
 
 ## Phases
 
 ### Phase 1 — Frame & baseline
 
-1. Reproduce the slowness reliably under a controlled load (script or benchmark).
-2. Pick **one metric**: p99 latency, allocation rate, or throughput.
-3. Record the baseline number before touching any code.
+1. If a Sentry reference or production-alert signal motivated this investigation, invoke `swe-workbench:observability-context` and prepend its `## Observability context` block here, at Phase 1 only. **Evidence-class caveat:** that block always carries `**Evidence class:** production signal (Phase-1 framing) — NOT a profile`; use it only to frame which endpoint/job to target — it never substitutes for the profile artifact Phase 2/3 require.
+2. Reproduce the slowness reliably under a controlled load (script or benchmark).
+3. Pick **one metric**: p99 latency, allocation rate, or throughput.
+4. Record the baseline number before touching any code.
 
 ### Phase 2 — Profile
 

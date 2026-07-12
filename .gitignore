@@ -11,3 +11,5 @@ scripts/__pycache__/
 .venv/
 .rimba/settings.local.toml
 .claude/cache/
+.superpowers/
+docs/superpowers/

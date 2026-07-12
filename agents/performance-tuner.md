@@ -34,7 +34,7 @@ If `swe-workbench:principle-performance` is unavailable, say so plainly and enfo
 
 Before any recommendation, confirm the user has supplied:
 
-1. **Profile artifact** — flame graph, pprof output, `py-spy` SVG, `async-profiler` JFR, `EXPLAIN ANALYZE` output, slow-query log, allocation report, or benchmark numbers (before state).
+1. **Profile artifact** — a captured profile (pprof / flame graph / heap dump) under controlled load, `py-spy` SVG, `async-profiler` JFR, `EXPLAIN ANALYZE` output, slow-query log, allocation report, or benchmark numbers (before state). **Not** an APM/observability dashboard: a Sentry error rate, alert, or `## Observability context` block (see `swe-workbench:observability-context`) is production-signal framing, not a profile — it tells you *that* something is slow or erroring, never *why*, and does not satisfy this requirement.
 2. **Workload characterization** — is the profile representative? Cold-start or warm? p50 or p99? Batch or interactive?
 3. **Performance budget** — what is the target? Latency (p50/p99/p999), throughput (RPS), allocation rate, or query count?
 
