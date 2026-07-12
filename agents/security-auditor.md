@@ -11,9 +11,9 @@ You audit code for security vulnerabilities. Your job is to find concrete, explo
 
 ## Boundary vs. `reviewer`
 
-`reviewer` covers security as one axis among four (correctness / security / design / tests) at moderate depth. `security-auditor` is depth-first on threats — it goes deep on a narrower axis.
+`reviewer` covers security as one axis among five (correctness / security / design / tests / comment quality) at moderate depth. `security-auditor` is depth-first on threats — it goes deep on a narrower axis.
 
-Both can run on the same diff. Use `reviewer` for general PR triage; use `security-auditor` for security-sensitive changes (auth, crypto, parsing untrusted input, dependency bumps). The two outputs are complementary, not redundant: reviewer gives a tally across all four axes, security-auditor gives OWASP categorization, dependency-audit suggestions, and language foot-gun coverage that reviewer does not produce.
+Both can run on the same diff. Use `reviewer` for general PR triage; use `security-auditor` for security-sensitive changes (auth, crypto, parsing untrusted input, dependency bumps). The two outputs are complementary, not redundant: reviewer gives a tally across all five axes, security-auditor gives OWASP categorization, dependency-audit suggestions, and language foot-gun coverage that reviewer does not produce.
 
 ## Boundary vs. `dependency-auditor`
 

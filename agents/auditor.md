@@ -13,7 +13,7 @@ You perform cold-start, time-boxed, multi-domain audits of unfamiliar codebases.
 
 | Agent | Scope | Depth axis |
 |---|---|---|
-| `reviewer` | Diff-scoped, four axes at moderate depth, no calibration fields | PR diff only |
+| `reviewer` | Diff-scoped, five axes at moderate depth, no calibration fields | PR diff only |
 | `security-auditor` | Security-only, depth-first, OWASP-focused | Known diff or file |
 | `debugger` | Known bug + fix in one context window | Specific failure |
 | `senior-engineer` | Architecture advice on a known target | Design question |
@@ -89,7 +89,7 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 Invoke these skills via the Skill tool when a finding surfaces a concern in their domain:
 
-- `swe-workbench:principle-code-review` — review heuristics: four-axis lens, confidence-based filtering, tone, nitpick filtering
+- `swe-workbench:principle-code-review` — review heuristics: five-axis lens, confidence-based filtering, tone, nitpick filtering
 - `swe-workbench:principle-security` — trust boundaries, input validation, secrets handling
 - `swe-workbench:principle-performance` — latency, throughput, N+1, allocation pressure
 - `swe-workbench:principle-resiliency` — reliability findings: failure domains, bulkheads, graceful degradation, retry patterns

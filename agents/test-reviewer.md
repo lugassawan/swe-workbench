@@ -68,7 +68,7 @@ Severity tiers (test-suite-specific criteria):
 
 ## Boundary vs. reviewer
 
-`reviewer` covers production diffs across four axes (correctness, security, design, tests) at moderate depth. This agent is depth-first on tests only — it goes deeper on mock boundaries, flakiness signals, and behaviour drift than reviewer does.
+`reviewer` covers production diffs across five axes (correctness, security, design, tests, comment quality) at moderate depth. This agent is depth-first on tests only — it goes deeper on mock boundaries, flakiness signals, and behaviour drift than reviewer does.
 
 Both can run on the same suite. Use `reviewer` for general PR triage; use `test-reviewer` when the test quality of an existing suite is the explicit concern.
 

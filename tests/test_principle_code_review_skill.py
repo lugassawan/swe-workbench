@@ -41,20 +41,20 @@ def _axis_bullet_lines(section: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Four-Axis Review Lens
+# Five-Axis Review Lens
 # ---------------------------------------------------------------------------
 
 
 def test_correctness_bullet_mentions_paired_guard_predicate_gaps():
     """The Correctness axis bullet must name paired-guard predicate gaps."""
     body = _read()
-    section = _section(body, "Four-Axis Review Lens")
+    section = _section(body, "Five-Axis Review Lens")
     bullets = _axis_bullet_lines(section)
     correctness_line = next(
         (line for line in bullets if line.strip().startswith("- **Correctness**")),
         "",
     )
-    assert correctness_line, "Four-Axis Review Lens must have a '- **Correctness**' bullet"
+    assert correctness_line, "Five-Axis Review Lens must have a '- **Correctness**' bullet"
     lowered = correctness_line.lower()
     assert "predicate" in lowered, (
         "the Correctness bullet must mention predicate gaps between paired guard methods"
@@ -64,15 +64,38 @@ def test_correctness_bullet_mentions_paired_guard_predicate_gaps():
     )
 
 
-def test_four_axis_framing_still_has_exactly_four_axes():
-    """The 'four axes' framing must remain accurate after the Correctness edit."""
+def test_five_axis_framing_has_exactly_five_axes():
+    """The 'five axes' framing must remain accurate after the Comment quality addition."""
     body = _read()
-    section = _section(body, "Four-Axis Review Lens")
+    section = _section(body, "Five-Axis Review Lens")
     bullets = _axis_bullet_lines(section)
-    assert len(bullets) == 4, (
-        "'## Four-Axis Review Lens' must have exactly four '- **Axis**' bullets, "
+    assert len(bullets) == 5, (
+        "'## Five-Axis Review Lens' must have exactly five '- **Axis**' bullets, "
         f"found {len(bullets)}"
     )
-    assert "every review covers four axes" in section.lower(), (
-        "the four-axes framing sentence must remain in place"
+    assert "every review covers five axes" in section.lower(), (
+        "the five-axes framing sentence must be in place"
+    )
+
+
+def test_comment_quality_axis_present():
+    """The Comment quality axis must define scope (hygiene, in-diff only, no auto-rewrite)."""
+    body = _read()
+    section = _section(body, "Five-Axis Review Lens")
+    bullets = _axis_bullet_lines(section)
+    comment_line = next(
+        (line for line in bullets if line.strip().startswith("- **Comment quality**")),
+        "",
+    )
+    assert comment_line, "Five-Axis Review Lens must have a '- **Comment quality**' bullet"
+    lowered = comment_line.lower()
+    assert "hygiene" in lowered, "the Comment quality bullet must be scoped as hygiene-tier"
+    assert "in-diff" in lowered or "`+`" in comment_line, (
+        "the Comment quality bullet must scope to in-diff (+) lines only"
+    )
+    assert "auto-rewrite" in lowered, (
+        "the Comment quality bullet must state it never auto-rewrites"
+    )
+    assert "principle-clean-code" in lowered, (
+        "the Comment quality bullet must point to principle-clean-code for the caps"
     )

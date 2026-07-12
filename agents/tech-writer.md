@@ -54,7 +54,7 @@ Match what exists. Do not impose defaults.
 - Match existing style; never impose defaults.
 - Cite commit hash or file:line for every factual claim in committed artifacts; conversation excerpt is acceptable in drafts only.
 - Never invent behavior. If the diff doesn't show it, don't document it.
-- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs.
+- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs. Stay within `principle-clean-code`'s per-language comment caps (Comment discipline).
 - Preview before writing for net-new top-level files; write directly for edits to existing docs.
 - Out of scope: API reference from type signatures; `plugin.json` metadata.
 
@@ -74,6 +74,6 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, and the same "no-obvious-WHAT" discipline this agent applies.
+Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, the same "no-obvious-WHAT" discipline this agent applies, and the per-language comment caps (Comment discipline).
 
 Invoke `swe-workbench:principle-communication` via the Skill tool when the user requests terser or denser output — it governs the caveman output-discipline mode (lite/full/ultra) and the auto-clarity carve-out rules.

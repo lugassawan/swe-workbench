@@ -83,3 +83,31 @@ def test_paired_guard_step_mentions_grep_and_predicate_comparison():
     assert "predicate" in step_text, (
         "the paired-guard symmetry step must instruct comparing predicate sets"
     )
+
+
+# ---------------------------------------------------------------------------
+# Comment-quality backstop (#509)
+# ---------------------------------------------------------------------------
+
+
+def test_process_section_mentions_comment_quality_backstop():
+    """The Process section must have a dedicated comment-quality-backstop step,
+    scoped as Low/hygiene, in-diff '+' lines only, drop-or-simplify, never an
+    auto-rewrite, never pre-existing comments."""
+    body = _read()
+    section = _section(body, "Process")
+    idx = section.lower().find("comment-quality backstop")
+    assert idx != -1, "'## Process' must contain a 'Comment-quality backstop' step"
+    step_text = section[idx:].lower()
+    assert "hygiene" in step_text, (
+        "the comment-quality backstop step must be scoped as Low/hygiene severity"
+    )
+    assert "`+`" in section[idx:] or "in-diff" in step_text, (
+        "the comment-quality backstop step must scope to in-diff '+' lines only"
+    )
+    assert "auto-rewrite" in step_text, (
+        "the comment-quality backstop step must state it never auto-rewrites comments"
+    )
+    assert "pre-existing" in step_text, (
+        "the comment-quality backstop step must state it never flags pre-existing comments"
+    )

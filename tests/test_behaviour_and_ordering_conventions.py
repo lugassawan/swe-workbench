@@ -185,3 +185,36 @@ def test_language_skill_has_testing_section_before_avoid(skill_path):
     assert testing_index < avoid_index, (
         f"{skill_path.relative_to(ROOT)}: '## Testing' must precede '## Avoid'"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC 6 (#509) — principle-clean-code has a Comment discipline section
+# ---------------------------------------------------------------------------
+
+
+def test_comment_discipline_section_exists():
+    body = CLEAN_CODE_SKILL.read_text()
+    assert "## Comment discipline" in body, (
+        "skills/principle-clean-code/SKILL.md must contain a '## Comment discipline' section "
+        "so per-language comment caps have a single canonical home"
+    )
+
+
+def test_comment_discipline_section_names_all_doc_comment_styles():
+    body = CLEAN_CODE_SKILL.read_text()
+    section = _section(body, "Comment discipline").lower()
+    assert section, "'## Comment discipline' section is empty or missing"
+    for token in ("inline", "godoc", "javadoc", "docstring", "rustdoc"):
+        assert token in section, (
+            f"'## Comment discipline' must name '{token}' so downstream flows share one term set"
+        )
+
+
+def test_comment_discipline_section_defines_unnecessary_comment():
+    body = CLEAN_CODE_SKILL.read_text()
+    section = _section(body, "Comment discipline").lower()
+    assert section, "'## Comment discipline' section is empty or missing"
+    for token in ("what-not-why", "restates-the-code", "commented-out"):
+        assert token in section, (
+            f"'## Comment discipline' must define unnecessary comments via '{token}'"
+        )

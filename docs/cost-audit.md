@@ -22,7 +22,7 @@ At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was ad
 | product-designer | `agents/product-designer.md` | sonnet | No | M | Depth-first UX review; usability heuristic judgment and design-system compliance require reasoning |
 | product-manager | `agents/product-manager.md` | sonnet | No | **S → haiku** | Formats rough ideas into structured GitHub issues; template discovery + fill is mechanical |
 | refactorer | `agents/refactorer.md` | sonnet | No | M | Fowler-catalog steps; behavior-preservation invariant needs correctness judgment |
-| reviewer | `agents/reviewer.md` | sonnet | No | M–L | Four-axis PR review (correctness, security, design, tests); correctness judgment is high-stakes |
+| reviewer | `agents/reviewer.md` | sonnet | No | M–L | Five-axis PR review (correctness, security, design, tests, comment quality); correctness judgment is high-stakes |
 | security-auditor | `agents/security-auditor.md` | sonnet | No | L | OWASP depth-first; exploitability assessment requires strong reasoning |
 | senior-engineer | `agents/senior-engineer.md` | sonnet | No | L | Architectural advice; trade-off synthesis; one-way-door assessment |
 | tech-writer | `agents/tech-writer.md` | sonnet | No | **S → haiku** | Generates docs from diffs and context; prose transformation with existing tone-matching |
