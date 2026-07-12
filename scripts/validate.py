@@ -457,10 +457,12 @@ _ADAPTERS_HEADING_RE = re.compile(r'^##(?!#)[ \t]+Adapters[ \t]*$', re.MULTILINE
 _H2_BOUNDARY_RE = re.compile(r'^##(?!#)[ \t]+\S', re.MULTILINE)
 # One '### <Provider>' sub-heading starts one adapter block.
 _H3_PROVIDER_RE = re.compile(r'^###(?!#)[ \t]+(.+?)[ \t]*$', re.MULTILINE)
-# A fenced code block: opening ``` or ~~~ (3+) at some indent, any content,
-# then a closing fence of the SAME character and indent. DOTALL so '.' spans
-# newlines; non-greedy so an unrelated later fence doesn't get swallowed.
-_FENCE_RE = re.compile(r'^([ \t]*)(`{3,}|~{3,})[^\n]*\n.*?^\1\2[ \t]*$', re.MULTILINE | re.DOTALL)
+# Opening fence: ``` or ~~~ (3+) at some indent. Line-scanned (not matched
+# as one block regex) so the closing fence can be length-checked against the
+# opening length via a per-match compiled pattern — a plain backreference
+# can only require an EXACT repeat, but CommonMark allows the closer to be
+# >= the opener's length (e.g. open ``` / close ````).
+_FENCE_OPEN_RE = re.compile(r'^([ \t]*)(`{3,}|~{3,})')
 
 
 def _strip_fenced_code_blocks(text):
@@ -470,11 +472,35 @@ def _strip_fenced_code_blocks(text):
     docs/extending.md); without this, a fenced '## X' or '- **Trigger:**'
     example line is indistinguishable from real structure to the
     heading/boundary/label regexes below — either truncating a section early
-    or masking a genuinely malformed block. Replaces each fenced span with
-    an equal number of blank lines so downstream regex *positions* (offsets
-    within the returned text) stay meaningful for anything derived from it.
+    or masking a genuinely malformed block. Replaces every line spanned by a
+    fence (open through close, inclusive) with a blank line, so downstream
+    regex *positions* (offsets within the returned text) stay meaningful for
+    anything derived from it. Line-based (not a single whole-text regex) so
+    CRLF line endings and a closing fence longer than the opening one both
+    strip correctly; a fence left unterminated to EOF is blanked to EOF too,
+    matching CommonMark's own unterminated-fence behavior.
     """
-    return _FENCE_RE.sub(lambda m: '\n'.join('' for _ in m.group(0).split('\n')), text)
+    lines = text.split('\n')
+    out = []
+    i, n = 0, len(lines)
+    while i < n:
+        probe = lines[i][:-1] if lines[i].endswith('\r') else lines[i]
+        opener = _FENCE_OPEN_RE.match(probe)
+        if opener is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        fence_char, open_len = opener.group(2)[0], len(opener.group(2))
+        closer_re = re.compile(r'^[ \t]*' + re.escape(fence_char) + '{' + str(open_len) + r',}[ \t]*$')
+        out.append('')
+        i += 1
+        while i < n:
+            probe = lines[i][:-1] if lines[i].endswith('\r') else lines[i]
+            out.append('')
+            i += 1
+            if closer_re.match(probe):
+                break
+    return '\n'.join(out)
 
 
 def check_adapter_blocks(cache=None):

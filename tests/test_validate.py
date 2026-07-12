@@ -1527,6 +1527,26 @@ class TestCheckAdapterBlocks:
         assert "'Degrade'" in validate.FAILURES[0]
 
 
+class TestStripFencedCodeBlocks:
+    """Unit tests for _strip_fenced_code_blocks, isolated from the full
+    check_adapter_blocks path (issue surfaced in PR #525 follow-up review)."""
+
+    def test_closing_fence_longer_than_opening_is_stripped(self):
+        # CommonMark allows the closing fence to be >= the opening length.
+        text = "before\n```\n## fake\n````\nafter\n"
+        stripped = validate._strip_fenced_code_blocks(text)
+        assert "## fake" not in stripped
+        assert "before" in stripped
+        assert "after" in stripped
+
+    def test_crlf_fenced_block_is_stripped(self):
+        text = "before\r\n```\r\n## fake\r\n```\r\nafter\r\n"
+        stripped = validate._strip_fenced_code_blocks(text)
+        assert "## fake" not in stripped
+        assert "before" in stripped
+        assert "after" in stripped
+
+
 # ──────────────────────────────────────────────
 # check_unwired_principle_skills
 # ──────────────────────────────────────────────
