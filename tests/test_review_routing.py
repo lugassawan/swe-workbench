@@ -131,6 +131,37 @@ class TestReviewModeRouting:
         assert "ux" in text[postable_idx:line_end], \
             "ux must be enumerated in the postable specialist set"
 
+    def test_local_diff_mode_states_no_posting_prompt(self):
+        """The ## Local-diff mode section must explicitly state that no posting prompt
+        ever appears there, not just rely on the Specialist post sub-flow's exclusion
+        clause to imply it (user-requested emphasis, PR #520)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        local_diff_idx = text.find("## Local-diff mode")
+        pr_mode_idx = text.find("## PR mode")
+        assert local_diff_idx != -1 and pr_mode_idx != -1, "section headers not found"
+        local_diff_text = text[local_diff_idx:pr_mode_idx]
+        assert "no posting prompt" in local_diff_text.lower(), (
+            "## Local-diff mode must explicitly state that no posting prompt appears in this mode"
+        )
+
+    def test_specialist_subflow_scope_line_names_all_exclusions(self):
+        """The Specialist post sub-flow's scope line must name all three excluded paths
+        (contributor-trust, local-diff mode, general mode) so the single-firing-condition
+        claim is airtight, not just a two-way exclusion (user-requested emphasis, PR #520)."""
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        # "## Specialist post sub-flow" also appears as an inline backtick-quoted
+        # cross-reference earlier (in the PR mode section) — anchor on the actual
+        # ATX heading (start-of-line "## ") to skip past that inline mention.
+        heading_match = re.search(r"^## Specialist post sub-flow$", text, re.MULTILINE)
+        assert heading_match, "Specialist post sub-flow heading not found"
+        subflow_idx = heading_match.start()
+        paragraph_start = text.find("\n\n", subflow_idx) + 2  # skip past the heading's blank line
+        paragraph_end = text.find("\n\n", paragraph_start)
+        scope_text = text[paragraph_start:paragraph_end]
+        assert "contributor-trust" in scope_text, "must exclude contributor-trust"
+        assert "local-diff mode" in scope_text.lower(), "must exclude local-diff mode"
+        assert "general mode" in scope_text.lower(), "must exclude general mode"
+
     def test_specialist_subflow_decision_gated_on_severity(self):
         """DECISION must be derived from Critical/High severity, not mere non-emptiness
         of FINDINGS[] — a run with only Low/Medium findings should APPROVE, mirroring

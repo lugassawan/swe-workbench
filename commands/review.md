@@ -79,6 +79,8 @@ The user can override any inferred mode by re-invoking with an explicit `--mode`
 
 Ground judgements in SOLID and Clean Architecture principles. Do not nitpick formatting — that is the linter's job.
 
+**No posting prompt appears in this mode, ever** — there is no PR to post to. The post/skip `AskUserQuestion` confirmation (see `## Specialist post sub-flow` below) is exclusive to PR mode's postable specialist set; local-diff mode always just prints findings, unconditionally.
+
 ## PR mode
 
 **When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool, passing the resolved PR number.
@@ -93,7 +95,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 ## Specialist post sub-flow
 
-Applies only to the postable specialist set (security, accessibility, dependency, performance, tests, ux) in PR mode — never to `contributor-trust` (advisory-only, see above), never to local-diff mode (there is no PR to post to, so no prompt appears).
+**The post/skip `AskUserQuestion` prompt below fires in exactly one case: a postable specialist mode (security, accessibility, dependency, performance, tests, ux) resolved in PR mode.** It never fires for `contributor-trust` (advisory-only, see above — stops before reaching this section) and never fires for local-diff mode (there is no PR to post to — see the explicit "no posting prompt" note in `## Local-diff mode` above). General mode has its own posting flow inside `workflow-pr-review` and does not go through this sub-flow either.
 
 1. **Preflight:** reuse `runtime/preflight-pr.sh` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `workflow-pr-review`'s `${PR}.json` and `workflow-pr-review-followup`'s `${PR}-followup.json`, so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`.
 2. **Ephemeral worktree:** `rimba add pr:<N> --task "review-<mode>-<N>" --skip-deps --skip-hooks` when rimba is available. When rimba is absent, use the direct-git fallback from `workflow-pr-review` Step 2 but with the same mode-scoped naming as the rimba path — `WT="/tmp/swe-workbench-pr-review/<mode>-${PR}"`, branch `review-<mode>-${PR}` — so a specialist run's worktree/branch never collides with a general review's `pr-review-${PR}` or another specialist mode's own run.
