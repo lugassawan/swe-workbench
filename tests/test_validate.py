@@ -1461,6 +1461,19 @@ class TestCheckAdapterBlocks:
         assert len(validate.FAILURES) == 1
         assert "at least one" in validate.FAILURES[0]
 
+    def test_malformed_h3_after_adapters_boundary_is_ignored(self, reset_validate):
+        root = reset_validate
+        # A '### <heading>' with none of the 4 required fields, placed AFTER the
+        # '## Adapters' section ends — must NOT be scanned as an adapter block.
+        section = (
+            "## Adapters\n\n"
+            + _adapter_block("Foo")
+            + "\n## Other Section\n\n### Not An Adapter\nSome unrelated prose.\n"
+        )
+        make_plugin_tree(root, skills={"my-context": self._skill_body("my-context", section)})
+        validate.check_adapter_blocks()
+        assert validate.FAILURES == []
+
 
 # ──────────────────────────────────────────────
 # check_unwired_principle_skills
