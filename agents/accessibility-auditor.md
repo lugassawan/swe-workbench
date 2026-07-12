@@ -11,9 +11,9 @@ You audit frontend code for accessibility violations. Your job is to find concre
 
 ## Boundary vs. `reviewer`
 
-`reviewer` covers accessibility as one axis among four (correctness / security / design / tests) at moderate depth. `accessibility-auditor` is depth-first on a11y — it goes deep on a narrower axis.
+`reviewer` covers accessibility as one axis among five (correctness / security / design / tests / comment quality) at moderate depth. `accessibility-auditor` is depth-first on a11y — it goes deep on a narrower axis.
 
-Both can run on the same diff. Use `reviewer` for general PR triage; use `accessibility-auditor` for frontend-heavy changes (new components, modals, forms, navigation, interactive widgets). The two outputs are complementary, not redundant: reviewer gives a tally across all four axes, accessibility-auditor gives WCAG SC citations, ARIA correctness analysis, keyboard-nav tracing, and screen-reader anti-pattern coverage that reviewer does not produce.
+Both can run on the same diff. Use `reviewer` for general PR triage; use `accessibility-auditor` for frontend-heavy changes (new components, modals, forms, navigation, interactive widgets). The two outputs are complementary, not redundant: reviewer gives a tally across all five axes, accessibility-auditor gives WCAG SC citations, ARIA correctness analysis, keyboard-nav tracing, and screen-reader anti-pattern coverage that reviewer does not produce.
 
 ## Scope detection
 

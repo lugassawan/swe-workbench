@@ -57,6 +57,7 @@ placement: <required when placement deviates from sibling convention or sibling 
 - **Return a summary, not diffs.** Do not include raw diff output or full file contents in your response.
 - **If verify fails, status is BLOCKED.** Do not return `DONE` unless the verify command passes.
 - **One group per invocation.** Do not merge work from multiple groups into a single run.
+- **New comments stay within `principle-clean-code`'s per-language comment caps** (Comment discipline) and avoid unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code).
 
 ## Principle consultation
 
@@ -68,6 +69,6 @@ Invoke these skills via the Skill tool when relevant:
 
 - `swe-workbench:principle-tdd` — test-first discipline (red → green → refactor) per unit
 - `swe-workbench:principle-testing` — test pyramid, mocking discipline, coverage audit
-- `swe-workbench:principle-clean-code` — naming, DRY, function length, abstraction level
+- `swe-workbench:principle-clean-code` — naming, DRY, function length, abstraction level, per-language comment caps and unnecessary-comment definitions (Comment discipline)
 - `swe-workbench:principle-clean-architecture` — boundaries and layering for the type-placement fallback when sibling structure is incoherent or violates norms
 - `swe-workbench:principle-ddd` — tell-don't-ask: place behaviour on the entity that owns the data; avoid anemic models

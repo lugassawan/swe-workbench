@@ -161,6 +161,8 @@ Verify baseline tests pass before writing any code.
 
 **Goal:** Write code following the plan, committing incrementally.
 
+New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline) — assess at write-time so comments are lean on the first pass, rather than relying on the Phase 4 review backstop.
+
 Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
@@ -206,7 +208,7 @@ Invoke `superpowers:verification-before-completion`.
 
 Dispatch **BOTH** reviewers **IN PARALLEL** — in a single batch (same turn), as two distinct required invocations, **neither optional**. They are different unit types:
 - `superpowers:requesting-code-review` (a **Skill**) — plan-alignment: does this match the plan and meet standards?
-- `swe-workbench:reviewer` (a **subagent**) — diff review: correctness, security, design, test gaps in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
+- `swe-workbench:reviewer` (a **subagent**) — diff review: correctness, security, design, test gaps, comment quality in `Severity | File:Line | Issue | Why it matters | Suggested fix` format
 
 Running the Skill inline and skipping the subagent (or vice-versa) does **not** satisfy this phase.
 
