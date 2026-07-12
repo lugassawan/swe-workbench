@@ -56,7 +56,7 @@ but different branches never share a checkpoint file.
 - `context` — flat free-form bag; `context.branch` is the resume-validation key. Skills pack skill-specific values here (`pr`, `head_sha`, `decision` for pr-review; project-detection values for workflow-development). `context.worktree_root` records the absolute path of the worktree where the session is doing its work — populate it with `git rev-parse --show-toplevel` at Phase 1 checkpoint, or omit it when working in the main checkout.
 - `updated_at` — ISO-8601 timestamp (informational — not used for staleness; the hook uses filesystem mtime instead).
 
-**Coverage limit for the worktree re-anchor nudge:** The resume hook is compaction-only (`SessionStart` with `matcher: "compact"`). As of issue #497, the nudge fires independently of the sidecar gate: it probes `git rev-parse --git-dir --git-common-dir` directly and fires whenever cwd resolves to a linked worktree — including the *same-path* case (a fresh sidecar's `worktree_root` already matches the live root) and the *sidecar-less* case (no checkpoint exists at all, e.g. a workflow that never wrote one). Only when cwd is **not** a linked worktree does the hook stay silent. It **cannot** redirect to a *foreign* worktree it has no checkpoint for (e.g. a session that was always anchored in the wrong dir but never compacted) — path mismatch still only produces the `REQUIRED` variant when a sidecar records a differing `worktree_root`. It also does not fire on a cold fresh launch or session "continuation" (a non-compaction resume) — this remains a residual coverage limit, since the hook's `matcher: "compact"` only targets compaction-triggered `SessionStart` events. The worktree_root nudge is defense-in-depth; the primary guidance lives in `skills/workflow-worktree-session/SKILL.md` and the plan template.
+**Coverage limit for the worktree re-anchor nudge:** As of issue #497, the nudge fires independently of the sidecar gate: it probes `git rev-parse --git-dir --git-common-dir` directly and fires whenever cwd resolves to a linked worktree — including the *same-path* case (a fresh sidecar's `worktree_root` already matches the live root) and the *sidecar-less* case (no checkpoint exists at all, e.g. a workflow that never wrote one). Only when cwd is **not** a linked worktree does the hook stay silent. As of issue #524, the hook also fires on `startup` (cold launch) and `resume` (`--continue`/`--resume`/`/resume`), not only `compact` — closing the gap where a non-compaction session resume left `EnterWorktree` tracking silently unrecovered. Wording is source-aware: a `startup`/`resume` firing never claims "this session was compacted" (see `context.worktree_root` note below and the Hook registration table). Two intentional gaps remain: `clear` (`/clear`) is not covered, since anchoring generally survives it (same process, same cwd); and the hook still **cannot** redirect to a *foreign* worktree it has no checkpoint for (e.g. a session that was always anchored in the wrong dir) — path mismatch still only produces the `REQUIRED` variant when a sidecar records a differing `worktree_root`. The worktree_root nudge is defense-in-depth; the primary guidance lives in `skills/workflow-worktree-session/SKILL.md` and the plan template.
 
 ### Lifecycle
 
@@ -64,9 +64,9 @@ but different branches never share a checkpoint file.
 |---|---|---|
 | **Model** | Phase/step transition | Write (overwrite) the state file with the new phase |
 | **Model** | Terminal phase success | Delete the state file |
-| **Hook** | SessionStart(compact) | Read the file; inject resume preamble if fresh + valid |
-| **Hook** | SessionStart(compact), file >24h old | Delete the file; no injection (staleness sweep) |
-| **Hook** | SessionStart(compact), branch mismatch or version ≠ 1 | No injection (fail-open, file untouched) |
+| **Hook** | SessionStart(startup\|resume\|compact) | Read the file; inject resume preamble if fresh + valid |
+| **Hook** | SessionStart(startup\|resume\|compact), file >24h old | Delete the file; no injection (staleness sweep) |
+| **Hook** | SessionStart(startup\|resume\|compact), branch mismatch or version ≠ 1 | No injection (fail-open, file untouched) |
 
 The state file is a **fail-soft cache, not a source of truth**. The model owns the semantic
 lifecycle (write/delete at phase boundaries). The hook owns the mechanical lifecycle
@@ -77,10 +77,20 @@ to "ask", because a wrong resume is worse than no resume.
 
 | Event | Matcher | Script |
 |---|---|---|
+| `SessionStart` | `"startup"` | `hooks/workflow_resume_hint.sh` |
+| `SessionStart` | `"resume"` | `hooks/workflow_resume_hint.sh` |
 | `SessionStart` | `"compact"` | `hooks/workflow_resume_hint.sh` |
 
-`SessionStart` requires a `matcher` string (not a lifecycle event in `validate.py`); the
-`"compact"` matcher targets only compaction-triggered session starts.
+`SessionStart` requires a `matcher` string (not a lifecycle event in `validate.py`); each
+matcher is registered as its own explicit single-matcher entry (rather than one piped
+`"startup|resume|compact"` entry) so a silent non-match on unsupported piped-matcher
+regex support would be visible rather than invisible. Together the three matchers cover
+cold launch (`startup`), continuation via `--continue`/`--resume`/`/resume` (`resume`),
+and auto-compaction (`compact`). `"clear"` (`/clear`) is intentionally not registered —
+`/clear` keeps the same process and cwd, so `EnterWorktree` anchoring generally survives
+it. The injected wording is conditioned on the SessionStart `.source` field (see
+`hooks/workflow_resume_hint.sh`'s `set_framing`) so a `startup`/`resume` firing never
+falsely claims "this session was compacted".
 
 The hook always exits 0 — it never blocks session startup.
 
@@ -129,6 +139,25 @@ echo '{"cwd":"'"$(git rev-parse --show-toplevel)"'"}' \
   | bash hooks/workflow_resume_hint.sh
 
 # Expected: JSON with hookSpecificOutput.additionalContext containing the skill name and phase.
+# No .source field → neutral wording ("[Workflow auto-resume]" / "This session resumed.").
+
+# 2b. Reproduce each source-aware framing by adding a `.source` field.
+# `source` selects the wording: compact | resume | startup | (absent/other → neutral).
+for src in compact resume startup; do
+  echo "--- source=$src ---"
+  jq -cn --arg cwd "$(git rev-parse --show-toplevel)" --arg source "$src" \
+    '{cwd: $cwd, source: $source}' \
+    | bash hooks/workflow_resume_hint.sh \
+    | jq -r '.hookSpecificOutput.additionalContext' | head -3
+done
+
+# Expected headers, respectively:
+#   [Workflow auto-resume after compaction]   / "This session was compacted."
+#   [Workflow auto-resume after continuation] / "This session was resumed/continued."
+#   [Workflow auto-resume on startup]         / "This is a fresh session start."
+# None but the `compact` case may contain the word "compacted". The startup intro is
+# worktree-agnostic by design — the worktree-specific claim (is this cwd a linked
+# worktree?) belongs to the separately gated reanchor_line/format_advisory, not the intro.
 
 # 3. Test the no-op path (no file)
 rm "$STATEDIR/${SAFE}.json"
