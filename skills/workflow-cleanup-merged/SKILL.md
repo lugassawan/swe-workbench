@@ -86,13 +86,19 @@ _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>" "$DEFAULT_BRANCH")"
 ```
 
+**⚠️ Bash-tool timeout coupling (must hold, not optional):** invoke this Bash tool call with an explicit `timeout: 600000` (~600s). The script's own internal watchdog computes an adaptive budget capped at ~570s (see `TOTAL_CAP` in `sync-and-verify.sh`) precisely so it fires *before* the harness's external tool-call timeout. Bash's own default tool-call timeout is 120s — well under the script's worst-case adaptive budget on a large monorepo worktree. If the external timeout fires first, the harness kills the whole process tree uncontrolled: the internal watchdog never gets to run its own controlled TERM→KILL sequence, and Block D's detection code never executes — the interrupted-hook state goes undetected and unreported. The script cannot self-enforce this invariant; it depends entirely on the caller passing this explicit timeout.
+
 The script: derives `MAIN_REPO=` (main worktree root via `git worktree list --porcelain`), anchors the shell there so the rimba hook cannot strand a deleted cwd, then runs `git checkout "$DEFAULT_BRANCH" && git pull --ff-only origin "$DEFAULT_BRANCH"` (best-effort — sync failure warns to stderr but does not abort), then checks whether the hook already removed the worktree and local branch. `--ff-only` is non-negotiable; plain `git pull` can synthesize a merge commit on divergence.
 
 When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast path)`), `git pull` fires the hook as a side-effect, which removes the merged worktree and local branch automatically. A sync failure on the fast path forces fall-through to the rimba-binary or shell strategy — it does NOT abort cleanup.
 
-**Internal timeout guard.** The checkout-then-pull sync step runs under a `SYNC_TIMEOUT` watchdog (`90` seconds by default, override via the `SYNC_TIMEOUT` env var) — a pure-bash `set -m` job-group backgrounding, not the `timeout` binary (absent on stock macOS). If the pull hangs, the watchdog `kill`s the whole process group at `SYNC_TIMEOUT` seconds. **Invariant the caller must hold:** `SYNC_TIMEOUT` must stay below the harness's external tool-call timeout (headroom for Block C/D plus a 2s kill grace) — the script cannot self-enforce this. **What the guard does and does not do:** it does NOT prevent corruption — an external kill can still land mid-`rm` inside the rimba post-merge hook. It converts an otherwise-uncontrolled external kill (which would also SIGKILL this script mid-hook, leaving the failure silent) into a controlled in-script timeout that still runs Block D's detection below. Firing at 90s, below the common 120s external tool-call limit, usually lands during the network pull itself (a clean kill, no hook involved) rather than mid-hook.
+**Internal timeout guard — split, adaptive budget.** The checkout-then-pull sync step runs under a `SYNC_TIMEOUT` watchdog — a pure-bash `set -m` job-group backgrounding, not the `timeout` binary (absent on stock macOS). By default (no `SYNC_TIMEOUT` override) the budget is computed adaptively as `PULL_BUDGET` (network allowance, `90`s, override via `PULL_TIMEOUT`) **plus** `HOOK_BUDGET` — scaled by `$HEAD_REF`'s own tracked-file count (`git ls-files | wc -l` on its worktree, capped at `480`s) — so a hook cleaning up a worktree with tens of thousands of tracked files gets a proportionally larger window instead of being starved by a flat 90s. The total is capped at `570`s (`TOTAL_CAP`). An explicit `SYNC_TIMEOUT` env var always overrides this computation verbatim (with the existing non-negative-integer validation, falling back to 90 on invalid input) — this is how the test suite pins specific watchdog timings. The script emits a stderr diagnostic (`adaptive watchdog budget=<T>s (pull=<P>s + hook=<H>s for <files> tracked files)`) whenever the adaptive path runs. If the pull+hook combined exceeds the budget, the watchdog `kill`s the whole process group. **What the guard does and does not do:** it does NOT prevent corruption — an external kill (or the internal watchdog itself) can still land mid-`rm` inside the rimba post-merge hook, leaving a worktree with an intact root but wiped tracked files. It converts an otherwise-uncontrolled kill (which would also take down this script mid-hook, leaving the failure silent) into a controlled in-script timeout that still runs Block D's detection below.
 
-**Hook-interruption detection (stateless, not event-based).** After the sync, the script probes `git worktree list --porcelain` for any registered worktree whose directory is missing on disk — the canonical signal that a `post-merge` hook `rm` (this run's or a prior one's) was interrupted mid-deletion, leaving the worktree registration and branch ref alive in `.git` while the files are gone. This is state-based rather than event-based on purpose: an external kill takes down this script too, so it cannot reliably observe its own interruption — but a stale registration on the next run always tells the truth.
+**Hook-interruption detection (stateless, not event-based).** After the sync, the script runs checks that set `HOOK_INTERRUPTED=1`:
+
+1. **Missing-root scan** — probes `git worktree list --porcelain` for any registered worktree whose *top-level directory* is missing on disk — the signal that a `post-merge` hook `rm` (this run's or a prior one's) was interrupted mid-deletion before reaching the worktree's own root removal, leaving the worktree registration and branch ref alive in `.git` while the whole directory is gone.
+2. **Targeted subtree-wipe probe (#532)** — checks `$HEAD_REF`'s own worktree specifically: if its root directory still exists but ≥90% of its tracked files (by `git status --porcelain` deletion count vs. the `git ls-files` total) are gone, the hook was interrupted *after* deleting most files but *before* removing the root itself. The missing-root scan above cannot see this case — the directory is still there. A ratio threshold (not "any deletion") avoids flagging a worktree that's just legitimately dirty.
+3. **Probe-failure fallback** — if the subtree-wipe probe's own `git status` call fails (e.g. `$HEAD_WT`'s admin metadata was itself reaped before a kill landed), the script does not default to "0% deleted" — it flags `HOOK_INTERRUPTED=1` with a distinct "could not verify" stderr message, since a failed probe is inconclusive, not evidence of a clean worktree. All three checks are state-based rather than event-based on purpose: an external kill takes down this script too, so it cannot reliably observe its own interruption — but a stale registration, a wiped subtree, or an unverifiable state on the next run always tells the truth.
 
 ### Step 4 — Remove Worktree
 
@@ -100,7 +106,10 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 
 - **`WORKTREE_GONE=1`**: both the worktree and local branch are already gone — the hook did its job. No further action is needed in Step 4; proceed to Step 5. The script reports `LOCAL_DELETED=0` (local already gone) and still attempts the remote delete.
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
-- **`HOOK_INTERRUPTED=1`**: independent of `WORKTREE_GONE` — a registered worktree exists in `.git` with no directory on disk, i.e. the timeout guard (or an external kill on a prior run) caught a hook mid-`rm`. The probe scans **all** registered worktrees, not just `$HEAD_REF`'s — the flagged entry may be `$HEAD_REF`'s own half-deleted worktree, or an unrelated stray left over from a different branch's interrupted cleanup. Either way, run `git worktree prune` first (always safe — see the Recovery Example below); if the missing entry was `$HEAD_REF`'s own, its worktree is now fully gone and only its branch remains (skip straight to Step 5). If it was an unrelated stray, pruning clears the signal and the normal Step 4 removal strategies proceed for `$HEAD_REF` as usual. The script is verify-only here: it signals and documents, it never auto-remediates.
+- **`HOOK_INTERRUPTED=1`**: independent of `WORKTREE_GONE` — one of three states, all meaning the timeout guard (or an external kill on a prior run) caught the post-merge hook mid-`rm`. The script is verify-only here: it signals and documents, it never auto-remediates.
+  - **Root missing** — a registered worktree exists in `.git` with no directory on disk at all. The probe scans **all** registered worktrees, not just `$HEAD_REF`'s — the flagged entry may be `$HEAD_REF`'s own half-deleted worktree, or an unrelated stray left over from a different branch's interrupted cleanup. Either way, run `git worktree prune` first (always safe — see the Recovery Example below); if the missing entry was `$HEAD_REF`'s own, its worktree is now fully gone and only its branch remains (skip straight to Step 5). If it was an unrelated stray, pruning clears the signal and the normal Step 4 removal strategies proceed for `$HEAD_REF` as usual.
+  - **Root intact, subtree wiped (#532)** — `$HEAD_REF`'s own worktree directory still exists, but ≥90% of its tracked files are gone from disk (the hook was killed after deleting most files but before removing the root). `git worktree prune` is a **no-op** here — it only clears missing *directories*, and this one still exists. Recover with `git -C <worktree-path> restore .` (restores the missing tracked files from the index) or by re-running `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal Step 4/5 flow.
+  - **Root intact, probe inconclusive** — the subtree-wipe probe's own `git status` call failed (e.g. `$HEAD_WT`'s admin metadata was itself reaped). Neither `git worktree prune` (directory exists) nor `restore .` (needs functioning git metadata) is guaranteed safe here — manually inspect `$HEAD_WT` (e.g. `git -C <worktree-path> status`) before choosing a recovery path.
 
 ### Step 5 — Delete Branches
 
@@ -239,7 +248,9 @@ git worktree remove "$WORKTREE"
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
 | cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` (or the `cd`-to-main-root fallback for `cd`-entered worktrees) prevents this when followed. If observed, re-run from the main repo root. |
 | rimba `remove` removes worktree but fails branch delete | Non-zero exit after worktree directory is gone | Partial success — fall through to Step 5 from `$MAIN_REPO`. Worktree is gone; only branch remains. |
-| Partial worktree deletion (interrupted hook) | `HOOK_INTERRUPTED=1` — a registered worktree is missing on disk (may be `$HEAD_REF`'s own, or an unrelated stray from an earlier interrupted cleanup) | Run `git worktree prune` from `$MAIN_REPO` first — always safe, never touches a live worktree — then delete the stale branch (`delete-branches.sh` or `git branch -D <ref>`). Only skip the normal Step 4 removal strategies for `$HEAD_REF` if the missing entry turns out to be `$HEAD_REF`'s own worktree; otherwise proceed with Step 4 as usual once the stray is pruned. |
+| Partial worktree deletion (interrupted hook, root missing) | `HOOK_INTERRUPTED=1` — a registered worktree is missing on disk (may be `$HEAD_REF`'s own, or an unrelated stray from an earlier interrupted cleanup) | Run `git worktree prune` from `$MAIN_REPO` first — always safe, never touches a live worktree — then delete the stale branch (`delete-branches.sh` or `git branch -D <ref>`). Only skip the normal Step 4 removal strategies for `$HEAD_REF` if the missing entry turns out to be `$HEAD_REF`'s own worktree; otherwise proceed with Step 4 as usual once the stray is pruned. |
+| Partial worktree deletion (interrupted hook, root intact / subtree wiped) (#532) | `HOOK_INTERRUPTED=1` — `$HEAD_REF`'s own worktree directory still exists but ≥90% of its tracked files are gone | `git worktree prune` is a no-op (the directory exists). Run `git -C <worktree-path> restore .` to restore the missing files, or re-run `rimba clean --merged --force` to finish the interrupted removal, then proceed with Step 4/5 as usual. |
+| Subtree-wipe probe itself fails (interrupted hook, root intact, state unverifiable) (#532) | `HOOK_INTERRUPTED=1` — stderr shows "could not verify \<worktree\>'s worktree state" | Neither `git worktree prune` nor `restore .` is guaranteed safe. Manually inspect `$HEAD_WT` (e.g. `git -C <worktree-path> status`) before choosing a recovery path. |
 
 ### Recovery Example — Interrupted Hook
 
@@ -247,9 +258,7 @@ A `SYNC_TIMEOUT` firing (or an external tool-call kill) can land mid-`rm` inside
 
 ```bash
 cd "$MAIN_REPO"
-# Identify which registered worktree(s) have no directory on disk (same
-# check Block D performs internally). Line-based, not awk field-splitting —
-# a path containing a space would silently vanish under `awk '{print $2}'`:
+# Identify worktree(s) with no directory on disk (same check Block D performs; line-based, not awk field-splitting, so a path containing a space doesn't vanish):
 git worktree list --porcelain | while IFS= read -r line; do
   case "$line" in
     "worktree "*) w=${line#worktree }; [ -d "$w" ] || echo "MISSING: $w" ;;
@@ -260,6 +269,21 @@ git branch -D <stale-branch-name>                # the local ref that survived t
 ```
 
 `git worktree prune` only removes registrations whose directories are gone — it never touches a live worktree, so it is safe to run unconditionally once `HOOK_INTERRUPTED=1` is observed. This does not need `--force`: prune has no dirty/unpushed concept because the directory it would check is already gone. If the missing entry turns out to be an unrelated stray (not `$HEAD_REF`), pruning it clears the signal and Step 4's normal removal strategies proceed for `$HEAD_REF` as usual.
+
+### Recovery Example — Intact Root, Wiped Subtree (#532)
+
+On a large worktree, a kill can land *after* the hook deletes most tracked files but *before* it removes the root directory. The missing-root scan above misses this (the directory is still there); the targeted subtree probe reports `HOOK_INTERRUPTED=1` with a message that deliberately does not suggest `git worktree prune` (a no-op here):
+
+```bash
+cd "$MAIN_REPO"
+WT_PATH=$(git worktree list --porcelain \
+  | awk -v ref="branch refs/heads/<headRefName>" '/^worktree /{p=$2} $0 == ref {print p; exit}')
+git -C "$WT_PATH" restore .        # restores the missing tracked files from the index
+# — or, to finish the interrupted removal instead —
+rimba clean --merged --force
+```
+
+`restore .` only touches tracked files missing or modified relative to the index; untracked files are unaffected. After recovery, proceed with the normal Step 4/5 flow for `$HEAD_REF`.
 
 ## Common Mistakes
 
