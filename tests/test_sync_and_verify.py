@@ -353,6 +353,162 @@ class TestSyncAndVerifySyncTimeoutValidation:
             f"Expected a fallback warning on stderr, got: {result.stderr!r}"
         )
 
+    def test_non_numeric_pull_timeout_falls_back_to_default(self, git_repo):
+        """PULL_TIMEOUT feeds the same adaptive-budget arithmetic as SYNC_TIMEOUT
+        and must degrade gracefully the same way — not crash the whole script
+        with an unbound-variable error and zero stdout output (issue #532
+        review finding)."""
+        env = {**_CLEAN_ENV, "PULL_TIMEOUT": "abc"}
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        _assert_contract(result, "0")
+        assert "invalid PULL_TIMEOUT" in result.stderr, (
+            f"Expected a fallback warning on stderr, got: {result.stderr!r}"
+        )
+
+
+def _add_and_commit_bulk_files(worktree: Path, count: int, prefix: str = "bulk") -> None:
+    for i in range(count):
+        (worktree / f"{prefix}{i:03d}.txt").write_text(f"{i}\n")
+    subprocess.run(
+        ["git", "add", "."], cwd=str(worktree), check=True, capture_output=True, text=True, env=_CLEAN_ENV
+    )
+    subprocess.run(
+        ["git", "commit", "-m", f"add {count} bulk files"],
+        cwd=str(worktree),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+    )
+
+
+class TestSyncAndVerifySubtreeWipeProbe:
+    """Fix A (#532): a registered worktree whose *root* survives but whose
+    tracked files were wiped underneath it (watchdog kills the post-merge hook
+    mid-rm) must still flag HOOK_INTERRUPTED=1 — the existing missing-root loop
+    only catches a vanished top-level directory and false-negatives here."""
+
+    def test_subtree_wipe_detected(self, git_repo, tmp_path):
+        wt_path = tmp_path / "wt-branch"
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        _add_and_commit_bulk_files(wt_path, 98)  # + README.md + feature.txt = 100 tracked
+
+        bulk_files = sorted(wt_path.glob("bulk*.txt"))
+        for f in bulk_files[:95]:  # 95/100 = 95% deletion ratio, well above the 90% threshold
+            f.unlink()
+
+        result = _run_script(git_repo, BRANCH, default_branch="main")
+        _assert_contract(result, "0", hook_interrupted="1")
+        assert "restore" in result.stderr, (
+            f"Expected the restore recovery hint, got: {result.stderr!r}"
+        )
+        assert "git worktree prune" not in result.stderr, (
+            f"'git worktree prune' is a no-op for an intact root — must not be "
+            f"advised here: {result.stderr!r}"
+        )
+
+    def test_subtree_wipe_no_false_positive_on_lightly_dirty_worktree(self, git_repo, tmp_path):
+        wt_path = tmp_path / "wt-branch-clean"
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        _add_and_commit_bulk_files(wt_path, 98)
+
+        bulk_files = sorted(wt_path.glob("bulk*.txt"))
+        for f in bulk_files[:2]:  # 2/100 = 2% deletion ratio — legitimately dirty, not interrupted
+            f.unlink()
+
+        result = _run_script(git_repo, BRANCH, default_branch="main")
+        _assert_contract(result, "0", hook_interrupted="0")
+
+
+class TestSyncAndVerifyAdaptiveBudget:
+    """Fix B (#532): with SYNC_TIMEOUT unset, the watchdog budget must scale
+    with $HEAD_REF's own tracked-file count (pull budget + hook budget)."""
+
+    def test_adaptive_budget_diagnostic_present_and_scales_with_file_count(
+        self, git_repo, tmp_path
+    ):
+        small_wt = tmp_path / "wt-small"
+        subprocess.run(
+            ["git", "worktree", "add", str(small_wt), BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+
+        large_branch = "feature/532-large-branch"
+        subprocess.run(
+            ["git", "checkout", "-b", large_branch, BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        _add_and_commit_bulk_files(git_repo, 300, prefix="huge")
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        large_wt = tmp_path / "wt-large"
+        subprocess.run(
+            ["git", "worktree", "add", str(large_wt), large_branch],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+
+        small_result = _run_script(git_repo, BRANCH, default_branch="main")
+        large_result = _run_script(git_repo, large_branch, default_branch="main")
+
+        _assert_contract(small_result, "0")
+        _assert_contract(large_result, "0")
+
+        budget_re = re.compile(r"adaptive watchdog budget=(\d+)s \(pull=(\d+)s \+ hook=(\d+)s for (\d+) tracked files\)")
+        small_match = budget_re.search(small_result.stderr)
+        large_match = budget_re.search(large_result.stderr)
+        assert small_match, f"Expected adaptive budget diagnostic, got: {small_result.stderr!r}"
+        assert large_match, f"Expected adaptive budget diagnostic, got: {large_result.stderr!r}"
+
+        small_budget = int(small_match.group(1))
+        large_budget = int(large_match.group(1))
+        small_files = int(small_match.group(4))
+        large_files = int(large_match.group(4))
+
+        assert large_files > small_files
+        assert large_budget > small_budget, (
+            f"Expected a larger tracked-file count to yield a larger watchdog "
+            f"budget: small={small_budget}s ({small_files} files), "
+            f"large={large_budget}s ({large_files} files)"
+        )
+
 
 class TestSyncAndVerifyEvalSafety:
     """Regression: caller adding `2>&1` to $(...) must not let git output

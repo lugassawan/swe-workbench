@@ -14,21 +14,67 @@ MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
 [ -n "${MAIN_REPO:-}" ] || { echo "sync-and-verify: could not resolve main repo path — aborting" >&2; exit 1; }
 cd "$MAIN_REPO"
 
+# Resolve $HEAD_REF's own worktree (path + tracked-file count) up front, before
+# the pull below can trigger the post-merge hook against it. Shared by the
+# adaptive watchdog budget (Block B) and the subtree-wipe probe (Block D):
+# `git ls-files` reads the index, which a plain `rm` inside the hook never
+# touches, so the same count is valid as both "files to budget for" (read
+# pre-pull) and "files that should still be there" (compared post-pull, in
+# Block D) — race-stable and cheap even against tens of thousands of files.
+# Use awk string comparison (-v) to avoid regex metachar injection from HEAD_REF.
+HEAD_WT=$(git worktree list --porcelain \
+  | awk -v ref="branch refs/heads/$HEAD_REF" '/^worktree /{p=$2} $0 == ref {print p; exit}')
+HEAD_WT_FILES=0
+if [ -n "${HEAD_WT:-}" ] && [ -d "$HEAD_WT" ]; then
+  if _n=$(git -C "$HEAD_WT" ls-files 2>/dev/null | wc -l | tr -d ' '); then
+    HEAD_WT_FILES=$_n
+  fi
+fi
+
 # Block B: sync local default branch (best-effort — failure warns, does not abort)
 # Backgrounded under an internal watchdog so an external tool-call kill can
 # never hit this step uncontrolled: firing before that external timeout turns
 # an unrecoverable process-tree kill into a controlled in-script exit that
 # still runs Block D's detection. This does NOT prevent corruption — a kill
 # can still land during the hook's rm — it makes it detectable and recoverable.
-# SYNC_TIMEOUT must be < the external tool-call timeout (headroom for Block C/D
-# plus the 2s kill grace below) — the script cannot self-enforce this invariant.
-SYNC_TIMEOUT="${SYNC_TIMEOUT:-90}"
-case "$SYNC_TIMEOUT" in
-  ''|*[!0-9]*)
-    echo "sync-and-verify: invalid SYNC_TIMEOUT='$SYNC_TIMEOUT' (must be a non-negative integer) — falling back to 90" >&2
-    SYNC_TIMEOUT=90
-    ;;
-esac
+#
+# TOTAL_CAP (570s) below is coupled to the Bash-tool-call timeout the caller
+# (SKILL.md Step 3b) must pass when invoking this script (~600s). The internal
+# watchdog MUST fire before that external timeout, or the external kill lands
+# first and Block D never runs — the script cannot self-enforce this invariant;
+# it is documented here AND in SKILL.md Step 3b.
+if [ -n "${SYNC_TIMEOUT:-}" ]; then
+  # Explicit override always wins — used by tests and manual overrides.
+  case "$SYNC_TIMEOUT" in
+    ''|*[!0-9]*)
+      echo "sync-and-verify: invalid SYNC_TIMEOUT='$SYNC_TIMEOUT' (must be a non-negative integer) — falling back to 90" >&2
+      SYNC_TIMEOUT=90
+      ;;
+  esac
+else
+  # Split budget: PULL_BUDGET covers the network pull; HOOK_BUDGET scales with
+  # how many tracked files the post-merge hook has to reap (K files/sec is an
+  # empirical throughput estimate, not measured per-repo), so a 23k-file
+  # monorepo worktree doesn't starve the hook of its cleanup window.
+  PULL_BUDGET="${PULL_TIMEOUT:-90}"
+  case "$PULL_BUDGET" in
+    ''|*[!0-9]*)
+      echo "sync-and-verify: invalid PULL_TIMEOUT='$PULL_BUDGET' (must be a non-negative integer) — falling back to 90" >&2
+      PULL_BUDGET=90
+      ;;
+  esac
+  K=50
+  HOOK_CAP=480
+  TOTAL_CAP=570
+  HOOK_BUDGET=$(( (HEAD_WT_FILES + K - 1) / K ))
+  [ "$HOOK_BUDGET" -le "$HOOK_CAP" ] || HOOK_BUDGET=$HOOK_CAP
+  _uncapped_total=$(( PULL_BUDGET + HOOK_BUDGET ))
+  SYNC_TIMEOUT=$_uncapped_total
+  [ "$SYNC_TIMEOUT" -le "$TOTAL_CAP" ] || SYNC_TIMEOUT=$TOTAL_CAP
+  _capped_note=""
+  [ "$_uncapped_total" -le "$TOTAL_CAP" ] || _capped_note=" — capped from ${_uncapped_total}s"
+  echo "sync-and-verify: adaptive watchdog budget=${SYNC_TIMEOUT}s (pull=${PULL_BUDGET}s + hook=${HOOK_BUDGET}s for ${HEAD_WT_FILES} tracked files)${_capped_note}" >&2
+fi
 TIMED_OUT=0
 set -m # give the backgrounded job its own process group
 ( git checkout "$DEFAULT_BRANCH" \
@@ -81,8 +127,40 @@ while IFS= read -r _line; do
   esac
 done < <(git worktree list --porcelain)
 
+# Fix A (#532): targeted subtree-deletion probe. The loop above only catches a
+# worktree whose *top-level* directory vanished. When the Block B watchdog
+# kills the post-merge hook mid-rm, the worktree root can survive while a
+# subtree of tracked files underneath it is wiped — the loop above sees
+# `[ -d "$_wt" ]` succeed and HOOK_INTERRUPTED stays a false 0, and
+# `git worktree prune` (the recovery advice below) is a no-op for this shape:
+# prune only clears missing *directories*, never files missing inside a live
+# one. Ratio, not "any deletion", so a worktree that's just legitimately dirty
+# doesn't get flagged as interrupted.
+SUBTREE_WIPED=0
+if [ -n "${HEAD_WT:-}" ] && [ -d "$HEAD_WT" ] && [ "${HEAD_WT_FILES:-0}" -gt 0 ]; then
+  _dels=0
+  if _d=$(git -C "$HEAD_WT" status --porcelain 2>/dev/null | awk '
+      {
+        x = substr($0, 1, 1); y = substr($0, 2, 1)
+        if (x == "U" || y == "U") next        # unmerged (UU/UD/UA/AU/DU)
+        if (x == "D" && y == "D") next        # unmerged: both deleted
+        if (x == "A" && y == "A") next        # unmerged: both added
+        if (x == "D" || y == "D") c++
+      }
+      END { print c + 0 }
+    '); then
+    _dels=$_d
+  fi
+  if [ "$(( _dels * 100 / HEAD_WT_FILES ))" -ge 90 ]; then
+    HOOK_INTERRUPTED=1
+    SUBTREE_WIPED=1
+  fi
+fi
+
 if [ "$HOOK_INTERRUPTED" -eq 1 ]; then
-  if [ "$TIMED_OUT" -eq 1 ]; then
+  if [ "$SUBTREE_WIPED" -eq 1 ]; then
+    echo "sync-and-verify: partial worktree deletion detected — $HEAD_REF's worktree root ($HEAD_WT) is intact but its tracked files are gone (the post-merge hook was likely interrupted mid-cleanup). The directory still exists, so pruning stale worktree registrations will not help. Recover: run 'git -C $HEAD_WT restore .' to restore the missing files, or re-run 'rimba clean --merged --force' to finish removing the worktree." >&2
+  elif [ "$TIMED_OUT" -eq 1 ]; then
     echo "sync-and-verify: internal timeout (${SYNC_TIMEOUT}s) interrupted the post-merge hook — partial worktree deletion detected. Recover: run 'git worktree prune' from the main repo, then delete the stale branch." >&2
   else
     echo "sync-and-verify: partial worktree deletion detected (a registered worktree is missing on disk — a prior cleanup was likely interrupted). Recover: run 'git worktree prune' from the main repo." >&2
