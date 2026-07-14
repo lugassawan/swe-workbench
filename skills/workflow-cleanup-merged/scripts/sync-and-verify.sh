@@ -43,8 +43,12 @@ fi
 # watchdog MUST fire before that external timeout, or the external kill lands
 # first and Block D never runs — the script cannot self-enforce this invariant;
 # it is documented here AND in SKILL.md Step 3b.
-if [ -n "${SYNC_TIMEOUT:-}" ]; then
+if [ "${SYNC_TIMEOUT+set}" = "set" ]; then
   # Explicit override always wins — used by tests and manual overrides.
+  # `${SYNC_TIMEOUT+set}` (presence), not `${SYNC_TIMEOUT:-}` (non-empty): the
+  # latter treats SYNC_TIMEOUT="" the same as unset, silently routing an
+  # explicit-but-empty override into the adaptive path below instead of the
+  # invalid-input fallback the case guard already provides for "90s" etc.
   case "$SYNC_TIMEOUT" in
     ''|*[!0-9]*)
       echo "sync-and-verify: invalid SYNC_TIMEOUT='$SYNC_TIMEOUT' (must be a non-negative integer) — falling back to 90" >&2
@@ -66,6 +70,12 @@ else
   K=50
   HOOK_CAP=480
   TOTAL_CAP=570
+  # Known scope limit: HOOK_BUDGET only accounts for $HEAD_REF's own tracked
+  # files. `rimba clean --merged --force` sweeps ALL currently-merged
+  # worktrees in one invocation, so a bulk multi-PR cleanup round (this
+  # script invoked once per merged PR, but the *first* pull's hook fires
+  # against every already-merged worktree at once) can still starve the hook
+  # even though this run's budget looks sufficient for $HEAD_REF alone.
   HOOK_BUDGET=$(( (HEAD_WT_FILES + K - 1) / K ))
   [ "$HOOK_BUDGET" -le "$HOOK_CAP" ] || HOOK_BUDGET=$HOOK_CAP
   _uncapped_total=$(( PULL_BUDGET + HOOK_BUDGET ))
@@ -137,6 +147,7 @@ done < <(git worktree list --porcelain)
 # one. Ratio, not "any deletion", so a worktree that's just legitimately dirty
 # doesn't get flagged as interrupted.
 SUBTREE_WIPED=0
+SUBTREE_PROBE_FAILED=0
 if [ -n "${HEAD_WT:-}" ] && [ -d "$HEAD_WT" ] && [ "${HEAD_WT_FILES:-0}" -gt 0 ]; then
   _dels=0
   if _d=$(git -C "$HEAD_WT" status --porcelain 2>/dev/null | awk '
@@ -150,15 +161,26 @@ if [ -n "${HEAD_WT:-}" ] && [ -d "$HEAD_WT" ] && [ "${HEAD_WT_FILES:-0}" -gt 0 ]
       END { print c + 0 }
     '); then
     _dels=$_d
+  else
+    # `git status` itself failed inside $HEAD_WT (e.g. its own .git pointer
+    # file/admin metadata was among the files reaped before the kill landed).
+    # Do NOT default to "0% deleted" here — that would silently report a
+    # false-clean state for the exact interrupted-hook shape this probe
+    # exists to catch. Flag as inconclusive-but-suspicious instead.
+    SUBTREE_PROBE_FAILED=1
   fi
-  if [ "$(( _dels * 100 / HEAD_WT_FILES ))" -ge 90 ]; then
+  if [ "$SUBTREE_PROBE_FAILED" -eq 1 ]; then
+    HOOK_INTERRUPTED=1
+  elif [ "$(( _dels * 100 / HEAD_WT_FILES ))" -ge 90 ]; then
     HOOK_INTERRUPTED=1
     SUBTREE_WIPED=1
   fi
 fi
 
 if [ "$HOOK_INTERRUPTED" -eq 1 ]; then
-  if [ "$SUBTREE_WIPED" -eq 1 ]; then
+  if [ "$SUBTREE_PROBE_FAILED" -eq 1 ]; then
+    echo "sync-and-verify: could not verify $HEAD_REF's worktree state ($HEAD_WT) — the deletion-ratio probe itself failed (git status errored), which can happen if the worktree's own admin metadata was reaped before a kill landed. Treating as a possible interrupted hook out of caution. Recover: inspect $HEAD_WT manually (e.g. 'git -C $HEAD_WT status') before assuming it's clean." >&2
+  elif [ "$SUBTREE_WIPED" -eq 1 ]; then
     echo "sync-and-verify: partial worktree deletion detected — $HEAD_REF's worktree root ($HEAD_WT) is intact but its tracked files are gone (the post-merge hook was likely interrupted mid-cleanup). The directory still exists, so pruning stale worktree registrations will not help. Recover: run 'git -C $HEAD_WT restore .' to restore the missing files, or re-run 'rimba clean --merged --force' to finish removing the worktree." >&2
   elif [ "$TIMED_OUT" -eq 1 ]; then
     echo "sync-and-verify: internal timeout (${SYNC_TIMEOUT}s) interrupted the post-merge hook — partial worktree deletion detected. Recover: run 'git worktree prune' from the main repo, then delete the stale branch." >&2

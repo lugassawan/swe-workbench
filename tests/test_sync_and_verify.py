@@ -329,6 +329,71 @@ class TestSyncAndVerifyWatchdog:
             f"the timeout-specific one: {result.stderr!r}"
         )
 
+    def test_watchdog_timeout_on_own_worktree_subtree_wipe_wins_message(
+        self, git_repo, tmp_path
+    ):
+        """The exact #532 repro: the watchdog kills the hook mid-rm on the SAME
+        worktree it's syncing for (TIMED_OUT=1 and SUBTREE_WIPED=1 both true on
+        $HEAD_REF's own worktree) — not an unrelated stray. Message-selection
+        precedence must pick the subtree-specific restore message over the
+        generic TIMED_OUT-corroborated one, even though both conditions hold."""
+        real_git = shutil.which("git")
+        assert real_git, "git must be resolvable on PATH for this test"
+
+        wt_path = tmp_path / "wt-own-subtree"
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        _add_and_commit_bulk_files(wt_path, 98)  # + README.md + feature.txt = 100 tracked
+
+        stub_dir = tmp_path / "stub_bin_own_subtree"
+        stub_dir.mkdir()
+        stub_git = stub_dir / "git"
+        marker = tmp_path / "pull_started_own_subtree"
+        # Simulate the hook wiping 95/100 tracked files in $HEAD_REF's OWN
+        # worktree during the pull, then hanging so the watchdog has to kill
+        # the whole group — the same shape as issue #532's report.
+        stub_git.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "pull" ]; then\n'
+            f'  touch "{marker}"\n'
+            f'  find "{wt_path}" -maxdepth 1 -name "bulk*.txt" | head -95 | xargs rm -f\n'
+            "  sleep 30\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n'
+        )
+        stub_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{stub_dir}{os.pathsep}{_CLEAN_ENV['PATH']}",
+            "SYNC_TIMEOUT": "1",
+        }
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
+        )
+
+        assert marker.exists(), "stub git pull was never invoked — test is vacuous"
+        _assert_contract(result, "0", hook_interrupted="1")
+        assert "restore" in result.stderr, (
+            f"Expected the subtree-wipe restore message to win, got: {result.stderr!r}"
+        )
+        assert "worktree prune" not in result.stderr, (
+            "The subtree message must win over both prune-based messages "
+            f"(generic and TIMED_OUT-corroborated): {result.stderr!r}"
+        )
+
 
 class TestSyncAndVerifySyncTimeoutValidation:
     """A malformed SYNC_TIMEOUT must not silently disable the watchdog.
@@ -369,6 +434,28 @@ class TestSyncAndVerifySyncTimeoutValidation:
         _assert_contract(result, "0")
         assert "invalid PULL_TIMEOUT" in result.stderr, (
             f"Expected a fallback warning on stderr, got: {result.stderr!r}"
+        )
+
+    def test_empty_sync_timeout_falls_back_to_default(self, git_repo):
+        """SYNC_TIMEOUT="" (explicitly set, but empty) must be treated as
+        invalid input like "90s" — not silently routed into the adaptive
+        budget path as if the variable were unset (issue #532 review
+        finding: `[ -n "${SYNC_TIMEOUT:-}" ]` is false for an empty string,
+        so presence must be checked via `${SYNC_TIMEOUT+set}` instead)."""
+        env = {**_CLEAN_ENV, "SYNC_TIMEOUT": ""}
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        _assert_contract(result, "0")
+        assert "invalid SYNC_TIMEOUT" in result.stderr, (
+            f"Expected a fallback warning on stderr, got: {result.stderr!r}"
+        )
+        assert "adaptive watchdog budget" not in result.stderr, (
+            f"Empty SYNC_TIMEOUT must not silently take the adaptive path: {result.stderr!r}"
         )
 
 
@@ -438,6 +525,76 @@ class TestSyncAndVerifySubtreeWipeProbe:
 
         result = _run_script(git_repo, BRANCH, default_branch="main")
         _assert_contract(result, "0", hook_interrupted="0")
+
+    def test_subtree_probe_failure_flagged_as_inconclusive_not_clean(self, git_repo, tmp_path):
+        """If `git status --porcelain` itself fails inside $HEAD_REF's worktree
+        (e.g. its own .git pointer file/admin metadata was reaped before the
+        kill landed), the probe must not silently default to "0% deleted" —
+        it must flag HOOK_INTERRUPTED=1 with a distinct "could not verify"
+        message rather than reporting a false-clean state (review finding on
+        issue #532's PR).
+
+        The `.git` removal must happen mid-flight (during the pull, via a
+        stub), not before the script starts — removing it upfront would also
+        break the script's own EARLY `ls-files` snapshot (taken before the
+        pull, over the same PATH-stubbed git), zeroing HEAD_WT_FILES and
+        skipping the probe block entirely rather than exercising the failure
+        path this test targets.
+        """
+        real_git = shutil.which("git")
+        assert real_git, "git must be resolvable on PATH for this test"
+
+        wt_path = tmp_path / "wt-branch-probe-fail"
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), BRANCH],
+            cwd=str(git_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        _add_and_commit_bulk_files(wt_path, 98)
+
+        stub_dir = tmp_path / "stub_bin_probe_fail"
+        stub_dir.mkdir()
+        stub_git = stub_dir / "git"
+        marker = tmp_path / "pull_started_probe_fail"
+        # On `pull`, simulate admin-metadata reaping: delete the worktree's own
+        # `.git` pointer file (not the tracked files), then let the real pull
+        # proceed normally against $MAIN_REPO (unaffected, different cwd).
+        stub_git.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = "pull" ]; then\n'
+            f'  touch "{marker}"\n'
+            f'  rm -f "{wt_path}/.git"\n'
+            "fi\n"
+            f'exec "{real_git}" "$@"\n'
+        )
+        stub_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{stub_dir}{os.pathsep}{_CLEAN_ENV['PATH']}",
+        }
+
+        result = subprocess.run(
+            ["bash", str(SCRIPT), BRANCH, "main"],
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=20,
+        )
+
+        assert marker.exists(), "stub git pull was never invoked — test is vacuous"
+        _assert_contract(result, "0", hook_interrupted="1")
+        assert "could not verify" in result.stderr, (
+            f"Expected a distinct inconclusive-probe message, got: {result.stderr!r}"
+        )
+        assert "restore" not in result.stderr, (
+            f"The probe-failure message must not be confused with the normal "
+            f"subtree-wipe restore message: {result.stderr!r}"
+        )
 
 
 class TestSyncAndVerifyAdaptiveBudget:
