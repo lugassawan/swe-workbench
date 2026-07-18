@@ -10,11 +10,13 @@ Defects addressed:
    path alongside rimba — it causes EnterWorktree to mangle branch names.
 """
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 TEMPLATE = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
+SWEEP_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sweep-residuals.sh"
 
 
 def test_cleanup_merged_step3_calls_exit_worktree_before_cwd_anchor():
@@ -173,8 +175,9 @@ def test_cleanup_merged_step5_delegates_to_delete_branches_script():
     assert "### Step 5 — Delete Branches" in body, (
         "Step 5 heading must be '### Step 5 — Delete Branches'"
     )
-    assert "### Step 6 — Report" in body, (
-        "Step 7 must be renumbered to Step 6 after the merge"
+    assert "### Step 7 — Report" in body, (
+        "The Report step must be renumbered to Step 7 to make room for the new "
+        "Step 6 — Residual Sweep step"
     )
 
     step5_slice = body.split("### Step 5 — Delete Branches")[1].split("### Step 6")[0]
@@ -239,4 +242,113 @@ def test_common_mistakes_no_op_row_reframed():
     assert "compaction" in mistakes.lower(), (
         "Common Mistakes table must name compaction as an alternative cause "
         "wherever it discusses the ExitWorktree no-op."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — Residual Sweep (issue #535)
+# ---------------------------------------------------------------------------
+
+def test_cleanup_merged_step6_delegates_to_sweep_residuals_script():
+    """Step 6 must delegate residual reaping to sweep-residuals.sh via eval.
+
+    Mirrors test_cleanup_merged_step5_delegates_to_delete_branches_script: the
+    skill slice for Step 6 must reference the companion script and invoke it
+    through an eval block, the same pattern every other Step in this file uses.
+    """
+    body = SKILL.read_text()
+
+    assert "### Step 6 — Residual Sweep" in body, (
+        "Step 6 heading must be '### Step 6 — Residual Sweep (PR-scoped)'"
+    )
+    assert "### Step 7 — Report" in body, (
+        "Step 7 heading must exist immediately after Step 6"
+    )
+
+    step6_slice = body.split("### Step 6 — Residual Sweep")[1].split("### Step 7 — Report")[0]
+
+    assert "sweep-residuals.sh" in step6_slice, (
+        "Step 6 slice must reference sweep-residuals.sh"
+    )
+    assert "eval" in step6_slice, (
+        "Step 6 slice must invoke sweep-residuals.sh through an eval block, "
+        "matching the KEY=VALUE contract used by every other step's companion script"
+    )
+
+
+def test_sweep_residuals_script_exists_and_is_executable():
+    """SKILL.md's Step 6 reference target must actually exist and be runnable."""
+    assert SWEEP_SCRIPT.is_file(), f"{SWEEP_SCRIPT} must exist"
+    assert os.access(SWEEP_SCRIPT, os.X_OK), f"{SWEEP_SCRIPT} must be executable"
+
+
+def test_sweep_residuals_script_never_touches_shared_parent_dirs():
+    """sweep-residuals.sh must never rmdir or bare-rm-rf the shared containing dirs.
+
+    /tmp/swe-workbench-pr-review/ and /tmp/swe-workbench-address-feedback/ are
+    shared across concurrent PRs — a concurrent unrelated PR may hold live state
+    there. The script must only ever touch PR-#N-keyed files/dirs beneath them,
+    routed through the two runtime guard scripts rather than bare rm.
+    """
+    src = SWEEP_SCRIPT.read_text()
+
+    assert "rmdir" not in src, (
+        "sweep-residuals.sh must never call rmdir — it could remove a shared "
+        "parent dir out from under a concurrent PR"
+    )
+    assert 'rm -rf "/tmp/swe-workbench-pr-review"' not in src, (
+        "sweep-residuals.sh must never bare-rm-rf the shared pr-review parent dir"
+    )
+    assert 'rm -rf "/tmp/swe-workbench-address-feedback"' not in src, (
+        "sweep-residuals.sh must never bare-rm-rf the shared address-feedback parent dir"
+    )
+    assert "clean-ephemeral.sh" in src, (
+        "sweep-residuals.sh must route worktree removal through runtime/clean-ephemeral.sh"
+    )
+    assert "clean-state-files.sh" in src, (
+        "sweep-residuals.sh must route state-file removal through runtime/clean-state-files.sh"
+    )
+
+
+def test_sweep_residuals_script_never_force_deletes_address_feedback_branch():
+    """sweep-residuals.sh must never git branch -D an address-feedback-N branch.
+
+    That branch may be the PR's real head branch — only its worktree is safe to
+    remove, never the branch itself.
+    """
+    src = SWEEP_SCRIPT.read_text()
+    assert 'git branch -D "address-feedback' not in src, (
+        "sweep-residuals.sh must never force-delete an address-feedback-N branch — "
+        "it may be the PR's real head branch"
+    )
+
+
+def test_cleanup_merged_step7_report_includes_sweep_line():
+    """Step 7's report block must document the residual sweep result."""
+    body = SKILL.read_text()
+    assert "### Step 7 — Report" in body, "Step 7 — Report heading must exist"
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
+
+    assert "SWEPT_WORKTREES" in step7_slice or "Residual sweep" in step7_slice, (
+        "Step 7's report block must include a line documenting the residual "
+        "sweep result (SWEPT_WORKTREES/SWEPT_STATE_FILES or 'Residual sweep' wording)"
+    )
+
+
+def test_cleanup_merged_step6_scratchpad_prose_is_scoped():
+    """Step 6's scratchpad-cleanup instruction must be explicitly scoped to the PR.
+
+    The plan requires prose (not shipped shell code) telling the agent to delete
+    only scratchpad files it itself created for this PR's work, scoped to #N,
+    and never a blanket wipe of the scratchpad directory.
+    """
+    body = SKILL.read_text()
+    step6_slice = body.split("### Step 6 — Residual Sweep")[1].split("### Step 7 — Report")[0]
+
+    assert "scoped to" in step6_slice, (
+        "Step 6 must contain 'scoped to' language for the scratchpad-cleanup instruction"
+    )
+    assert "never a blanket" in step6_slice, (
+        "Step 6 must contain 'never a blanket' language ruling out a blanket "
+        "scratchpad-directory wipe"
     )

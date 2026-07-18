@@ -126,7 +126,16 @@ The script always attempts the remote delete regardless of whether the local bra
 
 Capital `-D` is used for the local delete: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
-### Step 6 — Report
+### Step 6 — Residual Sweep (PR-scoped)
+
+```bash
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/sweep-residuals.sh" "<number>")"
+```
+
+This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `workflow-pr-review`, `workflow-pr-review-followup`, and `workflow-address-feedback` when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, and `#<number>`'s orphaned `/tmp` state JSON (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0. After it runs, also delete any scratchpad files **you** (the agent executing this skill) created for this PR's review/feedback/cleanup work — scoped to `#<number>` only, never a blanket wipe of the scratchpad directory; the harness scratchpad path layout is undocumented and version-fragile, so this step stays prose guidance rather than shipped shell code.
+
+### Step 7 — Report
 
 ```
 Cleanup complete for PR #<number> (<headRefName>):
@@ -134,6 +143,7 @@ Cleanup complete for PR #<number> (<headRefName>):
   ✓ Local branch deleted: <branch>  (or: already gone — LOCAL_DELETED=0)
   ✓ Remote branch deleted: <branch> (or: already gone — REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
+  ✓ Residual sweep: <SWEPT_WORKTREES> worktree(s) + <SWEPT_STATE_FILES> state file(s) removed (or: none)
 ```
 
 ## Worktree Removal Strategies
@@ -272,18 +282,7 @@ git branch -D <stale-branch-name>                # the local ref that survived t
 
 ### Recovery Example — Intact Root, Wiped Subtree (#532)
 
-On a large worktree, a kill can land *after* the hook deletes most tracked files but *before* it removes the root directory. The missing-root scan above misses this (the directory is still there); the targeted subtree probe reports `HOOK_INTERRUPTED=1` with a message that deliberately does not suggest `git worktree prune` (a no-op here):
-
-```bash
-cd "$MAIN_REPO"
-WT_PATH=$(git worktree list --porcelain \
-  | awk -v ref="branch refs/heads/<headRefName>" '/^worktree /{p=$2} $0 == ref {print p; exit}')
-git -C "$WT_PATH" restore .        # restores the missing tracked files from the index
-# — or, to finish the interrupted removal instead —
-rimba clean --merged --force
-```
-
-`restore .` only touches tracked files missing or modified relative to the index; untracked files are unaffected. After recovery, proceed with the normal Step 4/5 flow for `$HEAD_REF`.
+Same interrupted-hook family as above, but the root directory survives while most tracked files are gone. See the Failure Mode Table row "Partial worktree deletion (interrupted hook, root intact / subtree wiped) (#532)" for the full signal and recovery: `git -C <worktree-path> restore .` (restores missing tracked files from the index) or `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal Step 4/5 flow.
 
 ## Common Mistakes
 
