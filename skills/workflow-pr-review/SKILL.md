@@ -107,7 +107,7 @@ Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `li
 
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
-- `BYLINE` — `_Reviewed by \`reviewer\` ([swe-workbench](https://github.com/lugassawan/swe-workbench))._`
+- `BYLINE` — `_Reviewed by \`reviewer\`_` (identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` Step 4).
 - `CALLER_TAG` — `general` (scopes the core's own threads-cache filename so it never collides with a concurrent followup or specialist run on the same PR).
 - `FINDINGS[]` — as parsed above.
 

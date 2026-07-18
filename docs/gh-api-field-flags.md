@@ -35,6 +35,29 @@ After posting, confirm the body landed as the literal string you intended:
 gh api <endpoint>/<id> -q '.body'
 ```
 
+## Arrays of objects: `-f`/`-F` field flags don't work, use `--input -`
+
+`gh api -f`/`-F` bracket notation (`key[]=value`) only builds arrays of **scalars**.
+Numeric-indexed bracket notation (`comments[0][path]=...`, `comments[1][path]=...`) does
+**not** build an array of objects — it builds a JSON *object* keyed by stringified indices
+(`{"comments":{"0":{...},"1":{...}}}`), which most array-typed API fields (e.g. GitHub's
+`POST /pulls/{n}/reviews` `comments` field) reject outright. Verified against a live `gh`
+install — this is not a theoretical gap.
+
+For an array-of-objects field, build the whole request body as JSON (`jq` is the natural
+tool) and post it via `gh api --input -`, which reads the request body verbatim from stdin.
+`jq --arg`/`--argjson` give the same raw-string safety `-f` gives a scalar field — a value
+starting with `@` is embedded as a literal JSON string, never file-expanded, because the
+payload never passes through `gh api`'s own field-flag parser at all:
+
+```bash
+PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body, comments: $comments_array}')
+gh api --method POST <endpoint> --input - <<<"$PAYLOAD"
+```
+
+Never string-concatenate a free-form value directly into a JSON literal (`"body": "'"$BODY"'"`)
+— a value containing `"` or `\` breaks the JSON or injects fields. Always go through `jq --arg`.
+
 ## Where this is enforced
 
 - `runtime/reply-and-resolve.sh` uses `-f body=` for both reply call sites (reply bodies start
@@ -42,6 +65,7 @@ gh api <endpoint>/<id> -q '.body'
   `tests/test_reply_and_resolve_script.py::test_body_flag_is_lowercase_f_not_uppercase_f`.
 - `skills/workflow-pr-review-post/SKILL.md` (the shared posting core used by
   `workflow-pr-review`, `workflow-pr-review-followup`, and the `/swe-workbench:review`
-  specialist PR-mode sub-flow) uses `-f body="$BODY"` in its Step 2 inline-comment POST
-  (a reviewer finding can also start with `@author`); guarded by
-  `tests/test_pr_review_skill_body_flag.py`.
+  specialist PR-mode sub-flow) builds the Step 2 `comments[]` array via `jq --arg body`
+  and posts it with `gh api --input -` (see above), and uses `-f body="$BODY"` in the
+  Step 4 model-A fallback's single-comment POST (a reviewer finding can also start with
+  `@author`); both guarded by `tests/test_pr_review_skill_body_flag.py`.

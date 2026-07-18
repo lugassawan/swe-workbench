@@ -121,7 +121,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
    - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
    - `DECISION` — as derived above.
    - `BLOCKING_SCOPE` — intentionally omitted; specialist auditors don't classify in-diff vs out-of-diff, so it falls back to the core's `IN-DIFF` fail-safe default and the diff-scoping flip never fires for specialist-mode reviews (unlike `workflow-pr-review`/`workflow-pr-review-followup`, which do set it from the reviewer agent's own classification).
-   - `BYLINE` — `` _Reviewed by `<auditor>` ([swe-workbench](https://github.com/lugassawan/swe-workbench))._ `` (the specific agent from the mode table, e.g. `security-auditor`).
+   - `BYLINE` — `` _Reviewed by `<auditor>`_ `` (identity-only — substitute the specific agent from the mode table, e.g. `security-auditor`; the core appends the swe-workbench remark itself, conditionally on public repos).
    - `CALLER_TAG` — the mode name (e.g. `security`).
    - `FINDINGS[]` — as normalized above.
 
