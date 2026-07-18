@@ -108,36 +108,36 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 - **`WORKTREE_GONE=0`**: hook did not fire (or rimba refused due to dirty/unpushed state). Select a removal strategy from `## Worktree Removal Strategies` below. Execute only the first strategy whose preconditions hold.
 - **`HOOK_INTERRUPTED=1`**: independent of `WORKTREE_GONE` — one of three states, all meaning the timeout guard (or an external kill on a prior run) caught the post-merge hook mid-`rm`. The script is verify-only here: it signals and documents, it never auto-remediates.
   - **Root missing** — a registered worktree exists in `.git` with no directory on disk at all. The probe scans **all** registered worktrees, not just `$HEAD_REF`'s — the flagged entry may be `$HEAD_REF`'s own half-deleted worktree, or an unrelated stray left over from a different branch's interrupted cleanup. Either way, run `git worktree prune` first (always safe — see the Recovery Example below); if the missing entry was `$HEAD_REF`'s own, its worktree is now fully gone and only its branch remains (skip straight to Step 5). If it was an unrelated stray, pruning clears the signal and the normal Step 4 removal strategies proceed for `$HEAD_REF` as usual.
-  - **Root intact, subtree wiped (#532)** — `$HEAD_REF`'s own worktree directory still exists, but ≥90% of its tracked files are gone from disk (the hook was killed after deleting most files but before removing the root). `git worktree prune` is a **no-op** here — it only clears missing *directories*, and this one still exists. Recover with `git -C <worktree-path> restore .` (restores the missing tracked files from the index) or by re-running `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal Step 4/5 flow.
+  - **Root intact, subtree wiped (#532)** — `$HEAD_REF`'s own worktree directory still exists, but ≥90% of its tracked files are gone from disk (the hook was killed after deleting most files but before removing the root). `git worktree prune` is a **no-op** here — it only clears missing *directories*, and this one still exists. Recover with `git -C <worktree-path> restore .` (restores the missing tracked files from the index) or by re-running `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal flow from Step 4 onward.
   - **Root intact, probe inconclusive** — the subtree-wipe probe's own `git status` call failed (e.g. `$HEAD_WT`'s admin metadata was itself reaped). Neither `git worktree prune` (directory exists) nor `restore .` (needs functioning git metadata) is guaranteed safe here — manually inspect `$HEAD_WT` (e.g. `git -C <worktree-path> status`) before choosing a recovery path.
 
-### Step 5 — Delete Branches
+### Step 5 — Residual Sweep (PR-scoped)
+```bash
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
+eval "$("$_SCRIPTS/sweep-residuals.sh" "<number>")"
+```
+This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `workflow-pr-review`, `workflow-pr-review-followup`, and `workflow-address-feedback` when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, and `#<number>`'s orphaned `/tmp` state JSON (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, so an interrupted session's local-only work is never silently discarded. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed by `eval` unless this sweep clears it first. The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0. After it runs, also delete any scratchpad files **you** (the agent executing this skill) created for this PR's review/feedback/cleanup work — scoped to `#<number>` only, never a blanket wipe of the scratchpad directory; the harness scratchpad path layout is undocumented and version-fragile, so this step stays prose guidance rather than shipped shell code.
 
+### Step 6 — Delete Branches
 ```bash
 eval "$("$_SCRIPTS/delete-branches.sh" "<headRefName>")"
 ```
-
 The script self-detects `MAIN_REPO` and anchors `cd` internally. It emits exactly two `KEY=VALUE` lines:
-
 - `LOCAL_DELETED=0|1` — `1` if the script deleted the local branch; `0` if it was already gone.
 - `REMOTE_DELETED=0|1` — `1` if the script deleted the remote branch; `0` if it was already gone.
 
-The script always attempts the remote delete regardless of whether the local branch was present — this covers the `WORKTREE_GONE=1` path where the local branch was already removed by the rimba hook. HTTP 404 / "remote ref does not exist" is treated as success (`REMOTE_DELETED=0`). Any other push error is warned to stderr but the script exits 0 so the caller's `eval` never aborts mid-cleanup.
+The script always attempts the remote delete regardless of whether the local branch was present — this covers the `WORKTREE_GONE=1` path where the local branch was already removed by the rimba hook. HTTP 404 / "remote ref does not exist" is treated as success (`REMOTE_DELETED=0`). Any other push error is warned to stderr but the script exits 0 so the caller's `eval` never aborts mid-cleanup. Capital `-D` is used for the local delete: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
-Capital `-D` is used for the local delete: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
-
-### Step 6 — Report
-
+### Step 7 — Report
 ```
 Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
-  ✓ Local branch deleted: <branch>  (or: already gone — LOCAL_DELETED=0)
-  ✓ Remote branch deleted: <branch> (or: already gone — REMOTE_DELETED=0)
+  ✓ Residual sweep: <SWEPT_WORKTREES> worktree(s) + <SWEPT_STATE_FILES> state file(s) removed (or: none)
+  ✓ Branches deleted: local <branch> / remote <branch> (or: already gone — LOCAL_DELETED=0 / REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
 
 ## Worktree Removal Strategies
-
 Execute the first strategy whose preconditions hold. Fall through to the next if preconditions fail.
 
 ### rimba + post-merge hook (fast path)
@@ -156,7 +156,7 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 Nothing strategy-specific. The `git pull --ff-only origin "$DEFAULT_BRANCH"` in Step 3 fired the post-merge hook, which ran `rimba clean --merged --force` and removed the worktree and local branch as a side-effect.
 
-The verification gate in Step 4 (`WORKTREE_GONE=1`) confirms the hook succeeded and routes the spine to skip Step 4 worktree-removal strategies and proceed to Step 5 (reports `LOCAL_DELETED=0`, still deletes remote).
+The verification gate in Step 4 (`WORKTREE_GONE=1`) confirms the hook succeeded and routes the spine to skip Step 4 worktree-removal strategies and proceed through Step 5 (residual sweep) to Step 6 (reports `LOCAL_DELETED=0`, still deletes remote).
 
 **Failure handling:**
 
@@ -188,7 +188,7 @@ If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, 
 ```bash
 [ -d "<worktree-path>" ] && WORKTREE_STILL_PRESENT=1 || WORKTREE_STILL_PRESENT=0
 ```
-- **`WORKTREE_STILL_PRESENT=0`** (worktree directory is gone): treat as **partial success** — the branch deletion failed but the worktree is already removed. `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 executes normally. Fall through to Step 5 (`delete-branches.sh`) from `$MAIN_REPO`. Do NOT abort.
+- **`WORKTREE_STILL_PRESENT=0`** (worktree directory is gone): treat as **partial success** — the branch deletion failed but the worktree is already removed. `WORKTREE_GONE` remains `0` (Step 4 ran before rimba), so Step 5 and Step 6 execute normally. Fall through to Step 6 (`delete-branches.sh`) from `$MAIN_REPO`. Do NOT abort.
 - **`WORKTREE_STILL_PRESENT=1`** (worktree directory still exists — rimba refused, e.g. dirty/unpushed): report the rimba error verbatim and abort. Do not proceed to branch deletion.
 
 ### shell fallback
@@ -230,7 +230,7 @@ git worktree remove "$WORKTREE"
 - `DIRTY > 0`: abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first.
 - `UNPUSHED > 0`: abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first.
 - `git worktree remove` fails: abort. Do not delete branches. Report verbatim.
-- `WORKTREE` empty: skip Batch B. Proceed directly to Step 5 (delete branches).
+- `WORKTREE` empty: skip Batch B. Proceed directly to Step 6 (delete branches).
 
 ## Failure Mode Table
 
@@ -241,15 +241,15 @@ git worktree remove "$WORKTREE"
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
 | cwd is inside the worktree | Path comparison | `cd` to the worktree root (`git rev-parse --show-toplevel`) before Batch B, or abort if not possible. |
 | `git worktree remove` fails | Non-zero exit | Abort. Do not delete branches. Report verbatim. |
-| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 5 (delete branches). |
+| No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 6 (delete branches). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
 | cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` (or the `cd`-to-main-root fallback for `cd`-entered worktrees) prevents this when followed. If observed, re-run from the main repo root. |
-| rimba `remove` removes worktree but fails branch delete | Non-zero exit after worktree directory is gone | Partial success — fall through to Step 5 from `$MAIN_REPO`. Worktree is gone; only branch remains. |
+| rimba `remove` removes worktree but fails branch delete | Non-zero exit after worktree directory is gone | Partial success — fall through to Step 6 from `$MAIN_REPO`. Worktree is gone; only branch remains. |
 | Partial worktree deletion (interrupted hook, root missing) | `HOOK_INTERRUPTED=1` — a registered worktree is missing on disk (may be `$HEAD_REF`'s own, or an unrelated stray from an earlier interrupted cleanup) | Run `git worktree prune` from `$MAIN_REPO` first — always safe, never touches a live worktree — then delete the stale branch (`delete-branches.sh` or `git branch -D <ref>`). Only skip the normal Step 4 removal strategies for `$HEAD_REF` if the missing entry turns out to be `$HEAD_REF`'s own worktree; otherwise proceed with Step 4 as usual once the stray is pruned. |
-| Partial worktree deletion (interrupted hook, root intact / subtree wiped) (#532) | `HOOK_INTERRUPTED=1` — `$HEAD_REF`'s own worktree directory still exists but ≥90% of its tracked files are gone | `git worktree prune` is a no-op (the directory exists). Run `git -C <worktree-path> restore .` to restore the missing files, or re-run `rimba clean --merged --force` to finish the interrupted removal, then proceed with Step 4/5 as usual. |
+| Partial worktree deletion (interrupted hook, root intact / subtree wiped) (#532) | `HOOK_INTERRUPTED=1` — `$HEAD_REF`'s own worktree directory still exists but ≥90% of its tracked files are gone | `git worktree prune` is a no-op (the directory exists). Run `git -C <worktree-path> restore .` to restore the missing files, or re-run `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal flow from Step 4 onward. |
 | Subtree-wipe probe itself fails (interrupted hook, root intact, state unverifiable) (#532) | `HOOK_INTERRUPTED=1` — stderr shows "could not verify \<worktree\>'s worktree state" | Neither `git worktree prune` nor `restore .` is guaranteed safe. Manually inspect `$HEAD_WT` (e.g. `git -C <worktree-path> status`) before choosing a recovery path. |
 
 ### Recovery Example — Interrupted Hook
@@ -283,7 +283,7 @@ git -C "$WT_PATH" restore .        # restores the missing tracked files from the
 rimba clean --merged --force
 ```
 
-`restore .` only touches tracked files missing or modified relative to the index; untracked files are unaffected. After recovery, proceed with the normal Step 4/5 flow for `$HEAD_REF`.
+`restore .` only touches tracked files missing or modified relative to the index; untracked files are unaffected. After recovery, proceed with the normal flow from Step 4 onward for `$HEAD_REF`.
 
 ## Common Mistakes
 
