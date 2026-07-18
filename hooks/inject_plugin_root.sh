@@ -48,6 +48,13 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 # CLAUDE_PLUGIN_ROOT=x`) is still treated as "already assigned" and
 # skipped, since this hook does not parse shell execution order (same
 # class of scope gap bash_guard.sh documents in its own header comment).
+# Out of scope: quoted/heredoc content — a `;`/`&`/`|` or line-start
+# inside a quoted string or heredoc body (e.g. a `.env` file written via
+# `cat > .env <<EOF` containing a literal `CLAUDE_PLUGIN_ROOT=` line, or
+# an `echo "...; CLAUDE_PLUGIN_ROOT=x"` argument) is indistinguishable
+# from a real command boundary without a real shell tokenizer. Worst
+# case this reverts to pre-hook behavior (silent no-op) for that command,
+# not a new failure mode.
 if printf '%s' "$cmd" | grep -Eq '(^|[;&|])[[:space:]]*(export[[:space:]]+)?CLAUDE_PLUGIN_ROOT='; then
   exit 0  # already assigns it — idempotent no-op
 fi
