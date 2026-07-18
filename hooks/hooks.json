@@ -11,6 +11,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_plugin_root.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {

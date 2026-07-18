@@ -22,7 +22,7 @@
 | `/swe-workbench:codebase-knowledge [path]` | Present a structured knowledge document (architecture overview, module map, public API surfaces, patterns). Read-only, understanding-oriented. Distinct from `/swe-workbench:audit-codebase` (defect detection) and `/swe-workbench:document` (prose-doc generation). |
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
 | `/swe-workbench:sync [--rebase] [--check-redundancy]` | Bring the current branch up to date with the default branch — delegates the mechanical merge/rebase to rimba (or git), then walks through any conflicts file-by-file with a `conflict-resolver` recommendation and rationale before applying. Never auto-pushes; push is a separate, prompted step. Default strategy is merge; pass `--rebase` to rebase instead. `--check-redundancy` runs an opt-in `redundancy-assessor` pass surfacing functional duplication the default branch already provides. |
-| `/swe-workbench:doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of findings. |
+| `/swe-workbench:doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of dependency findings; exits 1 only if CLAUDE_PLUGIN_ROOT cannot be resolved. |
 
 ## Subagents
 
