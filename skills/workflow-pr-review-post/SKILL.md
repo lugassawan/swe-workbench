@@ -180,16 +180,19 @@ if [ "$N" -gt 0 ]; then
     # GENUINELY re-validate/reassemble (do NOT resubmit $COMMENTS_JSON
     # unchanged); demote anything newly out-of-diff to a pr-level comment.
     HEAD_SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
-    COMMENTS_JSON="[]"; STILL_IN_DIFF=()
+    COMMENTS_JSON="[]"; STILL_IN_DIFF=(); DEMOTED_BODY=""; DEMOTED_N=0
     for row in "${INLINE_SURVIVORS[@]}"; do   # each row resolves REPO_PATH, LINE, BODY
       if line_is_in_diff "$REPO_PATH" "$LINE" "$HEAD_SHA"; then   # same predicate as Step 2's pre-validate pass
         COMMENTS_JSON=$(jq --arg path "$REPO_PATH" --argjson line "$LINE" --arg body "$BODY" \
           '. + [{path: $path, line: $line, side: "RIGHT", body: $body}]' <<<"$COMMENTS_JSON")
         STILL_IN_DIFF+=("$row")
       else
-        gh pr comment "$PR" --body "$BODY" && posted_pr_level=$((posted_pr_level + 1))
+        DEMOTED_BODY="${DEMOTED_BODY}${BODY}"$'\n\n---\n\n'; DEMOTED_N=$((DEMOTED_N + 1))
       fi
     done
+    # Batch every newly-demoted row into ONE pr-level comment — mirrors Step 2's own batching.
+    [ "$DEMOTED_N" -gt 0 ] && gh pr comment "$PR" --body "$DEMOTED_BODY" \
+      && posted_pr_level=$((posted_pr_level + DEMOTED_N))
     INLINE_SURVIVORS=("${STILL_IN_DIFF[@]}"); N=$(jq 'length' <<<"$COMMENTS_JSON")
     BYLINE_FULL="${BYLINE}${REMARK}. Posted ${N} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
     if [ "$IS_SELF_REVIEW" = true ]; then SUMMARY=$(printf '%s\n' "$BYLINE_FULL")
@@ -199,15 +202,20 @@ if [ "$N" -gt 0 ]; then
       '{commit_id: $commit_id, event: $event, body: $body, comments: $comments}')
     RESP2=$(gh api --method POST "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" --input - <<<"$PAYLOAD" 2>&1)
     [ $? -eq 0 ] && { posted_inline=$N; SUBMITTED=true; }
+  else
+    # Network/5xx — ambiguous: the POST may have landed server-side even though the
+    # client saw a failure. Never blind-retry (no idempotency key); instead confirm
+    # via a cheap read-your-write check before conceding to the model-A fallback.
+    LANDED=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" \
+      -q "[.[] | select(.user.login==\"$CURRENT_USER\" and .commit_id==\"$HEAD_SHA\")] | length")
+    [ "${LANDED:-0}" -gt 0 ] && { posted_inline=$N; SUBMITTED=true; }
   fi
-  # Any other failure (network, 5xx) is NOT retried — never blind-retry a POST
-  # with no idempotency key; SUBMITTED stays unset, falls through below.
 fi
 
 if [ "${SUBMITTED:-false}" != true ]; then
   # Reached when N=0 (nothing to batch — today's plain submit) OR the atomic
   # POST 422'd twice OR failed on network/5xx — model-A per-comment fallback.
-  posted_inline=0
+  posted_inline=0; DEMOTED_BODY=""; DEMOTED_N=0
   for row in "${INLINE_SURVIVORS[@]}"; do   # empty loop when N=0; each row resolves REPO_PATH, LINE, BODY
     if gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments" \
          -f body="$BODY" \
@@ -217,12 +225,13 @@ if [ "${SUBMITTED:-false}" != true ]; then
          -F commit_id="$HEAD_SHA"; then
       posted_inline=$((posted_inline + 1))
     else
-      # Never drop a finding silently on a fallback POST failure — demote to
-      # a follow-up pr-level note (same treatment an out-of-diff finding gets).
-      echo "[warn] individual comment POST failed for $REPO_PATH:$LINE — demoting to pr-level." >&2
-      gh pr comment "$PR" --body "$BODY" && posted_pr_level=$((posted_pr_level + 1))
+      # Never drop a finding silently on a fallback POST failure — batch into ONE
+      # follow-up pr-level comment after the loop, not one gh pr comment per row.
+      DEMOTED_BODY="${DEMOTED_BODY}${BODY}"$'\n\n---\n\n'; DEMOTED_N=$((DEMOTED_N + 1))
     fi
   done
+  [ "$DEMOTED_N" -gt 0 ] && gh pr comment "$PR" --body "$DEMOTED_BODY" \
+    && posted_pr_level=$((posted_pr_level + DEMOTED_N))
   BYLINE_FULL="${BYLINE}${REMARK}. Posted ${posted_inline} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
   if [ "$IS_SELF_REVIEW" = true ]; then SUMMARY=$(printf '%s\n' "$BYLINE_FULL")
   else SUMMARY=$(printf '**Review Decision: %s**\n\n%s\n' "$DECISION" "$BYLINE_FULL"); fi
@@ -273,13 +282,10 @@ This skill never touches the caller's own worktree or preflight state files (e.g
 
 | Failure | Signal | Action |
 |---|---|---|
-| A pre-validated finding is out-of-diff at post time (`HEAD_SHA` advanced since the diff-scoping scan) | Line-in-diff check fails during Step 2 assembly | Demote to the pr-level batch — never drop a finding silently. |
-| Atomic review POST returns 422 — stale `commit_id`, since every row in `comments[]` was pre-validated in-diff before assembly | `gh api` non-zero exit, response contains `422` | Re-fetch `HEAD_SHA` (`gh pr view "$PR" --json headRefOid -q .headRefOid`), re-run pre-validate/assemble, retry the atomic POST **once**. Still failing → fall back to model-A per-comment posting (rebuild `$SUMMARY` from the actual landed count, submit the event via `gh pr review`). |
-| Atomic review POST fails on network/5xx | Non-422 failure | **Never** blind-retry — no idempotency key for this endpoint, so a retried call that already landed double-posts every comment. Fall straight to the model-A fallback. |
-| `comments[]` is empty (`N == 0`) | No inline survivors after dedup + pre-validate | Fall through to `gh pr review --approve\|--comment` directly — no atomic POST attempted (the existing pre-#531 path, unchanged). |
-| Self-review (`IS_SELF_REVIEW=true`) | `CURRENT_USER == AUTHOR_LOGIN` | Submit with `EVENT=COMMENT` regardless of `$DECISION` — GitHub blocks self-`APPROVE` but allows self-`COMMENT`, so this run's inline/pr-level comments still land instead of the whole submit being skipped. |
+| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | Line-in-diff check fails during assembly, or `gh api` non-zero exit with `422` | Demote to the pr-level batch (never drop silently); for a 422, re-fetch `HEAD_SHA`, re-validate/reassemble, retry **once** — still failing falls back to model-A (rebuild `$SUMMARY` from the actual landed count). |
+| Atomic review POST fails on network/5xx | Non-422 failure | **Never** blind-retry (no idempotency key). Confirm via a read-your-write check (list reviews, filter by `$CURRENT_USER` + `$HEAD_SHA`) before conceding to the model-A fallback. |
+| Self-review (`IS_SELF_REVIEW=true`), or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review: submit `EVENT=COMMENT` regardless of `$DECISION` (never `APPROVE`). Empty: fall through to `gh pr review --approve\|--comment` directly, no atomic POST attempted. |
 | All findings dedup-matched | `posted == 0` | Submit with body noting "no new findings — all previously raised". Decision unaffected. |
-| GraphQL pagination needed (PR > 100 threads) | `hasNextPage == true` | Loop with `after: endCursor`. Known v1 limit if not hit/implemented. |
 | `gh pr comment` fails for a pr-level batch | Non-zero exit | Log and continue — inline findings from the same run must still post/submit; do not abort the whole flow over the pr-level fallback. |
 
 ## Common mistakes
@@ -287,14 +293,8 @@ This skill never touches the caller's own worktree or preflight state files (e.g
 | Mistake | Fix |
 |---|---|
 | Dedup pr-level findings against `reviewThreads` | `reviewThreads` only covers inline comment threads; a pr-level finding has no `path`/`line` to match against. Batch and post once; re-running the same specialist mode on an unchanged PR will re-post the batch (known v1 limitation — no pr-level dedup yet). |
-| Assemble `comments[]` via `gh api` bracket-indexed field flags, or string-concatenate `$BODY` into a JSON literal | Bracket indices (`comments[0][path]=...`) build a stringified-key *object*, not an array — GitHub's Reviews API rejects it. String concatenation breaks on `"`/`\`. Build `comments[]` as real JSON via `jq --arg`/`--argjson` and post with `gh api --input -`. |
-| `-F body=` on the fallback POST for a finding that starts with `@` → silent `@`-file-expansion | Use `-f body="$BODY"` (raw). See [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). |
-| Concatenate `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body | Inline comment bodies are `finding.body` verbatim — the byline/remark is a Step 4, review-level concern only (issue #531). |
-| Post inline comments individually while assembling `comments[]` | Assemble the whole batch and submit it atomically via `POST .../pulls/{n}/reviews`; per-comment posting is the model-A fallback, reachable only after a confirmed double-422 (or when `N=0`). |
-| Apply the diff-scoping flip on self-review or unknown identity | Gated on `IS_SELF_REVIEW=false` AND `IDENTITY_KNOWN=true`. Either false → no flip. |
-| Reuse the caller's own state-file names for the threads cache | This skill owns `${PR}-post-threads-${CALLER_TAG}.json` specifically so it never collides with a caller's `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json`, nor with another caller's own tagged threads cache for the same PR. |
-| Set `posted_pr_level` before checking whether `gh pr comment` succeeded | Gate the assignment on the call's exit status — a failed batch must leave `posted_pr_level=0`, not the finding count, or the byline/CTA misreport what was actually posted. |
-| Restate posted findings in the review `$SUMMARY` body | Findings live in inline comments / the pr-level batch comment; the summary is decision + byline (+ informational) only. |
-| Block on this skill's own cleanup before returning control | Step 6 reap is foreground (fast, single small file) — unlike worktree teardown, which the caller backgrounds separately. |
-| Report a dependency-mode (pr-level-only) run as "posted N inline comments" | The byline reports `posted_inline` and `posted_pr_level` separately — a run with zero inline posts must not claim it posted inline comments just because `posted` (the combined total) is non-zero. |
+| Assemble `comments[]` via `gh api` bracket-indexed field flags, string-concatenate `$BODY` into a JSON literal, or post inline comments individually | Bracket indices (`comments[0][path]=...`) build a stringified-key *object*, not an array — GitHub's Reviews API rejects it. String concatenation breaks on `"`/`\`. Build `comments[]` as real JSON via `jq --arg`/`--argjson` and submit the whole batch atomically via `gh api --input -`; per-comment posting is the model-A fallback only, reachable after a confirmed double-422 (or `N=0`). |
+| `-F body=` on the fallback POST, or concatenating `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body | Use `-f body="$BODY"` (raw) for the fallback POST — see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). Inline comment bodies are `finding.body` verbatim; the byline/remark is a Step 4, review-level concern only (issue #531). |
+| Set `posted_pr_level` before checking whether `gh pr comment` succeeded, or report a dependency-mode (pr-level-only) run as "posted N inline comments" | Gate the assignment on exit status — a failed batch must leave `posted_pr_level=0`. The byline reports `posted_inline`/`posted_pr_level` separately so a zero-inline run doesn't misreport itself. |
+| Restate posted findings in the review `$SUMMARY` body, or block on this skill's own cleanup before returning control | Findings live in inline/pr-level comments; the summary is decision + byline only. Step 6 reap is foreground (fast) — unlike worktree teardown, which the caller backgrounds separately. |
 | Assume `$_RT` is inherited from the caller's Step 1 | This skill is its own skill boundary, not a `source`d shell fragment — re-derive `_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"` at the top of Step 6. |
