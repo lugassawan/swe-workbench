@@ -1,11 +1,16 @@
 ---
-description: Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of findings.
+description: Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) plus gh auth status. Prints a green/red table; never modifies state. Exit 0 regardless of dependency findings; exits 1 only if CLAUDE_PLUGIN_ROOT cannot be resolved.
 ---
 
 Run the preflight diagnostic and print the results verbatim:
 
 ```
-bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"
+_RT="${CLAUDE_PLUGIN_ROOT:-}"
+[ -n "$_RT" ] || {
+  echo "CLAUDE_PLUGIN_ROOT not set; cannot locate runtime scripts (see swe-workbench runtime/README.md)" >&2
+  exit 1
+}
+bash "$_RT/runtime/doctor.sh"
 ```
 
 Print the full stdout output exactly as produced — do not summarise, truncate, or reformat it.

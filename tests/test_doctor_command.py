@@ -73,10 +73,16 @@ def test_doctor_in_readme():
 
 
 def test_doctor_invokes_script_portably():
-    """doctor.md must invoke the script via $CLAUDE_PLUGIN_ROOT (portable for plugin installs, #328)."""
+    """doctor.md must invoke the script via a CLAUDE_PLUGIN_ROOT-derived path
+    (portable for plugin installs, #328), guarded so an empty
+    CLAUDE_PLUGIN_ROOT fails loudly instead of silently resolving to a bare
+    relative path (#530)."""
     text = DOCTOR_CMD.read_text()
-    assert "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh" in text, (
-        "doctor.md must invoke the script via $CLAUDE_PLUGIN_ROOT for plugin-install portability"
+    assert "CLAUDE_PLUGIN_ROOT" in text, (
+        "doctor.md must reference CLAUDE_PLUGIN_ROOT for plugin-install portability"
+    )
+    assert "$_RT/runtime/doctor.sh" in text, (
+        "doctor.md must invoke the script via $_RT (bound from CLAUDE_PLUGIN_ROOT) after the guard"
     )
     assert "bash scripts/doctor.sh" not in text, (
         "doctor.md must not invoke the script via a non-portable bare relative path"
