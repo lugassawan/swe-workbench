@@ -225,6 +225,48 @@ class TestAddressFeedbackWorktreePreservesBranch:
             _run("git", "branch", "-D", pr_head_branch, cwd=repo)
 
 
+# ── dirty worktree: skipped, never force-removed ─────────────────────────
+
+
+class TestDirtyWorktreeSkipped:
+    """A worktree with uncommitted changes must be skipped, not force-removed.
+
+    Interrupted flows are exactly when uncommitted, local-only work is most
+    likely to exist (e.g. a killed session mid-edit, before its own commit
+    step) — silently discarding it would be an unrecoverable data-loss bug.
+    """
+
+    def test_dirty_pr_review_worktree_skipped_not_removed(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        branch = f"pr-review-{n}"
+        wt_path = PR_REVIEW_DIR / n
+
+        _run("git", "branch", branch, cwd=repo)
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(wt_path), branch, cwd=repo)
+        (wt_path / "uncommitted.txt").write_text("local-only work\n")
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "1")
+            assert wt_path.exists(), "dirty worktree must NOT be force-removed"
+            assert (wt_path / "uncommitted.txt").exists(), (
+                "uncommitted file must survive — this is the data-loss guard"
+            )
+            assert _branch_exists(repo, branch), (
+                "branch must survive when its worktree is skipped as dirty"
+            )
+            assert "uncommitted" in result.stderr.lower() or "dirty" in result.stderr.lower(), (
+                f"a dirty-skip warning must be printed to stderr, got: {result.stderr!r}"
+            )
+        finally:
+            _cleanup_worktree(repo, wt_path, branch)
+
+
 # ── no residual found ─────────────────────────────────────────────────────
 
 

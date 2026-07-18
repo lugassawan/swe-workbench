@@ -126,6 +126,18 @@ if [ -n "${MAIN_REPO:-}" ]; then
     local label="$1" path="$2" delete_branch="$3"
     [ -n "$path" ] || return 0
 
+    # Interrupted flows are exactly when a worktree is most likely to hold
+    # uncommitted, local-only work (e.g. a killed session mid-edit, before its
+    # own commit step) — skip it rather than silently discarding it.
+    if [ -d "$path" ]; then
+      local dirty_lines
+      dirty_lines=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      if [ "${dirty_lines:-0}" -gt 0 ]; then
+        echo "sweep-residuals: skipping $label — $dirty_lines uncommitted change(s) in $path; not force-removing." >&2
+        return 0
+      fi
+    fi
+
     if [ -n "$RIMBA" ] && "$RIMBA" remove "$label" --force >/dev/null 2>&1; then
       :
     else
