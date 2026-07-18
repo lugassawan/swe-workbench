@@ -185,6 +185,53 @@ class TestWordBoundaryGate:
 
 
 # ──────────────────────────────────────────────
+# Assignment-position anchoring (regression: a bare word-boundary check
+# still mis-fired on CLAUDE_PLUGIN_ROOT= appearing inside a URL query
+# string or --data payload, not a real shell assignment — reviewer finding)
+# ──────────────────────────────────────────────
+
+
+class TestAssignmentPositionAnchoring:
+    def test_url_query_string_does_not_suppress_injection(self, hook_script):
+        """CLAUDE_PLUGIN_ROOT= inside a URL query string is not a real
+        assignment — the real $CLAUDE_PLUGIN_ROOT reference elsewhere in
+        the same command must still get injected."""
+        cmd = 'curl "https://example.com/?CLAUDE_PLUGIN_ROOT=x"; bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"'
+        result = run_hook(hook_script, cmd, plugin_root="/fake/root")
+        assert result.returncode == 0, result.stderr
+        out = json.loads(result.stdout)
+        updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+        assert updated.startswith("export CLAUDE_PLUGIN_ROOT=")
+        assert "/fake/root" in updated
+
+    def test_data_payload_does_not_suppress_injection(self, hook_script):
+        cmd = 'curl --data "CLAUDE_PLUGIN_ROOT=x" example.com && bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"'
+        result = run_hook(hook_script, cmd, plugin_root="/fake/root")
+        assert result.returncode == 0, result.stderr
+        out = json.loads(result.stdout)
+        updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+        assert updated.startswith("export CLAUDE_PLUGIN_ROOT=")
+
+    def test_assignment_after_semicolon_still_suppresses(self, hook_script):
+        cmd = 'echo hi; CLAUDE_PLUGIN_ROOT=/already/set; bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"'
+        result = run_hook(hook_script, cmd, plugin_root="/fake/root")
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_assignment_after_and_operator_still_suppresses(self, hook_script):
+        cmd = 'echo hi && CLAUDE_PLUGIN_ROOT=/already/set; bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"'
+        result = run_hook(hook_script, cmd, plugin_root="/fake/root")
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_export_assignment_after_semicolon_still_suppresses(self, hook_script):
+        cmd = 'echo hi; export CLAUDE_PLUGIN_ROOT=/already/set; bash "$CLAUDE_PLUGIN_ROOT/runtime/doctor.sh"'
+        result = run_hook(hook_script, cmd, plugin_root="/fake/root")
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+
+# ──────────────────────────────────────────────
 # Fail-open on malformed input
 # ──────────────────────────────────────────────
 

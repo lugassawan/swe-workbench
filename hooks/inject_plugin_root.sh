@@ -30,19 +30,28 @@ esac
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$cmd" ] || exit 0
 
-# Word-boundary aware so an unrelated identifier that merely contains
-# CLAUDE_PLUGIN_ROOT as a substring (e.g. MY_CLAUDE_PLUGIN_ROOT=, or the
-# distinct var CLAUDE_PLUGIN_ROOTS) is never mistaken for a real reference
-# or assignment of the actual variable.
-# Out of scope: execution order — a reference BEFORE a later assignment in
-# the same command (e.g. `echo "$CLAUDE_PLUGIN_ROOT"; CLAUDE_PLUGIN_ROOT=x`)
-# is still treated as "already assigned" and skipped, since this hook does
-# not parse shell execution order (same class of scope gap bash_guard.sh
-# documents in its own header comment).
-if printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_])CLAUDE_PLUGIN_ROOT='; then
+# Assignment check is anchored to an actual command-start position (start
+# of a line — grep is line-oriented, so this also covers "after a newline"
+# for free — or after a ; & | separator, optionally with leading
+# whitespace) — NOT a bare word-boundary substring match. A word-boundary
+# check alone still mis-fires on CLAUDE_PLUGIN_ROOT= appearing inside a URL
+# query string or --data payload (e.g. `curl ".../?CLAUDE_PLUGIN_ROOT=x"`),
+# which would wrongly read as "already assigned" and skip injection of a
+# genuine $CLAUDE_PLUGIN_ROOT reference elsewhere in the same command —
+# reproducing the exact #530 failure mode in that case. [;&|] alone covers
+# && and || too, since each is still built from ; & | characters.
+# Reference check requires an actual sigil ($ or ${) so a bare mention of
+# the literal text (e.g. in an echo or comment, with no $) doesn't trigger
+# an unnecessary rewrite.
+# Out of scope: execution order — a reference BEFORE a later real
+# assignment in the same command (e.g. `echo "$CLAUDE_PLUGIN_ROOT";
+# CLAUDE_PLUGIN_ROOT=x`) is still treated as "already assigned" and
+# skipped, since this hook does not parse shell execution order (same
+# class of scope gap bash_guard.sh documents in its own header comment).
+if printf '%s' "$cmd" | grep -Eq '(^|[;&|])[[:space:]]*(export[[:space:]]+)?CLAUDE_PLUGIN_ROOT='; then
   exit 0  # already assigns it — idempotent no-op
 fi
-if ! printf '%s' "$cmd" | grep -Eq '(^|[^A-Za-z0-9_])CLAUDE_PLUGIN_ROOT([^A-Za-z0-9_]|$)'; then
+if ! printf '%s' "$cmd" | grep -Eq '\$\{?CLAUDE_PLUGIN_ROOT([^A-Za-z0-9_]|$)'; then
   exit 0  # doesn't reference it — nothing to do
 fi
 
