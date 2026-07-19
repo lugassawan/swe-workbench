@@ -26,7 +26,7 @@ Single source of truth for how development work flows. Three modes:
 ```
 Mode B — Single Implementation:
 
-  Phase 1 (Branch)    → rimba add <task> (if rimba on PATH) OR superpowers:using-git-worktrees (fallback)
+  Phase 1 (Branch)    → enter existing worktree if one matches, else rimba add <task> (rimba) OR superpowers:using-git-worktrees (fallback)
   Phase 2 (Implement) → superpowers:executing-plans OR superpowers:subagent-driven-development
                           └─ swe-workbench:principle-tdd (per unit)
                           └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
@@ -113,10 +113,11 @@ RIMBA=$(command -v rimba 2>/dev/null \
 [ -n "$RIMBA" ] && "$RIMBA" version 2>/dev/null || true   # confirm binary; never `--version`
 ```
 
+- **Detect an existing worktree first (idempotent resume):** rimba MCP active → call `list`; rimba CLI → run `$RIMBA list --json` (entries carry `task`, `type`, `branch`, `path`, `is_current`, `status.dirty`). Match an entry whose `task` equals the target task (PR invocations: target key is `pr:<num>`) **or** whose `branch` equals the derived `<prefix>/<task>`. **On a match:** resolve the absolute path via `git worktree list --porcelain`, keyed on the matched entry's own `branch` value — not a re-derived `<prefix>/<task>` guess, which can miss after a `rimba rename` or a task-only match. Print exactly one notice line: `Resuming existing worktree: <branch> at <abs-path>` (append ` (uncommitted changes present)` if the entry's `status.dirty` is true — already fetched above, no extra call needed). If deps/install status is unknown, treat it like an in-flight `rimba add` (see "Post-create timing" below) — don't run tests until confirmed. Follow "Enter the worktree" below, then **skip the create call entirely** — this pre-check runs *before* any `add` is launched, so a match is always a *prior* worktree. **No match → create**, using the bullets below.
 - **rimba MCP server active:** invoke the `add` tool on it (`rimba mcp`) — no shell process needed. Use `add pr:<num>` when implementing from a PR number.
-- **`$RIMBA` non-empty (binary found):** run `$RIMBA add [<service>/]<task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing.
-- **Promote work already started** — if you began editing on the current branch in the main checkout (not the default branch), `$RIMBA add branch:<current-branch>` moves that work into its own worktree, transferring dirty changes via `git stash`. `--source` is not valid in this mode.
-- **rimba absent:** invoke `superpowers:using-git-worktrees` exactly as today.
+- **`$RIMBA` non-empty (binary found):** run `$RIMBA add [<service>/]<task> [--flag]` (or `$RIMBA add pr:<num> --task "<label>"` for a PR). Rimba handles branch-prefix conventions (`feature/`, `bugfix/`, `hotfix/`, `docs/`, `test/`, `chore/`), `.env`/`.tool-versions`/`.vscode` copying, `post_create` hooks, and lockfile sharing. **In-flight ≠ duplicate:** `Path: <abs-path>` prints *before* `post_create` hooks/deps finish (see "Post-create timing" and "Reclaim install time" below) — a path appearing while *this* `rimba add` is still running is the normal early print, **never** a duplicate; never kill or interrupt it. Only a genuine **non-zero exit** reporting the worktree/branch already exists — a real duplicate from another session — routes to enter: resolve the path via `git worktree list --porcelain`, print the same notice as above, and `EnterWorktree` it instead of surfacing a failure.
+- **Promote work already started** — if you began editing on the current branch in the main checkout (not the default branch), `$RIMBA add branch:<current-branch>` moves that work into its own worktree, transferring dirty changes via `git stash`. `--source` is not valid in this mode. Distinct from the resume case above: that re-enters a worktree left over from a *prior* run; this promotes uncommitted work on the *current* branch in the main checkout into a new worktree.
+- **rimba absent:** before invoking `superpowers:using-git-worktrees`, run `git worktree list --porcelain` and match the target branch the same way as the pre-check above; if a match exists, `EnterWorktree` it (same one-line notice + dirty flag via `git -C <path> status --porcelain`) instead of creating. Otherwise invoke `superpowers:using-git-worktrees` exactly as today.
 
 **Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
 
@@ -138,12 +139,12 @@ Examples: `$RIMBA add auth-redirect --bugfix` → `bugfix/auth-redirect`; `$RIMB
 
 Use the service scope whenever the work is clearly contained within one module — it groups branches and makes worktree paths self-descriptive. For cross-cutting changes, inspect the planned file edits and pick the service where the majority of changes land. If two services tie, prefer the service that owns the primary interface changed (e.g. the API layer for a contract change, the UI layer for a rendering change); only omit the scope entirely if no service file is touched at all (e.g. a root-only CI config change).
 
-**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree. `Path: <abs-path>` is printed **before deps** install begins (after the create + copy steps). Coding may start as soon as `Path:` appears; running the test suite requires installed packages, so wait for `rimba add` to fully complete before running tests.
+**Post-create timing** — `rimba add` runs dependency install and `post_create` hooks *after* creating the worktree. `Path: <abs-path>` is printed **before deps** install begins (after the create + copy steps). Coding may start as soon as `Path:` appears; running the test suite requires installed packages, so wait for `rimba add` to fully complete before running tests. This is the same early print the "In-flight ≠ duplicate" rule above guards against misreading as a duplicate worktree.
 
 - **Deps required (most stacks):** omit `--skip-deps`/`--skip-hooks` and wait for `rimba add` to complete before running the test suite. This applies regardless of whether the plan is TDD-first — if tests need installed packages, rimba must finish first.
 - **No deps needed:** pass `--skip-deps` and `--skip-hooks` only when the test suite requires no installation step (e.g. pure shell scripts, documentation assertion tests). Never skip deps and then reinstall them manually — rimba's pipeline already handles it correctly.
 
-**Reclaim install time (large/monorepo deps)** — `Path:` is available before deps finish, so on a long install you can implement during the wait:
+**Reclaim install time (large/monorepo deps)** — `Path:` is available before deps finish, so on a long install you can implement during the wait. A path becoming visible mid-run is never grounds to kill the in-flight `rimba add` (see "In-flight ≠ duplicate" above):
 1. Run `rimba add`; if install will take a while, let it continue in the **background** (the Bash tool backgrounds long-running commands) so the session is free to code.
 2. As soon as `Path: <abs-path>` appears, enter the worktree and implement the planned changes.
 3. **Do not run the test suite until `rimba add` has fully completed** — RED/GREEN need installed deps.
