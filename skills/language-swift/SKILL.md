@@ -88,6 +88,14 @@ button.onTap = { [weak self] in
 }
 ```
 
+## Doc comments
+- `///` doc comment: a single-sentence summary; add `- Parameters:`/`- Returns:` only for a non-obvious contract (units, side effects, thrown-error meaning).
+
+```swift
+/// Returns the cached price, refreshing it if older than `maxAge`.
+func price(for symbol: String, maxAge: TimeInterval) async throws -> Decimal
+```
+
 ## Packaging — Swift Package Manager
 - `Package.swift` is the modern standard. Avoid CocoaPods / Carthage in new projects.
 - One target per logical module. Keep `Sources/` layout mirroring the module name.

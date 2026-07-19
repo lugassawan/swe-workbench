@@ -61,6 +61,15 @@ func InitApp(ctx context.Context) (*App, error) {
 }
 ```
 
+## Doc comments
+- godoc: the comment starts with the symbol name and reads as one full sentence — `go doc` renders it verbatim.
+- One sentence covers most exported symbols; expand only for a non-obvious contract (surprising panics, blocking behavior, ownership transfer).
+
+```go
+// Fetch returns the user with the given id, or ErrNotFound if none exists.
+func Fetch(ctx context.Context, id string) (*User, error) { ... }
+```
+
 ## Tooling
 - **Imports:** `goimports -w .`
 - **Format:** `gofmt -w .` (redundant if running goimports; keep for explicit CI parity)

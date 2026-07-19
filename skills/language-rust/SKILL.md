@@ -63,6 +63,15 @@ let total: u32 = orders.iter()
 - `ok_or_else`, `map_err`, `and_then`, `unwrap_or_else` — chain, don't match.
 - Reserve `unwrap`/`expect` for truly unreachable cases; always prefer `expect("why")` over `unwrap` in production.
 
+## Doc comments
+- `///` doc comment: one summary line first — `cargo doc` renders it as the item's headline.
+- Add `# Examples`, `# Panics`, or `# Safety` sections only when they apply, not as boilerplate.
+
+```rust
+/// Returns the order total, excluding cancelled line items.
+pub fn total(&self) -> Decimal { ... }
+```
+
 ## Tooling
 - **Imports/Auto-fix:** `cargo fix --allow-dirty` (applies all auto-fixable rustc/Clippy lints — review the full diff before staging; not suitable as an unattended CI step)
 - **Format:** `cargo fmt` (set `imports_granularity` in `rustfmt.toml` for import grouping; `cargo fmt --check` in CI)

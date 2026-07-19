@@ -63,6 +63,14 @@ class Counter extends Notifier<int> {
 - `integration_test` runs the same API on a real device/emulator for end-to-end flows.
 - Unit-test `Notifier`/`Cubit`/`Bloc` logic directly — no widget tree needed.
 
+## Doc comments
+- `///` doc comment: dartdoc treats the first sentence as a standalone summary — keep it one sentence, expand only for a non-obvious contract.
+
+```dart
+/// Returns the cached price, refreshing it if older than [maxAge].
+Future<Decimal> priceFor(String symbol, Duration maxAge) async { ... }
+```
+
 ## Tooling
 - **Format:** `dart format .`
 - **Lint/analyze:** `dart analyze` (package) or `flutter analyze` (app) — configured via `analysis_options.yaml`.

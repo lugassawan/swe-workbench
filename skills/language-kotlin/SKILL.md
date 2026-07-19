@@ -89,6 +89,14 @@ val prices: Flow<BigDecimal> = priceRepo.watch(symbol)
     .distinctUntilChanged()
 ```
 
+## Doc comments
+- KDoc: lead with a single-sentence summary fragment; add `@param`/`@return` only when they carry information beyond the type.
+
+```kotlin
+/** Returns the cached price, refreshing it if older than [maxAge]. */
+fun priceFor(symbol: String, maxAge: Duration): BigDecimal
+```
+
 ## Tooling
 - **Imports/Format:** `./gradlew ktlintFormat` / `ktlint -F` (standalone binary)
 - **Lint:** `detekt` / `./gradlew detekt`
