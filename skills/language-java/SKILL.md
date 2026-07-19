@@ -79,6 +79,15 @@ List<String> emails = users.stream()
     .toList();
 ```
 
+## Doc comments
+- **javadoc** — the first sentence is the summary shown in generated indexes; keep it a single fragment, not a paragraph.
+- Add `@param`/`@return` only when they convey something the signature doesn't (units, ownership, valid ranges).
+
+```java
+/** Returns the user's active orders, most recent first. */
+List<Order> activeOrders(String userId) { ... }
+```
+
 ## Build and packaging
 - Maven: `pom.xml` with `<dependencyManagement>` for BOM imports; prefer the wrapper (`./mvnw`).
 - Gradle: `build.gradle` (Groovy) or `build.gradle.kts` (Kotlin DSL — preferred for IDE support).

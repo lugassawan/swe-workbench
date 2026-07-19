@@ -26,16 +26,25 @@ Doc-comment styles, named so authoring and review flows share one term set:
 |-------|----------|----------|
 | Inline (`//`, `#`) | any | ≤2 lines |
 | godoc | Go | ~4 lines |
-| javadoc | Java, Kotlin | ~10 lines |
+| javadoc | Java | ~10 lines |
+| KDoc | Kotlin | ~10 lines |
 | docstring | Python | ~8 lines |
 | rustdoc | Rust | ~8 lines |
+| TSDoc/JSDoc | TypeScript, JavaScript | ~8 lines |
+| Swift markup | Swift | ~8 lines |
+| XML doc | C# | ~8 lines |
+| YARD/RDoc | Ruby | ~6 lines |
+| dartdoc | Dart | ~6 lines |
 
-Caps are soft — a well-justified doc comment can exceed them, but a comment that runs long without adding information past the cap is a signal to trim.
+Caps are soft — a well-justified doc comment can exceed them, but a comment that runs long without adding information past the cap is a signal to trim. Default to the shortest comment that conveys the WHY; a longer form is earned only by genuinely non-obvious rationale — a workaround, a gotcha, an invariant.
 
 An **unnecessary comment** is any of:
 - **WHAT-not-WHY** — describes what the code does instead of why it does it; well-named code already says WHAT.
 - **Restates-the-code** — the comment is a paraphrase of the line(s) below it, adding no information a reader couldn't get from the code itself.
 - **Commented-out code** — dead code kept "just in case"; version control already keeps it.
+- **Over-explained / decision-essay** — a comment that documents a decision, its alternatives, or trade-off rationale at a length better suited to an ADR or commit message. Inline, state the WHY in one line; if the rationale needs a paragraph, it belongs in an ADR (`swe-workbench:architect`) or the commit body, not the source. A doc comment under its cap can still be over-explained — brevity is qualitative, not just line-count.
+
+**Stale comments.** When an edit changes the code a comment describes, reassess the comment — don't leave it untouched by default. Drop it if it no longer adds WHY (or now falls into one of the categories above); rephrase it if the rationale still applies but no longer matches the new code. A comment that was accurate when written and is wrong or misleading after a later edit is a correctness bug wearing a style nit's clothing.
 
 ## Naming reveals intent
 *Names are documentation that can't go stale.*

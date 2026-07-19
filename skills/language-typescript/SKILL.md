@@ -96,6 +96,14 @@ TypeScript types are shapes, not identities. Two unrelated types with the same f
 - Avoid `FC<Props>` — it adds implicit `children` and breaks generic components. Prefer `function Thing(props: Props) { ... }`.
 - `useEffect` only for synchronizing with external systems. Derived state belongs in render.
 
+## Doc comments
+- **TSDoc/JSDoc** — `/** ... */`: one-line summary. The type signature already documents shape, so skip `@param` that just restates a typed parameter name.
+
+```ts
+/** Returns the user's active orders, most recent first. */
+function activeOrders(userId: string): Order[] { ... }
+```
+
 ## Tooling
 - **Imports:** `npx organize-imports-cli` (reliable regardless of ESLint config); or `eslint --fix` if `eslint-plugin-import` / `@typescript-eslint/consistent-type-imports` is configured
 - **Format:** `prettier --write .`

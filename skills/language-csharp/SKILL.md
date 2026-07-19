@@ -104,6 +104,14 @@ var activeEmails = users
     .ToArray();
 ```
 
+## Doc comments
+- **XML doc** — `/// <summary>` one concise sentence; add `<param>`/`<returns>` only when they carry information the signature doesn't (units, valid ranges, ownership).
+
+```csharp
+/// <summary>Returns the user's active orders, most recent first.</summary>
+public IReadOnlyList<Order> ActiveOrders(string userId) { ... }
+```
+
 ## Tooling
 - **Imports/Format:** `dotnet format`
 - **Lint:** Roslyn analyzers (`<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>` in csproj); `dotnet format --verify-no-changes` as formatting gate in CI

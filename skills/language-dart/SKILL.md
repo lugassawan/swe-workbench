@@ -56,6 +56,14 @@ class Counter extends Notifier<int> {
 }
 ```
 
+## Doc comments
+- **dartdoc** — `///` doc comment: the first sentence is treated as a standalone summary — keep it one sentence, expand only for a non-obvious contract.
+
+```dart
+/// Returns the cached price, refreshing it if older than [maxAge].
+Future<Decimal> priceFor(String symbol, Duration maxAge) async { ... }
+```
+
 ## Testing
 - `flutter_test`: `testWidgets('description', (tester) async { ... })` drives a widget in an isolated binding.
 - `tester.pumpWidget(...)` mounts; `tester.pump()` advances one frame, `tester.pumpAndSettle()` drains animations/microtasks.

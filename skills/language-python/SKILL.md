@@ -93,6 +93,16 @@ match command:
 - Pin transitive deps via lockfile (`uv.lock`, `poetry.lock`) in applications; use version ranges in libraries.
 - Always isolate with a virtualenv — never install into the system Python.
 
+## Doc comments
+- **docstring** (PEP 257) — a one-line summary in imperative mood — `"""Return the parsed config."""`, not a description of what the function is.
+- Expand to `Args:`/`Returns:`/`Raises:` sections only when the contract isn't obvious from the signature and type hints.
+
+```python
+def load_config(path: Path) -> Config:
+    """Load and validate the config at `path`."""
+    ...
+```
+
 ## Tooling
 - **Imports:** `ruff check --select I --fix`
 - **Format:** `ruff format` / `black .`

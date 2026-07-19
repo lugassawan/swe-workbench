@@ -80,6 +80,16 @@ end
 - Use Bundler for dependency boundaries, Rake for project tasks, and gemspecs only when shipping a library.
 - Rails-adjacent names like service objects, jobs, serializers, and presenters should describe ordinary Ruby objects first.
 
+## Doc comments
+- **YARD/RDoc** — `#` comment above the method: one summary line; add `@param`/`@return` tags only when the type or meaning isn't obvious from the name.
+
+```ruby
+# Returns the user's active orders, most recent first.
+def active_orders(user_id)
+  ...
+end
+```
+
 ## Tooling
 - **Format:** `rubocop -a` (safe autocorrect; no dedicated import tool in Ruby)
 - **Lint:** `rubocop`
