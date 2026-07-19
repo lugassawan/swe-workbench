@@ -89,7 +89,7 @@ button.onTap = { [weak self] in
 ```
 
 ## Doc comments
-- `///` doc comment: a single-sentence summary; add `- Parameters:`/`- Returns:` only for a non-obvious contract (units, side effects, thrown-error meaning).
+- **Swift markup** — `///` doc comment: a single-sentence summary; add `- Parameters:`/`- Returns:` only for a non-obvious contract (units, side effects, thrown-error meaning).
 
 ```swift
 /// Returns the cached price, refreshing it if older than `maxAge`.

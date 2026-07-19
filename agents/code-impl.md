@@ -57,7 +57,7 @@ placement: <required when placement deviates from sibling convention or sibling 
 - **Return a summary, not diffs.** Do not include raw diff output or full file contents in your response.
 - **If verify fails, status is BLOCKED.** Do not return `DONE` unless the verify command passes.
 - **One group per invocation.** Do not merge work from multiple groups into a single run.
-- **New comments stay within `principle-clean-code`'s per-language comment caps** (Comment discipline) and avoid unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay). When a doc comment is warranted, follow the language's idiomatic form — one summary sentence first; see the relevant `language-*` skill's Doc comments section.
+- **New comments stay within `principle-clean-code`'s per-language comment caps** (Comment discipline) and avoid unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay). When a doc comment is warranted, follow the language's idiomatic form — one summary sentence first; see the relevant `language-*` skill's Doc comments section (only guaranteed for languages with a doc-comment idiom — `language-bash` and `language-sql` have none).
 
 ## Principle consultation
 

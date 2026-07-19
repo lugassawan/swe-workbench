@@ -64,7 +64,7 @@ let total: u32 = orders.iter()
 - Reserve `unwrap`/`expect` for truly unreachable cases; always prefer `expect("why")` over `unwrap` in production.
 
 ## Doc comments
-- `///` doc comment: one summary line first — `cargo doc` renders it as the item's headline.
+- **rustdoc** — `///` doc comment: one summary line first; `cargo doc` renders it as the item's headline.
 - Add `# Examples`, `# Panics`, or `# Safety` sections only when they apply, not as boilerplate.
 
 ```rust

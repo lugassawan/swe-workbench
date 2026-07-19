@@ -105,7 +105,7 @@ var activeEmails = users
 ```
 
 ## Doc comments
-- `/// <summary>` one concise sentence; add `<param>`/`<returns>` only when they carry information the signature doesn't (units, valid ranges, ownership).
+- **XML doc** — `/// <summary>` one concise sentence; add `<param>`/`<returns>` only when they carry information the signature doesn't (units, valid ranges, ownership).
 
 ```csharp
 /// <summary>Returns the user's active orders, most recent first.</summary>
