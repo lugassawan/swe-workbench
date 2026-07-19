@@ -20,7 +20,7 @@ git branch -D <stale-branch-name>                # the local ref that survived t
 
 `git worktree prune` only removes registrations whose directories are gone — it never touches a live worktree, so it is safe to run unconditionally once `HOOK_INTERRUPTED=1` is observed. This does not need `--force`: prune has no dirty/unpushed concept because the directory it would check is already gone. If the missing entry turns out to be an unrelated stray (not `$HEAD_REF`), pruning it clears the signal and Step 4's normal removal strategies proceed for `$HEAD_REF` as usual.
 
-## Recovery Example — Intact Root, Wiped Subtree (#532)
+## Recovery Example — Intact Root, Wiped Subtree
 
 On a large worktree, a kill can land *after* the hook deletes most tracked files but *before* it removes the root directory. The missing-root scan above misses this (the directory is still there); the targeted subtree probe reports `HOOK_INTERRUPTED=1` with a message that deliberately does not suggest `git worktree prune` (a no-op here):
 

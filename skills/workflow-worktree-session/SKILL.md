@@ -48,7 +48,7 @@ Call `ExitWorktree(action: "keep")` by default. If it succeeds, the session was 
 **If it reports a no-op:** a no-op means only *no active `EnterWorktree` session* — it does **not** by itself confirm `cd`-entry. Two causes present identically:
 
 1. **cd-entry** — the session was always anchored via the `cd` fallback and `EnterWorktree` was never called.
-2. **Compaction dropped tracking** — the session *was* `EnterWorktree`-anchored, but auto-compaction silently lost the harness's session-level anchoring while the Bash cwd stayed inside the worktree (issue #497). `EnterWorktree`/`ExitWorktree` are harness-owned tools — the plugin cannot change their output or make the harness persist this across compaction.
+2. **Compaction dropped tracking** — the session *was* `EnterWorktree`-anchored, but auto-compaction silently lost the harness's session-level anchoring while the Bash cwd stayed inside the worktree. `EnterWorktree`/`ExitWorktree` are harness-owned tools — the plugin cannot change their output or make the harness persist this across compaction.
 
 Before assuming cd-entry, actively probe for context:
 
