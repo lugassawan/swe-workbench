@@ -56,13 +56,6 @@ class Counter extends Notifier<int> {
 }
 ```
 
-## Testing
-- `flutter_test`: `testWidgets('description', (tester) async { ... })` drives a widget in an isolated binding.
-- `tester.pumpWidget(...)` mounts; `tester.pump()` advances one frame, `tester.pumpAndSettle()` drains animations/microtasks.
-- `find.text(...)`, `find.byType(...)`, `find.byKey(...)` locate widgets; assert with `expect(find.text('X'), findsOneWidget)`.
-- `integration_test` runs the same API on a real device/emulator for end-to-end flows.
-- Unit-test `Notifier`/`Cubit`/`Bloc` logic directly — no widget tree needed.
-
 ## Doc comments
 - `///` doc comment: dartdoc treats the first sentence as a standalone summary — keep it one sentence, expand only for a non-obvious contract.
 
@@ -70,6 +63,13 @@ class Counter extends Notifier<int> {
 /// Returns the cached price, refreshing it if older than [maxAge].
 Future<Decimal> priceFor(String symbol, Duration maxAge) async { ... }
 ```
+
+## Testing
+- `flutter_test`: `testWidgets('description', (tester) async { ... })` drives a widget in an isolated binding.
+- `tester.pumpWidget(...)` mounts; `tester.pump()` advances one frame, `tester.pumpAndSettle()` drains animations/microtasks.
+- `find.text(...)`, `find.byType(...)`, `find.byKey(...)` locate widgets; assert with `expect(find.text('X'), findsOneWidget)`.
+- `integration_test` runs the same API on a real device/emulator for end-to-end flows.
+- Unit-test `Notifier`/`Cubit`/`Bloc` logic directly — no widget tree needed.
 
 ## Tooling
 - **Format:** `dart format .`

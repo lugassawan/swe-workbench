@@ -26,7 +26,8 @@ Doc-comment styles, named so authoring and review flows share one term set:
 |-------|----------|----------|
 | Inline (`//`, `#`) | any | ≤2 lines |
 | godoc | Go | ~4 lines |
-| javadoc | Java, Kotlin | ~10 lines |
+| javadoc | Java | ~10 lines |
+| KDoc | Kotlin | ~10 lines |
 | docstring | Python | ~8 lines |
 | rustdoc | Rust | ~8 lines |
 | TSDoc/JSDoc | TypeScript, JavaScript | ~8 lines |
