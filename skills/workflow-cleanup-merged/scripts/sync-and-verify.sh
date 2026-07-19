@@ -137,7 +137,7 @@ while IFS= read -r _line; do
   esac
 done < <(git worktree list --porcelain)
 
-# Fix A (#532): targeted subtree-deletion probe. The loop above only catches a
+# Fix A: targeted subtree-deletion probe. The loop above only catches a
 # worktree whose *top-level* directory vanished. When the Block B watchdog
 # kills the post-merge hook mid-rm, the worktree root can survive while a
 # subtree of tracked files underneath it is wiped — the loop above sees
