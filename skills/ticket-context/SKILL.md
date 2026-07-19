@@ -39,7 +39,7 @@ If no reference is present, exit cleanly.
 - **Degrade:** If `gh` CLI is missing, emit `ticket-context: gh CLI unavailable; proceeding without context.` On auth error, surface the raw error; never fabricate. On empty/404, say so; do not guess.
 
 ### Linear
-- **Trigger:** Linear issue URL — `linear.app/<workspace>/issue/<TEAM-N>[/...]` (unambiguous, always routes here). A bare `[A-Z]+-\d+` key routes here ONLY when a Linear MCP tool (`mcp__linear__*`) is reachable in-session AND no Atlassian MCP tool is reachable — otherwise a bare key stays routed to the Jira adapter above (zero regression to existing Jira routing; this is the explicit tiebreak rule for issue #511).
+- **Trigger:** Linear issue URL — `linear.app/<workspace>/issue/<TEAM-N>[/...]` (unambiguous, always routes here). A bare `[A-Z]+-\d+` key routes here ONLY when a Linear MCP tool (`mcp__linear__*`) is reachable in-session AND no Atlassian MCP tool is reachable — otherwise a bare key stays routed to the Jira adapter above (zero regression to existing Jira routing; this is the explicit tiebreak rule).
 - **Fetch:** `mcp__linear__*` tools (aspirational — this plugin does not ship a Linear MCP integration; this recipe activates only if the user has one connected). Fetch the issue by identifier or URL.
 - **Extract → block fields:** title → Title; state, priority → Type/Status; description body → Summary/Acceptance criteria (or "not specified" if absent); labels, linked issues → Linked references; last activity → Recent activity; issue URL → Source.
 - **Degrade:** If no `mcp__linear__*` tool is reachable, emit `ticket-context: Linear MCP unavailable; proceeding without context.` Never fabricate a Linear result, and never silently fall back to treating a `linear.app` URL as a Jira key.
