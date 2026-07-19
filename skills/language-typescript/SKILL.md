@@ -97,7 +97,7 @@ TypeScript types are shapes, not identities. Two unrelated types with the same f
 - `useEffect` only for synchronizing with external systems. Derived state belongs in render.
 
 ## Doc comments
-- TSDoc `/** ... */`: one-line summary. The type signature already documents shape, so skip `@param` that just restates a typed parameter name.
+- **TSDoc/JSDoc** — `/** ... */`: one-line summary. The type signature already documents shape, so skip `@param` that just restates a typed parameter name.
 
 ```ts
 /** Returns the user's active orders, most recent first. */

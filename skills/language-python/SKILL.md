@@ -94,7 +94,7 @@ match command:
 - Always isolate with a virtualenv — never install into the system Python.
 
 ## Doc comments
-- PEP 257: a one-line summary docstring in imperative mood — `"""Return the parsed config."""`, not a description of what the function is.
+- **docstring** (PEP 257) — a one-line summary in imperative mood — `"""Return the parsed config."""`, not a description of what the function is.
 - Expand to `Args:`/`Returns:`/`Raises:` sections only when the contract isn't obvious from the signature and type hints.
 
 ```python

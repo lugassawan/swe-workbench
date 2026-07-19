@@ -90,7 +90,7 @@ val prices: Flow<BigDecimal> = priceRepo.watch(symbol)
 ```
 
 ## Doc comments
-- KDoc: lead with a single-sentence summary fragment; add `@param`/`@return` only when they carry information beyond the type.
+- **KDoc** — lead with a single-sentence summary fragment; add `@param`/`@return` only when they carry information beyond the type.
 
 ```kotlin
 /** Returns the cached price, refreshing it if older than [maxAge]. */

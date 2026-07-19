@@ -57,7 +57,7 @@ class Counter extends Notifier<int> {
 ```
 
 ## Doc comments
-- `///` doc comment: dartdoc treats the first sentence as a standalone summary — keep it one sentence, expand only for a non-obvious contract.
+- **dartdoc** — `///` doc comment: the first sentence is treated as a standalone summary — keep it one sentence, expand only for a non-obvious contract.
 
 ```dart
 /// Returns the cached price, refreshing it if older than [maxAge].

@@ -80,7 +80,7 @@ List<String> emails = users.stream()
 ```
 
 ## Doc comments
-- javadoc: the first sentence is the summary shown in generated indexes — keep it a single fragment, not a paragraph.
+- **javadoc** — the first sentence is the summary shown in generated indexes; keep it a single fragment, not a paragraph.
 - Add `@param`/`@return` only when they convey something the signature doesn't (units, ownership, valid ranges).
 
 ```java

@@ -62,7 +62,7 @@ func InitApp(ctx context.Context) (*App, error) {
 ```
 
 ## Doc comments
-- godoc: the comment starts with the symbol name and reads as one full sentence — `go doc` renders it verbatim.
+- **godoc** — the comment starts with the symbol name and reads as one full sentence; `go doc` renders it verbatim.
 - One sentence covers most exported symbols; expand only for a non-obvious contract (surprising panics, blocking behavior, ownership transfer).
 
 ```go

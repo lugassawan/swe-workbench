@@ -81,7 +81,7 @@ end
 - Rails-adjacent names like service objects, jobs, serializers, and presenters should describe ordinary Ruby objects first.
 
 ## Doc comments
-- YARD/RDoc `#` comment above the method: one summary line; add `@param`/`@return` tags only when the type or meaning isn't obvious from the name.
+- **YARD/RDoc** — `#` comment above the method: one summary line; add `@param`/`@return` tags only when the type or meaning isn't obvious from the name.
 
 ```ruby
 # Returns the user's active orders, most recent first.
