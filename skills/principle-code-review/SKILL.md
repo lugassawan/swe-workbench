@@ -16,7 +16,7 @@ Every review covers five axes:
 - **Design integrity** — SOLID violations, leaky abstractions, tight coupling, circular deps, domain logic bleeding into infrastructure.
   *For complexity / duplication / length, prefer Quality-stage output over subjective comments — see `workflow-development`.*
 - **Tests** — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior.
-- **Comment quality** — unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code) and doc-comments over the per-language cap; hygiene-tier, in-diff `+` lines only, suggested-fix drop-or-simplify, never an auto-rewrite. Caps live in `principle-clean-code`.
+- **Comment quality** — unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay) and doc-comments over the per-language cap; hygiene-tier, in-diff `+` lines only, suggested-fix drop-or-simplify, never an auto-rewrite. Caps live in `principle-clean-code`.
 
 ## What's Not a Finding
 
