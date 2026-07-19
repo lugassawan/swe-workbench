@@ -44,6 +44,8 @@ An **unnecessary comment** is any of:
 - **Commented-out code** — dead code kept "just in case"; version control already keeps it.
 - **Over-explained / decision-essay** — a comment that documents a decision, its alternatives, or trade-off rationale at a length better suited to an ADR or commit message. Inline, state the WHY in one line; if the rationale needs a paragraph, it belongs in an ADR (`swe-workbench:architect`) or the commit body, not the source. A doc comment under its cap can still be over-explained — brevity is qualitative, not just line-count.
 
+**Stale comments.** When an edit changes the code a comment describes, reassess the comment — don't leave it untouched by default. Drop it if it no longer adds WHY (or now falls into one of the categories above); rephrase it if the rationale still applies but no longer matches the new code. A comment that was accurate when written and is wrong or misleading after a later edit is a correctness bug wearing a style nit's clothing.
+
 ## Naming reveals intent
 *Names are documentation that can't go stale.*
 - **Intent over implementation** — `calculateShippingCost` not `processData`; `isEligibleForDiscount` not `check`.
