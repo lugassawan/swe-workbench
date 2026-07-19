@@ -1,0 +1,5 @@
+ship a fast branch-based p0 hotfix with deferred verification
+this is a p0 incident, open the pr now and verify after
+branch-based hotfix, no worktree, ready for review immediately
+open a ready-for-review pr first then run verification and review after
+urgent hotfix — defer the regression test until after merge

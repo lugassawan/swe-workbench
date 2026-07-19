@@ -31,14 +31,14 @@ orchestrator: true
 - If the user passed a PR number → use it directly.
 - Else → derive from current branch:
   ```
-  gh pr view --json number,state,mergedAt,headRefName,headRepository
+  gh pr view --json number,state,mergedAt,headRefName,headRepository,body
   ```
   Extract `headRefName` as the branch name to clean up.
 
 ### Step 2 — Verify Merged via `gh` (Sole Oracle)
 
 ```
-gh pr view <number> --json state,mergedAt,headRefName
+gh pr view <number> --json state,mergedAt,headRefName,body
 ```
 
 Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message if either condition fails.
@@ -129,12 +129,36 @@ The script self-detects `MAIN_REPO` and anchors `cd` internally. It emits exactl
 The script always attempts the remote delete regardless of whether the local branch was present — this covers the `WORKTREE_GONE=1` path where the local branch was already removed by the rimba hook. HTTP 404 / "remote ref does not exist" is treated as success (`REMOTE_DELETED=0`). Any other push error is warned to stderr but the script exits 0 so the caller's `eval` never aborts mid-cleanup. Capital `-D` is used for the local delete: squash-merged branches are not merge ancestors of `main`; lowercase `-d` would refuse.
 
 ### Step 7 — Report
+
+Print this 4-line block immediately — cleanup Steps 3–6 are already done at this point, and this
+confirmation must not wait on Step 8, which runs (and may pause on `AskUserQuestion`) afterward.
+
 ```
 Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
   ✓ Residual sweep: <SWEPT_WORKTREES> worktree(s) + <SWEPT_STATE_FILES> state file(s) removed (or: none)
   ✓ Branches deleted: local <branch> / remote <branch> (or: already gone — LOCAL_DELETED=0 / REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
+```
+
+### Step 8 — Deferred-verification follow-up
+
+Only when the `body` fetched in Step 1/2 contains the exact line
+`<!-- swe-workbench:deferred-verification -->` (written by `/swe-workbench:hotfix` when the fix
+shipped ahead of its regression test). Steps 3–6 always complete unconditionally first — this step
+never gates cleanup, and marker-absent PRs skip it silently with the Step 7 report unchanged.
+
+Offer `AskUserQuestion`: **File a follow-up issue** / **Create a `test/<slug>` branch** (off the
+already-synced default branch from Step 3) / **Skip**. Full filing mechanics (preview + `.cmd`
+sidecar + `confirm` gate, mirroring `workflow-audit-emit-issues`, scoped to "Backfill regression
+test for hotfix PR #<number>", `--label` included when a matching repo label exists) are in
+`reference/deferred-verification-followup.md`.
+
+Once Step 8 resolves (filed, branched, or skipped), append one trailing line to the already-printed
+Step 7 report — do not reprint the 4-line block:
+
+```
+  ✓ Follow-up: <filed as issue #N | test/<slug> branch created | skipped>
 ```
 
 ## Worktree Removal Strategies
@@ -252,38 +276,11 @@ git worktree remove "$WORKTREE"
 | Partial worktree deletion (interrupted hook, root intact / subtree wiped) (#532) | `HOOK_INTERRUPTED=1` — `$HEAD_REF`'s own worktree directory still exists but ≥90% of its tracked files are gone | `git worktree prune` is a no-op (the directory exists). Run `git -C <worktree-path> restore .` to restore the missing files, or re-run `rimba clean --merged --force` to finish the interrupted removal, then proceed with the normal flow from Step 4 onward. |
 | Subtree-wipe probe itself fails (interrupted hook, root intact, state unverifiable) (#532) | `HOOK_INTERRUPTED=1` — stderr shows "could not verify \<worktree\>'s worktree state" | Neither `git worktree prune` nor `restore .` is guaranteed safe. Manually inspect `$HEAD_WT` (e.g. `git -C <worktree-path> status`) before choosing a recovery path. |
 
-### Recovery Example — Interrupted Hook
+### Recovery Examples
 
-A `SYNC_TIMEOUT` firing (or an external tool-call kill) can land mid-`rm` inside the rimba post-merge hook, leaving a worktree registered in `.git` with its directory already gone from disk. `sync-and-verify.sh` reports this as `HOOK_INTERRUPTED=1` and prints a recovery hint to stderr. The probe scans **all** registered worktrees, not just `$HEAD_REF`'s — `HOOK_INTERRUPTED=1` can point at an unrelated stray left over from a different branch's interrupted cleanup, so identify the specific entry before assuming it's the one you're cleaning up:
-
-```bash
-cd "$MAIN_REPO"
-# Identify worktree(s) with no directory on disk (same check Block D performs; line-based, not awk field-splitting, so a path containing a space doesn't vanish):
-git worktree list --porcelain | while IFS= read -r line; do
-  case "$line" in
-    "worktree "*) w=${line#worktree }; [ -d "$w" ] || echo "MISSING: $w" ;;
-  esac
-done
-git worktree prune                              # drops the stale registration(s) for the missing dir(s)
-git branch -D <stale-branch-name>                # the local ref that survived the interrupted rm
-```
-
-`git worktree prune` only removes registrations whose directories are gone — it never touches a live worktree, so it is safe to run unconditionally once `HOOK_INTERRUPTED=1` is observed. This does not need `--force`: prune has no dirty/unpushed concept because the directory it would check is already gone. If the missing entry turns out to be an unrelated stray (not `$HEAD_REF`), pruning it clears the signal and Step 4's normal removal strategies proceed for `$HEAD_REF` as usual.
-
-### Recovery Example — Intact Root, Wiped Subtree (#532)
-
-On a large worktree, a kill can land *after* the hook deletes most tracked files but *before* it removes the root directory. The missing-root scan above misses this (the directory is still there); the targeted subtree probe reports `HOOK_INTERRUPTED=1` with a message that deliberately does not suggest `git worktree prune` (a no-op here):
-
-```bash
-cd "$MAIN_REPO"
-WT_PATH=$(git worktree list --porcelain \
-  | awk -v ref="branch refs/heads/<headRefName>" '/^worktree /{p=$2} $0 == ref {print p; exit}')
-git -C "$WT_PATH" restore .        # restores the missing tracked files from the index
-# — or, to finish the interrupted removal instead —
-rimba clean --merged --force
-```
-
-`restore .` only touches tracked files missing or modified relative to the index; untracked files are unaffected. After recovery, proceed with the normal flow from Step 4 onward for `$HEAD_REF`.
+Worked examples for both `HOOK_INTERRUPTED=1` cases (root-missing, and the root-intact/subtree-wiped
+#532 case) — including the exact `git worktree prune` / `git -C <path> restore .` / `rimba clean
+--merged --force` recovery commands named above — live in `reference/recovery-examples.md`.
 
 ## Common Mistakes
 

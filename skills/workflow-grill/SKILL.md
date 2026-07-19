@@ -1,6 +1,6 @@
 ---
 name: workflow-grill
-description: "Grill-me interrogation mode: relentlessly walk the decision tree one question at a time, interrogate requirements, self-answer from the codebase, exit on shared understanding or proceed — hands a Resolved-decisions block to the command's artifact step. Activated by /swe-workbench:capture /swe-workbench:design /swe-workbench:implement /swe-workbench:architect /swe-workbench:extend /swe-workbench:debug. Not a from-scratch design flow; produces no design doc."
+description: "Grill-me interrogation mode: relentlessly walk the decision tree one question at a time, interrogate requirements, self-answer from the codebase, exit on shared understanding or proceed — hands a Resolved-decisions block to the command's artifact step. Activated by /swe-workbench:capture /swe-workbench:design /swe-workbench:implement /swe-workbench:architect /swe-workbench:extend /swe-workbench:debug /swe-workbench:hotfix. Not a from-scratch design flow; produces no design doc."
 orchestrator: true
 ---
 
@@ -10,7 +10,7 @@ orchestrator: true
 
 `workflow-grill` runs in the **orchestrator** (main conversation thread), inside a command's clarify
 step, **before** any subagent is delegated to. It is not a standalone workflow — it is a mode
-gate activated by the interrogation prelude in the six interactive commands.
+gate activated by the interrogation prelude in the seven interactive commands.
 
 It produces one output: a `## Resolved decisions` block that the command threads into its normal
 artifact/delegation step (the same way a ticket-context summary is prepended).

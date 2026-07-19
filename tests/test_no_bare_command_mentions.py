@@ -26,6 +26,7 @@ COMMANDS = [
     "doctor",
     "document",
     "extend",
+    "hotfix",
     "implement",
     "migrate",
     "refactor",
