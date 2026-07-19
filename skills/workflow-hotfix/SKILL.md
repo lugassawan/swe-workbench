@@ -84,7 +84,12 @@ gh pr edit <N> --body-file /tmp/hotfix-pr-body-<N>.txt
 
 Confirm the marker landed (`gh pr view <N> --json body -q .body` contains the exact line) before
 moving to Phase 4 — this is the single line Phase 5 and `workflow-cleanup-merged` Step 8 both gate
-on, so a silent failure here silently breaks the whole deferred-verification contract.
+on, so a silent failure here silently breaks the whole deferred-verification contract. Then reap
+the temp file (foreground, no suppression — a failed reap must surface):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" /tmp/hotfix-pr-body-<N>.txt
+```
 
 ## Phase 4 — Verify + Review (after the PR is open)
 
@@ -106,8 +111,10 @@ The deferred debt is paid only when **both** hold: a regression test was added c
 Phase 2–4, not from intent.
 
 - **Paid:** `gh pr view <N> --json body -q .body`, remove exactly the
-  `<!-- swe-workbench:deferred-verification -->` line (nothing else), write the result to a temp
-  file, `gh pr edit <N> --body-file <tmp>`.
+  `<!-- swe-workbench:deferred-verification -->` line (nothing else), write the result to
+  `/tmp/hotfix-pr-body-<N>.txt` (same path Phase 3 used and already reaped — safe to reuse),
+  `gh pr edit <N> --body-file /tmp/hotfix-pr-body-<N>.txt`, then reap it the same way:
+  `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" /tmp/hotfix-pr-body-<N>.txt`.
 - **Not paid:** leave the marker untouched — `workflow-cleanup-merged` reads it at merge time and
   offers the backfill follow-up there. Do not strip it preemptively "because verification passed"
   if no regression test was added; a green test suite that never exercises the fix is not paid debt.
