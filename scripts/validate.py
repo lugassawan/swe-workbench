@@ -73,9 +73,9 @@ def parse_frontmatter(path, text=None):
 # ──────────────────────────────────────────────
 
 def _build_cache():
-    """Read every agent .md, every skills/*/SKILL.md, and every rules/*.md exactly once.
+    """Read every agent .md and every skills/*/SKILL.md exactly once.
 
-    Returns (agents, skills, rules) where each is a dict[Path, str | None].
+    Returns (agents, skills) where each is a dict[Path, str | None].
     rglob("*.md") is intentional: it covers check_unwired_principle_rules
     (which uses rglob) in addition to the flat-glob consumers.
     Unreadable files are stored as None so consumers that track failures
@@ -84,15 +84,16 @@ def _build_cache():
 
     Note: skills/*/templates/*.md files are NOT cached here; check_template_placeholders
     reads each template file directly (one read_text() call per template).
-    rules/*/examples/**/*.md are NOT cached here either; check_examples reads
-    each example file directly, same rationale.
+    rules/*.md files are NOT cached here either — every rules/-touching check
+    (check_catalog_completeness, check_unwired_principle_rules) only needs
+    filenames (via glob().stem), never file content, so there's nothing to cache.
+    rules/*/examples/**/*.md are NOT cached either; check_examples reads each
+    example file directly, same rationale.
     """
     agents_dir = ROOT / "agents"
     skills_dir = ROOT / "skills"
-    rules_dir = ROOT / "rules"
     agents: dict = {}
     skills: dict = {}
-    rules: dict = {}
     for p in agents_dir.rglob("*.md"):
         try:
             agents[p] = p.read_text(encoding="utf-8")
@@ -103,13 +104,7 @@ def _build_cache():
             skills[p] = p.read_text(encoding="utf-8")
         except OSError:
             skills[p] = None  # sentinel: present but unreadable
-    if rules_dir.is_dir():
-        for p in rules_dir.glob("*.md"):
-            try:
-                rules[p] = p.read_text(encoding="utf-8")
-            except OSError:
-                rules[p] = None  # sentinel: present but unreadable
-    return agents, skills, rules
+    return agents, skills
 
 
 # ──────────────────────────────────────────────

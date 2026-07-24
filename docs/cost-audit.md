@@ -37,7 +37,7 @@ At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was ad
 
 Skills have no `model:` field — they are prose instructions injected into the invoking session's context. Tier here reflects the cognitive load the skill places on the host model, which informs future decisions (e.g., whether to downgrade the invoking session or guard the skill behind a model check).
 
-`principle-*`/`language-*` rows below were skills at snapshot time; they were later converted to plain `rules/*.md` files (no `SKILL.md`, no `Skill`-tool invocation — see `docs/superpowers/specs/2026-07-24-principles-languages-as-rules-design.md`). Paths are updated to the current `rules/<name>.md` location; the cost/tier analysis is unaffected since these were already "N/A model / prose injected into context" at audit time, not independently-dispatched artifacts.
+`principle-*`/`language-*` rows below were skills at snapshot time; they were later converted to plain `rules/*.md` files (no `SKILL.md`, no `Skill`-tool invocation — see `docs/principles-languages-as-rules-design.md`). Paths are updated to the current `rules/<name>.md` location; the cost/tier analysis is unaffected since these were already "N/A model / prose injected into context" at audit time, not independently-dispatched artifacts.
 
 | Surface | Path | Current model | Spawns subagents? | Recommended tier | Notes |
 |---|---|---|---|---|---|

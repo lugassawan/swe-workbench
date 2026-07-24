@@ -35,9 +35,9 @@ git checkout -b feat/<topic>
 The `commit-msg` hook enforces a `[type] Subject` prefix on every commit:
 
 ```
-[feat] Add Python language skill
-[fix] Resolve trigger keyword collision in DDD skill
-[docs] Clarify F.I.R.S.T. principle in TDD skill
+[feat] Add Ruby language rule
+[fix] Resolve trigger keyword collision in workflow-pr-review skill
+[docs] Clarify F.I.R.S.T. principle in TDD rule
 [chore]: Bump actions/setup-python from 5 to 6
 ```
 
@@ -104,7 +104,7 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` �
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `workflow-*` (plus the `*-context` family). The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly. `principle-*`/`language-*` are **not** skills — see "Rule layout" below.
 
-**Rule layout**: `principle-*`/`language-*` live at `rules/<name>.md` — a single flat file, no directory, no frontmatter, no `SKILL.md`, no `triggers.txt`. They are not registered in `plugin.json`'s `skills` key and are never invoked via the `Skill` tool. Load a body on demand with `cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"`. See `docs/superpowers/specs/2026-07-24-principles-languages-as-rules-design.md` for the rationale and `docs/extending.md` (`## Adding a language rule`) for the recipe.
+**Rule layout**: `principle-*`/`language-*` live at `rules/<name>.md` — a single flat file, no directory, no frontmatter, no `SKILL.md`, no `triggers.txt`. They are not registered in `plugin.json`'s `skills` key and are never invoked via the `Skill` tool. Load a body on demand with `cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"`. See `docs/principles-languages-as-rules-design.md` for the rationale and `docs/extending.md` (`## Adding a language rule`) for the recipe.
 
 **Skill/rule catalog**: The catalog is split across three slice files under `agents/shared/`: `principles.md`, `languages.md`, and `workflows.md`. `principles.md`/`languages.md` are rule-backed (sourced from `rules/`); `workflows.md` is skill-backed (sourced from `skills/`) — their entry formats differ accordingly:
 - `principles.md`/`languages.md` entry: `` - `<name>` — <one-line description> → `rules/<name>.md` ``

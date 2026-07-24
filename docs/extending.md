@@ -4,7 +4,7 @@
 
 `principle-*`/`language-*` are plain `.md` files under `rules/` — not skills. No `SKILL.md`
 frontmatter, no `Skill`-tool invocation, no `triggers.txt`. See
-`docs/superpowers/specs/2026-07-24-principles-languages-as-rules-design.md` for the rationale.
+`docs/principles-languages-as-rules-design.md` for the rationale.
 
 To add a new language rule (say, Ruby or another language not already shipped):
 

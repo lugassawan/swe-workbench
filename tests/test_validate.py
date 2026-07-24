@@ -1600,6 +1600,90 @@ class TestCheckUnwiredPrincipleRules:
 
 
 # ──────────────────────────────────────────────
+# check_no_stale_principle_language_skill_refs
+# ──────────────────────────────────────────────
+
+
+class TestCheckNoStalePrincipleLanguageSkillRefs:
+    def test_backtick_wrapped_stale_ref_in_agent_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\nInvoke `swe-workbench:principle-tdd` before writing tests.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_stale_principle_language_skill_refs()
+        assert any(
+            "my-agent.md" in f and "swe-workbench:principle-tdd" in f
+            for f in validate.FAILURES
+        )
+
+    def test_bare_stale_ref_in_command_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, commands=[{"name": "my-cmd", "description": "d"}])
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n"
+            "\nSee swe-workbench:language-python for idioms (no backticks).\n",
+            encoding="utf-8",
+        )
+        validate.check_no_stale_principle_language_skill_refs()
+        assert any(
+            "my-cmd.md" in f and "swe-workbench:language-python" in f
+            for f in validate.FAILURES
+        )
+
+    def test_stale_ref_in_skill_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "workflow-foo": (
+                    "---\nname: workflow-foo\ndescription: d\n---\n"
+                    "\nCompose `swe-workbench:principle-security` for the auth section.\n"
+                )
+            },
+        )
+        validate.check_no_stale_principle_language_skill_refs()
+        assert any(
+            "workflow-foo" in f and "swe-workbench:principle-security" in f
+            for f in validate.FAILURES
+        )
+
+    def test_real_workflow_skill_ref_does_not_fail(self, reset_validate):
+        """A genuine swe-workbench:workflow-* reference is not principle-*/language-* and must pass."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
+            "\nSee `swe-workbench:workflow-commit-and-pr` for the delivery flow.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_stale_principle_language_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_rule_style_cat_reference_does_not_fail(self, reset_validate):
+        """The new `cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` pattern is not a stale ref."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Bash\n---\n"
+            '\ncat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md" before writing tests.\n',
+            encoding="utf-8",
+        )
+        validate.check_no_stale_principle_language_skill_refs()
+        assert len(validate.FAILURES) == 0
+
+    def test_clean_tree_passes(self, reset_validate, monkeypatch):
+        """The real repo tree must have zero stale refs (the retirement guarantee)."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_stale_principle_language_skill_refs()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # File-read caching
 # ──────────────────────────────────────────────
 
