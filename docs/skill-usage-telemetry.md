@@ -55,4 +55,6 @@ If you expect a "Skills used by …" line but don't see one:
 
 ## Security note
 
-Skill names land in the `systemMessage` field visible in the orchestrator's transcript.  If a future plugin author ever encodes sensitive data into skill names, those names would appear in the transcript.  Skill names in this plugin are all short, non-sensitive identifiers (e.g. `swe-workbench:principle-code-review`).
+Skill names land in the `systemMessage` field visible in the orchestrator's transcript.  If a future plugin author ever encodes sensitive data into skill names, those names would appear in the transcript.  Skill names in this plugin are all short, non-sensitive identifiers (e.g. `superpowers:systematic-debugging`).
+
+Note: `principle-*`/`language-*` are plain `rules/*.md` files, not skills — loading one via `cat` is a Bash tool call, not a `Skill` tool call, so it never appears in this telemetry.

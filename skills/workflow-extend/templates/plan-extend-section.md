@@ -14,7 +14,7 @@ Copy this `## Workflow` section into your extend spec and substitute `[[detect:K
 
 ### Phase 2: Implement
 - Follow plan tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`
-- Apply `swe-workbench:principle-tdd` per unit of work
+- Apply `rules/principle-tdd.md` per unit of work
 - `skip-phase-1: existing branch [[detect:branch-name]] reused from open PR #[[detect:pr-number]]`
 
 ### Phase 3: Verify

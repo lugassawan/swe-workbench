@@ -34,7 +34,7 @@ Copy this `## Workflow` section into your plan **in full — do not abridge, sum
 
 ### Phase 2: Implement
 - Follow plan tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`
-- Apply `swe-workbench:principle-tdd` per unit of work
+- Apply `rules/principle-tdd.md` per unit of work
 
 ### Phase 3: Verify
 

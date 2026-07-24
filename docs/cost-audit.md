@@ -18,7 +18,7 @@ At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was ad
 | debugger | `agents/debugger.md` | sonnet | No | M | Delegates investigation to `systematic-debugging` skill; fix is minimal but judgment-bearing |
 | dependency-auditor | `agents/dependency-auditor.md` | sonnet | No | **S → haiku** | Reads manifests, reports versions/licenses; mechanical extraction, low reasoning density. Watch window: GPL/AGPL transitive in MIT projects, SSPL/BUSL/Commons-Clause, per-version license changes, dev-only vs. production viral scope — any relational license judgment that misclassifies to lower severity is a revert trigger. |
 | migrator | `agents/migrator.md` | sonnet | No | M–L | Expand-backfill-switch-contract reasoning across deployments; phase correctness is high-stakes |
-| performance-tuner | `agents/performance-tuner.md` | sonnet | No | M | Profile-driven; delegates to `principle-performance` skill; hotspot ranking requires judgment |
+| performance-tuner | `agents/performance-tuner.md` | sonnet | No | M | Profile-driven; delegates to the `principle-performance` rule; hotspot ranking requires judgment |
 | product-designer | `agents/product-designer.md` | sonnet | No | M | Depth-first UX review; usability heuristic judgment and design-system compliance require reasoning |
 | product-manager | `agents/product-manager.md` | sonnet | No | **S → haiku** | Formats rough ideas into structured GitHub issues; template discovery + fill is mechanical |
 | refactorer | `agents/refactorer.md` | sonnet | No | M | Fowler-catalog steps; behavior-preservation invariant needs correctness judgment |
@@ -26,7 +26,7 @@ At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was ad
 | security-auditor | `agents/security-auditor.md` | sonnet | No | L | OWASP depth-first; exploitability assessment requires strong reasoning |
 | senior-engineer | `agents/senior-engineer.md` | sonnet | No | L | Architectural advice; trade-off synthesis; one-way-door assessment |
 | tech-writer | `agents/tech-writer.md` | sonnet | No | **S → haiku** | Generates docs from diffs and context; prose transformation with existing tone-matching |
-| test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec. Watch: test-writer auto-detects framework, reads existing tests, and invokes `principle-tdd`/`principle-testing` skills — multi-step steps that haiku may skip. Revert if Skill invocations are skipped or framework detection regresses. |
+| test-writer | `agents/test-writer.md` | sonnet | No | **S → haiku** | Writes behavioural tests in idiomatic style; mechanical code generation given a spec. Watch: test-writer auto-detects framework, reads existing tests, and loads the `principle-tdd`/`principle-testing` rules — multi-step steps that haiku may skip. Revert if rule loads are skipped or framework detection regresses. |
 
 **Tier S agents (flipped to haiku in this PR):** dependency-auditor, product-manager, tech-writer, test-writer  
 **Tier M/L agents (unchanged):** accessibility-auditor, architect, auditor, debugger, migrator, performance-tuner, product-designer, refactorer, reviewer, security-auditor, senior-engineer
@@ -37,38 +37,40 @@ At audit time, 14 agents shipped with `model: sonnet`; `product-designer` was ad
 
 Skills have no `model:` field — they are prose instructions injected into the invoking session's context. Tier here reflects the cognitive load the skill places on the host model, which informs future decisions (e.g., whether to downgrade the invoking session or guard the skill behind a model check).
 
+`principle-*`/`language-*` rows below were skills at snapshot time; they were later converted to plain `rules/*.md` files (no `SKILL.md`, no `Skill`-tool invocation — see `docs/superpowers/specs/2026-07-24-principles-languages-as-rules-design.md`). Paths are updated to the current `rules/<name>.md` location; the cost/tier analysis is unaffected since these were already "N/A model / prose injected into context" at audit time, not independently-dispatched artifacts.
+
 | Surface | Path | Current model | Spawns subagents? | Recommended tier | Notes |
 |---|---|---|---|---|---|
-| language-bash | `skills/language-bash/` | N/A | No | M | Language idioms reference |
-| language-go | `skills/language-go/` | N/A | No | M | Language idioms reference |
-| language-java | `skills/language-java/` | N/A | No | M | Language idioms reference |
-| language-kotlin | `skills/language-kotlin/` | N/A | No | M | Language idioms reference |
-| language-python | `skills/language-python/` | N/A | No | M | Language idioms reference |
-| language-rust | `skills/language-rust/` | N/A | No | M | Language idioms reference |
-| language-swift | `skills/language-swift/` | N/A | No | M | Language idioms reference |
-| language-typescript | `skills/language-typescript/` | N/A | No | M | Language idioms reference |
-| principle-accessibility | `skills/principle-accessibility/` | N/A | No | M | WCAG guidance |
-| principle-api-design | `skills/principle-api-design/` | N/A | No | M | REST/gRPC conventions |
-| principle-clean-architecture | `skills/principle-clean-architecture/` | N/A | No | M | Dependency-inversion patterns |
-| principle-clean-code | `skills/principle-clean-code/` | N/A | No | M | Naming / function-size rules |
-| principle-concurrency | `skills/principle-concurrency/` | N/A | No | M | Thread/async safety patterns |
-| principle-cost-awareness | `skills/principle-cost-awareness/` | N/A | No | M | Token-spend heuristics |
-| principle-data-modeling | `skills/principle-data-modeling/` | N/A | No | M | Schema design guidance |
-| principle-ddd | `skills/principle-ddd/` | N/A | No | M | Domain-driven design patterns |
-| principle-design-patterns | `skills/principle-design-patterns/` | N/A | No | M | GoF / structural patterns |
-| principle-distributed-systems | `skills/principle-distributed-systems/` | N/A | No | M | CAP, eventual consistency |
-| principle-error-handling | `skills/principle-error-handling/` | N/A | No | M | Error propagation patterns |
-| principle-event-driven | `skills/principle-event-driven/` | N/A | No | M | Event sourcing / pub-sub |
-| principle-i18n | `skills/principle-i18n/` | N/A | No | M | Localization patterns |
-| principle-observability | `skills/principle-observability/` | N/A | No | M | Logging/tracing/metrics |
-| principle-performance | `skills/principle-performance/` | N/A | No | M | Profile-first optimization |
-| principle-product-design | `skills/principle-product-design/` | N/A | No | M | UX and product design heuristics; usability judgment, visual hierarchy, interaction design |
-| principle-resiliency | `skills/principle-resiliency/` | N/A | No | M | Retry/circuit-breaker patterns |
-| principle-security | `skills/principle-security/` | N/A | No | M | OWASP-aligned security guidance |
-| principle-solid | `skills/principle-solid/` | N/A | No | M | SOLID principles |
-| principle-tdd | `skills/principle-tdd/` | N/A | No | M | Red-green-refactor discipline |
-| principle-testing | `skills/principle-testing/` | N/A | No | M | Test strategy (unit/int/e2e) |
-| principle-version-control | `skills/principle-version-control/` | N/A | No | M | Git workflow conventions |
+| language-bash | `rules/language-bash.md` | N/A | No | M | Language idioms reference |
+| language-go | `rules/language-go.md` | N/A | No | M | Language idioms reference |
+| language-java | `rules/language-java.md` | N/A | No | M | Language idioms reference |
+| language-kotlin | `rules/language-kotlin.md` | N/A | No | M | Language idioms reference |
+| language-python | `rules/language-python.md` | N/A | No | M | Language idioms reference |
+| language-rust | `rules/language-rust.md` | N/A | No | M | Language idioms reference |
+| language-swift | `rules/language-swift.md` | N/A | No | M | Language idioms reference |
+| language-typescript | `rules/language-typescript.md` | N/A | No | M | Language idioms reference |
+| principle-accessibility | `rules/principle-accessibility.md` | N/A | No | M | WCAG guidance |
+| principle-api-design | `rules/principle-api-design.md` | N/A | No | M | REST/gRPC conventions |
+| principle-clean-architecture | `rules/principle-clean-architecture.md` | N/A | No | M | Dependency-inversion patterns |
+| principle-clean-code | `rules/principle-clean-code.md` | N/A | No | M | Naming / function-size rules |
+| principle-concurrency | `rules/principle-concurrency.md` | N/A | No | M | Thread/async safety patterns |
+| principle-cost-awareness | `rules/principle-cost-awareness.md` | N/A | No | M | Token-spend heuristics |
+| principle-data-modeling | `rules/principle-data-modeling.md` | N/A | No | M | Schema design guidance |
+| principle-ddd | `rules/principle-ddd.md` | N/A | No | M | Domain-driven design patterns |
+| principle-design-patterns | `rules/principle-design-patterns.md` | N/A | No | M | GoF / structural patterns |
+| principle-distributed-systems | `rules/principle-distributed-systems.md` | N/A | No | M | CAP, eventual consistency |
+| principle-error-handling | `rules/principle-error-handling.md` | N/A | No | M | Error propagation patterns |
+| principle-event-driven | `rules/principle-event-driven.md` | N/A | No | M | Event sourcing / pub-sub |
+| principle-i18n | `rules/principle-i18n.md` | N/A | No | M | Localization patterns |
+| principle-observability | `rules/principle-observability.md` | N/A | No | M | Logging/tracing/metrics |
+| principle-performance | `rules/principle-performance.md` | N/A | No | M | Profile-first optimization |
+| principle-product-design | `rules/principle-product-design.md` | N/A | No | M | UX and product design heuristics; usability judgment, visual hierarchy, interaction design |
+| principle-resiliency | `rules/principle-resiliency.md` | N/A | No | M | Retry/circuit-breaker patterns |
+| principle-security | `rules/principle-security.md` | N/A | No | M | OWASP-aligned security guidance |
+| principle-solid | `rules/principle-solid.md` | N/A | No | M | SOLID principles |
+| principle-tdd | `rules/principle-tdd.md` | N/A | No | M | Red-green-refactor discipline |
+| principle-testing | `rules/principle-testing.md` | N/A | No | M | Test strategy (unit/int/e2e) |
+| principle-version-control | `rules/principle-version-control.md` | N/A | No | M | Git workflow conventions |
 | ticket-context | `skills/ticket-context/` | N/A | No | **S** | Pure fetch-and-format; no reasoning; high-frequency invocation (30% of session spend at baseline) |
 | workflow-bug-triage | `skills/workflow-bug-triage/` | N/A | No | M | Triage orchestration prose |
 | workflow-cleanup-merged | `skills/workflow-cleanup-merged/` | N/A | No | M | Branch/worktree cleanup steps |

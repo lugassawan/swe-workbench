@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # PostToolUse:Read|Edit|Write handler — emits a non-blocking hint when the
-# touched file's extension maps to a known language-* skill.
+# touched file's extension maps to a known language-* rule.
 #
 # Behaviour:
-#   • De-duplicates: emits at most once per (session, skill) pair.
+#   • De-duplicates: emits at most once per (session, rule) pair.
 #   • Never blocks: exit 0 always.  A broken hook must never gate a tool call.
 set -u
 
-# ── extension → skill map ────────────────────────────────────────────────────
-ext_to_skill() {
+# ── extension → rule map ─────────────────────────────────────────────────────
+ext_to_rule() {
     local ext="$1"
     case "$ext" in
         py)                   echo "language-python" ;;
@@ -28,7 +28,7 @@ ext_to_skill() {
 }
 
 main() {
-    local input file_path session_id ext skill safe_session safe_skill sentinel dir today
+    local input file_path session_id ext rule safe_session safe_rule sentinel dir today
 
     input=$(cat)
 
@@ -42,8 +42,8 @@ main() {
     ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
     [ "$ext" = "${file_path##*/}" ] && exit 0   # no dot in filename → no extension
 
-    skill=$(ext_to_skill "$ext")
-    [ -n "$skill" ] || exit 0             # unmapped extension → no hint
+    rule=$(ext_to_rule "$ext")
+    [ -n "$rule" ] || exit 0              # unmapped extension → no hint
 
     # Session-scoped de-dup sentinel.
     # Use || true so a jq-absent environment still falls through to the PID fallback.
@@ -52,21 +52,21 @@ main() {
 
     # Sanitize both components: only alphanumeric + dash + underscore
     safe_session="${session_id//[^A-Za-z0-9_-]/_}"
-    safe_skill="${skill//[^A-Za-z0-9_-]/_}"
+    safe_rule="${rule//[^A-Za-z0-9_-]/_}"
 
     # Date-scoped subdir provides a coarse TTL: yesterday's sentinels are invisible
     # today, preventing cross-session suppression on long-running machines.
     today=$(date +%Y%m%d 2>/dev/null) || today="default"
     dir="${TMPDIR:-/tmp}/swe_wb_skill_hints/${today}"
     mkdir -p "$dir" 2>/dev/null || exit 0
-    sentinel="${dir}/${safe_session}_${safe_skill}"
+    sentinel="${dir}/${safe_session}_${safe_rule}"
 
-    # Already hinted this session for this skill → silent no-op
+    # Already hinted this session for this rule → silent no-op
     [ -f "$sentinel" ] && exit 0
     touch "$sentinel" 2>/dev/null || exit 0
 
     # Emit hint via hookSpecificOutput
-    local hint="Consider \`swe-workbench:${skill}\` for .${ext} work — invoke it via the Skill tool to apply language-specific idioms."
+    local hint="Consult rule \`${rule}\` for .${ext} work — \`cat \"\$CLAUDE_PLUGIN_ROOT/rules/${rule}.md\"\` to apply language-specific idioms."
     jq -cn --arg ctx "$hint" \
         '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":$ctx}}' \
         2>/dev/null || true

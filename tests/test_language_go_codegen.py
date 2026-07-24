@@ -1,7 +1,7 @@
 """Structural tests for the Go code-generation / google/wire convention (closes #477).
 
 Acceptance criteria:
-- skills/language-go/SKILL.md has a '## Code generation' section, non-empty.
+- rules/language-go.md has a '## Code generation' section, non-empty.
 - The section mentions wire.go, wire_gen.go, and a DO NOT EDIT / generated signal.
 - The section references regeneration via `go generate` (and/or `wire ./...`).
 - The section states the source-of-truth rule: edit wire.go, not wire_gen.go.
@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-GO_SKILL = ROOT / "skills" / "language-go" / "SKILL.md"
+GO_SKILL = ROOT / "rules" / "language-go.md"
 
 
 def _section(body: str, heading: str) -> str:
@@ -38,14 +38,14 @@ def _section(body: str, heading: str) -> str:
 
 
 def test_go_skill_file_exists():
-    assert GO_SKILL.exists(), "skills/language-go/SKILL.md must exist"
+    assert GO_SKILL.exists(), "rules/language-go.md must exist"
 
 
 def test_has_code_generation_section():
     body = GO_SKILL.read_text()
     section = _section(body, "Code generation")
     assert section.strip(), (
-        "skills/language-go/SKILL.md must contain a non-empty '## Code generation' section"
+        "rules/language-go.md must contain a non-empty '## Code generation' section"
     )
 
 

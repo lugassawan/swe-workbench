@@ -69,12 +69,12 @@ def test_includes_both_catalog_slices():
 
 def test_requires_language_skill_statement():
     body = _read()
-    assert "Language skill (required)" in body
+    assert "Language rule (required)" in body
 
 
 def test_references_version_control_principle():
     body = _read()
-    assert "swe-workbench:principle-version-control" in body
+    assert "rules/principle-version-control.md" in body
 
 
 def test_never_calls_ours_theirs_directly():

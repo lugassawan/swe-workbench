@@ -34,13 +34,13 @@ Auto-detect the project's existing E2E suite before writing a single line:
 3. Identify the run command: `npx playwright test`, `npx cypress run`, or whatever `package.json` / `Makefile` specifies.
 4. If no E2E suite exists yet, bootstrap Playwright TypeScript as the default (create `playwright.config.ts` + install `@playwright/test`); note this in your output. The MCP-side exploration still works immediately — project setup is only required to run the authored specs.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope (TypeScript/JavaScript for Playwright, Python for pytest-playwright, etc.) and invoke the matching `language-*` skill. State which language skill(s) you loaded, or note "N/A".
+**Language rule (required):** Identify the language(s) in scope (TypeScript/JavaScript for Playwright, Python for pytest-playwright, etc.) and `cat` the matching `rules/language-*.md` body. State which language rule(s) you loaded, or note "N/A".
 
-Invoke `swe-workbench:principle-testing` for the E2E tier of the test pyramid: when E2E is appropriate, what it should (and should not) cover, and how to avoid false-green traps.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-testing.md"` for the E2E tier of the test pyramid: when E2E is appropriate, what it should (and should not) cover, and how to avoid false-green traps.
 
 ## Exploration process
 

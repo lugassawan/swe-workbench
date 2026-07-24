@@ -35,10 +35,10 @@ End with per-hunk rationale lines (surfaced to the user by `workflow-branch-sync
 
 Never emit more than one sentinel line, and never omit it — a missing or malformed sentinel means `workflow-branch-sync` cannot proceed and must fall back to the manual path.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) of the conflicted file and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for a `.py` file). State which language skill(s) you loaded, or note "N/A" if the file has no language-specific idiom (e.g. plain text, lockfiles).
+**Language rule (required):** Identify the language(s) of the conflicted file and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for a `.py` file). State which language rule(s) you loaded, or note "N/A" if the file has no language-specific idiom (e.g. plain text, lockfiles).
 
-Invoke `swe-workbench:principle-version-control` when the conflict itself is shaped by merge/rebase discipline — e.g. deciding whether a hunk represents a legitimate divergent change vs. one side simply being stale, or when the rationale hinges on commit history rather than code content.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-version-control.md"` when the conflict itself is shaped by merge/rebase discipline — e.g. deciding whether a hunk represents a legitimate divergent change vs. one side simply being stale, or when the rationale hinges on commit history rather than code content.

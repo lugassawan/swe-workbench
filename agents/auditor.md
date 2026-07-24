@@ -81,18 +81,18 @@ Every finding must include all 11 fields. **Omit any finding you cannot fill all
 
 **Forbidden:** anything mutating — `git checkout`, `git commit`, `npm install`, `cargo build`, `make`, any redirect (`>`, `>>`), `rm`, `mv`, `cp`, `curl`, `wget`.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when a finding surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when a finding surfaces a concern in its domain:
 
-- `swe-workbench:principle-code-review` — review heuristics: five-axis lens, confidence-based filtering, tone, nitpick filtering
-- `swe-workbench:principle-security` — trust boundaries, input validation, secrets handling
-- `swe-workbench:principle-performance` — latency, throughput, N+1, allocation pressure
-- `swe-workbench:principle-resiliency` — reliability findings: failure domains, bulkheads, graceful degradation, retry patterns
-- `swe-workbench:principle-observability` — missing logs, metrics, traces; SLI/SLO gaps
-- `swe-workbench:principle-tdd` — test-first discipline, red-green-refactor violations, F.I.R.S.T. failures
-- `swe-workbench:principle-testing` — coverage gaps, mock overuse, missing integration tests, flaky tests, test pyramid imbalance
+- `rules/principle-code-review.md` — review heuristics: five-axis lens, confidence-based filtering, tone, nitpick filtering
+- `rules/principle-security.md` — trust boundaries, input validation, secrets handling
+- `rules/principle-performance.md` — latency, throughput, N+1, allocation pressure
+- `rules/principle-resiliency.md` — reliability findings: failure domains, bulkheads, graceful degradation, retry patterns
+- `rules/principle-observability.md` — missing logs, metrics, traces; SLI/SLO gaps
+- `rules/principle-tdd.md` — test-first discipline, red-green-refactor violations, F.I.R.S.T. failures
+- `rules/principle-testing.md` — coverage gaps, mock overuse, missing integration tests, flaky tests, test pyramid imbalance

@@ -28,8 +28,8 @@ If `superpowers:systematic-debugging` is unavailable, say so plainly and run the
 ## Principle lens (what makes this swe-workbench-shaped)
 
 After the root cause is known, answer:
-- **SOLID** — does the bug's shape signal a responsibility, substitutability, or dependency-direction breach? Consult `swe-workbench:principle-solid`.
-- **Clean Architecture** — did the defect cross a layer boundary that should have stopped it? Consult `swe-workbench:principle-clean-architecture`.
+- **SOLID** — does the bug's shape signal a responsibility, substitutability, or dependency-direction breach? `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-solid.md"`.
+- **Clean Architecture** — did the defect cross a layer boundary that should have stopped it? `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-clean-architecture.md"`.
 - **Test gap** — why did the existing suite not catch this? Missing branch, missing boundary, or test mirrored the implementation.
 
 Call this out even when the minimal fix does not address it. Silence signals the principle is clean.
@@ -54,25 +54,25 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - SOLID / Clean-Arch risks (or "none — principle is clean")
 - Design fork (if any) — surfaced for the orchestrator; you have no `Agent` tool and do not consult subagents yourself
 
-## Principle consultation
+## Rule consultation
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the diagnosis surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the diagnosis surfaces a concern in its domain:
 
-- `swe-workbench:principle-solid` — responsibility, substitutability, dependency direction
-- `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency rule
-- `swe-workbench:principle-concurrency` — race conditions, deadlock, missing cancellation propagation, ordering bugs, memory-model surprises
-- `swe-workbench:principle-refactoring` — when the diagnosis surfaces structural debt that the minimal fix should NOT touch (recommend follow-up /swe-workbench:refactor)
-- `swe-workbench:principle-postmortem` — when the bug triggered a production incident and the team needs blameless RCA framing, trigger/condition/root-cause decomposition, or action-item structure
+- `rules/principle-solid.md` — responsibility, substitutability, dependency direction
+- `rules/principle-clean-architecture.md` — boundaries, layering, dependency rule
+- `rules/principle-concurrency.md` — race conditions, deadlock, missing cancellation propagation, ordering bugs, memory-model surprises
+- `rules/principle-refactoring.md` — when the diagnosis surfaces structural debt that the minimal fix should NOT touch (recommend follow-up /swe-workbench:refactor)
+- `rules/principle-postmortem.md` — when the bug triggered a production incident and the team needs blameless RCA framing, trigger/condition/root-cause decomposition, or action-item structure
 
-## Available skills
+## Available rules
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
 ## Absolute rules
 - No fix without a failing test first.
 - No behavior change beyond what the failing test demands.
 - No "while I'm here" refactors — note them, defer to `/swe-workbench:refactor`.
 - If the root cause is a design flaw, fix the symptom minimally and surface the design fork in your output for the orchestrator to act on. You do not hold the `Agent` tool and cannot consult other subagents yourself — flagging the fork is your responsibility; deciding and running any advisory consult is the orchestrator's.
-- If a fix genuinely requires a new type: (1) scan sibling source files — if empty/absent, apply `swe-workbench:principle-clean-architecture` layering directly; if coherent, match the observed convention; if incoherent, apply best practice via `swe-workbench:principle-clean-architecture`. (2) Note the placement choice in the Minimal-fix output line. (3) Never let placement reasoning widen the diff.
+- If a fix genuinely requires a new type: (1) scan sibling source files — if empty/absent, apply `rules/principle-clean-architecture.md` layering directly; if coherent, match the observed convention; if incoherent, apply best practice via `rules/principle-clean-architecture.md`. (2) Note the placement choice in the Minimal-fix output line. (3) Never let placement reasoning widen the diff.

@@ -64,7 +64,7 @@ Do NOT invoke `workflow-development` Mode A here — this skill renders its own 
 
 Hand off to `swe-workbench:workflow-development` Mode B starting at **Phase 2 (Implement)**, citing `skip-phase-1: existing branch [[detect:branch-name]] reused from open PR [[detect:pr-number]]` so the orchestrator does not attempt worktree creation.
 
-**Phase 2:** Execute implementation tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`. Apply `swe-workbench:principle-tdd` per unit: red → green → refactor.
+**Phase 2:** Execute implementation tasks using `superpowers:executing-plans` or `superpowers:subagent-driven-development`. `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md"` and apply it per unit: red → green → refactor.
 
 **Phase 3 (Verify):** Run `superpowers:verification-before-completion`. Do not advance until all format / lint / test steps pass with evidence.
 

@@ -1,6 +1,6 @@
 ---
 name: workflow-dependency-upgrade
-description: Use when walking the dependency-upgrade lifecycle — routine sweep, Dependabot/Renovate PR triage, CVE patch, or major-version migration. Structured runbook: triage+batch → bump regen lockfile → build/test → breakage-triage → PR hygiene. Per-ecosystem command matrix; composes principle-security. Keywords: dependency upgrade bump lockfile Dependabot Renovate semver CVE supply-chain breakage
+description: Use when walking the dependency-upgrade lifecycle — routine sweep, Dependabot/Renovate PR triage, CVE patch, or major-version migration. Structured runbook: triage+batch → bump regen lockfile → build/test → breakage-triage → PR hygiene. Per-ecosystem command matrix; composes the principle-security rule. Keywords: dependency upgrade bump lockfile Dependabot Renovate semver CVE supply-chain breakage
 ---
 
 # workflow-dependency-upgrade
@@ -18,13 +18,13 @@ Structured runbook for the full upgrade lifecycle: triage → bump → test → 
 
 ## When NOT to invoke
 
-- Design-time dep-graph minimization or supply-chain posture review → `swe-workbench:principle-security`.
-- Release/version-bump mechanics (semver discipline, changelog, pre-release gate) → `swe-workbench:principle-release-engineering`.
+- Design-time dep-graph minimization or supply-chain posture review → `rules/principle-security.md`.
+- Release/version-bump mechanics (semver discipline, changelog, pre-release gate) → `rules/principle-release-engineering.md`.
 - A full feature build that happens to bump a dep → `/swe-workbench:implement`.
 
 ## Composition
 
-- **`swe-workbench:principle-security`** — supply-chain integrity, CVE triage, SBOM, lockfile pinning, frozen installs.
+- **`rules/principle-security.md`** — supply-chain integrity, CVE triage, SBOM, lockfile pinning, frozen installs.
 - **`security-auditor` agent** — CVE confirmation and dependency-graph risk read.
 - **`reviewer` agent** — breakage diff read for ambiguous API/type changes.
 

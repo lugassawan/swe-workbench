@@ -115,21 +115,21 @@ Gate to advance: ...
 5. Switch flips readers before writers — flipping writers first causes silent data divergence on rollback.
 6. Phase 5 (Contract) is gated on stability evidence, never a calendar date.
 
-## Principle consultation
+## Rule consultation
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the migration surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the migration surfaces a concern in its domain:
 
-- `swe-workbench:principle-data-modeling` — schema evolution, indexing the new column, hot-key avoidance, retention policy during dual-write window
-- `swe-workbench:principle-resiliency` — phased migration as blast-radius reduction; kill-switch flag at Switch phase as graceful-degradation mechanism
-- `swe-workbench:principle-version-control` — atomic per-phase commits ("Phase 2/5: backfill user_email_v2"); conflict resolution on long-running dual-write branches diverging from main
-- `swe-workbench:principle-release-engineering` — semver bump for migrations that cross a compatibility boundary; expand-contract as the per-phase release discipline; rollback path documented before each phase ships
-- `swe-workbench:principle-event-driven` — compatible serializers, parallel consumer groups, DLQ strategy at Switch, idempotent event handlers during Dual-write
-- `swe-workbench:principle-observability` — every advance gate must cite a metric; no metric = blind gate = blocked; structured logs per phase transition
-- `swe-workbench:principle-performance` — backfill cost on a representative replica before production; bounded `ACCESS EXCLUSIVE` lock duration; chunk size tuning
-- `swe-workbench:principle-api-design` — versioned endpoints, `Deprecation`/`Sunset` headers, sunset windows that exceed client release cycles
+- `rules/principle-data-modeling.md` — schema evolution, indexing the new column, hot-key avoidance, retention policy during dual-write window
+- `rules/principle-resiliency.md` — phased migration as blast-radius reduction; kill-switch flag at Switch phase as graceful-degradation mechanism
+- `rules/principle-version-control.md` — atomic per-phase commits ("Phase 2/5: backfill user_email_v2"); conflict resolution on long-running dual-write branches diverging from main
+- `rules/principle-release-engineering.md` — semver bump for migrations that cross a compatibility boundary; expand-contract as the per-phase release discipline; rollback path documented before each phase ships
+- `rules/principle-event-driven.md` — compatible serializers, parallel consumer groups, DLQ strategy at Switch, idempotent event handlers during Dual-write
+- `rules/principle-observability.md` — every advance gate must cite a metric; no metric = blind gate = blocked; structured logs per phase transition
+- `rules/principle-performance.md` — backfill cost on a representative replica before production; bounded `ACCESS EXCLUSIVE` lock duration; chunk size tuning
+- `rules/principle-api-design.md` — versioned endpoints, `Deprecation`/`Sunset` headers, sunset windows that exceed client release cycles
 
-## Available skills
+## Available rules
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.

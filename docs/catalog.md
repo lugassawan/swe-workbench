@@ -52,43 +52,48 @@
 | `test-reviewer` | Auditing existing tests for flakiness, over-mocking, behaviour-vs-implementation drift, and coverage gaps. Invoked by `/swe-workbench:review --mode tests`. |
 | `test-writer` | Authoring tests for an existing function, module, or change set. |
 
-## Skills
+## Rules
 
-### Principles — consulted by reasoning agents when relevant triggers apply
+Plain `.md` files under `rules/` — not skills. No `SKILL.md`, no `Skill`-tool invocation, no
+`triggers.txt`/BM25 harness. The catalog below (`agents/shared/{principles,languages}.md`) is
+injected into the main thread at session start and embedded in every code-touching subagent's
+prompt; loading a body is `cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"`.
 
-| Skill | Triggers |
+### Principles — catalog + judgment (no auto-trigger; the agent decides when one applies)
+
+| Rule | When it applies |
 |---|---|
-| `principle-clean-architecture` | "clean architecture", "hexagonal", "ports and adapters", "dependency rule", "layering". |
-| `principle-ddd` | "DDD", "domain-driven", "bounded context", "aggregate", "value object", "ubiquitous language". |
-| `principle-solid` | "SOLID", "single responsibility", "open-closed", "Liskov", "interface segregation", "dependency inversion". |
-| `principle-tdd` | "TDD", "test-driven", "red green refactor", "unit test", "test first". |
-| `principle-testing` | "test pyramid", "test double", "mock", "stub", "fake", "fixture", "coverage", "mutation testing", "flaky", "contract test", "property-based test", "characterization test". |
-| `principle-design-patterns` | "design pattern", "strategy", "factory", "observer", "decorator", "adapter". |
-| `principle-clean-code` | "clean code", "function length", "naming", "DRY", "KISS", "YAGNI", "abstraction level", "error handling". |
-| `principle-code-review` | "code review checklist", "PR review heuristics", "review comment", "review finding", "nitpick filtering", "reviewing a diff". |
-| `principle-communication` | "caveman mode", "be brief", "less tokens", "use fewer tokens", "talk like caveman", "use caveman", "full caveman", "ultra caveman", "max caveman", `/caveman`, `/caveman ultra`. |
-| `principle-postmortem` | "postmortem", "blameless", "root cause analysis", "5 whys", "fishbone", "incident review", "MTTD", "MTTR", "action items", "incident report", "blameless postmortem". |
-| `principle-refactoring` | "refactor", "Fowler", "Extract Function", "Inline Variable", "Move Function", "smell", "Long Method", "Feature Envy", "Data Clumps", "Primitive Obsession", "characterization test", "behavior-preserving". |
-| `principle-observability` | "structured logs", "application metrics", "distributed traces", "span", "OpenTelemetry", "SLO", "SLI", "RED method", "USE method", "cardinality", "structured logging". |
-| `principle-api-design` | "api versioning", "idempotency", "idempotency key", "pagination", "cursor pagination", "error shape", "REST vs RPC", "event-driven", "API deprecation", "API contract". |
-| `principle-event-driven` | "outbox pattern", "sagas", "choreography vs orchestration", "duplicate events", "schema evolution". |
-| `principle-error-handling` | "errors as values", "Result type", "exception handling", "retry", "exponential backoff", "jitter", "circuit breaker", "fail fast", "fail soft", "idempotent retry", "error wrapping", "timeouts", "deadlines". |
-| `principle-resiliency` | "bulkheads", "fail fast vs degrade gracefully", "failure domains", "readiness probes", "cascading failure". |
-| `principle-concurrency` | "race condition", "deadlock", "livelock", "structured concurrency", "cancellation", "backpressure", "mutex vs channel", "actor model", "atomics", "memory model". |
-| `principle-distributed-systems` | "CP vs AP", "PACELC", "Lamport timestamps", "vector clocks", "Raft". |
-| `principle-performance` | "latency vs throughput", "profile before optimize", "N+1 queries", "GC pause", "Big-O". |
-| `principle-cost-awareness` | "cloud cost", "FinOps", "egress", "right-sizing", "scale-to-zero", "cost-per-request", "storage tier", "log volume", "cardinality cost". |
-| `principle-data-modeling` | "schema design", "data model", "normalization", "denormalization", "indexing", "hot key", "hot partition", "schema evolution", "expand contract", "query-first", "storage paradigm", "relational vs document", "TTL", "archival". |
-| `principle-release-engineering` | "release", "tag", "semver", "rollout", "rollback", "kill-switch", "expand-contract", "feature flag", "release notes". |
-| `principle-version-control` | "atomic commits", "rebase vs merge", "squash merge", "commit message", "trunk-based development". |
-| `principle-security` | "auth", "authn", "authz", "trust boundary", "input validation", "SSRF", "CSRF", "session", "JWT", "TLS", "secret", "encrypt". |
-| `principle-product-design` | "usability heuristic", "UX review", "visual hierarchy", "information architecture", "interaction design", "design system", "usability audit", "Nielsen", "loading state", "empty state", "error state", "progressive disclosure", "responsive design". |
-| `principle-accessibility` | "accessibility review", "keyboard trap", "ARIA roles", "WCAG contrast", "screen reader". |
-| `principle-i18n` | "locale formatting", "plural rules", "translation readiness", "right-to-left layout", "UTC in DB". |
+| `principle-clean-architecture` | Dependency rule, ports and adapters, domain-centric layering. |
+| `principle-ddd` | Bounded contexts, aggregates, value objects, ubiquitous language, domain events. |
+| `principle-solid` | SRP, OCP, LSP, ISP, DIP — responsibility, coupling, abstractions. |
+| `principle-tdd` | Red-green-refactor, test-first, F.I.R.S.T., Arrange-Act-Assert. |
+| `principle-testing` | Test pyramid, doubles taxonomy, coverage-vs-confidence, mutation testing, flaky-test triage, contract testing, fixtures and builders, property-based tests. |
+| `principle-design-patterns` | GoF catalog — Strategy, Factory, Observer, Decorator, Adapter, and more. |
+| `principle-clean-code` | DRY, KISS, YAGNI, naming, function length, abstraction level. |
+| `principle-code-review` | Five-axis lens (correctness, security, design, tests, comment quality), confidence-based filtering, comment tone, nitpick filtering. |
+| `principle-communication` | Terse "caveman" output mode (lite/full/ultra), drop filler/hedging, preserve code symbols and error strings verbatim, auto-clarity carve-out. |
+| `principle-postmortem` | Blameless culture, root cause analysis (5 Whys, Fishbone/Ishikawa), incident document structure, action-item discipline, MTTD/MTTR metrics. |
+| `principle-refactoring` | Fowler's catalog, smell→move mapping, rule of three, characterization-tests-first, small behavior-preserving steps with green between. |
+| `principle-observability` | Logs vs metrics vs traces, structured logging, OpenTelemetry, SLI/SLO. |
+| `principle-api-design` | Contract-first, versioning, idempotency, REST/RPC/event trade-offs. |
+| `principle-event-driven` | Event sourcing, CQRS, sagas, schema evolution, consumer groups, DLQ, idempotent handlers. |
+| `principle-error-handling` | Errors as values, classification, wrapping, retry, circuit breakers. |
+| `principle-resiliency` | Failure domains, bulkheads, graceful degradation, fail-fast vs fail-soft, health checks, blast radius containment, idempotency keys, safe retry, rate limiting, token bucket, backpressure, jitter. |
+| `principle-concurrency` | Race conditions, deadlock, structured concurrency, cancellation, backpressure. |
+| `principle-distributed-systems` | CAP/PACELC, consistency models, consensus, quorum, logical clocks, replication, delivery semantics. |
+| `principle-performance` | Latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries. |
+| `principle-cost-awareness` | FinOps mindset, egress, right-sizing, scale-to-zero, cost-per-request, storage tiers, observability cost. |
+| `principle-data-modeling` | Storage paradigm selection, normalization depth, indexing strategy, hot-key avoidance, schema evolution, query-first design, retention. |
+| `principle-release-engineering` | Semver discipline, expand-contract for breaking changes, idempotent release automation, post-release verification, rollback planning, release-notes audience. |
+| `principle-version-control` | Atomic commits, commit-message quality, branching strategy, rebase vs merge, squash vs preserve, PR description quality. |
+| `principle-security` | Trust boundaries, input validation, secrets handling, secure defaults, threat modeling. |
+| `principle-product-design` | Nielsen's 10 usability heuristics, visual hierarchy, information architecture, interaction design patterns, design-system compliance, responsive design. |
+| `principle-accessibility` | WCAG 2.2 AA, semantic HTML, ARIA, keyboard navigation, focus management, color contrast, screen-reader compatibility. |
+| `principle-i18n` | Locale-aware formatting, time zones, plural rules, message catalogs, RTL layout, ISO 8601, currency. |
 
-### Languages — auto-hint by file type (subagents load deterministically)
+### Languages — auto-hinted by file type (`hooks/skill_autoload_hint.sh`), loaded deterministically
 
-| Skill | Triggers |
+| Rule | Autoload signal (file ext / keywords) |
 |---|---|
 | `language-bash` | `.sh`, `.bash` files; keywords: bash, shell, sh, shellcheck, set -e, pipefail. |
 | `language-csharp` | `.cs` files, `.csproj`, `.sln`, `Directory.Build.props`, keywords: C#, .NET, dotnet, nullable reference types, records, pattern matching, async/await, cancellation tokens, ConfigureAwait, IOptions, LINQ. |
@@ -103,6 +108,8 @@
 | `language-swift` | `.swift` files, `Package.swift`, keywords: Swift, SwiftUI, actors, async/await, Sendable, Result builders, Swift Package Manager. |
 | `language-typescript` | `.ts`, `.tsx`, `.js`, `.jsx`, `package.json`, keywords: TypeScript, Node, tsconfig. |
 
+## Skills
+
 ### Workflows — auto-hint during implementation
 
 | Skill | Triggers | Delegation model |
@@ -110,7 +117,7 @@
 | `workflow-codebase-audit` | "cold-start audit", "take-home assessment audit", "tech-debt sweep", "inherited service onboarding". | Runs a time-boxed multi-domain audit of an unfamiliar codebase. Dispatches the auditor subagent for the sweep, optionally fans out to `security-auditor` and `debugger` in deep mode, and renders ranked findings with reasoning fields. |
 | `workflow-audit-emit-issues` | "file these audit findings as grouped github issues", "emit the audit results as issues grouped by subsystem", "turn the codebase audit findings into github issues". | Post-audit filing counterpart to `workflow-codebase-audit`. Groups findings by subsystem (path-prefix), discovers `.github/ISSUE_TEMPLATE/` and repo labels, renders a batch preview with `drop N`/`edit N` support, then on `confirm` files one GitHub issue per subsystem via `gh issue create --body-file`. Never fires before `confirm`. |
 | `workflow-bug-triage` | "investigate this bug", "find the root cause", "file an issue for this bug", "triage this". | Investigates bugs to root cause and files a structured GitHub issue instead of patching immediately. Composes `superpowers:systematic-debugging`, enforces the no-fix-before-root-cause rule, and preview-gates the final `gh issue create`. |
-| `workflow-development` | "implement this", "build this", "fix this bug", "execute plan", "orchestrate these issues". | Wraps the 5-phase lifecycle (Branch → Implement → Verify → Review → Deliver). Phase 1 prefers `rimba add <task>` when rimba is available; falls back to `superpowers:using-git-worktrees`. Phase 2 applies `swe-workbench:principle-tdd` per unit (via `superpowers:executing-plans` or `superpowers:subagent-driven-development`). Phase 3 invokes `superpowers:verification-before-completion` running **Imports → Format → Quality → Lint → Test** in order (Quality is optional, skipped with a note if no thresholds configured). Phase 4 dispatches `superpowers:requesting-code-review` (plan-alignment) and `swe-workbench:reviewer` (diff quality). Phase 5 invokes `swe-workbench:workflow-commit-and-pr`. Mode A plan template and Mode C orchestration live in companion files. |
+| `workflow-development` | "implement this", "build this", "fix this bug", "execute plan", "orchestrate these issues". | Wraps the 5-phase lifecycle (Branch → Implement → Verify → Review → Deliver). Phase 1 prefers `rimba add <task>` when rimba is available; falls back to `superpowers:using-git-worktrees`. Phase 2 applies `rules/principle-tdd.md` per unit (via `superpowers:executing-plans` or `superpowers:subagent-driven-development`). Phase 3 invokes `superpowers:verification-before-completion` running **Imports → Format → Quality → Lint → Test** in order (Quality is optional, skipped with a note if no thresholds configured). Phase 4 dispatches `superpowers:requesting-code-review` (plan-alignment) and `swe-workbench:reviewer` (diff quality). Phase 5 invokes `swe-workbench:workflow-commit-and-pr`. Mode A plan template and Mode C orchestration live in companion files. |
 | `workflow-commit-and-pr` | "commit this", "make a commit", "open a PR", "ship this branch". | Orchestrates preview-vs-commit-vs-ship flows, enforces the `[type] Subject` commit format, applies the docs-only `[no ci]` rule, chains ticket context when needed, and opens a draft or ready PR from the repo template. |
 | `workflow-pr-review` | "review PR 123", "peer review of #456", "fetch this PR and post deduped comments". | Fetches a remote PR into an ephemeral worktree, runs the reviewer subagent with a decision footer, deduplicates against existing review threads, posts only new inline comments, and submits APPROVE or COMMENT. |
 | `workflow-extend` | "/swe-workbench:extend", "extend the PR", "add this on top of the current PR", mid-PR follow-on, related sub-idea on the in-flight branch. | Captures a sub-idea inline (no new top-level issue), implements it on the same branch as the existing PR, skipping Phase 1 (Branch). Preserves Phases 2–5: Implement via TDD, Verify via `superpowers:verification-before-completion`, Review via `superpowers:requesting-code-review` + `swe-workbench:reviewer` (with scope-creep guard), Deliver via `swe-workbench:workflow-commit-and-pr` "Update existing PR" path. |
@@ -124,8 +131,8 @@
 | `workflow-hotfix` | "ship a fast branch-based p0 hotfix", "this is a p0 incident, open the pr now and verify after", "urgent hotfix — defer the regression test until after merge". | Branch-based P0 hotfix lifecycle: skips the worktree provider (plain branch), implements with TDD relaxed, opens the PR ready-for-review *before* verify/review, tags the PR body with a `<!-- swe-workbench:deferred-verification -->` marker, then reconciles it once the regression test is backfilled and verification is green. Invoked by `/swe-workbench:hotfix`. |
 | `workflow-worktree-session` | "in a worktree", "open the X worktree", "move into worktree", "switch to worktree", "enter worktree", "exit the worktree", "leave worktree". | Routes to `EnterWorktree(path=…)` for existing worktrees; defers to `superpowers:using-git-worktrees` for new ones (that skill handles consent, baseline tests, and calls `EnterWorktree` itself). `ExitWorktree(action: "keep"\|"remove")` on the way out. Forbids `Bash(cd …)` as a session-switch mechanism. |
 | `workflow-delegated-implementation` | "delegate this multi-module feature to focused implementer sub-agents", "group file changes and hand each cohesive changeset to code-impl", "keep orchestrator context lean by delegating implementation". | Conditional scope/complexity gate → group changes by commit-taxonomy axis (Infra/Core/Tests/Wiring) → dispatch each group to `code-impl` with a structured brief → consume the four-status summary without re-reading files → sequential default with opt-in worktree-isolated parallelism (safety table: disjoint file sets, zero cross-group dependency, no shared test target). |
-| `workflow-performance-investigation` | "this endpoint is slow", "find the performance hotspot", "profile flame graph", "capture a CPU profile", "structure the investigation and add a regression guard". | Profile-first runbook: baseline → profile (per-ecosystem tooling matrix) → hand profile to `performance-tuner` for ranked hotspots → bottleneck taxonomy → one isolated change → before/after measurement → regression guard. Composes `principle-performance`. |
-| `workflow-dependency-upgrade` | "upgrade our dependencies", "Dependabot PR triage", "bump this package to the latest major", "CVE patch", "major version migration and fix what breaks". | Structured upgrade runbook: triage+batch (patch/minor/major, automated vs manual) → bump & regen lockfile → build/test → breakage-triage taxonomy → PR hygiene. Per-ecosystem command matrix; composes `principle-security`. |
+| `workflow-performance-investigation` | "this endpoint is slow", "find the performance hotspot", "profile flame graph", "capture a CPU profile", "structure the investigation and add a regression guard". | Profile-first runbook: baseline → profile (per-ecosystem tooling matrix) → hand profile to `performance-tuner` for ranked hotspots → bottleneck taxonomy → one isolated change → before/after measurement → regression guard. Composes `rules/principle-performance.md`. |
+| `workflow-dependency-upgrade` | "upgrade our dependencies", "Dependabot PR triage", "bump this package to the latest major", "CVE patch", "major version migration and fix what breaks". | Structured upgrade runbook: triage+batch (patch/minor/major, automated vs manual) → bump & regen lockfile → build/test → breakage-triage taxonomy → PR hygiene. Per-ecosystem command matrix; composes `rules/principle-security.md`. |
 
 This skill is an orchestrator — it coordinates other skills rather than restating their content.
 

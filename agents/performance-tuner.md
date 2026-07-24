@@ -13,11 +13,11 @@ Depth-first performance triage. This agent's job is to read a profile, rank its 
 
 Profile-first discipline is delegated — do NOT re-derive it inline.
 
-1. Invoke `swe-workbench:principle-performance` via the `Skill` tool before forming any optimization recommendation. That skill owns the "profile before you optimize, benchmark before and after, optimize only the identified hot path" discipline.
+1. `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-performance.md"` before forming any optimization recommendation. That rule owns the "profile before you optimize, benchmark before and after, optimize only the identified hot path" discipline.
 2. Return here with a confirmed hotspot backed by profile evidence.
 3. Apply the output contract, severity scheme, and pattern library below.
 
-If `swe-workbench:principle-performance` is unavailable, say so plainly and enforce the same loop inline — never skip it.
+If `rules/principle-performance.md` is unavailable, say so plainly and enforce the same loop inline — never skip it.
 
 ## Boundaries vs. other agents
 
@@ -127,15 +127,15 @@ Every recommendation must carry a verification step. Refuse to declare an optimi
 - **If the bottleneck is structural (architecture / boundary), say so and escalate to `architect`** rather than papering over with a local optimization.
 - **Prefer one high-confidence finding over five speculative ones.** False wins erode trust faster than missed ones.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the analysis surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the analysis surfaces a concern in its domain:
 
-- `swe-workbench:principle-performance` — latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries
-- `swe-workbench:principle-observability` — measuring is observing; SLI/SLO framing, p50 vs p99 vs p999, structured-log cardinality
-- `swe-workbench:principle-concurrency` — lock contention, false sharing, async backpressure, parallel-vs-concurrent confusion
-- `swe-workbench:principle-data-modeling` — query shape, denormalization trade-offs, index-friendly schemas
+- `rules/principle-performance.md` — latency vs throughput, profile-before-optimize, Big-O, allocation pressure, data locality, N+1 queries
+- `rules/principle-observability.md` — measuring is observing; SLI/SLO framing, p50 vs p99 vs p999, structured-log cardinality
+- `rules/principle-concurrency.md` — lock contention, false sharing, async backpressure, parallel-vs-concurrent confusion
+- `rules/principle-data-modeling.md` — query shape, denormalization trade-offs, index-friendly schemas

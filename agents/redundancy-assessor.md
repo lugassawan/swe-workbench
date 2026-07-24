@@ -36,10 +36,10 @@ This departs from a single end-of-file sentinel (contrast `conflict-resolver`, w
 
 `workflow-branch-sync` validates every `id` you emit against `redundancy-scope.sh`'s enumerated candidate ids and rejects unknown ones — the actionable path always comes from the script's record, never from your prose, so name the file by its `id`, not by re-typing a path.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) of each candidate file and invoke the matching `language-*` skill (e.g., `swe-workbench:language-go` for a `.go` file). State which language skill(s) you loaded, or note "N/A" if a candidate has no language-specific idiom (e.g. plain text, lockfiles).
+**Language rule (required):** Identify the language(s) of each candidate file and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-go.md"` for a `.go` file). State which language rule(s) you loaded, or note "N/A" if a candidate has no language-specific idiom (e.g. plain text, lockfiles).
 
-Invoke `swe-workbench:principle-refactoring` when judging whether a candidate is genuinely redundant (Duplicate Code, Speculative Generality) versus a legitimate divergent change that only looks similar on the surface.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-refactoring.md"` when judging whether a candidate is genuinely redundant (Duplicate Code, Speculative Generality) versus a legitimate divergent change that only looks similar on the surface.

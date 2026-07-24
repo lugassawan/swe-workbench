@@ -157,17 +157,17 @@ If asked to apply a fix, refuse and re-emit the recommended action as text in th
 
 See @./shared/external-repo-reading.md.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the audit surfaces a concern in its domain:
 
-- `swe-workbench:principle-security` — when a license or lockfile finding has security implications
-- `swe-workbench:principle-resiliency` — when lockfile drift or yanked packages threaten reproducible builds
-- `swe-workbench:language-typescript` — Node/npm ecosystem idioms and `package.json` patterns
-- `swe-workbench:language-rust` — Cargo ecosystem, `cargo deny`, crates.io yank semantics
-- `swe-workbench:language-go` — Go module system, `go mod tidy`, `go.sum` verification
-- `swe-workbench:language-python` — pip, Poetry, uv, `pyproject.toml`, and packaging standards
+- `rules/principle-security.md` — when a license or lockfile finding has security implications
+- `rules/principle-resiliency.md` — when lockfile drift or yanked packages threaten reproducible builds
+- `rules/language-typescript.md` — Node/npm ecosystem idioms and `package.json` patterns
+- `rules/language-rust.md` — Cargo ecosystem, `cargo deny`, crates.io yank semantics
+- `rules/language-go.md` — Go module system, `go mod tidy`, `go.sum` verification
+- `rules/language-python.md` — pip, Poetry, uv, `pyproject.toml`, and packaging standards

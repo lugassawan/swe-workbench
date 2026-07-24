@@ -1,14 +1,14 @@
 """Structural tests for tell-don't-ask + member-ordering conventions (closes #459).
 
 Acceptance criteria:
-- skills/principle-ddd/SKILL.md body names both 'tell' (don't-ask) and 'anemic' domain.
-- skills/principle-clean-code/SKILL.md has a '## Member ordering' section that states
+- rules/principle-ddd.md body names both 'tell' (don't-ask) and 'anemic' domain.
+- rules/principle-clean-code.md has a '## Member ordering' section that states
   'public → protected → private' and mentions modifier-less languages (Go, Rust, or Python).
-- agents/reviewer.md Principle consultation list references swe-workbench:principle-ddd.
-- agents/code-impl.md Principle consultation list references swe-workbench:principle-ddd.
+- agents/reviewer.md Principle consultation list references rules/principle-ddd.md.
+- agents/code-impl.md Principle consultation list references rules/principle-ddd.md.
 
 Acceptance criteria (#329):
-- Every skills/language-*/SKILL.md has a '## Testing' section before '## Avoid'.
+- Every rules/language-*.md has a '## Testing' section before '## Avoid'.
 """
 
 import re
@@ -18,8 +18,8 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 
-DDD_SKILL = ROOT / "skills" / "principle-ddd" / "SKILL.md"
-CLEAN_CODE_SKILL = ROOT / "skills" / "principle-clean-code" / "SKILL.md"
+DDD_SKILL = ROOT / "rules" / "principle-ddd.md"
+CLEAN_CODE_SKILL = ROOT / "rules" / "principle-clean-code.md"
 REVIEWER_AGENT = ROOT / "agents" / "reviewer.md"
 CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
 
@@ -52,14 +52,14 @@ def _section(body: str, heading: str) -> str:
 
 
 def test_ddd_skill_file_exists():
-    assert DDD_SKILL.exists(), "skills/principle-ddd/SKILL.md must exist"
+    assert DDD_SKILL.exists(), "rules/principle-ddd.md must exist"
 
 
 def test_ddd_skill_names_tell_dont_ask():
     """Entity subsection must explicitly use the tell-don't-ask idiom."""
     body = DDD_SKILL.read_text()
     assert re.search(r"tell\W?\s*don\W?t\W?\s*ask", body, re.IGNORECASE), (
-        "skills/principle-ddd/SKILL.md must mention the 'tell, don't ask' principle "
+        "rules/principle-ddd.md must mention the 'tell, don't ask' principle "
         "so reviewers and implementers can surface the anti-pattern"
     )
 
@@ -68,7 +68,7 @@ def test_ddd_skill_names_anemic_domain():
     """Skill body must explicitly name 'anemic' domain model as an anti-pattern."""
     body = DDD_SKILL.read_text()
     assert "anemic" in body.lower(), (
-        "skills/principle-ddd/SKILL.md must mention 'anemic' (anemic domain model) "
+        "rules/principle-ddd.md must mention 'anemic' (anemic domain model) "
         "so reviewers and implementers can surface the anti-pattern"
     )
 
@@ -79,13 +79,13 @@ def test_ddd_skill_names_anemic_domain():
 
 
 def test_clean_code_skill_file_exists():
-    assert CLEAN_CODE_SKILL.exists(), "skills/principle-clean-code/SKILL.md must exist"
+    assert CLEAN_CODE_SKILL.exists(), "rules/principle-clean-code.md must exist"
 
 
 def test_clean_code_has_member_ordering_section():
     body = CLEAN_CODE_SKILL.read_text()
     assert "## Member ordering" in body, (
-        "skills/principle-clean-code/SKILL.md must contain a '## Member ordering' section "
+        "rules/principle-clean-code.md must contain a '## Member ordering' section "
         "so the convention has a canonical normative home"
     )
 
@@ -133,8 +133,8 @@ def test_reviewer_agent_file_exists():
 
 def test_reviewer_references_principle_ddd():
     body = REVIEWER_AGENT.read_text()
-    assert "swe-workbench:principle-ddd" in body, (
-        "agents/reviewer.md Principle consultation must reference 'swe-workbench:principle-ddd' "
+    assert "rules/principle-ddd.md" in body, (
+        "agents/reviewer.md Principle consultation must reference 'rules/principle-ddd.md' "
         "so the reviewer catches anemic domain models and tell-don't-ask violations"
     )
 
@@ -150,8 +150,8 @@ def test_code_impl_agent_file_exists():
 
 def test_code_impl_references_principle_ddd():
     body = CODE_IMPL_AGENT.read_text()
-    assert "swe-workbench:principle-ddd" in body, (
-        "agents/code-impl.md Principle consultation must reference 'swe-workbench:principle-ddd' "
+    assert "rules/principle-ddd.md" in body, (
+        "agents/code-impl.md Principle consultation must reference 'rules/principle-ddd.md' "
         "so implementers place behaviour on entities and avoid anemic models"
     )
 
@@ -160,10 +160,10 @@ def test_code_impl_references_principle_ddd():
 # AC 5 (#329) — every language-* skill has a '## Testing' section before '## Avoid'
 # ---------------------------------------------------------------------------
 
-LANGUAGE_SKILLS = sorted((ROOT / "skills").glob("language-*/SKILL.md"))
+LANGUAGE_SKILLS = sorted((ROOT / "rules").glob("language-*.md"))
 
 
-@pytest.mark.parametrize("skill_path", LANGUAGE_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("skill_path", LANGUAGE_SKILLS, ids=lambda p: p.stem)
 def test_language_skill_has_testing_section_before_avoid(skill_path):
     """Every language-* skill must document a '## Testing' section ahead of '## Avoid'.
 
@@ -195,7 +195,7 @@ def test_language_skill_has_testing_section_before_avoid(skill_path):
 def test_comment_discipline_section_exists():
     body = CLEAN_CODE_SKILL.read_text()
     assert "## Comment discipline" in body, (
-        "skills/principle-clean-code/SKILL.md must contain a '## Comment discipline' section "
+        "rules/principle-clean-code.md must contain a '## Comment discipline' section "
         "so per-language comment caps have a single canonical home"
     )
 

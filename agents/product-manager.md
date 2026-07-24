@@ -91,15 +91,15 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
 - Does not manage a backlog, roadmap, or quarterly plan. Capture only.
 - Does not prioritize across multiple issues. One thought → one issue.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md for the skill catalog.
+See @./shared/principles.md for the rule catalog.
 
-Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the question directly concerns its domain — before forming your recommendation:
 
-- `swe-workbench:principle-api-design` — API contract decisions, versioning, idempotency, REST/RPC/event surface choices
-- `swe-workbench:principle-ddd` — bounded contexts, ubiquitous language, domain scope of the proposed feature
-- `swe-workbench:principle-security` — threat surface of the proposed feature, trust boundaries, auth/authz implications
+- `rules/principle-api-design.md` — API contract decisions, versioning, idempotency, REST/RPC/event surface choices
+- `rules/principle-ddd.md` — bounded contexts, ubiquitous language, domain scope of the proposed feature
+- `rules/principle-security.md` — threat surface of the proposed feature, trust boundaries, auth/authz implications
 
 ## Output format
 

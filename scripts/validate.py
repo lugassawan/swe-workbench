@@ -73,10 +73,10 @@ def parse_frontmatter(path, text=None):
 # ──────────────────────────────────────────────
 
 def _build_cache():
-    """Read every agent .md and every skills/*/SKILL.md exactly once.
+    """Read every agent .md, every skills/*/SKILL.md, and every rules/*.md exactly once.
 
-    Returns (agents, skills) where each is a dict[Path, str | None].
-    rglob("*.md") is intentional: it covers check_unwired_principle_skills
+    Returns (agents, skills, rules) where each is a dict[Path, str | None].
+    rglob("*.md") is intentional: it covers check_unwired_principle_rules
     (which uses rglob) in addition to the flat-glob consumers.
     Unreadable files are stored as None so consumers that track failures
     (e.g. check_catalog_completeness) can report them without re-reading.
@@ -84,11 +84,15 @@ def _build_cache():
 
     Note: skills/*/templates/*.md files are NOT cached here; check_template_placeholders
     reads each template file directly (one read_text() call per template).
+    rules/*/examples/**/*.md are NOT cached here either; check_examples reads
+    each example file directly, same rationale.
     """
     agents_dir = ROOT / "agents"
     skills_dir = ROOT / "skills"
+    rules_dir = ROOT / "rules"
     agents: dict = {}
     skills: dict = {}
+    rules: dict = {}
     for p in agents_dir.rglob("*.md"):
         try:
             agents[p] = p.read_text(encoding="utf-8")
@@ -99,7 +103,13 @@ def _build_cache():
             skills[p] = p.read_text(encoding="utf-8")
         except OSError:
             skills[p] = None  # sentinel: present but unreadable
-    return agents, skills
+    if rules_dir.is_dir():
+        for p in rules_dir.glob("*.md"):
+            try:
+                rules[p] = p.read_text(encoding="utf-8")
+            except OSError:
+                rules[p] = None  # sentinel: present but unreadable
+    return agents, skills, rules
 
 
 # ──────────────────────────────────────────────
@@ -569,39 +579,53 @@ def _check_adapter_block_field_order(skill_md, provider, block):
 
 
 def check_catalog_completeness(cache=None):
-    """Per-slice catalogs under agents/shared/ must list every skill in the right slice,
+    """Per-slice catalogs under agents/shared/ must list every skill/rule in the right slice,
     and every agent must reference at least one slice catalog.
 
-    Slice files and their skill-name prefix rules:
-      principles.md  → skill names starting with 'principle-'
-      languages.md   → skill names starting with 'language-'
-      workflows.md   → skill names starting with 'workflow-' plus the '*-context' family
+    Slice files, their id-prefix rules, and their backing source of truth:
+      principles.md  → ids starting with 'principle-' → rules/<id>.md
+      languages.md   → ids starting with 'language-'  → rules/<id>.md
+      workflows.md   → ids starting with 'workflow-' plus the '*-context' family → skills/<id>/
 
-    Skills with unrecognised prefixes are assigned to principles.md by convention.
+    principles.md and languages.md catalog plain rule files (not skills) — principle-*/language-*
+    were converted from skills/<id>/SKILL.md to rules/<id>.md, so their bullet format differs from
+    workflows.md's: `` `<id>` — <desc> → `rules/<id>.md` `` instead of `` `swe-workbench:<id>` — <desc> ``.
+    Ids with unrecognised prefixes are assigned to principles.md by convention.
     """
     _SLICE_FILES = {
         "principles.md": ("principle-",),
         "languages.md": ("language-",),
         "workflows.md": ("workflow-",),
     }
+    _RULE_SLICES = frozenset({"principles.md", "languages.md"})
     _SLICE_REFS = frozenset({
         "@./shared/principles.md",
         "@./shared/languages.md",
         "@./shared/workflows.md",
     })
     # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
-    entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
+    skill_entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
+    # Rule-model bullet: `<id>` — <desc> → `rules/<id>.md`. Captures id twice (name, arrow
+    # target) so a mismatched pointer (copy-paste error) is caught, not just missing/stale ids.
+    rule_entry_re = re.compile(
+        r'^-\s+`([\w-]+)`\s+—\s+(\S.*?)\s+→\s+`rules/([\w-]+)\.md`\s*$', re.MULTILINE
+    )
 
     agents_dir = ROOT / "agents"
     shared_dir = agents_dir / "shared"
     skills_dir = ROOT / "skills"
+    rules_dir = ROOT / "rules"
     agents_cache = cache[0] if cache is not None else None
 
     if not skills_dir.is_dir():
         fail(skills_dir.relative_to(ROOT), "missing — required skills directory")
         return
+    if not rules_dir.is_dir():
+        fail(rules_dir.relative_to(ROOT), "missing — required rules directory")
+        return
 
-    on_disk = {p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file()}
+    skills_on_disk = {p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file()}
+    rules_on_disk = {p.stem for p in rules_dir.glob("*.md")}
 
     def _expected_slice(sid):
         for fname, prefixes in _SLICE_FILES.items():
@@ -630,19 +654,34 @@ def check_catalog_completeness(cache=None):
                 fail(slice_path.relative_to(ROOT), f"could not read file: {e}")
                 continue
 
-        slice_ids = {sid for sid, _ in entry_re.findall(text)}
+        is_rule_slice = slice_file in _RULE_SLICES
+        on_disk = rules_on_disk if is_rule_slice else skills_on_disk
+        artifact_label = "rule" if is_rule_slice else "skill"
+        artifact_path = (lambda sid: f"rules/{sid}.md") if is_rule_slice else (lambda sid: f"skills/{sid}/SKILL.md")
+        entry_id_fmt = (lambda sid: f"`{sid}`") if is_rule_slice else (lambda sid: f"`swe-workbench:{sid}`")
+
+        if is_rule_slice:
+            slice_ids = set()
+            for name, _desc, target in rule_entry_re.findall(text):
+                slice_ids.add(name)
+                if name != target:
+                    fail(slice_path.relative_to(ROOT),
+                         f"entry `{name}` points at mismatched target `rules/{target}.md`")
+        else:
+            slice_ids = {sid for sid, _ in skill_entry_re.findall(text)}
+
         expected_in_slice = {sid for sid in on_disk if _expected_slice(sid) == slice_file}
 
         for sid in sorted(expected_in_slice - slice_ids):
             fail(slice_path.relative_to(ROOT),
-                 f"missing entry for 'swe-workbench:{sid}' (skills/{sid}/SKILL.md exists)")
+                 f"missing entry for {entry_id_fmt(sid)} ({artifact_path(sid)} exists)")
         for sid in sorted(slice_ids - on_disk):
             fail(slice_path.relative_to(ROOT),
-                 f"stale entry 'swe-workbench:{sid}' has no skills/{sid}/ on disk")
+                 f"stale entry {entry_id_fmt(sid)} has no {artifact_path(sid)} on disk")
         for sid in sorted(slice_ids & on_disk):
             if _expected_slice(sid) != slice_file:
                 fail(slice_path.relative_to(ROOT),
-                     f"entry 'swe-workbench:{sid}' belongs in {_expected_slice(sid)}, not {slice_file}")
+                     f"entry {entry_id_fmt(sid)} ({artifact_label}) belongs in {_expected_slice(sid)}, not {slice_file}")
 
     # Every agent must reference at least one slice catalog, and every
     # code-touching agent (one that includes principles.md) must ALSO include
@@ -710,9 +749,9 @@ def check_shared_includes_not_blockquoted(cache=None):
 
 
 def check_examples():
-    """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
-    skills_dir = ROOT / "skills"
-    for example in sorted(skills_dir.glob("*/examples/**/*.md")):
+    """Example files in rules/*/examples/**/*.md must not exceed 120 lines."""
+    rules_dir = ROOT / "rules"
+    for example in sorted(rules_dir.glob("*/examples/**/*.md")):
         try:
             text = example.read_text(encoding="utf-8")
         except OSError as e:
@@ -727,21 +766,23 @@ def check_examples():
             )
 
 
-def check_unwired_principle_skills(cache=None):
-    """Every skills/principle-*/ must be referenced by at least one agent.
+def check_unwired_principle_rules(cache=None):
+    """Every rules/principle-*.md must be referenced by at least one agent.
 
     agents/shared/ (the catalog slice files) are explicitly excluded — they list
-    every skill by design and must not count as a wiring reference.
+    every rule by design and must not count as a wiring reference.
+
+    language-* rules are intentionally NOT checked here: they're wired dynamically
+    via each agent's "Language rule (required)" clause (identify the language(s) in
+    scope, `cat` the matching rule), not enumerated by name per agent — the same
+    exemption applied when these were skills, carried forward unchanged.
     """
-    skills_dir = ROOT / "skills"
+    rules_dir = ROOT / "rules"
     agents_dir = ROOT / "agents"
     shared_dir = agents_dir / "shared"
     agents_cache = cache[0] if cache is not None else None
 
-    principle_skills = sorted(
-        p.name for p in skills_dir.glob("principle-*")
-        if (p / "SKILL.md").is_file()
-    )
+    principle_rules = sorted(p.stem for p in rules_dir.glob("principle-*.md"))
 
     agent_files = [
         f for f in sorted(agents_dir.rglob("*.md"))
@@ -749,8 +790,8 @@ def check_unwired_principle_skills(cache=None):
         and (agents_cache is None or agents_cache.get(f) is not None)
     ]
 
-    for skill_id in principle_skills:
-        needle = f"`swe-workbench:{skill_id}`"
+    for rule_id in principle_rules:
+        needle = f"rules/{rule_id}.md"
         wired = any(
             needle in (agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8"))
             for f in agent_files
@@ -758,10 +799,49 @@ def check_unwired_principle_skills(cache=None):
         if not wired:
             fail(
                 Path("agents") / "<unwired>",
-                f"principle skill 'swe-workbench:{skill_id}' is not referenced by any "
+                f"principle rule '{rule_id}' (rules/{rule_id}.md) is not referenced by any "
                 f"agent in agents/*.md — wire it into a relevant agent's "
-                f"'## Principle consultation' list",
+                f"'## Rule consultation' list",
             )
+
+
+_STALE_RULE_SKILL_REF_RE = re.compile(r'`?swe-workbench:(?:principle|language)-[\w-]+`?')
+
+
+def check_no_stale_principle_language_skill_refs(cache=None):
+    """The old Skill-invocation surface for principle-*/language-* is retired —
+    they're plain rules/<id>.md files now, never `swe-workbench:principle-*` /
+    `swe-workbench:language-*` Skill references. Scans agents/, commands/, and
+    skills/ (the same scope as the manual retirement grep) for zero tolerance.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+
+    for subdir, sub_cache in (
+        (ROOT / "agents", agents_cache),
+        (ROOT / "commands", None),
+        (ROOT / "skills", skills_cache),
+    ):
+        if not subdir.is_dir():
+            continue
+        for md in sorted(subdir.rglob("*.md")):
+            if sub_cache is not None and md in sub_cache:
+                text = sub_cache[md]
+                if text is None:
+                    continue  # already reported by whichever check first cached this file
+            else:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+            hit = _STALE_RULE_SKILL_REF_RE.search(text)
+            if hit:
+                fail(
+                    md.relative_to(ROOT),
+                    f"stale Skill-invocation reference {hit.group(0)!r} — principle-*/language-* "
+                    f"are plain rules/<id>.md files, not skills; replace with "
+                    f"`cat \"$CLAUDE_PLUGIN_ROOT/rules/<id>.md\"`",
+                )
 
 
 # ──────────────────────────────────────────────
@@ -1116,7 +1196,8 @@ def main():
     check_adapter_blocks(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
-    check_unwired_principle_skills(cache=cache)
+    check_unwired_principle_rules(cache=cache)
+    check_no_stale_principle_language_skill_refs(cache=cache)
     check_examples()
     check_hook_scripts()
     check_test_subprocess_env()

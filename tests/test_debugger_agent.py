@@ -90,10 +90,10 @@ def test_minimal_fix_line_notes_placement_choice():
 
 
 def test_principle_clean_architecture_referenced():
-    """agents/debugger.md must reference swe-workbench:principle-clean-architecture."""
+    """agents/debugger.md must reference rules/principle-clean-architecture.md."""
     body = _read()
-    assert "swe-workbench:principle-clean-architecture" in body, (
-        "agents/debugger.md must reference 'swe-workbench:principle-clean-architecture' "
+    assert "rules/principle-clean-architecture.md" in body, (
+        "agents/debugger.md must reference 'rules/principle-clean-architecture.md' "
         "for the placement fallback when sibling structure is incoherent"
     )
 

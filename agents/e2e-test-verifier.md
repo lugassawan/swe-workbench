@@ -65,8 +65,8 @@ For each spec that passes: explicitly state whether it is **meaningful** (genuin
 - A green exit code is not sufficient — you must inspect assertion content.
 - If the runner is not installed (`npx playwright test` fails with `not found`), emit `BLOCKED:` rather than guessing an alternative.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-Invoke `swe-workbench:principle-testing` when diagnosing suspect passes or flaky specs — the testing pyramid and flaky-test triage sections are directly relevant.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-testing.md"` when diagnosing suspect passes or flaky specs — the testing pyramid and flaky-test triage sections are directly relevant.

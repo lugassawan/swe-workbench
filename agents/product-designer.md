@@ -155,14 +155,14 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 - Prefer one strong finding over five weak ones — false positives erode trust faster than missed findings.
 - If the diff is clean, say so explicitly: "No UX issues found in this diff." Silence is not a passing grade.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-typescript` for `.tsx` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-typescript.md"` for `.tsx` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills when the audit surfaces a concern in their domain:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the audit surfaces a concern in its domain:
 
-- `swe-workbench:principle-product-design` — usability heuristics, visual hierarchy, information architecture, interaction design, design-system compliance, responsive design (primary skill for this agent)
-- `swe-workbench:principle-accessibility` — when a11y concerns surface alongside UX concerns (WCAG, keyboard, ARIA, contrast, focus)
-- `swe-workbench:principle-clean-code` — naming clarity in UI labels, alt text, and accessible descriptions
+- `rules/principle-product-design.md` — usability heuristics, visual hierarchy, information architecture, interaction design, design-system compliance, responsive design (primary rule for this agent)
+- `rules/principle-accessibility.md` — when a11y concerns surface alongside UX concerns (WCAG, keyboard, ARIA, contrast, focus)
+- `rules/principle-clean-code.md` — naming clarity in UI labels, alt text, and accessible descriptions

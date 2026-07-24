@@ -1,13 +1,13 @@
-"""Structural tests for skills/principle-code-review/SKILL.md (closes #472)."""
+"""Structural tests for rules/principle-code-review.md (closes #472)."""
 
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SKILL = ROOT / "skills" / "principle-code-review" / "SKILL.md"
+SKILL = ROOT / "rules" / "principle-code-review.md"
 
 
 def _read() -> str:
-    assert SKILL.exists(), "skills/principle-code-review/SKILL.md must exist"
+    assert SKILL.exists(), "rules/principle-code-review.md must exist"
     return SKILL.read_text()
 
 

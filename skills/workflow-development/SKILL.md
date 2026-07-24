@@ -28,7 +28,7 @@ Mode B — Single Implementation:
 
   Phase 1 (Branch)    → enter existing worktree if one matches, else rimba add <task> (rimba) OR superpowers:using-git-worktrees (fallback)
   Phase 2 (Implement) → superpowers:executing-plans OR superpowers:subagent-driven-development
-                          └─ swe-workbench:principle-tdd (per unit)
+                          └─ rules/principle-tdd.md (per unit)
                           └─ swe-workbench:workflow-delegated-implementation (scope/complexity warrants isolation)
   Phase 3 (Verify)    → superpowers:verification-before-completion
   Phase 4 (Review)    → BOTH in parallel (neither optional):
@@ -74,7 +74,7 @@ Also check CLAUDE.md for project-specific conventions.
 | `pom.xml` | `mvn spotless:apply` (requires import-ordering rules in Spotless config; for unused-import removal add `impsort-maven-plugin`) | `mvn spotless:apply` | `mvn checkstyle:check` (requires plugin) | `mvn test` |
 | `build.gradle` / `build.gradle.kts` | `./gradlew spotlessApply` (Spotless: importOrder + removeUnusedImports) | `./gradlew spotlessApply` (or ktlint / google-java-format) | `./gradlew check` (Kotlin: `detekt`; Java: `checkstyleMain`) | `./gradlew test` |
 
-> **Authoritative per-language tool list:** this table covers manifest-detected projects (Go, JS/TS, Rust, Python, Java, Kotlin). For the full, canonical command set for any language — including languages without a manifest row (C#, Ruby, Swift, SQL, Bash) — consult the matching `swe-workbench:language-<lang>` skill (e.g. `swe-workbench:language-csharp`).
+> **Authoritative per-language tool list:** this table covers manifest-detected projects (Go, JS/TS, Rust, Python, Java, Kotlin). For the full, canonical command set for any language — including languages without a manifest row (C#, Ruby, Swift, SQL, Bash) — `cat` the matching `rules/language-<lang>.md` body (e.g. `cat "$CLAUDE_PLUGIN_ROOT/rules/language-csharp.md"`).
 
 > **`quality-command` fallback** is in the table below — intentionally separate because Quality is multi-tool by nature and a single cell would be unreadably wide.
 
@@ -162,12 +162,12 @@ Verify baseline tests pass before writing any code.
 
 **Goal:** Write code following the plan, committing incrementally.
 
-New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline) — assess at write-time so comments are lean on the first pass, rather than relying on the Phase 4 review backstop.
+New comments stay within `rules/principle-clean-code.md`'s per-language comment caps (Comment discipline) — assess at write-time so comments are lean on the first pass, rather than relying on the Phase 4 review backstop.
 
 Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
-- **No plan / ad-hoc** → implement directly with `swe-workbench:principle-tdd` per unit
+- **No plan / ad-hoc** → implement directly, `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md"` and apply it per unit
 - **Scope/complexity warrants isolation** → invoke `swe-workbench:workflow-delegated-implementation` to group changes and dispatch each cohesive group to a focused `code-impl` sub-agent; consume the summary (not the diff) to stay lean
 
 If a delegated `code-impl` run returns with verification evidence, mark Phase 3 "completed by sub-skill" per the deduplication rule above.

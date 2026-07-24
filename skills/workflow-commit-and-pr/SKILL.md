@@ -207,7 +207,7 @@ Prepend the ticket-context summary to the PR body so the reviewer has the full s
 
 ## Test plan generation
 
-Seed `## Test Plan` with type-tailored bullets BEFORE `gh pr create --body-file "$TMP"` runs. Never strip or replace host bullets — append `### Type-tailored checks ([type])` only. Heredoc fallback: replace `- [ ] <verification steps>` placeholder. See `swe-workbench:principle-testing`.
+Seed `## Test Plan` with type-tailored bullets BEFORE `gh pr create --body-file "$TMP"` runs. Never strip or replace host bullets — append `### Type-tailored checks ([type])` only. Heredoc fallback: replace `- [ ] <verification steps>` placeholder. See `rules/principle-testing.md`.
 
 **Precedence:** `breaking` → `feat` → `fix` → `perf` → most-frequent → latest → `feat`. **Types:** `breaking` migration+compat; `feat` new-behaviour; `fix` reproduce+verify; `refactor` same-outputs; `perf` baseline; `test` passes; `ci` parses; `docs` links; `chore` builds; `polish` clean.
 

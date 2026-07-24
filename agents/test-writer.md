@@ -20,15 +20,15 @@ Auto-detect by language and existing repo conventions before writing a single li
 
 Read at least one existing test file before writing — match the repo's style, not your defaults.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke `swe-workbench:principle-tdd` via the Skill tool before writing any test for the full red-green-refactor discipline and "What to test" checklist.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md"` before writing any test for the full red-green-refactor discipline and "What to test" checklist.
 
-Invoke `swe-workbench:principle-testing` for test pyramid balance, doubles taxonomy, coverage-vs-confidence, flaky-test triage, and contract testing.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-testing.md"` for test pyramid balance, doubles taxonomy, coverage-vs-confidence, flaky-test triage, and contract testing.
 
 ## What to test
 

@@ -41,25 +41,25 @@ Be honest. If the existing code is fine, say so and stop.
 
 See @./shared/external-repo-reading.md.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
+`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"` when the question directly concerns its domain — before forming your recommendation:
 
-- `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency direction
-- `swe-workbench:principle-data-modeling` — storage paradigm selection, normalization, schema evolution, query-first design
-- `swe-workbench:principle-ddd` — bounded contexts, aggregates, ubiquitous language
-- `swe-workbench:principle-api-design` — contracts, versioning, idempotency
-- `swe-workbench:principle-event-driven` — event sourcing, CQRS, sagas, schema evolution, idempotent consumers, DLQ
-- `swe-workbench:principle-solid` — responsibility, coupling, open-closed
-- `swe-workbench:principle-refactoring` — when assessing whether code can be safely restructured (rule of three, characterization-test coverage, behavior-preserving moves)
-- `swe-workbench:principle-performance` — latency vs throughput, profile-first, scalability trade-offs
-- `swe-workbench:principle-resiliency` — failure domains, fault isolation, degradation strategy, blast radius
-- `swe-workbench:principle-distributed-systems` — CAP/PACELC, consistency models, consensus and quorum, replication, exactly-once effects
-- `swe-workbench:principle-observability` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
-- `swe-workbench:principle-cost-awareness` — cost-per-request mental model, scale-to-zero vs cold-start, storage tier selection
-- `swe-workbench:principle-release-engineering` — semver-bump risk, expand-contract sequencing for breaking changes, rollback-vs-rollforward trade-offs, tag-identity invariants
-- `swe-workbench:principle-postmortem` — blameless RCA after incidents, trigger/condition/root-cause decomposition, action-item ownership, MTTD/MTTR trends (completes the prevent→detect→learn triad)
+- `rules/principle-clean-architecture.md` — boundaries, layering, dependency direction
+- `rules/principle-data-modeling.md` — storage paradigm selection, normalization, schema evolution, query-first design
+- `rules/principle-ddd.md` — bounded contexts, aggregates, ubiquitous language
+- `rules/principle-api-design.md` — contracts, versioning, idempotency
+- `rules/principle-event-driven.md` — event sourcing, CQRS, sagas, schema evolution, idempotent consumers, DLQ
+- `rules/principle-solid.md` — responsibility, coupling, open-closed
+- `rules/principle-refactoring.md` — when assessing whether code can be safely restructured (rule of three, characterization-test coverage, behavior-preserving moves)
+- `rules/principle-performance.md` — latency vs throughput, profile-first, scalability trade-offs
+- `rules/principle-resiliency.md` — failure domains, fault isolation, degradation strategy, blast radius
+- `rules/principle-distributed-systems.md` — CAP/PACELC, consistency models, consensus and quorum, replication, exactly-once effects
+- `rules/principle-observability.md` — SLI/SLO selection, what to instrument at boundaries, alerting on symptoms vs causes
+- `rules/principle-cost-awareness.md` — cost-per-request mental model, scale-to-zero vs cold-start, storage tier selection
+- `rules/principle-release-engineering.md` — semver-bump risk, expand-contract sequencing for breaking changes, rollback-vs-rollforward trade-offs, tag-identity invariants
+- `rules/principle-postmortem.md` — blameless RCA after incidents, trigger/condition/root-cause decomposition, action-item ownership, MTTD/MTTR trends (completes the prevent→detect→learn triad)

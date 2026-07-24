@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 COMMIT_AND_PR_SKILL = ROOT / "skills" / "workflow-commit-and-pr" / "SKILL.md"
-VERSION_CONTROL_SKILL = ROOT / "skills" / "principle-version-control" / "SKILL.md"
+VERSION_CONTROL_SKILL = ROOT / "rules" / "principle-version-control.md"
 CLEANUP_MERGED_SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 SYNC_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sync-and-verify.sh"
 PR_REVIEW_SKILL = ROOT / "skills" / "workflow-pr-review" / "SKILL.md"
@@ -159,7 +159,7 @@ def test_principle_version_control_attributes_type_format_to_swe_workbench():
     ]
 
     assert enforcement_lines, (
-        "Expected at least one line in skills/principle-version-control/SKILL.md "
+        "Expected at least one line in rules/principle-version-control.md "
         "mentioning '[type] Subject' enforcement — none found."
     )
 

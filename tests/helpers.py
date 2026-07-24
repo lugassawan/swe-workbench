@@ -8,6 +8,7 @@ def make_plugin_tree(
     root: Path,
     *,
     skills: dict | None = None,
+    rules: dict | None = None,
     agents: list[dict] | None = None,
     commands: list[dict] | None = None,
     plugin_json: dict | None = None,
@@ -18,6 +19,11 @@ def make_plugin_tree(
     """Write a minimal valid plugin layout into *root*.
 
     Each keyword argument overrides one piece; omitted pieces get sane defaults.
+    `rules` writes plain rules/<name>.md files — the principle-*/language-* rule
+    model (no SKILL.md, no swe-workbench: identifier). `skills` still writes real
+    skills/<name>/SKILL.md files — used for workflow-*/*-context fixtures and any
+    other genuine skill. The auto-generated principles.md/languages.md catalog
+    slices are sourced from `rules`; workflows.md is sourced from `skills`.
     Returns root for convenience.
     """
     # plugin.json
@@ -60,6 +66,14 @@ def make_plugin_tree(
             sd.mkdir(exist_ok=True)
             (sd / "SKILL.md").write_text(body, encoding="utf-8")
 
+    # rules/ — plain <name>.md files, no SKILL.md, no swe-workbench: identifier.
+    # Always created (even empty) since check_catalog_completeness requires it to exist.
+    rules_dir = root / "rules"
+    rules_dir.mkdir(exist_ok=True)
+    if rules is not None:
+        for rule_name, body in rules.items():
+            (rules_dir / f"{rule_name}.md").write_text(body, encoding="utf-8")
+
     # agents/
     agents_dir = root / "agents"
     agents_dir.mkdir(exist_ok=True)
@@ -74,26 +88,36 @@ def make_plugin_tree(
         # Legacy convenience: caller-supplied catalog text goes to principles.md;
         # other slices get empty stubs so the validator sees valid (if empty) files.
         import re as _re
-        _known = _re.findall(r"`swe-workbench:([\w-]+)`", catalog)
+        _known = set(_re.findall(r"`swe-workbench:([\w-]+)`", catalog))
+        _known |= set(_re.findall(r"`([\w-]+)`\s+—[^\n]*→\s+`rules/[\w-]+\.md`", catalog))
         _bad = [s for s in _known if any(s.startswith(p) for p in ("principle-", "language-", "workflow-")) or s == "ticket-context"]
         assert not _bad, (
-            f"catalog= must not contain prefixed skills {_bad}; pass them via skills= so "
-            "make_plugin_tree places them in the correct slice file automatically."
+            f"catalog= must not contain prefixed ids {_bad}; pass principle-*/language-* via "
+            "rules= and workflow-*/*-context via skills= so make_plugin_tree places them in "
+            "the correct slice file automatically."
         )
         (shared_dir / "principles.md").write_text(catalog, encoding="utf-8")
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (shared_dir / "workflows.md").write_text("\n", encoding="utf-8")
     else:
-        on_disk = sorted(p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file())
-        principles = [s for s in on_disk if s.startswith("principle-")]
-        languages = [s for s in on_disk if s.startswith("language-")]
-        workflows = [s for s in on_disk if s.startswith("workflow-") or s == "ticket-context"]
-        # Skills with unrecognised prefixes land in principles (safe default)
-        others = [s for s in on_disk if s not in principles and s not in languages and s not in workflows]
-        principles = principles + others
-        (shared_dir / "principles.md").write_text((_lines(principles) + "\n") if principles else "\n", encoding="utf-8")
-        (shared_dir / "languages.md").write_text((_lines(languages) + "\n") if languages else "\n", encoding="utf-8")
+        # workflows.md is skill-backed (real skills: workflow-* plus the *-context family).
+        skills_on_disk = sorted(p.name for p in skills_dir.iterdir() if (p / "SKILL.md").is_file())
+        workflows = [s for s in skills_on_disk if s.startswith("workflow-") or s == "ticket-context"]
         (shared_dir / "workflows.md").write_text((_lines(workflows) + "\n") if workflows else "\n", encoding="utf-8")
+
+        # principles.md/languages.md are rule-backed (rules/<id>.md, not skills).
+        rules_on_disk = sorted(p.stem for p in rules_dir.glob("*.md"))
+        principles = [r for r in rules_on_disk if r.startswith("principle-")]
+        languages = [r for r in rules_on_disk if r.startswith("language-")]
+        # Rules with unrecognised prefixes land in principles (safe default, mirrors validate.py)
+        others = [r for r in rules_on_disk if r not in principles and r not in languages]
+        principles = principles + others
+
+        def _rule_lines(ids):
+            return "\n".join(f"- `{rid}` — {rid} rule → `rules/{rid}.md`" for rid in ids)
+
+        (shared_dir / "principles.md").write_text((_rule_lines(principles) + "\n") if principles else "\n", encoding="utf-8")
+        (shared_dir / "languages.md").write_text((_rule_lines(languages) + "\n") if languages else "\n", encoding="utf-8")
 
     if agents is not None:
         for agent in agents:

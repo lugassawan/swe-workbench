@@ -26,7 +26,7 @@ Isolate this work in a worktree when the scope warrants it (non-trivial changes,
 - If no written plan exists, draft one via `superpowers:writing-plans`. **Whenever you author or finalize a plan that modifies the codebase — whether saved to a plan file or passed to `ExitPlanMode`** — first activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section per `skills/workflow-development/templates/plan-workflow-section.md` **before the plan is finalized (i.e. before `ExitPlanMode`)**. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/swe-workbench:implement` always modifies the codebase, Mode A always applies here.
   - **Defect guard:** if the plan being finalized lacks a `## Workflow` section, add it before emitting the plan rather than passing an incomplete plan to `ExitPlanMode`.
 - Execute via `superpowers:executing-plans` for sequential work, `superpowers:subagent-driven-development` for parallelizable units, or `swe-workbench:workflow-delegated-implementation` when scope/complexity warrants grouping changes into focused `code-impl` sub-agent dispatches to keep the orchestrator context lean.
-- Apply `swe-workbench:principle-tdd` per implementation unit: red → green → refactor.
+- `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md"` and apply it per implementation unit: red → green → refactor.
 - **Mid-implementation forks:** If an architectural decision emerges that was not anticipated in the plan, pause and consult `senior-engineer` rather than guessing. Update the plan before continuing.
 
 **Phase 3 — Verify**

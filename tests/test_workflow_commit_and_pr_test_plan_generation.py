@@ -6,7 +6,7 @@ Asserts that skills/workflow-commit-and-pr/SKILL.md documents:
   3. The precedence ladder (breaking → feat → fix → perf).
   4. The append-under-subheading seeding invariant (mutates body BEFORE gh pr create).
   5. The heredoc-fallback path (replace <verification steps> placeholder).
-  6. A cross-reference to swe-workbench:principle-testing.
+  6. A cross-reference to rules/principle-testing.md.
 
 Pattern mirrors tests/test_workflow_commit_and_pr_secret_scan.py.
 """
@@ -182,7 +182,7 @@ def test_heredoc_fallback_path_documented():
 
 
 def test_principle_testing_cross_reference():
-    """The section must cross-reference swe-workbench:principle-testing."""
+    """The section must cross-reference rules/principle-testing.md."""
     body = SKILL_PATH.read_text()
 
     assert SECTION_HEADING in body, (
@@ -191,7 +191,7 @@ def test_principle_testing_cross_reference():
 
     section = _section_body(body, SECTION_HEADING)
 
-    assert "swe-workbench:principle-testing" in section, (
-        "Test-plan generation section must link to 'swe-workbench:principle-testing' "
+    assert "rules/principle-testing.md" in section, (
+        "Test-plan generation section must link to 'rules/principle-testing.md' "
         "for deeper test-design guidance"
     )

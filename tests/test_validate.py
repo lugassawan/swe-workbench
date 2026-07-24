@@ -365,8 +365,8 @@ class TestPerformanceTunerAgent:
 
     def test_principle_performance_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-performance`" in text, (
-            "agent must reference swe-workbench:principle-performance"
+        assert "`rules/principle-performance.md`" in text, (
+            "agent must reference rules/principle-performance.md"
         )
 
     def test_shared_skills_include(self):
@@ -452,34 +452,28 @@ class TestPerformanceTunerAgent:
 # ──────────────────────────────────────────────
 
 class TestPrincipleCodeReviewSkill:
-    """Integration tests: assert the real skills/principle-code-review/SKILL.md satisfies
+    """Integration tests: assert the real rules/principle-code-review.md satisfies
     all acceptance criteria from issue #180 without relying on a synthetic fixture."""
 
-    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-code-review" / "SKILL.md"
+    RULE_PATH = Path(__file__).parent.parent / "rules" / "principle-code-review.md"
 
     def test_file_exists(self):
-        assert self.SKILL_PATH.exists(), "skills/principle-code-review/SKILL.md must exist"
-
-    def test_frontmatter_name(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
-        assert "name: principle-code-review" in text
+        assert self.RULE_PATH.exists(), "rules/principle-code-review.md must exist"
 
     def test_five_axis_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Five-Axis Review Lens" in text
 
     def test_confidence_filtering_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Confidence-Based Filtering" in text
 
-    def test_skill_passes_validate(self, reset_validate, monkeypatch):
-        """The real skill must pass check_skills() and check_unwired_principle_skills()
-        against the live tree."""
+    def test_rule_passes_validate(self, reset_validate, monkeypatch):
+        """The real rule must pass check_unwired_principle_rules() against the live tree."""
         import validate as val
-        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        monkeypatch.setattr(val, "ROOT", self.RULE_PATH.parent.parent)
         val.FAILURES.clear()
-        val.check_skills()
-        val.check_unwired_principle_skills()
+        val.check_unwired_principle_rules()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
 
@@ -488,55 +482,40 @@ class TestPrincipleCodeReviewSkill:
 # ──────────────────────────────────────────────
 
 class TestPrincipleReleaseEngineeringSkill:
-    """Integration tests: assert the real skills/principle-release-engineering/SKILL.md satisfies
+    """Integration tests: assert the real rules/principle-release-engineering.md satisfies
     all acceptance criteria from issue #175 without relying on a synthetic fixture."""
 
-    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-release-engineering" / "SKILL.md"
-    TRIGGERS_PATH = Path(__file__).parent.parent / "skills" / "principle-release-engineering" / "triggers.txt"
+    RULE_PATH = Path(__file__).parent.parent / "rules" / "principle-release-engineering.md"
 
     def test_file_exists(self):
-        assert self.SKILL_PATH.exists(), "skills/principle-release-engineering/SKILL.md must exist"
-
-    def test_frontmatter_name(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
-        assert "name: principle-release-engineering" in text
+        assert self.RULE_PATH.exists(), "rules/principle-release-engineering.md must exist"
 
     def test_semver_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Semver" in text
 
     def test_expand_contract_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Expand-contract" in text or "## Expand-Contract" in text
 
     def test_idempotent_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Idempotent" in text
 
     def test_post_release_verification_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Post-release verification" in text or "## Post-Release Verification" in text
 
     def test_rollback_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Rollback" in text
 
-    def test_triggers_has_two_or_more_non_empty_lines(self):
-        assert self.TRIGGERS_PATH.exists(), "triggers.txt must exist"
-        lines = [
-            ln for ln in self.TRIGGERS_PATH.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        ]
-        assert len(lines) >= 2, f"triggers.txt must have ≥2 non-empty lines, got {len(lines)}"
-
-    def test_skill_passes_validate(self, reset_validate, monkeypatch):
-        """The real skill must pass check_skills() and check_unwired_principle_skills()
-        against the live tree."""
+    def test_rule_passes_validate(self, reset_validate, monkeypatch):
+        """The real rule must pass check_unwired_principle_rules() against the live tree."""
         import validate as val
-        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        monkeypatch.setattr(val, "ROOT", self.RULE_PATH.parent.parent)
         val.FAILURES.clear()
-        val.check_skills()
-        val.check_unwired_principle_skills()
+        val.check_unwired_principle_rules()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
 
@@ -545,58 +524,43 @@ class TestPrincipleReleaseEngineeringSkill:
 # ──────────────────────────────────────────────
 
 class TestPrinciplePostmortemSkill:
-    """Integration tests: assert the real skills/principle-postmortem/SKILL.md satisfies
+    """Integration tests: assert the real rules/principle-postmortem.md satisfies
     all acceptance criteria from issue #178 without relying on a synthetic fixture."""
 
-    SKILL_PATH = Path(__file__).parent.parent / "skills" / "principle-postmortem" / "SKILL.md"
-    TRIGGERS_PATH = Path(__file__).parent.parent / "skills" / "principle-postmortem" / "triggers.txt"
+    RULE_PATH = Path(__file__).parent.parent / "rules" / "principle-postmortem.md"
 
     def test_file_exists(self):
-        assert self.SKILL_PATH.exists(), "skills/principle-postmortem/SKILL.md must exist"
-
-    def test_frontmatter_name(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
-        assert "name: principle-postmortem" in text
+        assert self.RULE_PATH.exists(), "rules/principle-postmortem.md must exist"
 
     def test_blameless_culture_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Blameless Culture" in text
 
     def test_root_cause_analysis_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Root Cause Analysis" in text
 
     def test_postmortem_document_structure_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Postmortem Document Structure" in text
 
     def test_action_item_discipline_section_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "## Action-Item Discipline" in text
 
     def test_two_rca_frameworks_present(self):
-        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        text = self.RULE_PATH.read_text(encoding="utf-8")
         assert "5 Whys" in text, "RCA section must cover the 5 Whys framework"
         assert "Fishbone" in text or "Ishikawa" in text, (
             "RCA section must cover the Fishbone/Ishikawa framework"
         )
 
-    def test_triggers_has_two_or_more_non_empty_lines(self):
-        assert self.TRIGGERS_PATH.exists(), "triggers.txt must exist"
-        lines = [
-            ln for ln in self.TRIGGERS_PATH.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-        ]
-        assert len(lines) >= 2, f"triggers.txt must have ≥2 non-empty lines, got {len(lines)}"
-
-    def test_skill_passes_validate(self, reset_validate, monkeypatch):
-        """The real skill must pass check_skills() and check_unwired_principle_skills()
-        against the live tree."""
+    def test_rule_passes_validate(self, reset_validate, monkeypatch):
+        """The real rule must pass check_unwired_principle_rules() against the live tree."""
         import validate as val
-        monkeypatch.setattr(val, "ROOT", self.SKILL_PATH.parent.parent.parent)
+        monkeypatch.setattr(val, "ROOT", self.RULE_PATH.parent.parent)
         val.FAILURES.clear()
-        val.check_skills()
-        val.check_unwired_principle_skills()
+        val.check_unwired_principle_rules()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
 
 
@@ -780,14 +744,14 @@ class TestTestReviewerAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        assert "`rules/principle-testing.md`" in text, (
+            "agent must reference rules/principle-testing.md"
         )
 
     def test_principle_code_review_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-code-review`" in text, (
-            "agent must reference swe-workbench:principle-code-review"
+        assert "`rules/principle-code-review.md`" in text, (
+            "agent must reference rules/principle-code-review.md"
         )
 
     def test_shared_skills_include(self):
@@ -842,7 +806,7 @@ class TestCheckCatalogCompleteness:
 
     def test_full_match_passes(self, reset_validate):
         root = reset_validate
-        make_plugin_tree(root, skills={"foo": "---\nname: foo\ndescription: d\n---\n"})
+        make_plugin_tree(root, rules={"foo": "# Foo\n\nBody.\n"})
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(self._agent_body(), encoding="utf-8")
         validate.check_catalog_completeness()
@@ -850,10 +814,10 @@ class TestCheckCatalogCompleteness:
 
     def test_catalog_missing_entry_fails(self, reset_validate):
         root = reset_validate
-        # skill on disk but not in catalog
+        # rule on disk but not in catalog
         make_plugin_tree(
             root,
-            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+            rules={"foo": "# Foo\n\nBody.\n"},
             catalog="# no entries\n",
         )
         agents_dir = root / "agents"
@@ -863,11 +827,11 @@ class TestCheckCatalogCompleteness:
 
     def test_stale_catalog_entry_fails(self, reset_validate):
         root = reset_validate
-        # catalog references skill that doesn't exist on disk
+        # catalog references a rule that doesn't exist on disk
         make_plugin_tree(
             root,
-            skills={},
-            catalog="- `swe-workbench:ghost` — phantom skill\n",
+            rules={},
+            catalog="- `ghost` — phantom rule → `rules/ghost.md`\n",
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(self._agent_body(), encoding="utf-8")
@@ -876,7 +840,7 @@ class TestCheckCatalogCompleteness:
 
     def test_agent_missing_include_fails(self, reset_validate):
         root = reset_validate
-        make_plugin_tree(root, skills={"foo": "---\nname: foo\ndescription: d\n---\n"})
+        make_plugin_tree(root, rules={"foo": "# Foo\n\nBody.\n"})
         agents_dir = root / "agents"
         # Agent without any slice catalog reference
         (agents_dir / "bad-agent.md").write_text(
@@ -888,12 +852,25 @@ class TestCheckCatalogCompleteness:
 
     def test_catalog_file_absent_fails(self, reset_validate):
         root = reset_validate
-        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        make_plugin_tree(root, rules={"principle-foo": "# Principle Foo\n\nBody.\n"})
         # Remove the principles slice — validator must report it missing
         catalog_path = root / "agents" / "shared" / "principles.md"
         catalog_path.unlink()
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
+
+    def test_rule_pointer_mismatch_fails(self, reset_validate):
+        """An entry whose `name` and arrow-target `rules/<id>.md` disagree is flagged."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            rules={"foo": "# Foo\n\nBody.\n"},
+            catalog="- `foo` — foo rule → `rules/bar.md`\n",
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(self._agent_body(), encoding="utf-8")
+        validate.check_catalog_completeness()
+        assert any("mismatched target" in f for f in validate.FAILURES)
 
 
 # ──────────────────────────────────────────────
@@ -1037,7 +1014,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
     def test_non_code_agent_with_principles_only_passes(self, reset_validate):
         # Non-code agents (product-manager) are whitelisted — principles-only is valid.
         root = reset_validate
-        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        make_plugin_tree(root, rules={"principle-foo": "# Principle Foo\n\nBody.\n"})
         agents_dir = root / "agents"
         (agents_dir / "product-manager.md").write_text(
             "---\nname: product-manager\ndescription: d\ntools: Read\n---\n"
@@ -1050,7 +1027,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
     def test_code_touching_agent_with_principles_only_fails(self, reset_validate):
         # Code-touching agents must reference @./shared/languages.md alongside principles.md.
         root = reset_validate
-        make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
+        make_plugin_tree(root, rules={"principle-foo": "# Principle Foo\n\nBody.\n"})
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
@@ -1067,9 +1044,9 @@ class TestCheckWorkflowDevelopmentActivationContract:
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={
-                "principle-foo": "---\nname: principle-foo\ndescription: d\n---\n",
-                "language-bar": "---\nname: language-bar\ndescription: d\n---\n",
+            rules={
+                "principle-foo": "# Principle Foo\n\nBody.\n",
+                "language-bar": "# Language Bar\n\nBody.\n",
             },
         )
         agents_dir = root / "agents"
@@ -1140,17 +1117,17 @@ class TestCheckWorkflowDevelopmentActivationContract:
         ), f"fixture-context must not be routed to principles.md, got: {validate.FAILURES}"
 
     def test_stale_entry_in_wrong_slice_fails(self, reset_validate):
-        """A language-* skill listed in principles.md (wrong slice) must fail."""
+        """A language-* rule listed in principles.md (wrong slice) must fail."""
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={"language-python": "---\nname: language-python\ndescription: d\n---\n"},
+            rules={"language-python": "# Language Python\n\nBody.\n"},
         )
         agents_dir = root / "agents"
         shared_dir = agents_dir / "shared"
         # Manually override: put language-python in principles.md instead of languages.md
         (shared_dir / "principles.md").write_text(
-            "- `swe-workbench:language-python` — python skill\n", encoding="utf-8"
+            "- `language-python` — python rule → `rules/language-python.md`\n", encoding="utf-8"
         )
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (agents_dir / "my-agent.md").write_text(
@@ -1551,7 +1528,7 @@ class TestStripFencedCodeBlocks:
 # check_unwired_principle_skills
 # ──────────────────────────────────────────────
 
-class TestCheckUnwiredPrincipleSkills:
+class TestCheckUnwiredPrincipleRules:
     def _agent_body(self, extra=""):
         return (
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
@@ -1559,65 +1536,66 @@ class TestCheckUnwiredPrincipleSkills:
             + extra
         )
 
-    def test_wired_principle_skill_passes(self, reset_validate):
+    def test_wired_principle_rule_passes(self, reset_validate):
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+            rules={"principle-foo": "# Principle Foo\n\nBody.\n"},
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
-            self._agent_body("\n- `swe-workbench:principle-foo` — rationale\n"),
+            self._agent_body("\n- `rules/principle-foo.md` — rationale\n"),
             encoding="utf-8",
         )
-        validate.check_unwired_principle_skills()
+        validate.check_unwired_principle_rules()
         assert len(validate.FAILURES) == 0
 
-    def test_unwired_principle_skill_fails(self, reset_validate):
+    def test_unwired_principle_rule_fails(self, reset_validate):
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+            rules={"principle-foo": "# Principle Foo\n\nBody.\n"},
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             self._agent_body(),  # no reference to principle-foo
             encoding="utf-8",
         )
-        validate.check_unwired_principle_skills()
+        validate.check_unwired_principle_rules()
         assert any("principle-foo" in f and "not referenced" in f for f in validate.FAILURES)
 
-    def test_non_principle_skill_unwired_does_not_fail(self, reset_validate):
+    def test_non_principle_rule_unwired_does_not_fail(self, reset_validate):
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={"language-foo": "---\nname: language-foo\ndescription: d\n---\n"},
+            rules={"language-foo": "# Language Foo\n\nBody.\n"},
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             self._agent_body(),  # no reference to language-foo — check should ignore it
             encoding="utf-8",
         )
-        validate.check_unwired_principle_skills()
+        validate.check_unwired_principle_rules()
         assert len(validate.FAILURES) == 0
 
     def test_catalog_reference_alone_does_not_satisfy_wiring(self, reset_validate):
         root = reset_validate
         make_plugin_tree(
             root,
-            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+            rules={"principle-foo": "# Principle Foo\n\nBody.\n"},
             # No agents written — the auto-generated slices (principles.md, languages.md,
-            # workflows.md) will contain the skill id, but that must not count as a wiring reference.
+            # workflows.md) will contain the rule id, but that must not count as a wiring reference.
         )
-        validate.check_unwired_principle_skills()
+        validate.check_unwired_principle_rules()
         assert any("principle-foo" in f for f in validate.FAILURES)
 
-    def test_principle_dir_without_skill_md_is_ignored(self, reset_validate):
+    def test_principle_dir_without_md_is_ignored(self, reset_validate):
         root = reset_validate
         make_plugin_tree(root)
-        # principle-bare/ exists on disk but has no SKILL.md — must not register
-        (root / "skills" / "principle-bare").mkdir(parents=True, exist_ok=True)
-        validate.check_unwired_principle_skills()
+        # principle-bare/ exists under rules/ but is a directory, not a <name>.md file
+        # (mirrors the shape of rules/principle-ddd/examples/ etc.) — must not register.
+        (root / "rules" / "principle-bare").mkdir(parents=True, exist_ok=True)
+        validate.check_unwired_principle_rules()
         assert len(validate.FAILURES) == 0
 
 
@@ -2496,8 +2474,8 @@ class TestE2eTestWriterAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        assert "rules/principle-testing.md" in text, (
+            "agent must reference rules/principle-testing.md"
         )
 
     def test_shared_skills_include(self):
@@ -2572,8 +2550,8 @@ class TestE2eTestVerifierAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        assert "rules/principle-testing.md" in text, (
+            "agent must reference rules/principle-testing.md"
         )
 
     def test_shared_skills_include(self):

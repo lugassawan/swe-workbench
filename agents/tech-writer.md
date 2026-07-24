@@ -54,7 +54,7 @@ Match what exists. Do not impose defaults.
 - Match existing style; never impose defaults.
 - Cite commit hash or file:line for every factual claim in committed artifacts; conversation excerpt is acceptable in drafts only.
 - Never invent behavior. If the diff doesn't show it, don't document it.
-- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs. Stay within `principle-clean-code`'s per-language comment caps (Comment discipline).
+- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs. Stay within `rules/principle-clean-code.md`'s per-language comment caps (Comment discipline).
 - Preview before writing for net-new top-level files; write directly for edits to existing docs.
 - Out of scope: API reference from type signatures; `plugin.json` metadata.
 
@@ -68,12 +68,12 @@ For each invocation, emit:
 4. **Draft or diff** — the content to be written.
 5. **Citations** — source for each factual claim.
 
-## Principle consultation
+## Rule consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @./shared/principles.md and @./shared/languages.md for the rule catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language rule (required):** Identify the language(s) in scope and `cat` the matching `rules/language-*.md` body (e.g., `cat "$CLAUDE_PLUGIN_ROOT/rules/language-python.md"` for `.py` files). State which language rule(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, the same "no-obvious-WHAT" discipline this agent applies, and the per-language comment caps (Comment discipline).
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-clean-code.md"` when writing inline comments — it enforces naming clarity, DRY, the same "no-obvious-WHAT" discipline this agent applies, and the per-language comment caps (Comment discipline).
 
-Invoke `swe-workbench:principle-communication` via the Skill tool when the user requests terser or denser output — it governs the caveman output-discipline mode (lite/full/ultra) and the auto-clarity carve-out rules.
+`cat "$CLAUDE_PLUGIN_ROOT/rules/principle-communication.md"` when the user requests terser or denser output — it governs the caveman output-discipline mode (lite/full/ultra) and the auto-clarity carve-out rules.

@@ -68,6 +68,17 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "^swe-workbench:.*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_plugin_root_subagent.sh"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup",
@@ -75,6 +86,10 @@
           {
             "type": "command",
             "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_catalog.sh"
           }
         ]
       },
@@ -84,6 +99,10 @@
           {
             "type": "command",
             "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_catalog.sh"
           }
         ]
       },
@@ -93,6 +112,10 @@
           {
             "type": "command",
             "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_catalog.sh"
           }
         ]
       }

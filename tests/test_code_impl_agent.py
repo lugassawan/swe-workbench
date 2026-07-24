@@ -274,10 +274,10 @@ def test_output_contract_has_placement_field():
 
 
 def test_principle_clean_architecture_referenced():
-    """agents/code-impl.md must reference swe-workbench:principle-clean-architecture."""
+    """agents/code-impl.md must reference rules/principle-clean-architecture.md."""
     body = _read()
-    assert "swe-workbench:principle-clean-architecture" in body, (
-        "agents/code-impl.md must reference 'swe-workbench:principle-clean-architecture' "
+    assert "rules/principle-clean-architecture.md" in body, (
+        "agents/code-impl.md must reference 'rules/principle-clean-architecture.md' "
         "so implementers apply layer/boundary discipline when placing types"
     )
 

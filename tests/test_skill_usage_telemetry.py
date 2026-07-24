@@ -109,7 +109,7 @@ class TestRecordHook:
     def test_top_level_is_noop(self, plugin_root, cache_dir):
         """No agent_id in stdin → exit 0, no buffer written."""
         result = _run_record(
-            {"tool_input": {"skill": "swe-workbench:principle-code-review"}},
+            {"tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"}},
             plugin_root,
             cache_dir,
         )
@@ -122,7 +122,7 @@ class TestRecordHook:
             {
                 "agent_id": "abc-123",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -131,7 +131,7 @@ class TestRecordHook:
         buffers = _buffer_files(cache_dir)
         assert len(buffers) == 1
         assert buffers[0].name.endswith("-abc-123.txt")
-        assert "swe-workbench:principle-code-review" in buffers[0].read_text()
+        assert "swe-workbench:workflow-commit-and-pr" in buffers[0].read_text()
 
     def test_unknown_agent_type_is_noop(self, plugin_root, cache_dir):
         """agent_type with no matching agent file → no buffer written."""
@@ -139,7 +139,7 @@ class TestRecordHook:
             {
                 "agent_id": "abc-123",
                 "agent_type": "NotARealAgent",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -153,7 +153,7 @@ class TestRecordHook:
             {
                 "agent_id": "abc-123",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             optout_plugin_root,
             cache_dir,
@@ -168,7 +168,7 @@ class TestRecordHook:
                 {
                     "agent_id": "abc-123",
                     "agent_type": malicious,
-                    "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                    "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
                 },
                 plugin_root,
                 cache_dir,
@@ -183,7 +183,7 @@ class TestRecordHook:
                 {
                     "agent_id": malicious,
                     "agent_type": "reviewer",
-                    "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                    "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
                 },
                 plugin_root,
                 cache_dir,
@@ -222,7 +222,7 @@ class TestRecordHook:
             {
                 "agent_id": "new-123",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -245,7 +245,7 @@ class TestRecordHook:
             {
                 "agent_id": "new-456",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -269,7 +269,7 @@ class TestRecordHook:
             {
                 "agent_id": "new-789",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -294,7 +294,7 @@ class TestRecordHook:
             {
                 "agent_id": "new-999",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -312,7 +312,7 @@ class TestRecordHook:
                 {
                     "agent_id": f"append-{sweep_every}",
                     "agent_type": "reviewer",
-                    "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                    "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
                 },
                 plugin_root,
                 cache_dir,
@@ -321,7 +321,7 @@ class TestRecordHook:
             assert result.returncode == 0
             matches = [b for b in _buffer_files(cache_dir) if b.name.endswith(f"-append-{sweep_every}.txt")]
             assert len(matches) == 1, f"Expected buffer for SKILL_SWEEP_EVERY={sweep_every}"
-            assert "swe-workbench:principle-code-review" in matches[0].read_text()
+            assert "swe-workbench:workflow-commit-and-pr" in matches[0].read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +587,7 @@ class TestRecordFlushIntegration:
             {
                 "agent_id": "integ-001",
                 "agent_type": "reviewer",
-                "tool_input": {"skill": "swe-workbench:principle-code-review"},
+                "tool_input": {"skill": "swe-workbench:workflow-commit-and-pr"},
             },
             plugin_root,
             cache_dir,
@@ -604,16 +604,16 @@ class TestRecordFlushIntegration:
         out = json.loads(result.stdout)
         assert "systemMessage" in out
         assert "Skills used by reviewer" in out["systemMessage"]
-        assert "swe-workbench:principle-code-review" in out["systemMessage"]
+        assert "swe-workbench:workflow-commit-and-pr" in out["systemMessage"]
         # Buffer cleaned up
         assert _buffer_files(cache_dir) == []
 
     def test_record_multiple_skills_then_flush_dedupes(self, plugin_root, cache_dir):
         """Multiple record calls with a duplicate produce a single deduped line."""
         for skill in [
-            "swe-workbench:principle-tdd",
-            "swe-workbench:principle-clean-code",
-            "swe-workbench:principle-tdd",  # duplicate
+            "swe-workbench:workflow-branch-sync",
+            "swe-workbench:workflow-cleanup-merged",
+            "swe-workbench:workflow-branch-sync",  # duplicate
         ]:
             _run_record(
                 {
@@ -632,7 +632,7 @@ class TestRecordFlushIntegration:
         )
         assert result.returncode == 0
         msg = json.loads(result.stdout)["systemMessage"]
-        # Dedup: tdd appears exactly once
-        assert msg.count("principle-tdd") == 1
+        # Dedup: workflow-branch-sync appears exactly once
+        assert msg.count("workflow-branch-sync") == 1
         # First-seen order preserved
-        assert msg.index("principle-tdd") < msg.index("principle-clean-code")
+        assert msg.index("workflow-branch-sync") < msg.index("workflow-cleanup-merged")

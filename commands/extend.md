@@ -36,7 +36,7 @@ Then activate `swe-workbench:workflow-extend` with all four values.
 The list below is a visible contract of the phases `workflow-extend` runs — it does **not** replace the skill activation above. Execute phases 2–5 in order. **Phase 1 (Branch) is intentionally skipped** — the open PR branch is reused, so no new branch or worktree is created.
 
 **Phase 2 — Implement**
-Execute the plan via `superpowers:executing-plans` or `superpowers:subagent-driven-development`. Apply `swe-workbench:principle-tdd` per unit: red → green → refactor.
+Execute the plan via `superpowers:executing-plans` or `superpowers:subagent-driven-development`. `cat "$CLAUDE_PLUGIN_ROOT/rules/principle-tdd.md"` and apply it per unit: red → green → refactor.
 
 **Phase 3 — Verify**
 Run `superpowers:verification-before-completion` before claiming any phase done. Do not advance to Phase 4 until format / lint / test pass with evidence.

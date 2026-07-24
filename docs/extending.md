@@ -1,14 +1,19 @@
 # Extending
 
-## Adding a language skill
+## Adding a language rule
 
-To add a new language skill (say, Ruby or another language not already shipped):
+`principle-*`/`language-*` are plain `.md` files under `rules/` — not skills. No `SKILL.md`
+frontmatter, no `Skill`-tool invocation, no `triggers.txt`. See
+`docs/superpowers/specs/2026-07-24-principles-languages-as-rules-design.md` for the rationale.
 
-1. Copy `skills/language-go/` to `skills/language-<your-language>/`.
-2. Rewrite `SKILL.md` frontmatter: `name: language-<your-language>`, and a keyword-rich `description` listing the language's file types and ecosystem terms.
+To add a new language rule (say, Ruby or another language not already shipped):
+
+1. Copy `rules/language-go.md` to `rules/language-<your-language>.md`.
+2. Replace the `# Go` title with `# <Your Language>` — there's no frontmatter to rewrite.
 3. Replace the body with the idioms that matter: error handling, typing, packaging, async, testing.
-4. Keep it under 150 lines.
-5. Add an entry to `agents/shared/languages.md` (the language slice of the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
+4. Keep it reasonably scoped — no hard line cap is enforced for rules, but match the length of
+   sibling `rules/language-*.md` files rather than padding.
+5. Add an entry to `agents/shared/languages.md` (the language slice of the rule catalog): `` - `language-<your-language>` — <one-line summary> → `rules/language-<your-language>.md` `` — see CONTRIBUTING.md for the required format and how the validator enforces it.
 6. Commit; users who reinstall the plugin will pick it up.
 
 ## Adding a context adapter
@@ -92,22 +97,23 @@ command ──► skill ──► skill
 
 **No back-edges:** nothing that a command activates may synchronously activate that command (or its skills) in turn. Cycles in the activation graph break Claude Code's loading behavior and are forbidden at all layers.
 
-`scripts/validate.py` (`check_no_cycles`) machine-enforces the no-cycle rule by scanning action-cued `` `swe-workbench:<id>` `` activations. Slash-command handoffs (`/swe-workbench:cmd`) and prose cross-references (`` See `swe-workbench:X` ``) are intentionally excluded from the graph — they are pointers, not activations.
+`scripts/validate.py` (`check_no_cycles`) machine-enforces the no-cycle rule by scanning action-cued `` `swe-workbench:<id>` `` activations. Slash-command handoffs (`/swe-workbench:cmd`) and prose cross-references (`` See `swe-workbench:X` ``) are intentionally excluded from the graph — they are pointers, not activations. `rules/*.md` loads (`cat "$CLAUDE_PLUGIN_ROOT/rules/<name>.md"`) are excluded too, for the same reason `@`-includes are: they're file composition, not an activation that could form a cycle.
 
-## Adding worked examples to a skill
+## Adding worked examples to a rule
 
-For skills that describe patterns (e.g. `principle-*`), add language-specific implementations as companion files in an `examples/` subdirectory inside the skill's directory:
+For rules that describe patterns (e.g. `principle-*`), add language-specific implementations as companion files in an `examples/` subdirectory alongside the rule file:
 
 ```
-skills/principle-clean-architecture/
-├── SKILL.md
-└── examples/
-    ├── mvc.go.md
-    ├── mvc.java.md
-    └── mvc.ts.md
+rules/
+├── principle-clean-architecture.md
+└── principle-clean-architecture/
+    └── examples/
+        ├── mvc.go.md
+        ├── mvc.java.md
+        └── mvc.ts.md
 ```
 
-**Loading model:** examples are never auto-loaded. `SKILL.md` holds an explicit pointer (e.g. `> See examples/ for worked implementations.`). The agent or user reads them on demand — this preserves the SKILL.md context budget.
+**Loading model:** examples are never auto-loaded. The rule file holds an explicit pointer (e.g. `> See rules/principle-clean-architecture/examples/ for worked implementations.`). The agent or user reads them on demand via `cat` — this preserves the rule file's own context budget.
 
 **File cap:** each `examples/*.md` file must be ≤120 lines. `scripts/validate.py` (`check_examples()`) enforces this. Examples that grow beyond 120 lines should be split by sub-topic or trimmed.
 

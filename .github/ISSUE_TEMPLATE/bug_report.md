@@ -9,8 +9,8 @@ assignees: ''
 ## Surface affected
 
 <!-- Check all that apply. -->
-- [ ] Skill — `principle-*`
-- [ ] Skill — `language-*`
+- [ ] Rule — `principle-*`
+- [ ] Rule — `language-*`
 - [ ] Skill — integration (`ticket-context`)
 - [ ] Skill — `workflow-*`
 - [ ] Subagent
