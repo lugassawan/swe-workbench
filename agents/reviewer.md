@@ -3,6 +3,8 @@ name: reviewer
 description: Senior code reviewer — audits diffs for correctness, security, design, missing tests, and comment quality. Invoke when reviewing a PR, a diff, or a completed feature.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-code-review
 ---
 
 **Reachable via:** `/swe-workbench:review` (general mode); also `swe-workbench:workflow-pr-review`, `swe-workbench:workflow-pr-review-followup`, `swe-workbench:workflow-development` Phase 4

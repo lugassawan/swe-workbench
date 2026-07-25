@@ -50,6 +50,17 @@ def test_frontmatter_name_is_reviewer():
     assert fm.get("name") == "reviewer", "frontmatter 'name' must be 'reviewer'"
 
 
+def test_frontmatter_preloads_principle_code_review():
+    """Issue #558: reviewer preloads its always-fire principle skill via
+    frontmatter rather than a first-action Skill() tool call."""
+    body = _read()
+    fm = validate.parse_frontmatter(AGENT, text=body)
+    assert fm is not None, "reviewer.md must have valid YAML frontmatter"
+    assert fm.get("skills") == ["swe-workbench:principle-code-review"], (
+        "reviewer.md frontmatter 'skills:' must preload 'swe-workbench:principle-code-review'"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Paired-guard symmetry heuristic
 # ---------------------------------------------------------------------------

@@ -45,6 +45,54 @@ class TestParseFrontmatter:
         fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
         assert fm == {"name": "x"}
 
+    def test_empty_value_no_items_stays_empty_string(self, tmp_path):
+        text = "---\nname: x\ntools:\ndescription: A skill\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["tools"] == ""
+
+    def test_block_sequence_becomes_list(self, tmp_path):
+        text = "---\nname: x\nskills:\n  - swe-workbench:principle-code-review\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review"]
+
+    def test_scalar_then_orphan_dash_line_does_not_attach(self, tmp_path):
+        text = "---\nname: x\ndescription: A skill\n- orphan\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["name"] == "x"
+        assert fm["description"] == "A skill"
+        assert "- orphan" not in fm.values()
+
+    def test_multiple_block_sequences_in_one_block(self, tmp_path):
+        text = (
+            "---\n"
+            "name: x\n"
+            "skills:\n"
+            "  - swe-workbench:principle-code-review\n"
+            "  - swe-workbench:principle-tdd\n"
+            "tools:\n"
+            "  - Read\n"
+            "  - Write\n"
+            "---\nBody"
+        )
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review", "swe-workbench:principle-tdd"]
+        assert fm["tools"] == ["Read", "Write"]
+
+    def test_block_sequence_survives_blank_line_before_items(self, tmp_path):
+        text = "---\nname: x\nskills:\n\n  - swe-workbench:principle-code-review\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review"]
+
+    def test_live_tree_agent_tools_still_str(self):
+        agents_dir = validate.ROOT / "agents"
+        for agent_md in sorted(agents_dir.glob("*.md")):
+            fm = validate.parse_frontmatter(agent_md)
+            assert fm is not None
+            if "tools" in fm:
+                assert isinstance(fm["tools"], str), (
+                    f"{agent_md}: tools frontmatter unexpectedly parsed as {type(fm['tools'])}"
+                )
+
 
 # ──────────────────────────────────────────────
 # check_plugin_json
@@ -681,6 +729,109 @@ class TestCheckAgentSkillRefs:
         )
         validate.check_agent_skill_refs()
         assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
+# check_preloaded_skills
+# ──────────────────────────────────────────────
+
+class TestCheckPreloadedSkills:
+    def _skill(self, skill_id, canary=True):
+        canary_line = f"<!-- preload-canary: SWB-PRELOAD-{skill_id.upper()} -->\n" if canary else ""
+        return f"---\nname: {skill_id}\ndescription: d\n---\n{canary_line}\nBody.\n"
+
+    def _agent(self, root, name, skills_block, body_extra):
+        (root / "agents" / f"{name}.md").write_text(
+            f"---\nname: {name}\ndescription: d\ntools: Read, Skill\n{skills_block}---\n"
+            f"\n{body_extra}\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+
+    def test_well_formed_preload_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_agent_without_skills_key_is_skipped(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(root, "my-agent", "", "No preload here.")
+        validate.check_preloaded_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_bare_unnamespaced_entry_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("not namespaced" in f for f in validate.FAILURES)
+
+    def test_unresolvable_skill_id_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-missing\n",
+            "- `swe-workbench:principle-missing` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any(
+            "does not resolve to skills/principle-missing/SKILL.md" in f
+            for f in validate.FAILURES
+        )
+
+    def test_missing_body_backtick_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "No body reference here.",
+        )
+        validate.check_preloaded_skills()
+        assert any("no backticked" in f for f in validate.FAILURES)
+
+    def test_missing_canary_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": self._skill("principle-foo", canary=False)},
+        )
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("preload-canary" in f for f in validate.FAILURES)
+
+    def test_scalar_skills_value_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills: swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("block sequence" in f for f in validate.FAILURES)
+
+    def test_empty_skills_value_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(root, "my-agent", "skills:\n", "No preload here.")
+        validate.check_preloaded_skills()
+        assert any("block sequence" in f for f in validate.FAILURES)
 
 
 # ──────────────────────────────────────────────

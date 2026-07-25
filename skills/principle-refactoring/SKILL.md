@@ -2,6 +2,7 @@
 name: principle-refactoring
 description: Refactoring discipline — Fowler's catalog of behavior-preserving moves (Extract Function, Inline Variable, Move Function, Replace Conditional with Polymorphism, Introduce Parameter Object, Extract Class), the smell→move mapping (Long Method, Large Class, Feature Envy, Data Clumps, Primitive Obsession, Shotgun Surgery, Divergent Change, Speculative Generality), the rule of three, characterization-tests-before-touching-legacy, and small-steps-with-green-between discipline. Distinct from principle-clean-code (naming/length aesthetics) and principle-design-patterns (GoF catalog selection). Auto-load when discussing refactoring strategy, code smells, when to extract, characterization tests for legacy code, or behavior-preserving structural change.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-REFACTORING -->
 
 # Refactoring Discipline
 

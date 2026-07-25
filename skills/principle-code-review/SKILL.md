@@ -2,6 +2,7 @@
 name: principle-code-review
 description: Code review heuristics — five-axis review lens (correctness, security, design integrity, test coverage, comment quality); confidence-based filtering (no finding without a concrete failure scenario); review comment tone (observation over accusation); nitpick filtering; what counts as a real finding vs linter noise. Auto-load when writing or framing a review comment, deciding whether a PR finding is worth surfacing, reviewing a diff for correctness, or filtering review nitpicks.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-CODE-REVIEW -->
 
 # Code Review
 
