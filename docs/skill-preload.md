@@ -10,7 +10,7 @@ Some agents open with a step that always fires — "load heuristics before readi
 | `test-writer` | `principle-tdd` | `skills:\n  - swe-workbench:principle-tdd` |
 | `refactorer` | `principle-refactoring` | `skills:\n  - swe-workbench:principle-refactoring` |
 
-Each of these agents invokes its listed skill unconditionally, on every dispatch, as its first action — the property that makes preloading safe. See `agents/reviewer.md`, `agents/test-writer.md`, and `agents/refactorer.md`.
+Each of these agents invokes its listed skill unconditionally on every dispatch — now preloaded via frontmatter; the body bullet is a fallback, not the primary load path. See `agents/reviewer.md`, `agents/test-writer.md`, and `agents/refactorer.md`.
 
 ## Why the body bullet stays
 
