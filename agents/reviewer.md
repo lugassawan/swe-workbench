@@ -89,9 +89,8 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the review surfaces a concern in their domain:
+Invoke these skills via the Skill tool when the review surfaces a concern in their domain (`principle-code-review` is preloaded unconditionally — see Process step 0 — and is not repeated here):
 
-- `swe-workbench:principle-code-review` — review heuristics: five-axis lens, confidence-based filtering, tone, nitpick filtering
 - `swe-workbench:principle-clean-code` — naming, duplication, readability, per-language comment caps and unnecessary-comment definitions (Comment discipline)
 - `swe-workbench:principle-error-handling` — failure modes, error wrapping
 - `swe-workbench:principle-solid` — responsibility violations, coupling

@@ -36,9 +36,8 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the refactoring touches their domain:
+Invoke these skills via the Skill tool when the refactoring touches their domain (`principle-refactoring` is preloaded unconditionally — see Process step 1 — and is not repeated here):
 
-- `swe-workbench:principle-refactoring` — smell→move mapping, Fowler catalog, rule of three, characterization-tests-first, behavior-preserving discipline
 - `swe-workbench:principle-clean-code` — naming smells, DRY, function length
 - `swe-workbench:principle-solid` — responsibility splits, coupling
 - `swe-workbench:principle-design-patterns` — when a pattern fits the smell being removed
