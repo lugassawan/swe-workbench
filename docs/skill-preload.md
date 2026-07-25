@@ -10,8 +10,8 @@ Assessed per agent, not by a size rule:
 
 - **Single-skill agents** (e.g. `test-writer` originally) — the one always-fire skill.
 - **Small catalogs** (e.g. `auditor`'s 7) — the whole catalog, when the agent's own default behavior touches most or all of it on every dispatch.
-- **Large catalogs** (`reviewer`, `senior-engineer`: 14 skills each; `architect`: 12; `migrator`: 8) — assessed and moved in full, on the judgment that the round-trip savings across common cases outweigh the fixed preload cost for these specific agents.
-- **Partial catalogs** — an agent can preload most of its catalog while deliberately leaving a few entries conditional. `senior-engineer` preloads 11 of its 14 skills; `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem` stay as on-demand body-only bullets, judged to be rare enough for that agent not to justify preloading.
+- **Large catalogs** (`senior-engineer`: 14 skills; `architect`: 12; `migrator`: 8) — assessed and moved in full (or near-full), on the judgment that the round-trip savings across common cases outweigh the fixed preload cost for these specific agents.
+- **Partial catalogs** — an agent can preload most of its catalog while deliberately leaving a few entries conditional. `senior-engineer` preloads 11 of its 14 skills; `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem` stay as on-demand body-only bullets, judged to be rare enough for that agent not to justify preloading. `reviewer` preloads 13 of its 14 skills; `principle-i18n` stays conditional since not every review is i18n-related. Both agents keep a short framing sentence above their remaining conditional bullets so the agent's own prompt still instructs it to reach for them when relevant.
 
 `security-auditor` was excluded from the original #558 scope (its `principle-security` use was judged conditional-by-design) but was later folded in — that exclusion was reassessed, not overridden by a blanket rule.
 
@@ -54,5 +54,5 @@ The rule is mechanical: `SWB-PRELOAD-` followed by the skill id, uppercased.
 ## Deliberately not preloaded
 
 - **`language-*` skills, in general** — which language applies is unknown until the diff is read; there's nothing to preload before that. One deliberate exception: `accessibility-auditor` preloads `swe-workbench:language-typescript`, since that agent is scoped specifically to frontend/TSX review — unlike general-purpose agents, the applicable language isn't actually in doubt for it.
-- **Individual catalog entries an agent's own assessment left conditional** — e.g. `senior-engineer`'s `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem` (see above). Not a blanket exclusion — just the outcome of that agent's specific assessment.
+- **Individual catalog entries an agent's own assessment left conditional** — e.g. `senior-engineer`'s `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem`, and `reviewer`'s `principle-i18n` (see above). Not a blanket exclusion — just the outcome of that agent's specific assessment.
 - **A live-dispatch CI canary** — acceptance criterion #2 from issue #558 called for a CI-enforced dispatch check. No agent-dispatch harness exists in this repo, and building one would cost more than the frontmatter changes it would guard. The manual runbook above is the intentionally-downgraded substitute.
