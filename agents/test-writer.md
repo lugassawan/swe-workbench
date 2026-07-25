@@ -5,6 +5,7 @@ model: haiku
 tools: Read, Edit, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-tdd
+  - swe-workbench:principle-testing
 ---
 
 **Reachable via:** `/swe-workbench:test`
@@ -27,10 +28,6 @@ Read at least one existing test file before writing — match the repo's style, 
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
-
-`swe-workbench:principle-tdd` is preloaded via frontmatter for the full red-green-refactor discipline and "What to test" checklist. Invoke it explicitly via the Skill tool only if it isn't already present in context, before writing any test.
-
-Invoke `swe-workbench:principle-testing` for test pyramid balance, doubles taxonomy, coverage-vs-confidence, flaky-test triage, and contract testing.
 
 ## What to test
 

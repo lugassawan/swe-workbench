@@ -3,6 +3,10 @@ name: accessibility-auditor
 description: Accessibility audit specialist — depth-first WCAG 2.2 AA review of frontend diffs for ARIA misuse, keyboard traps, focus mismanagement, color contrast, and screen-reader anti-patterns. Invoke when you want a focused a11y report, not a holistic code review.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-accessibility
+  - swe-workbench:principle-clean-code
+  - swe-workbench:language-typescript
 ---
 
 **Reachable via:** `/swe-workbench:review --mode a11y`
@@ -96,12 +100,12 @@ Base format, sort order, and silence rule: @./shared/severity-output-contract.md
 
 Domain-specific severity criteria (extends the base ladder with a11y examples):
 
-| Tier | Criteria | Examples |
-|---|---|---|
-| **Critical** | Keyboard-unreachable primary action; content completely inaccessible to screen readers; focus trap with no escape | `<div onClick>` primary CTA with no `role`/`tabindex`; informative `<img>` missing `alt`; modal that traps focus and never releases |
-| **High** | Focus indicator absent on interactive element; modal without focus trap; color-only error signaling; missing form label | Focus outline suppressed globally via `outline: none`; dialog opened with no focus management; `border: red` as sole error indicator |
-| **Medium** | Heading-level skip; `placeholder` as visible label; `tabindex>0` ordering hack; missing `prefers-reduced-motion` on non-trivial animation | `<h1>` → `<h3>` skip; `placeholder="Name"` with no `<label>`; `tabindex="5"` on a nav link |
-| **Low** | Missing skip link on long page; redundant ARIA label; decorative `<img>` with no `alt` (should be `alt=""`); `autofocus` on non-critical element | Page-level nav with no skip link; `<button aria-label="Submit">Submit</button>`; `<img src="divider.png">` with no `alt` attribute |
+| Tier         | Criteria                                                                                                                                         | Examples                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Critical** | Keyboard-unreachable primary action; content completely inaccessible to screen readers; focus trap with no escape                                | `<div onClick>` primary CTA with no `role`/`tabindex`; informative `<img>` missing `alt`; modal that traps focus and never releases  |
+| **High**     | Focus indicator absent on interactive element; modal without focus trap; color-only error signaling; missing form label                          | Focus outline suppressed globally via `outline: none`; dialog opened with no focus management; `border: red` as sole error indicator |
+| **Medium**   | Heading-level skip; `placeholder` as visible label; `tabindex>0` ordering hack; missing `prefers-reduced-motion` on non-trivial animation        | `<h1>` → `<h3>` skip; `placeholder="Name"` with no `<label>`; `tabindex="5"` on a nav link                                           |
+| **Low**      | Missing skip link on long page; redundant ARIA label; decorative `<img>` with no `alt` (should be `alt=""`); `autofocus` on non-critical element | Page-level nav with no skip link; `<button aria-label="Submit">Submit</button>`; `<img src="divider.png">` with no `alt` attribute   |
 
 ## Output contract
 
@@ -168,9 +172,3 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-typescript` for `.tsx` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
-
-Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
-
-- `swe-workbench:principle-accessibility` — semantic HTML, ARIA, keyboard navigation, focus management, contrast, screen-reader patterns
-- `swe-workbench:principle-clean-code` — naming and clarity in `aria-label`, `alt` text, and accessible descriptions
-- `swe-workbench:language-typescript` — JSX/TSX a11y idioms (eslint-plugin-jsx-a11y rules, React event-handler accessibility)

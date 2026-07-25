@@ -2,6 +2,7 @@
 name: principle-concurrency
 description: Concurrency principles — race conditions, deadlock, livelock, starvation, structured concurrency, cancellation propagation, backpressure, lock-free primitives, atomics, memory models, choosing between mutex vs channel vs actor vs semaphore vs CAS. Auto-load when designing concurrent code, debugging a race condition, fixing a deadlock, propagating cancellation, choosing a synchronization primitive, designing worker pools, or reasoning about goroutine/thread/task lifetimes.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-CONCURRENCY -->
 
 # Concurrency
 

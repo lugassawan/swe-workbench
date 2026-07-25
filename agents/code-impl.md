@@ -3,6 +3,12 @@ name: code-impl
 description: Focused implementer sub-agent — receives a scoped brief (goal, file set, verify command) from the orchestrator, implements only the assigned file group, and returns a structured summary. Invoke when swe-workbench:workflow-delegated-implementation delegates a cohesive change group to reduce orchestrator context. Never invoked directly for full-feature delivery.
 model: sonnet
 tools: Read, Edit, Write, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-tdd
+  - swe-workbench:principle-testing
+  - swe-workbench:principle-clean-code
+  - swe-workbench:principle-clean-architecture
+  - swe-workbench:principle-ddd
 ---
 
 **Reachable via:** `swe-workbench:workflow-delegated-implementation` (and `workflow-development` Phase 2 when scope/complexity warrants delegation).
@@ -41,12 +47,12 @@ placement: <required when placement deviates from sibling convention or sibling 
 
 **Status semantics:**
 
-| Status | Meaning |
-|---|---|
-| `DONE` | All criteria met; verify passed; no concerns. |
-| `DONE_WITH_CONCERNS` | Criteria met and verify passed, but there is something the orchestrator should review (e.g., an adjacent smell, a skipped edge case). |
-| `NEEDS_CONTEXT` | Implementation is blocked by a missing fact — an out-of-scope dependency, an ambiguous requirement, or a file the brief did not list. State it in `blockers`. |
-| `BLOCKED` | Hard blocker — verify failed, conflicting constraint, or the brief is self-contradictory. State the precise error in `blockers`. |
+| Status               | Meaning                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DONE`               | All criteria met; verify passed; no concerns.                                                                                                                 |
+| `DONE_WITH_CONCERNS` | Criteria met and verify passed, but there is something the orchestrator should review (e.g., an adjacent smell, a skipped edge case).                         |
+| `NEEDS_CONTEXT`      | Implementation is blocked by a missing fact — an out-of-scope dependency, an ambiguous requirement, or a file the brief did not list. State it in `blockers`. |
+| `BLOCKED`            | Hard blocker — verify failed, conflicting constraint, or the brief is self-contradictory. State the precise error in `blockers`.                              |
 
 **No diff field.** Return a summary, not diffs or full log output. The orchestrator reads the summary; it does not re-read the changed files.
 
@@ -65,11 +71,3 @@ placement: <required when placement deviates from sibling convention or sibling 
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
-
-Invoke these skills via the Skill tool when relevant:
-
-- `swe-workbench:principle-tdd` — test-first discipline (red → green → refactor) per unit
-- `swe-workbench:principle-testing` — test pyramid, mocking discipline, coverage audit
-- `swe-workbench:principle-clean-code` — naming, DRY, function length, abstraction level, per-language comment caps and unnecessary-comment definitions (Comment discipline)
-- `swe-workbench:principle-clean-architecture` — boundaries and layering for the type-placement fallback when sibling structure is incoherent or violates norms
-- `swe-workbench:principle-ddd` — tell-don't-ask: place behaviour on the entity that owns the data; avoid anemic models

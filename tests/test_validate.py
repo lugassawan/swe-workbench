@@ -790,7 +790,10 @@ class TestCheckPreloadedSkills:
             for f in validate.FAILURES
         )
 
-    def test_missing_body_backtick_fails(self, reset_validate):
+    def test_missing_body_backtick_does_not_fail(self, reset_validate):
+        """Body-bullet retention is no longer required — check_unwired_principle_skills
+        (not check_preloaded_skills) is what enforces wiring, and it accepts
+        frontmatter-only wiring too."""
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
         self._agent(
@@ -799,7 +802,7 @@ class TestCheckPreloadedSkills:
             "No body reference here.",
         )
         validate.check_preloaded_skills()
-        assert any("no backticked" in f for f in validate.FAILURES)
+        assert len(validate.FAILURES) == 0
 
     def test_missing_canary_fails(self, reset_validate):
         root = reset_validate
@@ -931,15 +934,21 @@ class TestTestReviewerAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_principle_code_review_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-code-review`" in text, (
-            "agent must reference swe-workbench:principle-code-review"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-code-review`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-code-review" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-code-review (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -1719,6 +1728,25 @@ class TestCheckUnwiredPrincipleSkills:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             self._agent_body("\n- `swe-workbench:principle-foo` — rationale\n"),
+            encoding="utf-8",
+        )
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_frontmatter_only_wiring_passes(self, reset_validate):
+        """A skill listed only in an agent's 'skills:' frontmatter (no
+        backticked body mention) counts as wired on its own — retention of
+        a body bullet is no longer required once a skill is preloaded."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n"
+            "skills:\n  - swe-workbench:principle-foo\n---\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_unwired_principle_skills()
@@ -2647,9 +2675,12 @@ class TestE2eTestWriterAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -2723,9 +2754,12 @@ class TestE2eTestVerifierAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")

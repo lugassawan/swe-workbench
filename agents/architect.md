@@ -3,6 +3,19 @@ name: architect
 description: Architecture artifact author — produces ADRs, RFCs, and cross-service contracts for decisions that have no existing codebase to read. Invoke when the output must be a written decision record, not a recommendation about existing code: authoring an ADR, drafting a cross-team RFC, decomposing a service, or making a multi-system technology selection.
 model: sonnet
 tools: Read, Grep, Glob, WebFetch, Skill
+skills:
+  - swe-workbench:principle-clean-architecture
+  - swe-workbench:principle-api-design
+  - swe-workbench:principle-ddd
+  - swe-workbench:principle-event-driven
+  - swe-workbench:principle-data-modeling
+  - swe-workbench:principle-resiliency
+  - swe-workbench:principle-distributed-systems
+  - swe-workbench:principle-observability
+  - swe-workbench:principle-security
+  - swe-workbench:principle-performance
+  - swe-workbench:principle-concurrency
+  - swe-workbench:principle-cost-awareness
 ---
 
 **Reachable via:** `/swe-workbench:architect`
@@ -58,21 +71,6 @@ See @./shared/external-repo-reading.md.
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
-
-Invoke these skills via the Skill tool when the question directly concerns their domain — before forming your recommendation:
-
-- `swe-workbench:principle-clean-architecture` — boundaries, layering, dependency direction
-- `swe-workbench:principle-api-design` — contract-first design, versioning, idempotency, REST/RPC/event trade-offs
-- `swe-workbench:principle-ddd` — bounded contexts, ubiquitous language, aggregate ownership
-- `swe-workbench:principle-event-driven` — async coupling, event schema evolution, sagas, DLQ strategy
-- `swe-workbench:principle-data-modeling` — multi-system data ownership, schema strategy, storage paradigm selection
-- `swe-workbench:principle-resiliency` — failure domains, blast radius, bulkheads, degradation strategy
-- `swe-workbench:principle-distributed-systems` — CAP/PACELC, consistency models, consensus and quorum, replication, delivery semantics
-- `swe-workbench:principle-observability` — slis/slos, instrumentation at system boundaries, alerting on symptoms vs causes
-- `swe-workbench:principle-security` — trust boundaries between systems, threat modeling, auth/authz at the contract surface
-- `swe-workbench:principle-performance` — system-level latency budgets, scalability trade-offs, profile-first discipline
-- `swe-workbench:principle-concurrency` — ordering guarantees, idempotency across hops, cancellation propagation
-- `swe-workbench:principle-cost-awareness` — system-level cost trade-offs, egress topology, right-sizing, cross-AZ/region data movement
 
 ## Absolute rules
 

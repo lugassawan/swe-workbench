@@ -3,6 +3,8 @@ name: conflict-resolver
 description: Conflict-resolution advisor — reads both sides of a merge/rebase conflict, reasons per-hunk, and recommends keep-mine/keep-main/manual with rationale. Invoke per conflicting file from workflow-branch-sync; never applies a resolution itself.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-version-control
 ---
 
 **Reachable via:** `/swe-workbench:sync`
@@ -40,5 +42,3 @@ Never emit more than one sentinel line, and never omit it — a missing or malfo
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) of the conflicted file and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for a `.py` file). State which language skill(s) you loaded, or note "N/A" if the file has no language-specific idiom (e.g. plain text, lockfiles).
-
-Invoke `swe-workbench:principle-version-control` when the conflict itself is shaped by merge/rebase discipline — e.g. deciding whether a hunk represents a legitimate divergent change vs. one side simply being stale, or when the rationale hinges on commit history rather than code content.

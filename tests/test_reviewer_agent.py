@@ -51,12 +51,14 @@ def test_frontmatter_name_is_reviewer():
 
 
 def test_frontmatter_preloads_principle_code_review():
-    """Issue #558: reviewer preloads its always-fire principle skill via
-    frontmatter rather than a first-action Skill() tool call."""
+    """reviewer preloads principle-code-review via frontmatter rather than a
+    first-action Skill() tool call; its full principle-skill catalog is also
+    now preloaded, so this only asserts containment, not an exact list."""
     body = _read()
     fm = validate.parse_frontmatter(AGENT, text=body)
     assert fm is not None, "reviewer.md must have valid YAML frontmatter"
-    assert fm.get("skills") == ["swe-workbench:principle-code-review"], (
+    assert isinstance(fm.get("skills"), list), "reviewer.md frontmatter 'skills:' must be a list"
+    assert "swe-workbench:principle-code-review" in fm["skills"], (
         "reviewer.md frontmatter 'skills:' must preload 'swe-workbench:principle-code-review'"
     )
 

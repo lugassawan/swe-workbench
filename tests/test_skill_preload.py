@@ -1,9 +1,8 @@
-"""Structural tests — skills: frontmatter preload for unconditional principle
-skills (issue #558).
+"""Structural tests — skills: frontmatter preload for principle skills.
 
-Parametrized over the three (agent, skill) pairs that preload their
-always-fire principle skill via frontmatter rather than a first-action
-Skill() tool call.
+Parametrized over every (agent, skill) pair discovered live from each
+agent's `skills:` frontmatter — not a hand-maintained list, so it can't
+drift out of sync as agents gain or lose preloaded skills.
 """
 
 from pathlib import Path
@@ -16,11 +15,23 @@ ROOT = Path(__file__).parent.parent
 AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
 
-PRELOAD_PAIRS = [
-    ("reviewer", "principle-code-review"),
-    ("test-writer", "principle-tdd"),
-    ("refactorer", "principle-refactoring"),
-]
+
+def _discover_preload_pairs():
+    pairs = []
+    for agent_md in sorted(AGENTS_DIR.glob("*.md")):
+        fm = validate.parse_frontmatter(agent_md)
+        if fm is None:
+            continue
+        entries = fm.get("skills")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if entry.startswith("swe-workbench:"):
+                pairs.append((agent_md.stem, entry.split(":", 1)[1]))
+    return pairs
+
+
+PRELOAD_PAIRS = _discover_preload_pairs()
 
 
 def _agent_text(agent_name):
@@ -50,18 +61,6 @@ def test_frontmatter_skills_list_contains_namespaced_entry(agent_name, skill_id)
 
 
 @pytest.mark.parametrize("agent_name,skill_id", PRELOAD_PAIRS)
-def test_backticked_body_reference_survives(agent_name, skill_id):
-    """The body bullet must be retained even though the skill is preloaded —
-    it's what keeps check_unwired_principle_skills' backticked-needle scan
-    satisfied, and is load-bearing per issue #558's grill."""
-    text = _agent_text(agent_name)
-    assert f"`swe-workbench:{skill_id}`" in text, (
-        f"agents/{agent_name}.md must retain a backticked '`swe-workbench:{skill_id}`' "
-        "body reference alongside the frontmatter preload"
-    )
-
-
-@pytest.mark.parametrize("agent_name,skill_id", PRELOAD_PAIRS)
 def test_skill_carries_preload_canary(agent_name, skill_id):
     """Checks presence only — position (immediately after frontmatter) is a
     documented convention in docs/skill-preload.md, not something this
@@ -77,3 +76,13 @@ def test_check_preloaded_skills_passes_on_live_tree():
     validate.FAILURES.clear()
     validate.check_preloaded_skills()
     assert validate.FAILURES == []
+
+
+def test_preload_pairs_were_discovered():
+    """Guards against PRELOAD_PAIRS silently discovering zero pairs (e.g. a
+    parse_frontmatter regression) — an empty parametrize list would make
+    every test above vacuously not-run rather than fail."""
+    assert len(PRELOAD_PAIRS) >= 20, (
+        f"expected at least 20 (agent, skill) preload pairs across the live tree, "
+        f"found {len(PRELOAD_PAIRS)} — check_preloaded_skills discovery may be broken"
+    )

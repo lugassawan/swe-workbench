@@ -296,13 +296,15 @@ def check_agent_skill_refs(cache=None):
 
 
 def check_preloaded_skills(cache=None):
-    """Every agent's frontmatter 'skills:' entry must be a namespaced, wired,
-    canary-bearing preload (issue #558).
+    """Every agent's frontmatter 'skills:' entry must be a namespaced,
+    resolvable, canary-bearing preload (issue #558/#562).
 
     Bare (non-namespaced) skill names silently fail to preload at dispatch
     time — Claude Code only resolves the 'swe-workbench:<id>' form. Agents
     without a 'skills:' key are skipped entirely, so this is a no-op for
-    agents that don't opt into preloading.
+    agents that don't opt into preloading. A body-text mention of the
+    preloaded skill is no longer required — see check_unwired_principle_skills,
+    which recognizes frontmatter 'skills:' entries as wiring in their own right.
     """
     agents_dir = ROOT / "agents"
     skills_dir = ROOT / "skills"
@@ -345,12 +347,6 @@ def check_preloaded_skills(cache=None):
                     f"skills/{skill_id}/SKILL.md",
                 )
                 continue
-            if f"`{entry}`" not in text:
-                fail(
-                    rel,
-                    f"frontmatter preloads {entry!r} but the body has no backticked "
-                    f"'`{entry}`' reference — retain the body bullet even when preloading",
-                )
             if skills_cache is not None and skill_md in skills_cache:
                 skill_text = skills_cache[skill_md]
             else:
@@ -819,7 +815,10 @@ def check_examples():
 
 
 def check_unwired_principle_skills(cache=None):
-    """Every skills/principle-*/ must be referenced by at least one agent.
+    """Every skills/principle-*/ must be referenced by at least one agent —
+    either backticked in body text, or listed in an agent's 'skills:'
+    frontmatter (unconditional preload wiring counts as wiring in its own
+    right; a body mention is no longer required once a skill is preloaded).
 
     agents/shared/ (the catalog slice files) are explicitly excluded — they list
     every skill by design and must not count as a wiring reference.
@@ -840,18 +839,26 @@ def check_unwired_principle_skills(cache=None):
         and (agents_cache is None or agents_cache.get(f) is not None)
     ]
 
+    agent_data = []
+    for f in agent_files:
+        text = agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8")
+        fm = parse_frontmatter(f, text=text)
+        fm_skills = fm.get("skills") if fm is not None else None
+        agent_data.append((text, fm_skills if isinstance(fm_skills, list) else []))
+
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
+        entry = f"swe-workbench:{skill_id}"
         wired = any(
-            needle in (agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8"))
-            for f in agent_files
+            needle in text or entry in fm_skills
+            for text, fm_skills in agent_data
         )
         if not wired:
             fail(
                 Path("agents") / "<unwired>",
                 f"principle skill 'swe-workbench:{skill_id}' is not referenced by any "
                 f"agent in agents/*.md — wire it into a relevant agent's "
-                f"'## Principle consultation' list",
+                f"'## Principle consultation' list or 'skills:' frontmatter",
             )
 
 

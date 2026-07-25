@@ -2,6 +2,7 @@
 name: principle-product-design
 description: UX and product design principles — Nielsen's 10 usability heuristics, visual hierarchy, information architecture, interaction design patterns, design-system compliance, and responsive layout. Accessibility/WCAG conformance is delegated to `swe-workbench:principle-accessibility`. Auto-load when reviewing UX, evaluating usability, checking interaction patterns, assessing visual hierarchy or information architecture, auditing design-system compliance, or planning user-facing features.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-PRODUCT-DESIGN -->
 
 # Product Design Principles
 
