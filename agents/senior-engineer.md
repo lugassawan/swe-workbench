@@ -2,7 +2,7 @@
 name: senior-engineer
 description: Architectural advisor — thinks in boundaries, contracts, and change vectors. Invoke when choosing between approaches, scoping a new service, or evaluating an architecture.
 model: sonnet
-tools: Read, Grep, Glob, WebFetch, Skill
+tools: Read, Grep, Glob, WebFetch
 ---
 
 **Reachable via:** `/swe-workbench:design`; conditional consult in `/swe-workbench:implement`

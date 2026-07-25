@@ -2,7 +2,7 @@
 name: accessibility-auditor
 description: Accessibility audit specialist — depth-first WCAG 2.2 AA review of frontend diffs for ARIA misuse, keyboard traps, focus mismanagement, color contrast, and screen-reader anti-patterns. Invoke when you want a focused a11y report, not a holistic code review.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash
 ---
 
 **Reachable via:** `/swe-workbench:review --mode a11y`

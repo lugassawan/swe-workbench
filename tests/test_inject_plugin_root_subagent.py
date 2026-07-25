@@ -2,8 +2,8 @@
 hands a dispatched subagent the resolved $CLAUDE_PLUGIN_ROOT as a literal path.
 
 $CLAUDE_PLUGIN_ROOT does not reliably resolve as a live shell variable inside
-a subagent's own Bash tool calls (confirmed empirically — see the design doc
-under docs/superpowers/specs/). This hook fires at SubagentStart, in the
+a subagent's own Bash tool calls (confirmed empirically — see
+docs/principles-languages-as-rules-design.md). This hook fires at SubagentStart, in the
 orchestrator's own environment (where the var IS reliably set), and injects
 the resolved value via additionalContext with an explicit substitution
 instruction. Fail-open: never blocks dispatch, emits nothing if

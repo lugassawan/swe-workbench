@@ -2,7 +2,7 @@
 name: product-designer
 description: UX and product design reviewer — depth-first usability heuristics, visual hierarchy, information architecture, interaction design, and design-system compliance review of frontend diffs. Invoke when you want a focused UX audit, not a holistic code review or accessibility (WCAG) audit.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash
 ---
 
 **Reachable via:** `/swe-workbench:review --mode ux`

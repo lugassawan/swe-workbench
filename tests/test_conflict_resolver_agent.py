@@ -29,7 +29,7 @@ def test_tools_are_advisory_only_no_edit_or_write():
     body = _read()
     fm = validate.parse_frontmatter(AGENT, text=body)
     tools = fm.get("tools", "")
-    for required in ("Read", "Grep", "Glob", "Bash", "Skill"):
+    for required in ("Read", "Grep", "Glob", "Bash"):
         assert required in tools, f"tools: must include '{required}'"
     assert "Edit" not in tools, "conflict-resolver is advisory only — must not have Edit"
     assert "Write" not in tools, "conflict-resolver is advisory only — must not have Write"

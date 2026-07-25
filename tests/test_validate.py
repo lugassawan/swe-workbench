@@ -740,7 +740,6 @@ class TestTestReviewerAgent:
         assert "description:" in fm_text
         assert "model: sonnet" in fm_text
         assert re.search(r"tools:.*\bRead\b", fm_text)
-        assert re.search(r"tools:.*\bSkill\b", fm_text)
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -2544,7 +2543,6 @@ class TestE2eTestWriterAgent:
         assert "name: e2e-test-writer" in fm_text
         assert "description:" in fm_text
         assert "model: sonnet" in fm_text
-        assert re.search(r"tools:.*\bSkill\b", fm_text), "tools: must include Skill"
 
     def test_blocked_sentinel_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -2605,7 +2603,6 @@ class TestE2eTestVerifierAgent:
         assert "model: haiku" in fm_text
         assert re.search(r"tools:.*\bRead\b", fm_text)
         assert re.search(r"tools:.*\bBash\b", fm_text), "tools: must include Bash (runs specs)"
-        assert re.search(r"tools:.*\bSkill\b", fm_text)
 
     def test_no_browser_mcp_tools_in_frontmatter(self):
         """Verifier uses the CLI runner, not browser MCP — tools: must not list MCP browser tools."""

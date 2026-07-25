@@ -2,7 +2,7 @@
 name: redundancy-assessor
 description: Redundancy-assessment advisor — reads whole-file candidates the branch added against what the default branch grew independently over the same window, and recommends auto-apply/escalate/none per candidate with rationale. Invoke from workflow-branch-sync's `sync --check-redundancy` pass; never removes a file itself.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash
 ---
 
 **Reachable via:** `/swe-workbench:sync --check-redundancy`

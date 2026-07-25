@@ -2,7 +2,7 @@
 name: refactorer
 description: Refactoring specialist — applies Fowler's catalog in small, behavior-preserving steps. Invoke when cleaning up a messy function, module, or class before adding a feature.
 model: sonnet
-tools: Read, Edit, Grep, Glob, Bash, Skill
+tools: Read, Edit, Grep, Glob, Bash
 ---
 
 **Reachable via:** `/swe-workbench:refactor`
