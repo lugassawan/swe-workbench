@@ -2,7 +2,6 @@
 name: principle-i18n
 description: Internationalization (i18n) & localization (l10n) principles — locale-aware date, time, number, and currency formatting, time-zone correctness (persist UTC in DB, render local), CLDR plural rules, message catalogs (ICU MessageFormat, gettext), translatable string composition (no concatenation), bidirectional & right-to-left layout, character-encoding hygiene, sortable date formats (ISO 8601). Auto-load when adding a new locale, formatting dates/times/numbers/currency for display, persisting timestamps, building message catalogs, composing user-facing strings from variables, designing pluralized copy, working with right-to-left scripts, choosing between backend and frontend locale negotiation, or auditing existing UI strings for translation readiness.
 ---
-<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-I18N -->
 
 # Internationalization & Localization Principles
 

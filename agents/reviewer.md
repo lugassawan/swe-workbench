@@ -18,7 +18,6 @@ skills:
   - swe-workbench:principle-cost-awareness
   - swe-workbench:principle-version-control
   - swe-workbench:principle-ddd
-  - swe-workbench:principle-i18n
 ---
 
 **Reachable via:** `/swe-workbench:review` (general mode); also `swe-workbench:workflow-pr-review`, `swe-workbench:workflow-pr-review-followup`, `swe-workbench:workflow-development` Phase 4
