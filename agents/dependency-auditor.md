@@ -3,6 +3,9 @@ name: dependency-auditor
 description: Dependency audit specialist — manifest-graph axis covering outdated versions, deprecation, license compatibility, transitive bloat, and lockfile drift across Node, Rust, Go, and Python ecosystems. Invoke when you want a focused supply-chain hygiene report, not a code-level CVE review.
 model: haiku
 tools: Read, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-security
+  - swe-workbench:principle-resiliency
 ---
 
 **Reachable via:** `/swe-workbench:review --mode deps`
@@ -147,11 +150,11 @@ If asked to apply a fix, refuse and re-emit the recommended action as text in th
 
 ## Severity scheme
 
-| Tier | Criteria | Examples |
-|---|---|---|
-| **High** | Active CVE in transitive dep (defer to `security-auditor`); GPL/AGPL conflict in MIT-distributed project; lockfile drift breaking reproducible builds (`npm ci` fails) | GPL dep in Apache project; Cargo.lock diverged from Cargo.toml; yanked crate with RUSTSEC advisory |
-| **Medium** | Major version >18 months behind; deprecated package with documented successor; unused production dependency; duplicate major versions in lockfile | `lodash@3` in lockfile; `request` still in `package.json`; `depcheck` finds unused prod dep |
-| **Low** | Minor/patch behind without known exploit; `UNKNOWN` license on dev-only dep; pre-1.0 stale pin; single-function utility with stdlib equivalent | `chalk@4` vs `chalk@5`; dev dep with `UNKNOWN` license; `is-array` package in prod |
+| Tier       | Criteria                                                                                                                                                               | Examples                                                                                           |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **High**   | Active CVE in transitive dep (defer to `security-auditor`); GPL/AGPL conflict in MIT-distributed project; lockfile drift breaking reproducible builds (`npm ci` fails) | GPL dep in Apache project; Cargo.lock diverged from Cargo.toml; yanked crate with RUSTSEC advisory |
+| **Medium** | Major version >18 months behind; deprecated package with documented successor; unused production dependency; duplicate major versions in lockfile                      | `lodash@3` in lockfile; `request` still in `package.json`; `depcheck` finds unused prod dep        |
+| **Low**    | Minor/patch behind without known exploit; `UNKNOWN` license on dev-only dep; pre-1.0 stale pin; single-function utility with stdlib equivalent                         | `chalk@4` vs `chalk@5`; dev dep with `UNKNOWN` license; `is-array` package in prod                 |
 
 ## Reading external repos
 
@@ -163,10 +166,8 @@ See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
-Invoke these skills via the Skill tool when the audit surfaces a concern in their domain:
+The `language-*` skills stay on-demand: the applicable ecosystem isn't known until the manifest is read.
 
-- `swe-workbench:principle-security` — when a license or lockfile finding has security implications
-- `swe-workbench:principle-resiliency` — when lockfile drift or yanked packages threaten reproducible builds
 - `swe-workbench:language-typescript` — Node/npm ecosystem idioms and `package.json` patterns
 - `swe-workbench:language-rust` — Cargo ecosystem, `cargo deny`, crates.io yank semantics
 - `swe-workbench:language-go` — Go module system, `go mod tidy`, `go.sum` verification

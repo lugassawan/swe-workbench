@@ -43,11 +43,16 @@ def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
 
 
-def parse_frontmatter(path, text=None):
-    """Return dict of key:value from YAML frontmatter (single-line scalars only), or None.
+_FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
+_FM_ITEM_RE = re.compile(r'^-\s+(.*\S)\s*$')
 
-    Keys are lowercased for case-insensitive lookup. Caller may pass pre-read `text`
-    to avoid a second file read.
+
+def parse_frontmatter(path, text=None):
+    """Return dict of key:value from YAML frontmatter, or None.
+
+    Single-line scalars yield str. A key with an empty scalar followed by
+    `- item` lines yields list[str]. Keys are lowercased for case-insensitive
+    lookup. Caller may pass pre-read `text` to avoid a second file read.
     """
     if text is None:
         text = path.read_text(encoding="utf-8")
@@ -61,10 +66,24 @@ def parse_frontmatter(path, text=None):
         return None
     block = text[3:end].strip()
     result = {}
+    pending = None  # key eligible to collect block-sequence items
     for line in block.splitlines():
-        m = re.match(r'^([\w][\w-]*):\s*(.*)$', line.strip())
+        stripped = line.strip()
+        if stripped == "":
+            continue  # blank line: does not disturb a pending block-sequence key
+        item = _FM_ITEM_RE.match(stripped)
+        if item and pending is not None:
+            if not isinstance(result[pending], list):
+                result[pending] = []
+            result[pending].append(item.group(1).strip())
+            continue
+        m = _FM_KEY_RE.match(stripped)
         if m:
-            result[m.group(1).lower()] = m.group(2).strip()
+            key, value = m.group(1).lower(), m.group(2).strip()
+            result[key] = value
+            pending = key if value == "" else None
+        else:
+            pending = None
     return result
 
 
@@ -273,6 +292,74 @@ def check_agent_skill_refs(cache=None):
                     agent_md.relative_to(ROOT),
                     f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
                     f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
+                )
+
+
+def check_preloaded_skills(cache=None):
+    """Every agent's frontmatter 'skills:' entry must be a namespaced,
+    resolvable, canary-bearing preload (issue #558/#562).
+
+    Bare (non-namespaced) skill names silently fail to preload at dispatch
+    time — Claude Code only resolves the 'swe-workbench:<id>' form. Agents
+    without a 'skills:' key are skipped entirely, so this is a no-op for
+    agents that don't opt into preloading. A body-text mention of the
+    preloaded skill is no longer required — see check_unwired_principle_skills,
+    which recognizes frontmatter 'skills:' entries as wiring in their own right.
+    """
+    agents_dir = ROOT / "agents"
+    skills_dir = ROOT / "skills"
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # already reported by check_agents
+        else:
+            text = agent_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(agent_md, text=text)
+        if fm is None or "skills" not in fm:
+            continue
+        rel = agent_md.relative_to(ROOT)
+        entries = fm["skills"]
+        if not isinstance(entries, list) or not entries:
+            fail(
+                rel,
+                "frontmatter 'skills:' must be a YAML block sequence "
+                "(e.g. '- swe-workbench:<id>'), not a scalar or empty value",
+            )
+            continue
+        for entry in entries:
+            if not entry.startswith("swe-workbench:"):
+                fail(
+                    rel,
+                    f"frontmatter 'skills:' entry {entry!r} is not namespaced — "
+                    "bare skill names silently fail to preload; use 'swe-workbench:<id>'",
+                )
+                continue
+            skill_id = entry.split(":", 1)[1]
+            skill_md = skills_dir / skill_id / "SKILL.md"
+            if not skill_md.is_file():
+                fail(
+                    rel,
+                    f"frontmatter 'skills:' entry {entry!r} does not resolve to "
+                    f"skills/{skill_id}/SKILL.md",
+                )
+                continue
+            if skills_cache is not None and skill_md in skills_cache:
+                skill_text = skills_cache[skill_md]
+            else:
+                try:
+                    skill_text = skill_md.read_text(encoding="utf-8")
+                except OSError:
+                    skill_text = None
+            canary = f"SWB-PRELOAD-{skill_id.upper()}"
+            if skill_text is None or f"preload-canary: {canary}" not in skill_text:
+                fail(
+                    rel,
+                    f"preloaded skill 'skills/{skill_id}/SKILL.md' is missing its "
+                    f"'<!-- preload-canary: {canary} -->' marker",
                 )
 
 
@@ -728,7 +815,10 @@ def check_examples():
 
 
 def check_unwired_principle_skills(cache=None):
-    """Every skills/principle-*/ must be referenced by at least one agent.
+    """Every skills/principle-*/ must be referenced by at least one agent —
+    either backticked in body text, or listed in an agent's 'skills:'
+    frontmatter (unconditional preload wiring counts as wiring in its own
+    right; a body mention is no longer required once a skill is preloaded).
 
     agents/shared/ (the catalog slice files) are explicitly excluded — they list
     every skill by design and must not count as a wiring reference.
@@ -749,18 +839,26 @@ def check_unwired_principle_skills(cache=None):
         and (agents_cache is None or agents_cache.get(f) is not None)
     ]
 
+    agent_data = []
+    for f in agent_files:
+        text = agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8")
+        fm = parse_frontmatter(f, text=text)
+        fm_skills = fm.get("skills") if fm is not None else None
+        agent_data.append((text, fm_skills if isinstance(fm_skills, list) else []))
+
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
+        entry = f"swe-workbench:{skill_id}"
         wired = any(
-            needle in (agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8"))
-            for f in agent_files
+            needle in text or entry in fm_skills
+            for text, fm_skills in agent_data
         )
         if not wired:
             fail(
                 Path("agents") / "<unwired>",
                 f"principle skill 'swe-workbench:{skill_id}' is not referenced by any "
                 f"agent in agents/*.md — wire it into a relevant agent's "
-                f"'## Principle consultation' list",
+                f"'## Principle consultation' list or 'skills:' frontmatter",
             )
 
 
@@ -1107,6 +1205,7 @@ def main():
     check_agents(cache=cache)
     check_commands()
     check_agent_skill_refs(cache=cache)
+    check_preloaded_skills(cache=cache)
     check_command_skill_refs()
     check_skill_skill_refs(cache=cache)
     check_workflow_development_activation_contract()

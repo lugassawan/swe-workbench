@@ -2,6 +2,7 @@
 name: principle-distributed-systems
 description: Distributed systems principles — CAP, PACELC, consistency models (linearizable, causal, eventual, read-your-writes), consensus (Paxos, Raft), quorum, leader election, split-brain, replication, partitioning, gossip, logical clocks (Lamport, vector, hybrid), clock skew, delivery semantics (at-most-once, at-least-once, exactly-once effects), idempotency across nodes, two-generals problem, fallacies of distributed computing. Auto-load when reasoning about CAP/PACELC trade-offs, choosing a consistency model, designing consensus or leader election, sizing quorums, ordering events with logical clocks, distinguishing exactly-once delivery from exactly-once effects, designing replication or partitioning strategy, or assessing distributed failure modes.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-DISTRIBUTED-SYSTEMS -->
 
 # Distributed Systems
 
