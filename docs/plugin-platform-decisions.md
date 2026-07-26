@@ -1,8 +1,9 @@
 # Plugin platform decisions
 
-Rulings made while migrating `runtime/` callsites to `bin/` wrappers (issue #560, expand phase).
-Recorded here so they don't have to be re-litigated when the contract phase (deleting
-`runtime/` and the `CLAUDE_PLUGIN_ROOT` injector hook) eventually ships.
+Rulings made while migrating `runtime/` callsites to `bin/` wrappers, so skills, commands, and
+agents invoke plugin scripts as bare PATH commands instead of resolving them through
+`$CLAUDE_PLUGIN_ROOT`. Recorded here so they don't have to be re-litigated once `runtime/` and
+the `CLAUDE_PLUGIN_ROOT` injector hook are eventually retired.
 
 ## 1. `${CLAUDE_PLUGIN_DATA}` — considered, not adopted
 
