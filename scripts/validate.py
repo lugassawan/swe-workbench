@@ -921,6 +921,7 @@ def check_bin_wrappers():
     bin_dir = ROOT / "bin"
     if not bin_dir.is_dir():
         return
+    wrapper_names = {p.name for p in bin_dir.iterdir() if p.is_file()}
     for wrapper in sorted(bin_dir.iterdir()):
         if not wrapper.is_file():
             continue
@@ -938,6 +939,15 @@ def check_bin_wrappers():
             continue
         if not _SHEBANG_RE.match(first_line):
             fail(rel, "bin/ wrapper must start with a #!/usr/bin/env <interp> shebang")
+
+    # Reverse direction: every runtime/ script must have a matching bin/ wrapper,
+    # so a newly added script can't silently ship without its bare-command entry point.
+    runtime_dir = ROOT / "runtime"
+    if runtime_dir.is_dir():
+        for script in sorted(list(runtime_dir.glob("*.sh")) + list(runtime_dir.glob("*.py"))):
+            expected = f"swe-workbench-{script.stem}"
+            if expected not in wrapper_names:
+                fail(script.relative_to(ROOT), f"has no matching bin/{expected} wrapper")
 
 
 # ──────────────────────────────────────────────
