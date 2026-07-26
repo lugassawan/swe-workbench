@@ -23,6 +23,7 @@ WRAPPERS = {
     "swe-workbench-clean-ephemeral": ("bash", "clean-ephemeral.sh"),
     "swe-workbench-clean-state-files": ("bash", "clean-state-files.sh"),
     "swe-workbench-comment-scan": ("python3", "comment-scan.py"),
+    "swe-workbench-diff-line-lookup": ("bash", "diff-line-lookup.sh"),
     "swe-workbench-doctor": ("bash", "doctor.sh"),
     "swe-workbench-fetch-pr": ("bash", "fetch-pr.sh"),
     "swe-workbench-gh-timeout": ("bash", "gh-timeout.sh"),
