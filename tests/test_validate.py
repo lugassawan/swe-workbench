@@ -2947,3 +2947,180 @@ class TestPhase4DispatchesBothReviewers:
             "Phase 4 dispatch sites are missing required tokens (#458):\n"
             + "\n".join(f"  {f}" for f in failures)
         )
+
+
+# ──────────────────────────────────────────────
+# check_no_echo_var_hazard
+# ──────────────────────────────────────────────
+
+class TestCheckNoEchoVarHazard:
+    """zsh (the user's likely login shell) expands backslash escapes in echo's
+    argument, corrupting embedded JSON piped or redirected through it (#549).
+    See docs/shell-echo-vs-printf.md."""
+
+    def _skill_with_block(self, root, name, block_lines):
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"---\nname: {name}\ndescription: d\n---\n\n"
+            "```bash\n" + "\n".join(block_lines) + "\n```\n"
+        )
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    # ── must flag ──
+
+    def test_echo_redirect_to_file_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" > /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f and "printf" in f for f in validate.FAILURES)
+
+    def test_echo_append_redirect_to_file_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" >> /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_piped_into_python_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(
+            root, "my-skill",
+            ["PR_STATE=$(echo \"$PR_JSON\" | python3 -c 'import sys; print(sys.stdin.read())')"],
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_piped_into_grep_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["echo \"$RESP\" | grep -q '422'"])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    # ── must not flag ──
+
+    def test_echo_literal_string_no_variable_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "literal status message"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_to_stderr_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "warn: $x" >&2'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_non_echo_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh api foo > "$STATE_FILE"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_non_echo_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["cmd 2>/dev/null"])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_with_logical_or_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$x" || true'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_printf_correct_form_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["printf '%s' \"$JSON\" > /tmp/payload.json"])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_with_ampersand_bounded_command_passes(self, reset_validate):
+        """A benign echo followed by an unrelated '&&'-joined piped command
+        must not be misattributed as the echo's own hazard."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$a" && ls | wc -l'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_quoted_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$VAR" > "/dev/null"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    # ── quote-aware / command-position hardening ──
+
+    def test_echo_json_with_embedded_semicolon_flags(self, reset_validate):
+        """A literal ';' inside the quoted argument must not truncate the
+        scan before the real pipe that follows it on the same line."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON; extra" | grep -q x'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_in_brace_group_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['{ echo "$JSON" | tee out; }'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_in_case_arm_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['  a) echo "$JSON" > out ;;'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    # ── structural coverage ──
+
+    def test_reference_subdir_file_is_scanned(self, reset_validate):
+        root = reset_validate
+        ref_dir = root / "skills" / "my-skill" / "reference"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / "notes.md").write_text(
+            "# Notes\n\n```bash\necho \"$JSON\" > /tmp/payload.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("reference/notes.md" in f for f in validate.FAILURES)
+
+    def test_prose_mention_outside_fence_is_ignored(self, reset_validate):
+        root = reset_validate
+        skill_dir = root / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: d\n---\n\n"
+            "Don't echo $JSON straight to a file — pipe it through printf instead.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_commands_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```bash\necho \"$JSON\" > /tmp/x.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("my-cmd.md" in f for f in validate.FAILURES)
+
+    def test_agents_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n```bash\necho \"$JSON\" > /tmp/x.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("my-agent.md" in f for f in validate.FAILURES)
+
+    def test_live_tree_has_zero_violations(self, reset_validate, monkeypatch):
+        """After the existing-site normalization (issue #549), the real tree is clean."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_echo_var_hazard()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"

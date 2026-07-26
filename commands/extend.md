@@ -11,11 +11,11 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 ```bash
 PR_JSON=$(gh pr view --json number,state,headRefName,isDraft,url 2>/dev/null || true)
-PR_STATE=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state',''))" 2>/dev/null || true)
-PR_NUM=$(echo "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('number',''))" 2>/dev/null || true)
-HEAD_REF=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('headRefName',''))" 2>/dev/null || true)
-PR_URL=$(echo "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('url',''))" 2>/dev/null || true)
-IS_DRAFT=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isDraft') else 'false')" 2>/dev/null || true)
+PR_STATE=$(printf '%s' "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state',''))" 2>/dev/null || true)
+PR_NUM=$(printf '%s' "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('number',''))" 2>/dev/null || true)
+HEAD_REF=$(printf '%s' "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('headRefName',''))" 2>/dev/null || true)
+PR_URL=$(printf '%s' "$PR_JSON"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('url',''))" 2>/dev/null || true)
+IS_DRAFT=$(printf '%s' "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('isDraft') else 'false')" 2>/dev/null || true)
 ```
 
 Note: `gh pr view` resolves against `origin`; on fork-based workflows where `origin` is the fork, it may return no PR. If that happens, use `gh pr view --repo <upstream-owner>/<repo>` explicitly.

@@ -1188,6 +1188,139 @@ def check_browser_tool_gate(cache=None):
 
 
 # ──────────────────────────────────────────────
+# echo/printf shell footgun (#549)
+# ──────────────────────────────────────────────
+
+_BASH_BLOCK_RE = re.compile(r'^```bash[ \t]*\n(.*?)\n^```[ \t]*$', re.MULTILINE | re.DOTALL)
+# echo at a command position: line start, or after ; & | ( { ) — a bare '&'
+# also covers '&&' and a bare '|' also covers '||' since both share their last
+# char; ')' covers a `case` arm ('a) echo ...'), '{' covers a brace group
+# ('{ echo ...; }'). An optional shell keyword (if/elif/then/else/do/while/
+# until) may sit between the position marker and 'echo' (e.g. 'elif echo ...
+# ; then') — the keyword itself must be at that same command position, so a
+# keyword mentioned in a trailing comment ('# if echo fails') still can't
+# reach this branch.
+_ECHO_CMD_POS_RE = re.compile(
+    r'(?:^|[;&|({)])\s*(?:(?:if|elif|then|else|do|while|until)\s+)?echo(?=\s|$)'
+)
+_VAR_REF_RE = re.compile(r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?')
+_SEPARATOR_CHARS = frozenset(' \t;&|')
+
+
+def _find_echo_hazard_end(window):
+    """Quote-aware scan of `window` (the text right after 'echo') for the
+    first real pipe/redirect hazard, stopping at the first unquoted command
+    separator (';', '&&', bare '&', '||') with no hazard found.
+
+    Quote-awareness matters because the JSON this check exists to protect
+    routinely contains a literal ';' inside a quoted string — a naive
+    unquoted `;`-split would truncate the scan before reaching a real pipe
+    or redirect that comes after it on the same line.
+
+    Returns the hazard's start offset into `window`, or None if the command
+    ends (separator or end-of-line) with no real pipe/redirect found.
+    """
+    quote = None
+    i, n = 0, len(window)
+    while i < n:
+        c = window[i]
+        if quote:
+            if c == '\\' and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            continue
+        if c == ';':
+            return None
+        if c == '&':
+            return None  # bare '&' (background) or '&&' — both end the command
+        if c == '|':
+            if i + 1 < n and window[i + 1] == '|':
+                return None  # '||' — logical OR, not a hazard
+            return i  # real pipe
+        if c == '>':
+            j = i + 1
+            if j < n and window[j] == '>':
+                j += 1
+            if j < n and window[j] == '&':
+                i = j + 1  # fd dup ('>&2') — not a hazard, keep scanning
+                continue
+            while j < n and window[j] in ' \t':
+                j += 1
+            k = j
+            while k < n and window[k] not in _SEPARATOR_CHARS:
+                k += 1
+            target = window[j:k].strip('"\'')
+            if target == '/dev/null':
+                i = k  # discarded output — not a hazard, keep scanning
+                continue
+            return i  # real file redirect
+        i += 1
+    return None
+
+
+def _echo_hazard_in_line(line):
+    """True if `line` pipes or redirects a variable through `echo` to a real
+    destination — not `/dev/null`, not an fd dup (`>&`), not `||`."""
+    for m in _ECHO_CMD_POS_RE.finditer(line):
+        window = line[m.end():]
+        hazard_end = _find_echo_hazard_end(window)
+        if hazard_end is None:
+            continue
+        if _VAR_REF_RE.search(window[:hazard_end]):
+            return True
+    return False
+
+
+def check_no_echo_var_hazard(cache=None):
+    """Flag bash blocks in skills/, commands/, agents/ that pipe or redirect a
+    variable through `echo` — zsh (the user's likely login shell) expands
+    backslash escapes in echo's argument, corrupting embedded JSON (#549).
+    Use printf '%s' instead; see docs/shell-echo-vs-printf.md.
+
+    docs/ is intentionally excluded from the scanned roots — that page must
+    show the bad pattern as a worked example without tripping this guard.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+    roots = (
+        (ROOT / "skills", skills_cache),
+        (ROOT / "commands", None),
+        (ROOT / "agents", agents_cache),
+    )
+    for base, sub_cache in roots:
+        if not base.is_dir():
+            continue
+        for md in sorted(base.rglob("*.md")):
+            if sub_cache is not None and md in sub_cache:
+                text = sub_cache[md]
+                if text is None:
+                    continue  # unreadable — already reported by another check
+            else:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+            for block_match in _BASH_BLOCK_RE.finditer(text):
+                block = block_match.group(1)
+                block_start_line = text.count('\n', 0, block_match.start(1)) + 1
+                for offset, line in enumerate(block.splitlines()):
+                    if _echo_hazard_in_line(line):
+                        fail(
+                            md.relative_to(ROOT),
+                            f"line {block_start_line + offset}: bash block pipes/redirects "
+                            f"a variable through 'echo' — zsh expands backslash escapes and "
+                            f"corrupts JSON; use printf '%s' (see docs/shell-echo-vs-printf.md)",
+                        )
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 
@@ -1221,6 +1354,7 @@ def main():
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
+    check_no_echo_var_hazard(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
