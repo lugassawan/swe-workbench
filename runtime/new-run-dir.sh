@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# new-run-dir.sh <prefix> <id>
+#
+# Allocates a fresh run-scoped scratch directory under
+# /tmp/swe-workbench-run/ for ad-hoc bash artifacts (assembled JSON
+# payloads, submit-response captures, comment drafts) that a flow's own
+# documented bash produces but never enumerates ahead of time. Distinct from
+# the PR-scoped state files under /tmp/swe-workbench-pr-review/ and
+# /tmp/swe-workbench-address-feedback/, which survive the invocation by
+# design (resume points) and stay reaped by name via clean-state-files.sh.
+#
+# Prints RUN_DIR=<path> on stdout, for `eval` in the caller (matches the
+# KEY=VALUE convention in skills/workflow-cleanup-merged/scripts/sweep-residuals.sh).
+#
+# Usage:
+#   eval "$(swe-workbench-new-run-dir pr-review 42)"
+#   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-42-a1b2c3
+#
+# <prefix> must be one of the flow prefixes reap-run-dir.sh's name-shape
+# allowlist accepts: pr-review, pr-followup, address-feedback,
+# review-<lowercase, hyphen-allowed> (e.g. review-security, review-contributor-trust),
+# extend, capture, audit-emit, hotfix. A run dir
+# this script cannot name correctly is a run dir reap-run-dir.sh can never
+# clean up, so the prefix is validated here too. <id> must be a bare
+# non-negative integer (typically a PR number).
+#
+# Also performs the age-gated orphan sweep, at allocation time rather than at
+# flow end: our own run began seconds ago, so anything already under the root
+# older than the threshold provably isn't ours. Sweeping at flow end could
+# instead hit a long-running concurrent session's still-live files. Scope:
+# entries directly under the root (one level only), owned by the current
+# user, matching the run-dir name shape, with mtime older than 24h. Never
+# touches /tmp/swe-workbench-pr-review/ or /tmp/swe-workbench-address-feedback/
+# — mixed lifetimes there (e.g. a deliberate *-triage.json resume point) make
+# a time anchor unsafe.
+
+set -euo pipefail
+
+reject() {
+  printf 'new-run-dir: %s\n' "$*" >&2
+  exit 1
+}
+
+PREFIX="${1:-}"
+ID="${2:-}"
+
+[ -n "$PREFIX" ] || reject "flow prefix argument is required"
+[ -n "$ID" ] || reject "id argument is required"
+
+case "$PREFIX" in
+  pr-review|pr-followup|address-feedback|extend|capture|audit-emit|hotfix) ;;
+  review-*)
+    printf '%s' "$PREFIX" | grep -qE '^review-[a-z][a-z-]*$' || reject "invalid review-* prefix: $PREFIX"
+    ;;
+  *) reject "unrecognized flow prefix: $PREFIX" ;;
+esac
+
+case "$ID" in
+  ''|*[!0-9]*) reject "id must be a non-negative integer: $ID" ;;
+esac
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REAP="$SCRIPT_DIR/reap-run-dir.sh"
+
+CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
+RUN_ROOT="${CANON_TMP}/swe-workbench-run"
+
+# The mkdir -p on world-writable /tmp is the one squat-sensitive step in this
+# whole flow — kept here, audited once, rather than copy-pasted into every
+# calling SKILL.md.
+mkdir -p -- "$RUN_ROOT"
+# No "--" here: BSD/macOS chmod (unlike GNU) does not recognize it as an
+# end-of-options marker and errors "chmod: --: No such file or directory".
+chmod 0700 "$RUN_ROOT" 2>/dev/null || true
+
+# ── Age-gated orphan sweep ──────────────────────────────────────────────────
+
+SWEEP_AGE_HOURS=24
+NOW_EPOCH=$(date +%s)
+
+for entry in "$RUN_ROOT"/*; do
+  [ -e "$entry" ] || continue  # no-match glob guard (nullglob not assumed)
+  base="$(basename "$entry")"
+  printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$' || continue
+  [ -O "$entry" ] || continue
+  # GNU (-c) tried first: BSD/macOS stat rejects the unrecognized -c option
+  # before touching any file argument, so it fails cleanly with no stdout.
+  # The reverse order is NOT safe: on GNU stat, -f means "filesystem status"
+  # (a flag, not a format-string parameter) — `stat -f '%m' "$entry"` is
+  # parsed as two file operands ("%m" and "$entry"), and GNU stat still
+  # prints filesystem info for the operand that exists even though the
+  # other fails, corrupting this capture with multi-line garbage instead of
+  # failing outright.
+  mtime_epoch=$(stat -c '%Y' "$entry" 2>/dev/null || stat -f '%m' "$entry" 2>/dev/null) || continue
+  age_hours=$(( (NOW_EPOCH - mtime_epoch) / 3600 ))
+  [ "$age_hours" -ge "$SWEEP_AGE_HOURS" ] || continue
+  "$REAP" "$entry" >/dev/null 2>&1 || true
+done
+
+# ── Allocation ───────────────────────────────────────────────────────────────
+# Explicit-template form only — `mktemp -d -t prefix` is NOT portable between
+# macOS (BSD mktemp) and GNU mktemp (different -t semantics). mktemp's O_EXCL
+# creation is what makes two concurrent allocations for the same PR distinct.
+RUN_DIR=$(mktemp -d "${RUN_ROOT}/${PREFIX}-${ID}-XXXXXX") || reject "mktemp -d failed"
+chmod 0700 "$RUN_DIR"
+
+printf 'RUN_DIR=%s\n' "$RUN_DIR"

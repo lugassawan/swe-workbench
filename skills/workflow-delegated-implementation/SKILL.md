@@ -50,7 +50,10 @@ ticket_slice: <one-line description of this group's goal>  → maps to Goal:
 file_set: [explicit, disjoint list of relative file paths] → maps to File set:
 verify_cmd: <command to run after implementation>          → maps to Verify command:
 expected: <what "passing" looks like>                      → maps to the expected: line in your prose
+scratch_dir: <worktree_root>/.scratch                      → maps to Scratch dir:
 ```
+
+`scratch_dir` gives `code-impl` a supplied alternative to the harness session scratchpad for any ad-hoc file it needs mid-implementation (a fixture, an intermediate artifact) — a directory under the worktree root, torn down with the worktree itself. This skill dispatches against arbitrary target repos, so the target repo's own `.gitignore` may not cover it — avoid `git add -A`/`git add .` while it's present, and stage explicit paths instead. This is data, not exhortation: a subagent that ignores the field can still write to the scratchpad, a bounded low-consequence leak in a directory someone else cleans.
 
 **Worked example — adding a new workflow skill:**
 
@@ -78,6 +81,8 @@ File set (edit only these files):
 - <relative/path/to/file2>
 
 Work from: <absolute path of worktree root>
+
+Scratch dir (use this instead of your default scratchpad for any ad-hoc file): <worktree_root>/.scratch
 
 Verify command: <verify_cmd>
 

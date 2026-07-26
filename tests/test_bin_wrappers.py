@@ -27,7 +27,9 @@ WRAPPERS = {
     "swe-workbench-doctor": ("bash", "doctor.sh"),
     "swe-workbench-fetch-pr": ("bash", "fetch-pr.sh"),
     "swe-workbench-gh-timeout": ("bash", "gh-timeout.sh"),
+    "swe-workbench-new-run-dir": ("bash", "new-run-dir.sh"),
     "swe-workbench-preflight-pr": ("bash", "preflight-pr.sh"),
+    "swe-workbench-reap-run-dir": ("bash", "reap-run-dir.sh"),
     "swe-workbench-reply-and-resolve": ("bash", "reply-and-resolve.sh"),
     "swe-workbench-sync-pr-metadata": ("bash", "sync-pr-metadata.sh"),
 }

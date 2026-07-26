@@ -13,8 +13,9 @@
 #   3. Path is under one of the sanctioned tmp locations:
 #        /tmp/swe-workbench-pr-review/<file>
 #        /tmp/swe-workbench-address-feedback/<file>
-#      OR basename matches ^(capture|report-issue|audit-emit|extend)- and
-#      parent directory is directly /tmp.
+#      OR basename matches
+#        ^(capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-
+#      and parent directory is directly /tmp.
 #
 # Unlike clean-ephemeral.sh (which rm -rf a worktree directory), this
 # script only calls rm -f on named regular files — never recursive.
@@ -78,7 +79,7 @@ validate_one() {
 
   # Path B: basename matches a known single-file-writer pattern, parent is /tmp.
   if [ "$canon_parent" = "$CANON_TMP" ] || [ "$parent" = "/tmp" ]; then
-    if printf '%s' "$base" | grep -qE '^(capture|report-issue|audit-emit|extend)-'; then
+    if printf '%s' "$base" | grep -qE '^(capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-'; then
       return 0
     fi
   fi

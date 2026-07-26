@@ -39,9 +39,10 @@ command -v swe-workbench-preflight-pr >/dev/null 2>&1 || {
 JSON="/tmp/swe-workbench-pr-review/${PR}-followup.json"
 eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
 CURRENT_USER=$(gh api /user -q .login)
+eval "$(swe-workbench-new-run-dir pr-followup "$PR")"
 ```
 
-`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON` (stored under `${PR}-followup.json` — distinct from `${PR}.json` used by the primary review to allow both to coexist), and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments.
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON` (stored under `${PR}-followup.json` — distinct from `${PR}.json` used by the primary review to allow both to coexist), and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from `$JSON`'s deliberate PR-keyed state.
 
 Check that the PR is open before proceeding:
 ```bash
@@ -110,6 +111,7 @@ Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `li
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
 - `BYLINE` — `_Re-reviewed by \`reviewer\`_` (identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` Step 4).
 - `CALLER_TAG` — `followup` (scopes the core's own threads-cache filename so it never collides with a concurrent primary or specialist run on the same PR).
+- `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` Step 2).
 - `FINDINGS[]` — as parsed above.
 
 The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
@@ -123,6 +125,10 @@ swe-workbench-clean-state-files "/tmp/swe-workbench-pr-review/${PR}-followup.jso
 [ -e "/tmp/swe-workbench-pr-review/${PR}-followup.json" ] \
   && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-followup.json" >&2 \
   || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-followup.json"
+swe-workbench-reap-run-dir "$RUN_DIR"
+[ -e "$RUN_DIR" ] \
+  && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 \
+  || echo "✓ run dir reaped: $RUN_DIR"
 ```
 
 Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:

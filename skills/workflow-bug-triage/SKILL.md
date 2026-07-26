@@ -145,7 +145,7 @@ or `/swe-workbench:implement` invocation.>
 ```bash
 gh issue create \
   --title "[bug] <short subject>" \
-  --body-file /tmp/swe-workbench-bug-triage-<repo-slug>-<unix-ts>.md \
+  --body-file /tmp/bug-triage-<repo-slug>-<unix-ts>.md \
   --label "bug"
 ```
 
@@ -155,7 +155,7 @@ Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST
 1. Run `gh repo view --json nameWithOwner -q '.nameWithOwner'` to confirm target repo.
 2. Print: filing target, title, **chosen label** (or "none — no matching label"), body (code-fenced), and the exact command. Tell the user they may change the label before replying `confirm`.
 3. Wait for `confirm`. Reject any other reply (re-prompt).
-4. On `confirm`, run the command and return the issue URL.
+4. On `confirm`, run the command and return the issue URL. After a successful `gh issue create`, reap the temp file: `swe-workbench-clean-state-files "/tmp/bug-triage-<repo-slug>-<unix-ts>.md"` (substituting the actual path from the command above). On failure, leave the file for retry.
 
 ## Boundary vs `/swe-workbench:debug`
 
