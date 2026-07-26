@@ -1,0 +1,707 @@
+#!/usr/bin/env python3
+"""Advisory comment-quality scanner for issue #546's verified gate.
+
+Pure function: unified diff text in on stdin, findings + a footer out on
+stdout. No git access inside this module — callers resolve the diff by
+whatever means their context already established (see agents/shared/
+comment-scan.md for the canonical `git diff -M` invocation). This keeps the
+comment-analysis domain logic testable against fixture diffs, independent
+of worktree / bare-repo / detached-HEAD concerns.
+
+Scope: advisory-with-accounting, not a hard gate. No detector exits non-zero.
+Enforcement lives in verdict accounting downstream (one KEEP/FIXED line per
+must-triage finding in Phase 3 evidence) — not in this script's exit code.
+A hard-fail here on a heuristic false positive (e.g. a rustdoc doctest
+misread as commented-out code) would push an agent toward deleting the
+false-flagged test to get back to green, which is worse than the noise
+this script accepts by staying advisory.
+
+Failure posture (mirrors hooks/secret_guard.py's fail-open contract):
+  - FAIL OPEN on any parse error, unreadable diff, or unexpected exception
+    → print a note, exit 0. A scanner that can crash a verify step is a
+    liability; heuristic comment analysis is never worth blocking on.
+  - Unknown file extensions are skipped, never silently: the coverage line
+    always states what was scanned vs skipped so a run in an unsupported
+    language doesn't read as a clean pass.
+
+Scope limit: detectors examine whole-line comments only. A trailing comment
+sharing a line with code (`import os  # noqa`) is not analyzed — it reads as
+a code line, not a comment line. This is deliberate, not an oversight: the
+directives this module excludes (`# noqa`, `# type: ignore`, ...) are almost
+always written trailing a statement, so they're already out of scope by
+construction; the directive gate below exists for the standalone-line case.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from dataclasses import dataclass, field
+
+# ── Language table ────────────────────────────────────────────────────────────
+# Derived from skills/principle-clean-code/SKILL.md's doc-style cap table.
+# That table is extension -> doc-style; this one is extension -> comment
+# syntax, a distinct mapping (e.g. .sh/.sql have line comments but no doc
+# idiom at all).
+#
+#   doc_mode:
+#     "block-star"    /** ... */ (Java, Kotlin, TS/JS)
+#     "triple-slash"  /// ...    (Rust, Swift, C#, Dart)
+#     "docstring"     '''..'''/"""...""" immediately under def/class/module (Python)
+#     "preceding-def" comment run immediately above a declaration (Go, Ruby)
+#     None            no doc idiom distinct from the inline cap (shell, SQL)
+
+
+@dataclass(frozen=True)
+class LangSpec:
+    name: str
+    line_token: str
+    block_delims: tuple | None
+    doc_mode: str | None
+    doc_cap: int | None
+
+
+INLINE_CAP = 2
+
+EXT_LANG: dict[str, LangSpec] = {
+    ".go": LangSpec("go", "//", None, "preceding-def", 4),
+    ".java": LangSpec("java", "//", ("/*", "*/"), "block-star", 10),
+    ".kt": LangSpec("kotlin", "//", ("/*", "*/"), "block-star", 10),
+    ".kts": LangSpec("kotlin", "//", ("/*", "*/"), "block-star", 10),
+    ".py": LangSpec("python", "#", None, "docstring", 8),
+    ".rs": LangSpec("rust", "//", None, "triple-slash", 8),
+    ".ts": LangSpec("typescript", "//", ("/*", "*/"), "block-star", 8),
+    ".tsx": LangSpec("typescript", "//", ("/*", "*/"), "block-star", 8),
+    ".js": LangSpec("javascript", "//", ("/*", "*/"), "block-star", 8),
+    ".jsx": LangSpec("javascript", "//", ("/*", "*/"), "block-star", 8),
+    ".mjs": LangSpec("javascript", "//", ("/*", "*/"), "block-star", 8),
+    ".cjs": LangSpec("javascript", "//", ("/*", "*/"), "block-star", 8),
+    ".swift": LangSpec("swift", "//", ("/*", "*/"), "triple-slash", 8),
+    ".cs": LangSpec("csharp", "//", ("/*", "*/"), "triple-slash", 8),
+    ".rb": LangSpec("ruby", "#", None, "preceding-def", 6),
+    ".dart": LangSpec("dart", "//", ("/*", "*/"), "triple-slash", 6),
+    ".sh": LangSpec("shell", "#", None, None, None),
+    ".bash": LangSpec("shell", "#", None, None, None),
+    ".sql": LangSpec("sql", "--", None, None, None),
+}
+
+_SKIP_SUFFIXES = (".md", ".markdown")
+
+_GO_DECL_RE = re.compile(r"^\s*(func|type|var|const|package)\b")
+_RUBY_DECL_RE = re.compile(r"^\s*(def|class|module)\b")
+
+_DIRECTIVE_PATTERNS = [
+    re.compile(r"^\s*type:\s*ignore\b", re.I),
+    re.compile(r"^\s*noqa\b", re.I),
+    re.compile(r"^\s*pragma\b", re.I),
+    re.compile(r"^\s*-\*-.*-\*-\s*$"),
+    re.compile(r"^\s*frozen_string_literal:\s*true\b", re.I),
+    re.compile(r"^\s*@ts-expect-error\b"),
+    re.compile(r"^\s*@ts-ignore\b"),
+    re.compile(r"^\s*eslint-(disable|enable)\b"),
+    re.compile(r"^\s*prettier-ignore\b"),
+    re.compile(r"^\s*vim:\s*(set\s+)?\S"),
+]
+_GO_DIRECTIVE_RE = re.compile(r"^//go:\w+")
+
+_GENERATED_RE = re.compile(r"@generated\b|DO NOT EDIT\b", re.I)
+
+_EXAMPLE_MARKER_RE = re.compile(r">>>|@example\b|<pre>|\{@code|```", re.I)
+_GODOC_INDENT_RE = re.compile(r"^(\t| {2,})\S")
+
+_CODE_KEYWORDS = frozenset({
+    "if", "else", "elif", "for", "while", "return", "def", "function", "func",
+    "class", "public", "private", "protected", "static", "var", "let", "const",
+    "import", "from", "package", "use", "fn", "impl", "struct", "enum", "match",
+    "switch", "case", "try", "catch", "except", "throw", "raise", "new", "void",
+    "namespace", "module", "export", "yield", "async", "await", "break",
+    "continue", "do", "end", "begin", "require", "include", "self", "this",
+    "super", "print", "console", "System",
+})
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_$][\w$.\[\]]*\s*(==|=|\+=|-=|:=)\s*\S")
+_CALL_RE = re.compile(r"^[A-Za-z_$][\w$.]*\([^)]*\)\s*;?\s*$")
+_TRAILING_CODE_RE = re.compile(r"[;{}]\s*$")
+_STOPWORDS = frozenset({
+    "the", "a", "an", "is", "are", "this", "that", "it", "to", "of", "and",
+    "or", "but", "we", "you", "for", "with", "on", "in", "not", "be", "as",
+})
+_COMMENT_STOPWORDS = _STOPWORDS | frozenset({
+    "return", "returns", "set", "sets", "get", "gets", "value", "values",
+    "by", "from", "into",
+})
+
+# Calibrated against this repo's recent merged diffs (Python/shell) plus
+# external Go (spf13/cobra), Rust (BurntSushi/ripgrep), and TS (sindresorhus/ky)
+# history — see the PR body for the precision writeup. COMMENTED_OUT's
+# keyword/trailing-punctuation gates were tightened during that pass to kill
+# false positives on prose (a WHY-comment using "match" as a verb, a sentence
+# ending in ';'); RESTATES had no real hits in the sampled corpus, so 0.7
+# stays a conservative default pending more KEEP/FIXED verdict data.
+RESTATES_THRESHOLD = 0.7
+DENSITY_FLOOR_CODE_LINES = 40
+DENSITY_RATIO_THRESHOLD = 0.5
+
+
+@dataclass
+class Finding:
+    detector: str
+    path: str
+    line: int
+    message: str
+    must_triage: bool
+
+    @property
+    def id(self) -> str:
+        return f"{self.detector}:{self.path}:{self.line}"
+
+
+@dataclass
+class ViewLine:
+    kind: str  # '+' or ' '
+    lineno: int | None
+    text: str
+
+
+@dataclass
+class FileDiff:
+    path: str
+    is_rename: bool = False
+    view: list[ViewLine] = field(default_factory=list)
+
+
+# ── Diff parsing ──────────────────────────────────────────────────────────────
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def parse_diff(text: str) -> list[FileDiff]:
+    files: list[FileDiff] = []
+    current: FileDiff | None = None
+    new_line = 0
+    in_hunk = False  # everything before the first '@@' is header, not content
+
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            current = FileDiff(path="")
+            files.append(current)
+            new_line = 0
+            in_hunk = False
+            continue
+        if current is None:
+            continue
+        if line.startswith(("rename from ", "rename to ", "similarity index ")):
+            current.is_rename = True
+            continue
+        if line.startswith("+++ "):
+            p = line[4:].strip()
+            current.path = "" if p == "/dev/null" else (p[2:] if p.startswith(("a/", "b/")) else p)
+            continue
+        m = _HUNK_RE.match(line)
+        if m:
+            new_line = int(m.group(1))
+            in_hunk = True
+            continue
+        if not in_hunk:
+            continue  # skip index/---/mode-change header lines
+        if not line:
+            current.view.append(ViewLine(" ", new_line, ""))
+            new_line += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            current.view.append(ViewLine("+", new_line, line[1:]))
+            new_line += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            continue
+        elif line.startswith("\\"):
+            continue
+        else:
+            content = line[1:] if line.startswith(" ") else line
+            current.view.append(ViewLine(" ", new_line, content))
+            new_line += 1
+
+    return [f for f in files if f.path]
+
+
+def classify(path: str) -> LangSpec | None:
+    if path.endswith(_SKIP_SUFFIXES):
+        return None
+    for ext, spec in EXT_LANG.items():
+        if path.endswith(ext):
+            return spec
+    return None
+
+
+def extension_of(path: str) -> str:
+    idx = path.rfind(".")
+    return path[idx:] if idx >= 0 else "(no-ext)"
+
+
+def is_generated(view: list[ViewLine]) -> bool:
+    return any(_GENERATED_RE.search(vl.text) for vl in view)
+
+
+def _leading_boundary(view: list[ViewLine]) -> int | None:
+    """Line number where real content starts, if this view covers line 1.
+
+    A shebang or blank preamble doesn't count as "real content" — a license
+    header starting right after a shebang is still the file's leading block.
+    Returns None when the view doesn't include the file's true start, so a
+    mid-file hunk never mistakes itself for a leading block.
+    """
+    if not view or view[0].lineno != 1:
+        return None
+    for vl in view:
+        if vl.lineno is None:
+            continue
+        s = vl.text.strip()
+        if not s or s.startswith("#!"):
+            continue
+        return vl.lineno
+    return None
+
+
+def _is_directive_line(spec: LangSpec, raw: str) -> bool:
+    s = raw.strip()
+    if s.startswith("#!"):
+        return True
+    if spec.name == "go" and _GO_DIRECTIVE_RE.match(s):
+        return True
+    body = _strip_line_token(s, spec.line_token)
+    if body is None:
+        return False
+    return any(p.search(body) for p in _DIRECTIVE_PATTERNS)
+
+
+def _strip_line_token(text: str, token: str) -> str | None:
+    s = text.strip()
+    if not s.startswith(token):
+        return None
+    return s[len(token):].strip()
+
+
+# ── Comment-run extraction ────────────────────────────────────────────────────
+
+
+@dataclass
+class Run:
+    lines: list[ViewLine]  # only the '+' lines belonging to this run
+    texts: list[str]  # each '+' line, stripped, marker still attached
+    is_doc: bool
+    has_example: bool
+    leading_of_file: bool
+    is_docstring: bool = False
+
+
+def _extract_line_runs(spec: LangSpec, view: list[ViewLine]) -> list[Run]:
+    """Group consecutive '+' single-line-comment entries into runs.
+
+    Non-'+' lines break a run's *added* extent but are still consulted to
+    resolve 'preceding-def' doc-ness, which looks at the next non-comment
+    line — it may be a context line the hunk merely shows for orientation.
+    """
+    runs: list[Run] = []
+    boundary = _leading_boundary(view)
+    i = 0
+    n = len(view)
+    while i < n:
+        vl = view[i]
+        if vl.kind != "+" or _strip_line_token(vl.text, spec.line_token) is None or _is_directive_line(spec, vl.text):
+            i += 1
+            continue
+        run_lines = [vl]
+        run_bodies = [vl.text.strip()]
+        j = i + 1
+        while (
+            j < n
+            and view[j].kind == "+"
+            and _strip_line_token(view[j].text, spec.line_token) is not None
+            and not _is_directive_line(spec, view[j].text)
+        ):
+            run_lines.append(view[j])
+            run_bodies.append(view[j].text.strip())
+            j += 1
+
+        is_doc, has_example = _classify_run(spec, run_bodies, view, j)
+        leading = boundary is not None and run_lines[0].lineno == boundary
+        runs.append(Run(run_lines, run_bodies, is_doc, has_example, leading))
+        i = j
+    return runs
+
+
+def _classify_run(spec: LangSpec, bodies: list[str], view: list[ViewLine], next_idx: int) -> tuple[bool, bool]:
+    has_example = any(_EXAMPLE_MARKER_RE.search(b) for b in bodies)
+
+    if spec.doc_mode == "triple-slash":
+        is_doc = bodies[0].startswith("///") and not bodies[0].startswith("////")
+        if is_doc and any(_GODOC_INDENT_RE.match((_strip_line_token(b, "///") or "")) for b in bodies):
+            has_example = True
+        return is_doc, has_example
+
+    if spec.doc_mode == "preceding-def":
+        decl_re = _GO_DECL_RE if spec.name == "go" else _RUBY_DECL_RE
+        k = next_idx
+        while k < len(view) and not view[k].text.strip():
+            k += 1
+        is_doc = k < len(view) and bool(decl_re.match(view[k].text))
+        if is_doc and any(_GODOC_INDENT_RE.match((_strip_line_token(b, spec.line_token) or "")) for b in bodies):
+            has_example = True
+        return is_doc, has_example
+
+    # block-star / docstring resolve doc-ness in their own dedicated scanners.
+    return False, has_example
+
+
+# ── Block-comment (/* ... */) extraction, for block-star languages ───────────
+
+
+def _extract_block_runs(spec: LangSpec, view: list[ViewLine]) -> list[Run]:
+    if not spec.block_delims:
+        return []
+    start_delim, end_delim = spec.block_delims
+    runs: list[Run] = []
+    boundary = _leading_boundary(view)
+    i = 0
+    n = len(view)
+    in_block = False
+    block_lines: list[ViewLine] = []
+    block_bodies: list[str] = []
+    block_is_doc = False
+    block_all_added = True
+
+    while i < n:
+        vl = view[i]
+        stripped = vl.text.strip()
+        if not in_block:
+            if stripped.startswith(start_delim):
+                in_block = True
+                block_is_doc = stripped.startswith(start_delim + "*") and not stripped.startswith(start_delim + "**")
+                block_lines = []
+                block_bodies = []
+                block_all_added = True
+                closes_same_line = end_delim in stripped[len(start_delim):]
+                if vl.kind == "+":
+                    block_lines.append(vl)
+                    block_bodies.append(stripped)
+                else:
+                    block_all_added = False
+                if closes_same_line:
+                    in_block = False
+                    if block_lines and block_all_added:
+                        has_example = any(_EXAMPLE_MARKER_RE.search(b) for b in block_bodies)
+                        runs.append(Run(block_lines, block_bodies, block_is_doc, has_example, boundary is not None and block_lines[0].lineno == boundary))
+        else:
+            if vl.kind == "+":
+                block_lines.append(vl)
+                block_bodies.append(stripped)
+            else:
+                block_all_added = False
+            if end_delim in stripped:
+                in_block = False
+                if block_lines and block_all_added:
+                    has_example = any(_EXAMPLE_MARKER_RE.search(b) for b in block_bodies)
+                    runs.append(Run(block_lines, block_bodies, block_is_doc, has_example, boundary is not None and block_lines[0].lineno == boundary))
+        i += 1
+
+    return runs
+
+
+# ── Python docstring extraction ───────────────────────────────────────────────
+
+_PY_DEF_RE = re.compile(r"^\s*(def|class)\s+\w+.*:\s*$")
+_PY_QUOTE_RE = re.compile(r'^\s*("""|\'\'\')')
+
+
+def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
+    runs: list[Run] = []
+    boundary = _leading_boundary(view)
+    i = 0
+    n = len(view)
+    while i < n:
+        vl = view[i]
+        m = _PY_QUOTE_RE.match(vl.text)
+        preceding_ok = (i == 0 and vl.lineno == 1) or (i > 0 and _PY_DEF_RE.match(view[i - 1].text))
+        if m and preceding_ok:
+            quote = m.group(1)
+            rest_of_line = vl.text.strip()[len(quote):]
+            block_lines = [vl] if vl.kind == "+" else []
+            block_bodies = [vl.text.strip()]
+            all_added = vl.kind == "+"
+            j = i
+            if quote not in rest_of_line:
+                j = i + 1
+                while j < n:
+                    line = view[j]
+                    if line.kind != "+":
+                        all_added = False
+                    else:
+                        block_lines.append(line)
+                    block_bodies.append(line.text.strip())
+                    if quote in line.text:
+                        break
+                    j += 1
+            has_example = any(_EXAMPLE_MARKER_RE.search(b) for b in block_bodies)
+            if block_lines and all_added:
+                leading = boundary is not None and block_lines[0].lineno == boundary
+                runs.append(Run(block_lines, block_bodies, True, has_example, leading, is_docstring=True))
+            i = j + 1
+            continue
+        i += 1
+    return runs
+
+
+# ── Detectors ──────────────────────────────────────────────────────────────────
+
+
+def _detect_over_cap(spec: LangSpec, run: Run, path: str) -> Finding | None:
+    if run.has_example or run.leading_of_file:
+        return None
+    cap = spec.doc_cap if run.is_doc else INLINE_CAP
+    if cap is None or len(run.lines) <= cap:
+        return None
+    style = f"{spec.name} doc comment" if run.is_doc else "inline comment"
+    start, end = run.lines[0].lineno, run.lines[-1].lineno
+    return Finding(
+        detector="OVER_CAP",
+        path=path,
+        line=start,
+        message=f"{len(run.lines)} lines exceeds {style} cap of {cap} (lines {start}-{end})",
+        must_triage=True,
+    )
+
+
+def _prose_score(text: str) -> float:
+    words = re.findall(r"[A-Za-z']+", text.lower())
+    if not words:
+        return 0.0
+    stop = sum(1 for w in words if w in _STOPWORDS)
+    return stop / len(words)
+
+
+def _looks_like_code(text: str) -> bool:
+    t = text.strip()
+    if not t:
+        return False
+    # Unambiguous shapes are safe as unconditional signals — no English
+    # sentence takes the form `identifier = expr` or `identifier(args)`.
+    if _ASSIGNMENT_RE.match(t) or _CALL_RE.match(t):
+        return True
+    if _prose_score(t) > 0.25 or "," in t:
+        return False  # a comma or high stopword ratio reads as prose, not a bare statement
+    word_count = len(re.findall(r"[A-Za-z_]\w*", t))
+    first_word = re.match(r"^([A-Za-z_]\w*)", t)
+    if first_word and first_word.group(1) in _CODE_KEYWORDS:
+        # Several keywords (match, case, try, new, use, do...) double as
+        # ordinary English verbs. A real one-line statement is short; a
+        # WHY-comment using one of these words as a verb runs a full
+        # sentence. Gate on length so "match the force pattern — a
+        # chained non-force `git push`..." doesn't trip on "match".
+        return word_count <= 5
+    # Bare trailing punctuation is the weakest signal — a prose sentence can
+    # end in ';' too. Require it to also be statement-short.
+    return word_count <= 8 and bool(_TRAILING_CODE_RE.search(t))
+
+
+def _comment_body(spec: LangSpec, run: Run, raw: str) -> str:
+    if run.is_doc and spec.doc_mode == "triple-slash":
+        return _strip_line_token(raw, "///") or raw
+    if spec.line_token and raw.strip().startswith(spec.line_token):
+        return _strip_line_token(raw, spec.line_token) or ""
+    return raw.strip("* \t")
+
+
+def _detect_commented_out(spec: LangSpec, run: Run, path: str) -> list[Finding]:
+    if run.has_example or run.is_docstring:
+        return []
+    findings = []
+    for vl, raw in zip(run.lines, run.texts):
+        body = _comment_body(spec, run, raw)
+        if any(p.search(body) for p in _DIRECTIVE_PATTERNS):
+            continue
+        if _looks_like_code(body):
+            findings.append(Finding(
+                detector="COMMENTED_OUT",
+                path=path,
+                line=vl.lineno,
+                message=f"comment body parses as code: `{body.strip()[:80]}`",
+                must_triage=True,
+            ))
+    return findings
+
+
+def _tokens(text: str) -> set[str]:
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text.lower())
+    return {w for w in words if w not in _COMMENT_STOPWORDS and len(w) > 1}
+
+
+def _detect_restates(spec: LangSpec, view: list[ViewLine], path: str) -> list[Finding]:
+    findings = []
+    n = len(view)
+    for i, vl in enumerate(view):
+        if vl.kind != "+":
+            continue
+        body = _strip_line_token(vl.text, spec.line_token)
+        if body is None or _is_directive_line(spec, vl.text) or body.startswith("/"):
+            continue  # triple-slash doc lines are scoped out of RESTATES (inline-only)
+        j = i + 1
+        while j < n and view[j].kind == "+" and not view[j].text.strip():
+            j += 1
+        if j >= n or view[j].kind != "+":
+            continue
+        code_line = view[j]
+        if _strip_line_token(code_line.text, spec.line_token) is not None:
+            continue  # next line is itself a comment, not code
+        c_tokens = _tokens(body)
+        k_tokens = _tokens(code_line.text)
+        if not c_tokens or not k_tokens:
+            continue
+        overlap = len(c_tokens & k_tokens) / len(c_tokens)
+        if overlap >= RESTATES_THRESHOLD:
+            findings.append(Finding(
+                detector="RESTATES",
+                path=path,
+                line=vl.lineno,
+                message=f"overlap {overlap:.2f} with code below: `{code_line.text.strip()[:60]}`",
+                must_triage=True,
+            ))
+    return findings
+
+
+# ── Per-file scan ──────────────────────────────────────────────────────────────
+
+
+def scan_file(fd: FileDiff) -> tuple[list[Finding], int, int]:
+    """Returns (findings, added_comment_lines, added_code_lines)."""
+    if fd.is_rename:
+        return [], 0, 0
+    spec = classify(fd.path)
+    if spec is None or is_generated(fd.view):
+        return [], 0, 0
+
+    findings: list[Finding] = []
+    comment_line_ids: set[int] = set()
+
+    runs = _extract_line_runs(spec, fd.view)
+    if spec.doc_mode == "docstring":
+        runs += _extract_python_docstrings(fd.view)
+    runs += _extract_block_runs(spec, fd.view)
+
+    for run in runs:
+        for vl in run.lines:
+            comment_line_ids.add(id(vl))
+        over_cap = _detect_over_cap(spec, run, fd.path)
+        if over_cap is not None:
+            findings.append(over_cap)
+        findings.extend(_detect_commented_out(spec, run, fd.path))
+
+    findings.extend(_detect_restates(spec, fd.view, fd.path))
+
+    added_comment = sum(1 for vl in fd.view if vl.kind == "+" and id(vl) in comment_line_ids)
+    added_code = sum(
+        1 for vl in fd.view
+        if vl.kind == "+" and id(vl) not in comment_line_ids and vl.text.strip()
+    )
+    return findings, added_comment, added_code
+
+
+# ── Orchestration ──────────────────────────────────────────────────────────────
+
+
+def scan_diff(text: str) -> tuple[list[Finding], dict]:
+    files = parse_diff(text)
+    findings: list[Finding] = []
+    scanned_langs: set[str] = set()
+    skipped_exts: set[str] = set()
+    scanned_count = 0
+    skipped_count = 0
+    total_comment = 0
+    total_code = 0
+
+    for fd in files:
+        if fd.path.endswith(_SKIP_SUFFIXES):
+            continue
+        spec = classify(fd.path)
+        if spec is None:
+            skipped_exts.add(extension_of(fd.path))
+            skipped_count += 1
+            continue
+        scanned_langs.add(spec.name)
+        scanned_count += 1
+        f_findings, comment_n, code_n = scan_file(fd)
+        findings.extend(f_findings)
+        total_comment += comment_n
+        total_code += code_n
+
+    if total_code >= DENSITY_FLOOR_CODE_LINES:
+        ratio = total_comment / total_code
+        if ratio >= DENSITY_RATIO_THRESHOLD:
+            findings.append(Finding(
+                detector="DENSITY",
+                path="(aggregate)",
+                line=0,
+                message=f"added comment/code ratio {ratio:.2f} ({total_comment}/{total_code} added lines)",
+                must_triage=False,
+            ))
+
+    coverage = {
+        "scanned_files": scanned_count,
+        "scanned_langs": sorted(scanned_langs),
+        "skipped_files": skipped_count,
+        "skipped_exts": sorted(skipped_exts),
+    }
+    return findings, coverage
+
+
+# ── Output ─────────────────────────────────────────────────────────────────────
+
+
+def format_output(findings: list[Finding], coverage: dict) -> str:
+    lines = []
+    scanned_n = coverage["scanned_files"]
+    skipped_exts = coverage["skipped_exts"]
+    langs = ", ".join(coverage["scanned_langs"]) or "none"
+    if skipped_exts:
+        skipped_n = coverage["skipped_files"]
+        exts = ", ".join(e.lstrip(".") for e in skipped_exts)
+        lines.append(f"COMMENT-SCAN: scanned {scanned_n} files ({langs}); skipped {skipped_n} ({exts}) — unsupported")
+    else:
+        lines.append(f"COMMENT-SCAN: scanned {scanned_n} files ({langs})")
+    lines.append("")
+
+    must_triage = [f for f in findings if f.must_triage]
+    info = [f for f in findings if not f.must_triage]
+
+    for f in must_triage + info:
+        lines.append(f"{f.id} — {f.message}")
+
+    lines.append("")
+    counts: dict[str, int] = {}
+    for f in must_triage:
+        counts[f.detector] = counts.get(f.detector, 0) + 1
+    counts_str = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    footer = f"COMMENT-SCAN: {len(must_triage)} must-triage"
+    if counts_str:
+        footer += f" ({counts_str})"
+    footer += f" INFO={len(info)}"
+    lines.append(footer)
+    return "\n".join(lines)
+
+
+def main() -> int:
+    try:
+        diff_text = sys.stdin.read()
+    except Exception as exc:  # fail-open: unreadable stdin
+        print(f"COMMENT-SCAN: degraded — could not read stdin ({exc}); skipping scan")
+        return 0
+
+    try:
+        findings, coverage = scan_diff(diff_text)
+        output = format_output(findings, coverage)
+    except Exception as exc:  # fail-open: any parse/analysis error
+        print(f"COMMENT-SCAN: degraded — {exc}; skipping scan (fail-open)")
+        return 0
+
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
