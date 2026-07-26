@@ -368,6 +368,31 @@ def test_range_main_dotdotdot_head_spans_multiple_commits(tmp_path):
     assert second.stdout == "src.txt:4\n"
 
 
+def test_mnemonic_prefix_config_does_not_break_header_matching(tmp_path):
+    """git config diff.mnemonicPrefix rewrites +++ headers to i/ and w/ instead of a/ and b/ —
+    the script forces --src-prefix=a/ --dst-prefix=b/ so header matching stays correct
+    regardless of this local config, across default/--staged/--range modes."""
+    repo = _init_repo(tmp_path)
+    _git(["config", "diff.mnemonicPrefix", "true"], cwd=repo)
+
+    (repo / "src.txt").write_text("line1\nMNEMONIC_HEAD_PATTERN\nline2\nline3\n")
+    default_result = _run(["src.txt", "MNEMONIC_HEAD_PATTERN"], cwd=repo)
+    assert default_result.returncode == 0, default_result.stderr
+    assert default_result.stdout == "src.txt:2\n"
+
+    _git(["add", "src.txt"], cwd=repo)
+    (repo / "src.txt").write_text("line1\nMNEMONIC_HEAD_PATTERN\nline2\nMNEMONIC_STAGED_PATTERN\nline3\n")
+    staged_result = _run(["src.txt", "MNEMONIC_HEAD_PATTERN", "--staged"], cwd=repo)
+    assert staged_result.returncode == 0, staged_result.stderr
+    assert staged_result.stdout == "src.txt:2\n"
+
+    _git(["add", "src.txt"], cwd=repo)
+    _git(["commit", "-m", "mnemonic commit"], cwd=repo)
+    range_result = _run(["src.txt", "MNEMONIC_STAGED_PATTERN", "--range=HEAD~1"], cwd=repo)
+    assert range_result.returncode == 0, range_result.stderr
+    assert range_result.stdout == "src.txt:4\n"
+
+
 # ── Unit 6: wiring assertions ───────────────────────────────────────────────────
 
 def test_runtime_scripts_list_contains_diff_line_lookup():
