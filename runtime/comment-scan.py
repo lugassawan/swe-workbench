@@ -108,6 +108,7 @@ _GENERATED_RE = re.compile(r"@generated\b|DO NOT EDIT\b", re.I)
 
 _EXAMPLE_MARKER_RE = re.compile(r">>>|@example\b|<pre>|\{@code|```", re.I)
 _GODOC_INDENT_RE = re.compile(r"^(\t| {2,})\S")
+_TRIPLE_SLASH_DOC_RE = re.compile(r"^//[/!](?!/)")  # /// or //! (Rust/Dart/C# doc), not ////
 
 _CODE_KEYWORDS = frozenset({
     "if", "else", "elif", "for", "while", "return", "def", "function", "func",
@@ -118,8 +119,10 @@ _CODE_KEYWORDS = frozenset({
     "continue", "do", "end", "begin", "require", "include", "self", "this",
     "super", "print", "console", "System",
 })
-_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_$][\w$.\[\]]*\s*(==|=|\+=|-=|:=)\s*\S")
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_$][\w$.\[\]]*\s*(==|=|\+=|-=|:=)\s*(\S.*)$")
 _CALL_RE = re.compile(r"^[A-Za-z_$][\w$.]*\([^)]*\)\s*;?\s*$")
+_BARE_WORD_PAIR_RE = re.compile(r"\b([A-Za-z]+)\s+([A-Za-z]+)\b")
+_OPERATOR_WORDS = frozenset({"and", "or", "not", "in", "is", "new"})
 _TRAILING_CODE_RE = re.compile(r"[;{}]\s*$")
 _STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "this", "that", "it", "to", "of", "and",
@@ -167,6 +170,7 @@ class FileDiff:
     path: str
     is_rename: bool = False
     view: list[ViewLine] = field(default_factory=list)
+    removed_texts: set[str] = field(default_factory=set)
 
 
 # ── Diff parsing ──────────────────────────────────────────────────────────────
@@ -193,6 +197,8 @@ def parse_diff(text: str) -> list[FileDiff]:
             current.is_rename = True
             continue
         if line.startswith("+++ "):
+            # Known gap: git C-style-quotes paths with spaces/non-ASCII
+            # (core.quotePath) — falls through to unsupported-ext, visibly.
             p = line[4:].strip()
             current.path = "" if p == "/dev/null" else (p[2:] if p.startswith(("a/", "b/")) else p)
             continue
@@ -210,6 +216,7 @@ def parse_diff(text: str) -> list[FileDiff]:
             current.view.append(ViewLine("+", new_line, line[1:]))
             new_line += 1
         elif line.startswith("-") and not line.startswith("---"):
+            current.removed_texts.add(line[1:].strip())
             continue
         elif line.startswith("\\"):
             continue
@@ -235,8 +242,15 @@ def extension_of(path: str) -> str:
     return path[idx:] if idx >= 0 else "(no-ext)"
 
 
+_GENERATED_MARKER_SCAN_LINES = 10
+
+
 def is_generated(view: list[ViewLine]) -> bool:
-    return any(_GENERATED_RE.search(vl.text) for vl in view)
+    """`@generated`/`DO NOT EDIT` markers live in the file header by
+    convention — restrict the scan there so an unrelated mid-file comment
+    (e.g. "# DO NOT EDIT this list without updating the migration too")
+    can't silently skip the whole file."""
+    return any(_GENERATED_RE.search(vl.text) for vl in view[:_GENERATED_MARKER_SCAN_LINES])
 
 
 def _leading_boundary(view: list[ViewLine]) -> int | None:
@@ -278,6 +292,12 @@ def _strip_line_token(text: str, token: str) -> str | None:
     return s[len(token):].strip()
 
 
+def _strip_triple_slash(text: str) -> str:
+    """Strip a `///` or `//!` doc marker (both 3 chars) if present, else no-op."""
+    s = text.strip()
+    return s[3:].strip() if _TRIPLE_SLASH_DOC_RE.match(s) else s
+
+
 # ── Comment-run extraction ────────────────────────────────────────────────────
 
 
@@ -313,6 +333,7 @@ def _extract_line_runs(spec: LangSpec, view: list[ViewLine]) -> list[Run]:
         while (
             j < n
             and view[j].kind == "+"
+            and view[j].lineno == run_lines[-1].lineno + 1  # reject cross-hunk "adjacency"
             and _strip_line_token(view[j].text, spec.line_token) is not None
             and not _is_directive_line(spec, view[j].text)
         ):
@@ -331,8 +352,8 @@ def _classify_run(spec: LangSpec, bodies: list[str], view: list[ViewLine], next_
     has_example = any(_EXAMPLE_MARKER_RE.search(b) for b in bodies)
 
     if spec.doc_mode == "triple-slash":
-        is_doc = bodies[0].startswith("///") and not bodies[0].startswith("////")
-        if is_doc and any(_GODOC_INDENT_RE.match((_strip_line_token(b, "///") or "")) for b in bodies):
+        is_doc = bool(_TRIPLE_SLASH_DOC_RE.match(bodies[0]))
+        if is_doc and any(_GODOC_INDENT_RE.match(_strip_triple_slash(b)) for b in bodies):
             has_example = True
         return is_doc, has_example
 
@@ -366,10 +387,18 @@ def _extract_block_runs(spec: LangSpec, view: list[ViewLine]) -> list[Run]:
     block_bodies: list[str] = []
     block_is_doc = False
     block_all_added = True
+    prev_lineno: int | None = None
 
     while i < n:
         vl = view[i]
         stripped = vl.text.strip()
+        if in_block and prev_lineno is not None and vl.lineno != prev_lineno + 1:
+            # Lineno gap = jumped to a new hunk; abort rather than merge a
+            # block comment across the omitted lines in between.
+            in_block = False
+            block_lines = []
+            block_bodies = []
+        prev_lineno = vl.lineno
         if not in_block:
             if stripped.startswith(start_delim):
                 in_block = True
@@ -418,7 +447,11 @@ def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
     while i < n:
         vl = view[i]
         m = _PY_QUOTE_RE.match(vl.text)
-        preceding_ok = (i == 0 and vl.lineno == 1) or (i > 0 and _PY_DEF_RE.match(view[i - 1].text))
+        # Module docstring = view's first real content (`_leading_boundary`),
+        # not literal index 0 — a shebang ahead of it must not disqualify it.
+        preceding_ok = (boundary is not None and vl.lineno == boundary) or (
+            i > 0 and _PY_DEF_RE.match(view[i - 1].text)
+        )
         if m and preceding_ok:
             quote = m.group(1)
             rest_of_line = vl.text.strip()[len(quote):]
@@ -426,15 +459,26 @@ def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
             block_bodies = [vl.text.strip()]
             all_added = vl.kind == "+"
             j = i
+            gap_abort = False
             if quote not in rest_of_line:
                 j = i + 1
+                prev_lineno = vl.lineno
                 while j < n:
                     line = view[j]
+                    if line.lineno != prev_lineno + 1:
+                        # Hunk boundary crossed before the docstring closed —
+                        # can't verify closure across the omitted lines in
+                        # between, so discard rather than merge hunks. Don't
+                        # consume this entry: it may start its own run.
+                        all_added = False
+                        gap_abort = True
+                        break
                     if line.kind != "+":
                         all_added = False
                     else:
                         block_lines.append(line)
                     block_bodies.append(line.text.strip())
+                    prev_lineno = line.lineno
                     if quote in line.text:
                         break
                     j += 1
@@ -442,7 +486,7 @@ def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
             if block_lines and all_added:
                 leading = boundary is not None and block_lines[0].lineno == boundary
                 runs.append(Run(block_lines, block_bodies, True, has_example, leading, is_docstring=True))
-            i = j + 1
+            i = j if gap_abort else j + 1
             continue
         i += 1
     return runs
@@ -452,7 +496,13 @@ def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
 
 
 def _detect_over_cap(spec: LangSpec, run: Run, path: str) -> Finding | None:
-    if run.has_example or run.leading_of_file:
+    if run.has_example:
+        return None
+    if run.leading_of_file and not run.is_doc:
+        # License headers and script preambles are exempt; a leading module
+        # docstring / file-header Javadoc / rustdoc-at-line-1 is not — it's
+        # the single most common real over-cap case (new-file documentation)
+        # and must stay subject to the cap like any other doc comment.
         return None
     cap = spec.doc_cap if run.is_doc else INLINE_CAP
     if cap is None or len(run.lines) <= cap:
@@ -476,13 +526,31 @@ def _prose_score(text: str) -> float:
     return stop / len(words)
 
 
+def _rhs_reads_as_prose(rhs: str) -> bool:
+    """True if `rhs` has two bare English words adjacent with no operator
+    between them — e.g. "r squared" in "area = pi * r squared". Real
+    expressions join identifiers with operators/punctuation; the only bare
+    word-word adjacency in real code comes from a handful of operator-words
+    (and/or/not/in/is/new), which this whitelists."""
+    for m in _BARE_WORD_PAIR_RE.finditer(rhs):
+        w1, w2 = m.group(1).lower(), m.group(2).lower()
+        if w1 not in _OPERATOR_WORDS and w2 not in _OPERATOR_WORDS:
+            return True
+    return False
+
+
 def _looks_like_code(text: str) -> bool:
     t = text.strip()
     if not t:
         return False
     # Unambiguous shapes are safe as unconditional signals — no English
-    # sentence takes the form `identifier = expr` or `identifier(args)`.
-    if _ASSIGNMENT_RE.match(t) or _CALL_RE.match(t):
+    # sentence takes the form `identifier = expr` or `identifier(args)`,
+    # except a formula-explaining comment can accidentally fit the assignment
+    # shape ("area = pi * r squared") — gate that one case on RHS word shape.
+    assignment = _ASSIGNMENT_RE.match(t)
+    if assignment:
+        return not _rhs_reads_as_prose(assignment.group(2))
+    if _CALL_RE.match(t):
         return True
     if _prose_score(t) > 0.25 or "," in t:
         return False  # a comma or high stopword ratio reads as prose, not a bare statement
@@ -502,7 +570,7 @@ def _looks_like_code(text: str) -> bool:
 
 def _comment_body(spec: LangSpec, run: Run, raw: str) -> str:
     if run.is_doc and spec.doc_mode == "triple-slash":
-        return _strip_line_token(raw, "///") or raw
+        return _strip_triple_slash(raw)
     if spec.line_token and raw.strip().startswith(spec.line_token):
         return _strip_line_token(raw, spec.line_token) or ""
     return raw.strip("* \t")
@@ -533,19 +601,28 @@ def _tokens(text: str) -> set[str]:
 
 
 def _detect_restates(spec: LangSpec, view: list[ViewLine], path: str) -> list[Finding]:
+    """Only checks each single '+' comment line against the '+' code line
+    immediately below it — a multi-line comment where line 1 restates the
+    code but later lines add real context is not flagged. Scoped this way
+    deliberately: it's the shape from the plan's own worked example
+    ("Returns the user's id" over "return user.id;"), and a WHY-heavy
+    multi-line comment is exactly what must survive (see RESTATES_THRESHOLD
+    calibration notes)."""
     findings = []
     n = len(view)
     for i, vl in enumerate(view):
         if vl.kind != "+":
             continue
         body = _strip_line_token(vl.text, spec.line_token)
-        if body is None or _is_directive_line(spec, vl.text) or body.startswith("/"):
-            continue  # triple-slash doc lines are scoped out of RESTATES (inline-only)
+        if body is None or _is_directive_line(spec, vl.text) or _TRIPLE_SLASH_DOC_RE.match(vl.text.strip()):
+            continue  # triple-slash/`//!` doc lines are scoped out of RESTATES (inline-only)
         j = i + 1
-        while j < n and view[j].kind == "+" and not view[j].text.strip():
+        last_lineno = vl.lineno
+        while j < n and view[j].kind == "+" and view[j].lineno == last_lineno + 1 and not view[j].text.strip():
+            last_lineno = view[j].lineno
             j += 1
-        if j >= n or view[j].kind != "+":
-            continue
+        if j >= n or view[j].kind != "+" or view[j].lineno != last_lineno + 1:
+            continue  # not actually adjacent — a hunk boundary, not a blank line, sits between
         code_line = view[j]
         if _strip_line_token(code_line.text, spec.line_token) is not None:
             continue  # next line is itself a comment, not code
@@ -568,21 +645,35 @@ def _detect_restates(spec: LangSpec, view: list[ViewLine], path: str) -> list[Fi
 # ── Per-file scan ──────────────────────────────────────────────────────────────
 
 
+def _rename_scan_view(fd: FileDiff) -> list[ViewLine]:
+    """For a rename hunk, demote '+' lines that exactly match removed content
+    to context — they're the same line reshown by the diff, not new content.
+    A genuinely new or edited line (no matching '-' text) stays '+' and is
+    scanned normally. This is what makes `-M` do what refactorer needs: don't
+    re-flag a doc comment that moved untouched, but still catch anything
+    actually new in the same rename+modify commit."""
+    if not fd.is_rename or not fd.removed_texts:
+        return fd.view
+    return [
+        ViewLine(" ", vl.lineno, vl.text) if vl.kind == "+" and vl.text.strip() in fd.removed_texts else vl
+        for vl in fd.view
+    ]
+
+
 def scan_file(fd: FileDiff) -> tuple[list[Finding], int, int]:
     """Returns (findings, added_comment_lines, added_code_lines)."""
-    if fd.is_rename:
-        return [], 0, 0
     spec = classify(fd.path)
     if spec is None or is_generated(fd.view):
         return [], 0, 0
 
+    view = _rename_scan_view(fd)
     findings: list[Finding] = []
     comment_line_ids: set[int] = set()
 
-    runs = _extract_line_runs(spec, fd.view)
+    runs = _extract_line_runs(spec, view)
     if spec.doc_mode == "docstring":
-        runs += _extract_python_docstrings(fd.view)
-    runs += _extract_block_runs(spec, fd.view)
+        runs += _extract_python_docstrings(view)
+    runs += _extract_block_runs(spec, view)
 
     for run in runs:
         for vl in run.lines:
@@ -592,11 +683,11 @@ def scan_file(fd: FileDiff) -> tuple[list[Finding], int, int]:
             findings.append(over_cap)
         findings.extend(_detect_commented_out(spec, run, fd.path))
 
-    findings.extend(_detect_restates(spec, fd.view, fd.path))
+    findings.extend(_detect_restates(spec, view, fd.path))
 
-    added_comment = sum(1 for vl in fd.view if vl.kind == "+" and id(vl) in comment_line_ids)
+    added_comment = sum(1 for vl in view if vl.kind == "+" and id(vl) in comment_line_ids)
     added_code = sum(
-        1 for vl in fd.view
+        1 for vl in view
         if vl.kind == "+" and id(vl) not in comment_line_ids and vl.text.strip()
     )
     return findings, added_comment, added_code

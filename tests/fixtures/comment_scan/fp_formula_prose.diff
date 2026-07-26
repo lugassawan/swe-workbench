@@ -1,0 +1,9 @@
+diff --git a/geometry.py b/geometry.py
+index 1111111..2222222 100644
+--- a/geometry.py
++++ b/geometry.py
+@@ -1,1 +1,3 @@
+ import math
++def circle_area(r):
++    # area = pi * r squared
++    return math.pi * r * r

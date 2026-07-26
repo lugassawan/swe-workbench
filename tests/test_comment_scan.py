@@ -72,6 +72,34 @@ def test_density_fires_as_informational_only():
     assert not findings[0].must_triage
 
 
+def test_over_cap_fires_on_leading_module_docstring():
+    """A module docstring at line 1 of a new file is 'leading', but it's a
+    doc comment, not a license header — the leading-of-file exemption must
+    not blanket-suppress it (regression: it originally did, silencing OVER_CAP
+    on the single most common real trigger case: new-file documentation)."""
+    findings, _ = _scan("over_cap_leading_docstring.diff")
+    assert _detectors(findings) == ["OVER_CAP"]
+    assert findings[0].line == 1
+
+
+def test_no_false_over_cap_across_unrelated_hunks():
+    """Three single-line comments in three far-apart, unrelated hunks must
+    not merge into one run just because they're adjacent in the diff *view*
+    (regression: run-continuation only checked '+' kind, not line-number
+    contiguity, so unrelated hunks could merge into a bogus multi-hunk OVER_CAP
+    span)."""
+    findings, _ = _scan("multi_hunk_no_cross_merge.diff")
+    assert findings == []
+
+
+def test_formula_comment_not_flagged_as_commented_out():
+    """"# area = pi * r squared" fits the bare assignment shape but is an
+    ordinary formula-explaining WHY-comment, not dead code (regression: the
+    assignment heuristic was truly unconditional and flagged it)."""
+    findings, _ = _scan("fp_formula_prose.diff")
+    assert findings == []
+
+
 # ── False-positive exclusion classes ──────────────────────────────────────────
 
 
@@ -106,11 +134,16 @@ def test_pure_rename_hunk_skipped_entirely():
     assert coverage["scanned_files"] == 0
 
 
-def test_rename_with_modification_skipped():
-    """refactorer moves a function + its untouched doc comment; a rename with
-    similarity <100% must not have its comments re-flagged (#546 plan §1)."""
+def test_rename_with_modification_exempts_only_the_unchanged_comment():
+    """A <100% similarity rename reshows an untouched doc comment as a -/+
+    pair (refactorer moves a function + its comment) — that pair must not
+    be re-flagged. But the same commit also adds a genuinely new commented-
+    out line with no removed-text counterpart, which must still be caught:
+    exempting the whole file (the pre-fix behavior) silently defeated the
+    gate on exactly the rename+modify shape refactorer's wiring depends on."""
     findings, _ = _scan("fp_rename_with_modification.diff")
-    assert findings == []
+    assert _detectors(findings) == ["COMMENTED_OUT"]
+    assert "w := &Widget" in findings[0].message
 
 
 # ── Coverage line ──────────────────────────────────────────────────────────────
