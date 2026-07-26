@@ -109,6 +109,31 @@ def test_empty_range_value_exits_64():
     assert "Usage:" in result.stderr
 
 
+def test_empty_pattern_exits_64_instead_of_matching_everything():
+    """An empty pattern must not silently match every `+` line (index(s, "") is always > 0 in awk)."""
+    diff = (
+        "diff --git a/x b/x\n"
+        "--- a/x\n"
+        "+++ b/x\n"
+        "@@ -1,1 +1,2 @@\n"
+        " ctx\n"
+        "+something\n"
+    )
+    result = _run(["x", "", "--stdin"], stdin=diff)
+    assert result.returncode == 64
+    assert "Usage:" in result.stderr
+
+
+def test_invalid_range_exits_64_not_a_raw_git_exit_code(tmp_path):
+    repo = _init_repo(tmp_path)
+    result = _run(["src.txt", "pattern", "--range=totally-bogus-rev"], cwd=repo)
+    assert result.returncode == 64, (
+        f"a bad --range must map to the documented usage-error exit code, not leak git's own "
+        f"exit code (got {result.returncode}): {result.stderr!r}"
+    )
+    assert "Usage:" in result.stderr
+
+
 # ── Unit 2: core scan via --stdin ──────────────────────────────────────────────
 
 def test_single_hunk_resolves_added_line():
@@ -181,6 +206,22 @@ def test_multi_file_diff_ignores_other_file_match():
     assert result.stdout == "src/Foo.java:2\n", (
         "match must resolve only within src/Foo.java's own hunk, not other.txt's"
     )
+
+
+def test_added_line_starting_with_plusplus_is_not_mistaken_for_header():
+    """An added line whose content begins with '++' (raw line '+++...') must not be
+    mistaken for a '+++ b/<path>' file header — only account lines while inside a hunk."""
+    diff = (
+        "diff --git a/x b/x\n"
+        "--- a/x\n"
+        "+++ b/x\n"
+        "@@ -1,1 +1,2 @@\n"
+        " ctx\n"
+        "+++PLUSPLUS_MARKER\n"
+    )
+    result = _run(["x", "++PLUSPLUS_MARKER", "--stdin"], stdin=diff)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "x:2\n"
 
 
 def test_no_newline_at_eof_marker_handled():

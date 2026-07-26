@@ -50,11 +50,13 @@ case "$PATTERN" in
     ;;
 esac
 
+[ -n "$PATTERN" ] || usage "pattern must not be empty"
+
 case "$SOURCE_MODE" in
   stdin)  DIFF=$(cat) ;;
-  staged) DIFF=$(git diff --cached -- "$TARGET_PATH") ;;
-  range)  DIFF=$(git diff "$RANGE" -- "$TARGET_PATH") ;;
-  head)   DIFF=$(git diff HEAD -- "$TARGET_PATH") ;;
+  staged) DIFF=$(git diff --no-color --cached -- "$TARGET_PATH") || usage "git diff --cached failed for '$TARGET_PATH'" ;;
+  range)  DIFF=$(git diff --no-color "$RANGE" -- "$TARGET_PATH") || usage "git diff failed for range '$RANGE' — check the rev-range is valid" ;;
+  head)   DIFF=$(git diff --no-color HEAD -- "$TARGET_PATH") || usage "git diff HEAD failed for '$TARGET_PATH'" ;;
 esac
 
 DLL_PATH="$TARGET_PATH" DLL_PATTERN="$PATTERN" awk '
