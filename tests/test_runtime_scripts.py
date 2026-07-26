@@ -12,6 +12,7 @@ RUNTIME = ROOT / "runtime"
 RUNTIME_SCRIPTS = [
     "clean-ephemeral.sh",
     "clean-state-files.sh",
+    "diff-line-lookup.sh",
     "doctor.sh",
     "fetch-pr.sh",
     "gh-timeout.sh",
