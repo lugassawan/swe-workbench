@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# reap-run-dir.sh <run-dir>
+#
+# Remove a single run-scoped scratch directory allocated by new-run-dir.sh,
+# but only after proving it is a sanctioned artifact.  Exits 1 (never
+# silently) when any safety check fails.
+#
+# This is a separate script from clean-state-files.sh (file-only, rm -f) and
+# clean-ephemeral.sh (worktree removal, whose Path A looseness is load-bearing
+# for bare-N basenames) because it enforces one check neither sibling can
+# express: the target directory must sit exactly one level below the shared
+# /tmp/swe-workbench-run/ parent, and must not be a git worktree.
+#
+# Safety checks (ALL must pass):
+#   1. Argument is non-empty, absolute, and contains no ".." segment.
+#   2. Trailing slash stripped before any comparison.
+#   3. Path is canonicalized (/tmp -> /private/tmp on macOS is transparent).
+#   4. Depth exactly one: dirname(canonical target) equals the canonical
+#      /tmp/swe-workbench-run root — prefix containment is not enough.
+#   5. Target is not the run-dir root itself (implied by 4, asserted anyway).
+#   6. Basename matches the run-dir name shape (allowlist, not denylist):
+#        ^(pr-review|pr-followup|address-feedback|review-[a-z]+|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$
+#   7. Target is owned by the current user ([ -O ]) — /tmp is world-writable
+#      and sticky, so a squatted dir owned by another UID is refused.
+#   8. Target does NOT contain a .git entry — keeps scratch and worktree
+#      domains disjoint by construction.
+#   9. Target is a directory and is not itself a symlink. Absent -> exit 0
+#      idempotently (nothing to do).
+#
+# No entry-count or size cap: checks 4+7+8 already bound the blast radius to
+# a single owned, non-worktree directory one level below a fixed parent —
+# an extra tunable here would carry no principled value.
+#
+# Call form:
+#   swe-workbench-reap-run-dir <run-dir> 2>/dev/null
+
+set -euo pipefail
+
+reject() {
+  printf 'reap-run-dir: %s\n' "$*" >&2
+  exit 1
+}
+
+TARGET="${1:-}"
+
+[ -n "$TARGET" ] || reject "path argument is required"
+
+case "$TARGET" in
+  /*) ;;
+  *) reject "path must be absolute: $TARGET" ;;
+esac
+
+if printf '%s' "$TARGET" | grep -qE '(^|/)\.\.(\/|$)'; then
+  reject "path contains '..' traversal: $TARGET"
+fi
+
+# Strip trailing slash before any comparison — this is what keeps the shared
+# parent itself from matching a naive prefix check.
+TARGET="${TARGET%/}"
+
+[ -n "$TARGET" ] || reject "path must be absolute: $TARGET"
+
+# Resolve /tmp -> /private/tmp on macOS once, for the run-dir root.
+CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
+RUN_ROOT="${CANON_TMP}/swe-workbench-run"
+
+# Canonicalize the parent directory (the target itself may not exist).
+parent="$(dirname "$TARGET")"
+base="$(basename "$TARGET")"
+canon_parent=$(cd "$parent" 2>/dev/null && pwd -P) || canon_parent="$parent"
+canon_target="${canon_parent}/${base}"
+
+[ "$canon_target" != "$RUN_ROOT" ] || reject "refusing to remove the run-dir root itself: $TARGET"
+
+[ "$canon_parent" = "$RUN_ROOT" ] || reject "path is not exactly one level under $RUN_ROOT: $TARGET"
+
+if ! printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z]+|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$'; then
+  reject "basename does not match the run-dir name shape: $base"
+fi
+
+# Absent path (including no dangling symlink at that name): idempotent no-op.
+# Checked via -L first since -e follows symlinks and would report a dangling
+# symlink as absent, letting it escape the rejection below.
+if [ ! -e "$canon_target" ] && [ ! -L "$canon_target" ]; then
+  exit 0
+fi
+
+[ -L "$canon_target" ] && reject "path is a symlink: $TARGET"
+
+[ -d "$canon_target" ] || reject "path is not a directory: $TARGET"
+
+[ -O "$canon_target" ] || reject "path is not owned by the current user: $TARGET"
+
+[ -e "$canon_target/.git" ] && reject "refusing to remove a directory containing .git: $TARGET"
+
+rm -rf -- "$canon_target"
