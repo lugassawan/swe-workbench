@@ -88,7 +88,7 @@ on, so a silent failure here silently breaks the whole deferred-verification con
 the temp file (foreground, no suppression — a failed reap must surface):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" /tmp/hotfix-pr-body-<N>.txt
+swe-workbench-clean-state-files /tmp/hotfix-pr-body-<N>.txt
 ```
 
 ## Phase 4 — Verify + Review (after the PR is open)
@@ -114,7 +114,7 @@ Phase 2–4, not from intent.
   `<!-- swe-workbench:deferred-verification -->` line (nothing else), write the result to
   `/tmp/hotfix-pr-body-<N>.txt` (same path Phase 3 used and already reaped — safe to reuse),
   `gh pr edit <N> --body-file /tmp/hotfix-pr-body-<N>.txt`, then reap it the same way:
-  `bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" /tmp/hotfix-pr-body-<N>.txt`.
+  `swe-workbench-clean-state-files /tmp/hotfix-pr-body-<N>.txt`.
 - **Not paid:** leave the marker untouched — `workflow-cleanup-merged` reads it at merge time and
   offers the backfill follow-up there. Do not strip it preemptively "because verification passed"
   if no regression test was added; a green test suite that never exercises the fix is not paid debt.

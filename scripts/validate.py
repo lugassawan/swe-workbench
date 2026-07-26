@@ -2,6 +2,7 @@
 """Plugin self-validator. Zero dependencies beyond python3 stdlib."""
 
 import json
+import os
 import py_compile
 import re
 import sys
@@ -43,11 +44,16 @@ def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
 
 
-def parse_frontmatter(path, text=None):
-    """Return dict of key:value from YAML frontmatter (single-line scalars only), or None.
+_FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
+_FM_ITEM_RE = re.compile(r'^-\s+(.*\S)\s*$')
 
-    Keys are lowercased for case-insensitive lookup. Caller may pass pre-read `text`
-    to avoid a second file read.
+
+def parse_frontmatter(path, text=None):
+    """Return dict of key:value from YAML frontmatter, or None.
+
+    Single-line scalars yield str. A key with an empty scalar followed by
+    `- item` lines yields list[str]. Keys are lowercased for case-insensitive
+    lookup. Caller may pass pre-read `text` to avoid a second file read.
     """
     if text is None:
         text = path.read_text(encoding="utf-8")
@@ -61,10 +67,24 @@ def parse_frontmatter(path, text=None):
         return None
     block = text[3:end].strip()
     result = {}
+    pending = None  # key eligible to collect block-sequence items
     for line in block.splitlines():
-        m = re.match(r'^([\w][\w-]*):\s*(.*)$', line.strip())
+        stripped = line.strip()
+        if stripped == "":
+            continue  # blank line: does not disturb a pending block-sequence key
+        item = _FM_ITEM_RE.match(stripped)
+        if item and pending is not None:
+            if not isinstance(result[pending], list):
+                result[pending] = []
+            result[pending].append(item.group(1).strip())
+            continue
+        m = _FM_KEY_RE.match(stripped)
         if m:
-            result[m.group(1).lower()] = m.group(2).strip()
+            key, value = m.group(1).lower(), m.group(2).strip()
+            result[key] = value
+            pending = key if value == "" else None
+        else:
+            pending = None
     return result
 
 
@@ -273,6 +293,74 @@ def check_agent_skill_refs(cache=None):
                     agent_md.relative_to(ROOT),
                     f"references 'swe-workbench:{artifact_id}' but no matching artifact found "
                     f"(checked skills/{artifact_id}/, agents/{artifact_id}.md, commands/{artifact_id}.md)",
+                )
+
+
+def check_preloaded_skills(cache=None):
+    """Every agent's frontmatter 'skills:' entry must be a namespaced,
+    resolvable, canary-bearing preload (issue #558/#562).
+
+    Bare (non-namespaced) skill names silently fail to preload at dispatch
+    time — Claude Code only resolves the 'swe-workbench:<id>' form. Agents
+    without a 'skills:' key are skipped entirely, so this is a no-op for
+    agents that don't opt into preloading. A body-text mention of the
+    preloaded skill is no longer required — see check_unwired_principle_skills,
+    which recognizes frontmatter 'skills:' entries as wiring in their own right.
+    """
+    agents_dir = ROOT / "agents"
+    skills_dir = ROOT / "skills"
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # already reported by check_agents
+        else:
+            text = agent_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(agent_md, text=text)
+        if fm is None or "skills" not in fm:
+            continue
+        rel = agent_md.relative_to(ROOT)
+        entries = fm["skills"]
+        if not isinstance(entries, list) or not entries:
+            fail(
+                rel,
+                "frontmatter 'skills:' must be a YAML block sequence "
+                "(e.g. '- swe-workbench:<id>'), not a scalar or empty value",
+            )
+            continue
+        for entry in entries:
+            if not entry.startswith("swe-workbench:"):
+                fail(
+                    rel,
+                    f"frontmatter 'skills:' entry {entry!r} is not namespaced — "
+                    "bare skill names silently fail to preload; use 'swe-workbench:<id>'",
+                )
+                continue
+            skill_id = entry.split(":", 1)[1]
+            skill_md = skills_dir / skill_id / "SKILL.md"
+            if not skill_md.is_file():
+                fail(
+                    rel,
+                    f"frontmatter 'skills:' entry {entry!r} does not resolve to "
+                    f"skills/{skill_id}/SKILL.md",
+                )
+                continue
+            if skills_cache is not None and skill_md in skills_cache:
+                skill_text = skills_cache[skill_md]
+            else:
+                try:
+                    skill_text = skill_md.read_text(encoding="utf-8")
+                except OSError:
+                    skill_text = None
+            canary = f"SWB-PRELOAD-{skill_id.upper()}"
+            if skill_text is None or f"preload-canary: {canary}" not in skill_text:
+                fail(
+                    rel,
+                    f"preloaded skill 'skills/{skill_id}/SKILL.md' is missing its "
+                    f"'<!-- preload-canary: {canary} -->' marker",
                 )
 
 
@@ -728,7 +816,10 @@ def check_examples():
 
 
 def check_unwired_principle_skills(cache=None):
-    """Every skills/principle-*/ must be referenced by at least one agent.
+    """Every skills/principle-*/ must be referenced by at least one agent —
+    either backticked in body text, or listed in an agent's 'skills:'
+    frontmatter (unconditional preload wiring counts as wiring in its own
+    right; a body mention is no longer required once a skill is preloaded).
 
     agents/shared/ (the catalog slice files) are explicitly excluded — they list
     every skill by design and must not count as a wiring reference.
@@ -749,18 +840,26 @@ def check_unwired_principle_skills(cache=None):
         and (agents_cache is None or agents_cache.get(f) is not None)
     ]
 
+    agent_data = []
+    for f in agent_files:
+        text = agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8")
+        fm = parse_frontmatter(f, text=text)
+        fm_skills = fm.get("skills") if fm is not None else None
+        agent_data.append((text, fm_skills if isinstance(fm_skills, list) else []))
+
     for skill_id in principle_skills:
         needle = f"`swe-workbench:{skill_id}`"
+        entry = f"swe-workbench:{skill_id}"
         wired = any(
-            needle in (agents_cache[f] if agents_cache is not None else f.read_text(encoding="utf-8"))
-            for f in agent_files
+            needle in text or entry in fm_skills
+            for text, fm_skills in agent_data
         )
         if not wired:
             fail(
                 Path("agents") / "<unwired>",
                 f"principle skill 'swe-workbench:{skill_id}' is not referenced by any "
                 f"agent in agents/*.md — wire it into a relevant agent's "
-                f"'## Principle consultation' list",
+                f"'## Principle consultation' list or 'skills:' frontmatter",
             )
 
 
@@ -808,6 +907,47 @@ def check_hook_scripts():
             py_compile.compile(str(py_file), doraise=True)
         except py_compile.PyCompileError as exc:
             fail(py_file.relative_to(ROOT), str(exc))
+
+
+# Every bin/ wrapper must be invokable as a bare command once <plugin>/bin is
+# on PATH: exec-bit set, a #!/usr/bin/env <interp> shebang (any interpreter,
+# not just bash — see docs/plugin-platform-decisions.md), and the
+# swe-workbench- prefix that is the only guard against colliding with a
+# user's own PATH entries (bin/ has no other enforcement mechanism for it).
+_SHEBANG_RE = re.compile(r'^#!/usr/bin/env \S+\n')
+
+
+def check_bin_wrappers():
+    bin_dir = ROOT / "bin"
+    if not bin_dir.is_dir():
+        return
+    wrapper_names = {p.name for p in bin_dir.iterdir() if p.is_file()}
+    for wrapper in sorted(bin_dir.iterdir()):
+        if not wrapper.is_file():
+            continue
+        rel = wrapper.relative_to(ROOT)
+        if not wrapper.name.startswith("swe-workbench-"):
+            fail(rel, "bin/ wrapper must be prefixed swe-workbench-")
+            continue
+        if not os.access(wrapper, os.X_OK):
+            fail(rel, "bin/ wrapper is not executable (chmod +x)")
+        try:
+            with wrapper.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+        except OSError as exc:
+            fail(rel, f"could not read wrapper: {exc}")
+            continue
+        if not _SHEBANG_RE.match(first_line):
+            fail(rel, "bin/ wrapper must start with a #!/usr/bin/env <interp> shebang")
+
+    # Reverse direction: every runtime/ script must have a matching bin/ wrapper,
+    # so a newly added script can't silently ship without its bare-command entry point.
+    runtime_dir = ROOT / "runtime"
+    if runtime_dir.is_dir():
+        for script in sorted(list(runtime_dir.glob("*.sh")) + list(runtime_dir.glob("*.py"))):
+            expected = f"swe-workbench-{script.stem}"
+            if expected not in wrapper_names:
+                fail(script.relative_to(ROOT), f"has no matching bin/{expected} wrapper")
 
 
 # ──────────────────────────────────────────────
@@ -1090,6 +1230,260 @@ def check_browser_tool_gate(cache=None):
 
 
 # ──────────────────────────────────────────────
+# echo/printf shell footgun (#549)
+# ──────────────────────────────────────────────
+
+_BASH_BLOCK_RE = re.compile(r'^```bash[ \t]*\n(.*?)\n^```[ \t]*$', re.MULTILINE | re.DOTALL)
+# echo at a command position: line start, or after ; & | ( { ) — a bare '&'
+# also covers '&&' and a bare '|' also covers '||' since both share their last
+# char; ')' covers a `case` arm ('a) echo ...'), '{' covers a brace group
+# ('{ echo ...; }'). An optional shell keyword (if/elif/then/else/do/while/
+# until) may sit between the position marker and 'echo' (e.g. 'elif echo ...
+# ; then') — the keyword itself must be at that same command position, so a
+# keyword mentioned in a trailing comment ('# if echo fails') still can't
+# reach this branch.
+_ECHO_CMD_POS_RE = re.compile(
+    r'(?:^|[;&|({)])\s*(?:(?:if|elif|then|else|do|while|until)\s+)?echo(?=\s|$)'
+)
+# Matches a bare variable reference ($VAR, ${VAR}) or a command/process
+# substitution opener ($( or a backtick) — the same escape-expansion risk
+# applies to whatever string ends up in echo's argument, not just bare
+# variables (PR #564 review follow-up).
+_VAR_REF_RE = re.compile(r'\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\(|`')
+_SEPARATOR_CHARS = frozenset(' \t;&|')
+
+
+def _redirect_target_hazard(window, j, n):
+    """From `j` (first char after a redirect operator), skip whitespace,
+    extract the target token, and return (new_index, is_hazard) — `is_hazard`
+    is False only for a `/dev/null` target (quotes stripped before compare)."""
+    while j < n and window[j] in ' \t':
+        j += 1
+    k = j
+    while k < n and window[k] not in _SEPARATOR_CHARS:
+        k += 1
+    target = window[j:k].strip('"\'')
+    return k, target != '/dev/null'
+
+
+def _find_echo_hazard_end(window):
+    """Quote-aware scan of `window` (the text right after 'echo') for the
+    first real pipe/redirect hazard, stopping at the first unquoted command
+    separator (';', '&&', bare '&', '||') with no hazard found.
+
+    Quote-awareness matters because the JSON this check exists to protect
+    routinely contains a literal ';' inside a quoted string — a naive
+    unquoted `;`-split would truncate the scan before reaching a real pipe
+    or redirect that comes after it on the same line.
+
+    Returns the hazard's start offset into `window`, or None if the command
+    ends (separator or end-of-line) with no real pipe/redirect found.
+    """
+    quote = None
+    i, n = 0, len(window)
+    while i < n:
+        c = window[i]
+        if quote:
+            if c == '\\' and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'"):
+            quote = c
+            i += 1
+            continue
+        if c == ';':
+            return None
+        if c == '&':
+            if i + 1 < n and window[i + 1] == '>':
+                # '&>'/'&>>' — combined stdout+stderr redirect to a real
+                # target; same hazard rules as a bare '>' (PR #564 review:
+                # checking '&' before '>' previously misread this as a bare
+                # background job / '&&' and bailed before the real redirect).
+                j = i + 2
+                if j < n and window[j] == '>':
+                    j += 1
+                if j < n and window[j] == '&':
+                    i = j + 1  # fd dup ('&>&2') — not a hazard, keep scanning
+                    continue
+                k, is_hazard = _redirect_target_hazard(window, j, n)
+                if not is_hazard:
+                    i = k
+                    continue
+                return i
+            return None  # bare '&' (background) or '&&' — both end the command
+        if c == '|':
+            if i + 1 < n and window[i + 1] == '|':
+                return None  # '||' — logical OR, not a hazard
+            return i  # real pipe
+        if c == '>':
+            j = i + 1
+            if j < n and window[j] == '>':
+                j += 1
+            if j < n and window[j] == '&':
+                i = j + 1  # fd dup ('>&2') — not a hazard, keep scanning
+                continue
+            k, is_hazard = _redirect_target_hazard(window, j, n)
+            if not is_hazard:
+                i = k
+                continue
+            return i  # real file redirect
+        i += 1
+    return None
+
+
+def _echo_hazard_in_line(line):
+    """True if `line` pipes or redirects a variable through `echo` to a real
+    destination — not `/dev/null`, not an fd dup (`>&`), not `||`."""
+    for m in _ECHO_CMD_POS_RE.finditer(line):
+        window = line[m.end():]
+        hazard_end = _find_echo_hazard_end(window)
+        if hazard_end is None:
+            continue
+        if _VAR_REF_RE.search(window[:hazard_end]):
+            return True
+    return False
+
+
+# printf at a command position — same rules as _ECHO_CMD_POS_RE.
+_PRINTF_CMD_POS_RE = re.compile(
+    r'(?:^|[;&|({)])\s*(?:(?:if|elif|then|else|do|while|until)\s+)?printf(?=\s)'
+)
+# A whole argument token that is NOTHING but a variable reference (optionally
+# single/double-quoted) — the hazard is $VAR used as printf's FORMAT string,
+# not as an argument to a literal '%s'.
+_BARE_VAR_TOKEN_RE = re.compile(r'^(["\']?)(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)\1(?=\s|$)')
+_PRINTF_DASH_V_RE = re.compile(r'^-v\s+\S+\s+')
+
+
+def _printf_hazard_in_line(line):
+    """True if `line` invokes `printf` with a bare variable as the format
+    string. `$VAR` then IS the format — a literal `%s` inside it reads a
+    nonexistent argument, and `%n` is a memory-write primitive in some
+    `printf(1)` implementations (PR #564 review follow-up)."""
+    for m in _PRINTF_CMD_POS_RE.finditer(line):
+        rest = line[m.end():].lstrip(' \t')
+        v_match = _PRINTF_DASH_V_RE.match(rest)
+        if v_match:
+            rest = rest[v_match.end():]  # `-v NAME` assigns to a var instead
+            # of stdout — the format string is the NEXT token, not NAME.
+        if _BARE_VAR_TOKEN_RE.match(rest):
+            return True
+    return False
+
+
+def _ends_with_continuation(line):
+    """True if `line` ends in an odd number of trailing backslashes — bash
+    line-continuation requires the final backslash be unescaped; trailing
+    backslashes pair up as literal characters except a possible odd one out,
+    which escapes the newline (PR #564 review follow-up: a fixed 1-vs-2
+    suffix check missed this for 3+ trailing backslashes)."""
+    trailing = len(line) - len(line.rstrip('\\'))
+    return trailing % 2 == 1
+
+
+def _join_bash_continuations(block_lines):
+    """Yield (start_offset, logical_line) pairs, joining a line ending in an
+    unescaped trailing '\\' with the physical line(s) that follow — bash
+    treats '\\<newline>' as a line-continuation, so a hazard can span what
+    look like two independent physical lines (PR #564 review follow-up).
+    A trailing '\\\\' (escaped backslash, i.e. a literal backslash char) is
+    NOT a continuation.
+    """
+    i, n = 0, len(block_lines)
+    while i < n:
+        start = i
+        parts = [block_lines[i]]
+        while _ends_with_continuation(parts[-1]) and i + 1 < n:
+            i += 1
+            parts.append(block_lines[i])
+        logical = ' '.join(p[:-1] if p.endswith('\\') else p for p in parts)
+        yield start, logical
+        i += 1
+
+
+def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
+    """Scan fenced ```bash blocks under skills/, commands/, agents/ (including
+    reference/ subdirs) and fail() on any line where `is_hazard_line` returns
+    True. `message` is called with the 1-indexed line number and must return
+    the failure reason string.
+
+    docs/ is intentionally excluded from the scanned roots — the sibling doc
+    page must show the bad pattern as a worked example without tripping this
+    guard (#549). Known limitation: scans raw lines with no heredoc-body
+    awareness, so a worked "here's the wrong way" example placed inside a
+    heredoc (rather than behind a '#' comment, which the command-position
+    regex already exempts) would be misread as a real hazard — narrow and
+    currently theoretical (PR #564 review follow-up).
+    """
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+    roots = (
+        (ROOT / "skills", skills_cache),
+        (ROOT / "commands", None),
+        (ROOT / "agents", agents_cache),
+    )
+    for base, sub_cache in roots:
+        if not base.is_dir():
+            continue
+        for md in sorted(base.rglob("*.md")):
+            if sub_cache is not None and md in sub_cache:
+                text = sub_cache[md]
+                if text is None:
+                    continue  # unreadable — already reported by another check
+            else:
+                try:
+                    text = md.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+            for block_match in _BASH_BLOCK_RE.finditer(text):
+                block = block_match.group(1)
+                block_start_line = text.count('\n', 0, block_match.start(1)) + 1
+                for offset, line in _join_bash_continuations(block.splitlines()):
+                    if is_hazard_line(line):
+                        fail(md.relative_to(ROOT), message(block_start_line + offset))
+
+
+def check_no_echo_var_hazard(cache=None):
+    """Flag bash blocks in skills/, commands/, agents/ that pipe or redirect a
+    variable through `echo` — zsh (the user's likely login shell) expands
+    backslash escapes in echo's argument, corrupting embedded JSON (#549).
+    Use printf '%s' instead; see docs/shell-echo-vs-printf.md.
+    """
+    _scan_bash_blocks_for_hazard(
+        cache,
+        _echo_hazard_in_line,
+        lambda ln: (
+            f"line {ln}: bash block pipes/redirects a variable through 'echo' — "
+            f"zsh expands backslash escapes and corrupts JSON; use printf '%s' "
+            f"(see docs/shell-echo-vs-printf.md)"
+        ),
+    )
+
+
+def check_no_printf_var_format(cache=None):
+    """Flag bash blocks in skills/, commands/, agents/ that pass a bare
+    variable as `printf`'s format string — `printf "$VAR"` is the naive (and
+    dangerous) translation of `echo "$VAR"`: `$VAR` becomes the FORMAT, so a
+    literal `%s` inside it reads a nonexistent argument, and `%n` is a
+    memory-write primitive in some `printf(1)` implementations. Always
+    `printf '%s' "$VAR"` — see docs/shell-echo-vs-printf.md.
+    """
+    _scan_bash_blocks_for_hazard(
+        cache,
+        _printf_hazard_in_line,
+        lambda ln: (
+            f"line {ln}: bash block passes a bare variable as printf's format "
+            f"string — a literal %s/%n inside it is read as a format directive; "
+            f"use printf '%s' \"$VAR\" (see docs/shell-echo-vs-printf.md)"
+        ),
+    )
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 
@@ -1107,6 +1501,7 @@ def main():
     check_agents(cache=cache)
     check_commands()
     check_agent_skill_refs(cache=cache)
+    check_preloaded_skills(cache=cache)
     check_command_skill_refs()
     check_skill_skill_refs(cache=cache)
     check_workflow_development_activation_contract()
@@ -1119,9 +1514,12 @@ def main():
     check_unwired_principle_skills(cache=cache)
     check_examples()
     check_hook_scripts()
+    check_bin_wrappers()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
+    check_no_echo_var_hazard(cache=cache)
+    check_no_printf_var_format(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

@@ -2,6 +2,7 @@
 name: principle-event-driven
 description: Event-driven architecture — event sourcing, CQRS, sagas, choreography vs orchestration, schema evolution, consumer groups, partitions, ordering, idempotent handlers, outbox pattern, dead letter queues. Auto-load when designing event-driven systems, evaluating event sourcing or CQRS, planning saga workflows, evolving event schemas across consumers, configuring consumer groups or partitions, implementing idempotent consumers or the outbox pattern, managing dead letter queues, or assessing whether event-driven architecture fits the problem.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-EVENT-DRIVEN -->
 
 # Event-Driven Architecture
 

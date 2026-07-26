@@ -2,6 +2,7 @@
 name: principle-error-handling
 description: Error handling principles — errors as values vs exceptions, error classification (transient/permanent/programmer), wrapping and context chains, sentinel vs typed vs coded errors, retry with exponential backoff and jitter, timeouts and deadlines, circuit breakers and bulkheads, log-once boundary discipline. Auto-load when discussing errors as values, Result type, exception handling, retry, exponential backoff, jitter, circuit breaker, fail fast, fail soft, idempotent retry, error wrapping, timeouts, or deadlines.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-ERROR-HANDLING -->
 
 # Error Handling
 

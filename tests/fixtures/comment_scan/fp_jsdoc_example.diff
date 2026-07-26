@@ -1,0 +1,14 @@
+diff --git a/src/widget.ts b/src/widget.ts
+index 1111111..2222222 100644
+--- a/src/widget.ts
++++ b/src/widget.ts
+@@ -1,1 +1,7 @@
+ export interface Widget { name: string }
++/**
++ * Formats a widget for display.
++ * @example
++ * formatWidget({ name: "a" }) // => "a"
++ */
++export function formatWidget(w: Widget): string {
++  return w.name;
++}

@@ -188,22 +188,22 @@ class TestReviewModeRouting:
 
     def test_specialist_subflow_reaps_own_state_file(self):
         """The specialist sub-flow's own mode-scoped preflight JSON must be reaped via
-        clean-state-files.sh in both the skip and post branches (PR #520 review feedback)."""
+        swe-workbench-clean-state-files in both the skip and post branches (PR #520 review feedback)."""
         text = REVIEW_PATH.read_text(encoding="utf-8")
         subflow_idx = text.find("## Specialist post sub-flow")
         assert subflow_idx != -1, "Specialist post sub-flow section not found"
         subflow_text = text[subflow_idx:]
-        assert "clean-state-files.sh" in subflow_text, (
+        assert "swe-workbench-clean-state-files" in subflow_text, (
             "Specialist post sub-flow must reap its own ${PR}-review-${MODE}.json via "
-            "runtime/clean-state-files.sh"
+            "swe-workbench-clean-state-files"
         )
         skip_idx = subflow_text.find("On **Skip**")
         post_idx = subflow_text.find("On `Post`")
         assert skip_idx != -1 and post_idx != -1, "Skip/Post branches not found"
-        assert "clean-state-files.sh" in subflow_text[skip_idx:post_idx], (
+        assert "swe-workbench-clean-state-files" in subflow_text[skip_idx:post_idx], (
             "The Skip branch must reap its own state file before tearing down the worktree"
         )
-        assert "clean-state-files.sh" in subflow_text[post_idx:], (
+        assert "swe-workbench-clean-state-files" in subflow_text[post_idx:], (
             "The Post branch must reap its own state file before tearing down the worktree"
         )
 

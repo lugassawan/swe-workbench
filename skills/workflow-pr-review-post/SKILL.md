@@ -94,7 +94,7 @@ gh api graphql -F subjectId="$THREAD_HEAD_ID" -f query='
 
 **Pre-validate before assembly**: the atomic Reviews API POST in Step 4 submits the whole batch in one call — one bad `(path, line)` 422s the *entire* review, and the error body carries no per-comment index to identify which row failed (an assumption to confirm on a scratch PR), so a stale or invalid line must be caught here, before it can poison the batch. Confirm each survivor's `line` lands on a `+` (added/modified) line for `path` in the diff at `$HEAD_SHA` — reuse the diff already fetched for this run, or re-fetch with `gh pr diff "$PR"`. **In-diff** → assemble into `comments[]` below. **Out-of-diff** → re-anchor the finding `pr-level` and fold it into the PR-level batch below — this is the contract's existing home for out-of-diff rows.
 
-Assemble each in-diff survivor into the pending review's `comments[]` **JSON array** via `jq` — **not** `gh api` bracket-indexed field flags. `gh api -f "comments[0][path]=..." -f "comments[1][path]=..."` builds a JSON *object* keyed by stringified indices (`{"comments":{"0":{...},"1":{...}}}`), not an array — GitHub's Reviews API requires `comments` to be an array and rejects the object shape outright, so that syntax can never work here (verified against a live `gh` install; do not reintroduce it). `jq --arg`/`--argjson` give the same raw-string safety `-f body=` gives a scalar field: a finding body starting with `@author…` is embedded as a literal JSON string value, never file-expanded — there is no `-f`/`-F` hazard once the payload is built as real JSON rather than passed through `gh api`'s own field-flag parser (see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md)). Never string-concatenate `$BODY` directly into a JSON literal — a body containing `"` or `\` would break the JSON or inject fields; always go through `jq --arg`.
+Assemble each in-diff survivor into the pending review's `comments[]` **JSON array** via `jq` — **not** `gh api` bracket-indexed field flags. `gh api -f "comments[0][path]=..." -f "comments[1][path]=..."` builds a JSON *object* keyed by stringified indices (`{"comments":{"0":{...},"1":{...}}}`), not an array — GitHub's Reviews API requires `comments` to be an array and rejects the object shape outright, so that syntax can never work here (verified against a live `gh` install; do not reintroduce it). `jq --arg`/`--argjson` give the same raw-string safety `-f body=` gives a scalar field: a finding body starting with `@author…` is embedded as a literal JSON string value, never file-expanded — there is no `-f`/`-F` hazard once the payload is built as real JSON rather than passed through `gh api`'s own field-flag parser (see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md)). Never string-concatenate `$BODY` directly into a JSON literal — a body containing `"` or `\` would break the JSON or inject fields; always go through `jq --arg`. If you pause mid-workflow to inspect `$COMMENTS_JSON`, persist it with `printf '%s' "$COMMENTS_JSON" > /tmp/payload.json`, never `echo` — zsh expands the JSON's `\n` escapes into raw newlines and corrupts it (see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md)).
 
 ```bash
 COMMENTS_JSON="[]"
@@ -175,7 +175,7 @@ if [ "$N" -gt 0 ]; then
   RESP=$(gh api --method POST "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" --input - <<<"$PAYLOAD" 2>&1)
   if [ $? -eq 0 ]; then
     posted_inline=$N; SUBMITTED=true
-  elif echo "$RESP" | grep -q '422'; then
+  elif printf '%s\n' "$RESP" | grep -q '422'; then
     # Stale commit_id, or a line pre-validate missed — re-fetch HEAD and
     # GENUINELY re-validate/reassemble (do NOT resubmit $COMMENTS_JSON
     # unchanged); demote anything newly out-of-diff to a pr-level comment.
@@ -245,7 +245,7 @@ fi
 
 In the fallback block, `$posted_inline` is read *after* the loop assigns it — no ordering hazard, since `$SUMMARY` here feeds the fallback's own `gh pr review` submit, never the already-sent atomic POST. When `N=0` the loop body never executes and `posted_inline` stays `0`, degenerating exactly to the previous plain submit — the empty-`comments[]` case is a fall-through, not a special case.
 
-**Never** use `--request-changes`. **Never** blind-retry the atomic POST on a network/5xx failure — there is no idempotency key for this endpoint, so a retried call that actually landed the first time double-posts every comment; the single retry above is scoped to a confirmed 422 only. Findings already posted inline/PR-level in Step 2 must NOT be restated in `$SUMMARY`.
+**Never** use `--request-changes`. **Never** blind-retry the atomic POST on a network/5xx failure — there is no idempotency key for this endpoint, so a retried call that actually landed the first time double-posts every comment; the single retry above is scoped to a confirmed 422 only. Findings already posted inline/PR-level in Step 2 must NOT be restated in `$SUMMARY`. **Never** `echo "$PAYLOAD"` to inspect it before submitting — use `printf '%s' "$PAYLOAD"` instead (see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md)).
 
 ## Step 5 — Address-feedback CTA (conditional)
 
@@ -269,11 +269,11 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 
 ## Step 6 — State reap
 
-Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is invoked as its own skill boundary, not a `source`d fragment of the caller's shell — `$_RT` from a caller's Step 1 is not inherited, so re-derive it here:
+Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is invoked as its own skill boundary, not a `source`d fragment of the caller's shell:
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-bash "$_RT/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
+command -v swe-workbench-clean-state-files >/dev/null 2>&1 || { echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2; exit 1; }
+swe-workbench-clean-state-files "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
 [ -e "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" ] \
   && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" >&2 \
   || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
@@ -295,6 +295,6 @@ This skill never touches the caller's own worktree or preflight state files (e.g
 | Mistake | Fix |
 |---|---|
 | Dedup pr-level findings against `reviewThreads` | `reviewThreads` only covers inline comment threads; a pr-level finding has no `path`/`line` to match against. Batch and post once; re-running the same specialist mode on an unchanged PR will re-post the batch (known v1 limitation — no pr-level dedup yet). |
-| Assemble `comments[]` via `gh api` bracket-indexed field flags, string-concatenate `$BODY` into a JSON literal, post inline comments individually, use `-F body=` on the fallback POST, or concatenate `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body | Bracket indices build a stringified-key *object*, not an array — GitHub rejects it. Build `comments[]` as real JSON via `jq --arg`/`--argjson`, submit atomically via `gh api --input -` (per-comment is the model-A fallback only). Use `-f body="$BODY"` (raw) for the fallback POST — see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). Inline bodies are `finding.body` verbatim; the byline/remark is Step 4-only. |
+| Assemble `comments[]` via `gh api` bracket-indexed field flags, string-concatenate `$BODY` into a JSON literal, post inline comments individually, use `-F body=` on the fallback POST, concatenate `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body, or `echo` a JSON payload (`$COMMENTS_JSON`/`$PAYLOAD`) to persist or inspect it | Bracket indices build a stringified-key *object*, not an array — GitHub rejects it. Build `comments[]` as real JSON via `jq --arg`/`--argjson`, submit atomically via `gh api --input -` (per-comment is the model-A fallback only). Use `-f body="$BODY"` (raw) for the fallback POST — see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). Inline bodies are `finding.body` verbatim; the byline/remark is Step 4-only. Use `printf '%s'` instead of `echo` for any payload — see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md). |
 | Set `posted_pr_level` before checking whether `gh pr comment` succeeded, report a dependency-mode (pr-level-only) run as "posted N inline comments", or restate posted findings in `$SUMMARY` | Gate the assignment on exit status. The byline reports `posted_inline`/`posted_pr_level` separately. Findings live in inline/pr-level comments; the summary is decision + byline only. |
-| Block on this skill's own cleanup, or assume `$_RT` is inherited from the caller's Step 1 | Step 6 reap is foreground (fast) — unlike worktree teardown, backgrounded separately. This skill is its own skill boundary — re-derive `_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"` at the top of Step 6. |
+| Block on this skill's own cleanup | Step 6 reap is foreground (fast) — unlike worktree teardown, backgrounded separately. This skill is its own skill boundary — the `command -v swe-workbench-clean-state-files` preflight at the top of Step 6 has no cross-caller state to inherit. |

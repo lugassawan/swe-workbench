@@ -112,11 +112,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - name: Run shellcheck (warning+ on all *.sh + githooks)
+      - name: Run shellcheck (warning+ on all *.sh + githooks + bin/ wrappers)
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         with:
           severity: warning
-          additional_files: 'commit-msg pre-commit pre-push'
+          additional_files: 'commit-msg pre-commit pre-push bin/swe-workbench-clean-ephemeral bin/swe-workbench-clean-state-files bin/swe-workbench-comment-scan bin/swe-workbench-doctor bin/swe-workbench-fetch-pr bin/swe-workbench-gh-timeout bin/swe-workbench-preflight-pr bin/swe-workbench-reply-and-resolve bin/swe-workbench-sync-pr-metadata'
           check_together: 'yes'
 
   pytest:

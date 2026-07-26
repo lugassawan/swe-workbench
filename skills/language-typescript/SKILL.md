@@ -2,6 +2,7 @@
 name: language-typescript
 description: TypeScript and JavaScript idioms — strict mode, type safety, discriminated unions, async patterns, and Node. Auto-load when working with .ts, .tsx, .js, .jsx files, package.json, or when the user mentions TypeScript, JavaScript, Node, type safety, or tsconfig.
 ---
+<!-- preload-canary: SWB-PRELOAD-LANGUAGE-TYPESCRIPT -->
 
 # TypeScript / JavaScript
 

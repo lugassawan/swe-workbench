@@ -8,8 +8,8 @@ Before running `gh pr create`, check whether an OPEN PR already exists for this 
 
 ```bash
 PR_INFO=$(gh pr view --json url,state -q '.state + "\t" + .url' 2>/dev/null || true)
-PR_STATE=$(echo "$PR_INFO" | cut -f1)
-PR_URL=$(echo "$PR_INFO"   | cut -f2)
+PR_STATE=$(printf '%s\n' "$PR_INFO" | cut -f1)
+PR_URL=$(printf '%s\n' "$PR_INFO"   | cut -f2)
 ```
 
 Filter: act only when `PR_STATE == "OPEN"`. Ignore `CLOSED` or `MERGED` PRs — those do not block new-PR creation.

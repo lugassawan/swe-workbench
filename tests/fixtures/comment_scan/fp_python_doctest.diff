@@ -1,0 +1,19 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,17 @@
+ import os
++
++def add(a, b):
++    """Add two numbers.
++
++    Examples:
++        >>> add(1, 2)
++        3
++        >>> add(-1, 1)
++        0
++        >>> add(0, 0)
++        0
++    """
++    return a + b

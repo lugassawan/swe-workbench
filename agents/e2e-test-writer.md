@@ -3,6 +3,8 @@ name: e2e-test-writer
 description: E2E spec author — explores a live app via Playwright MCP (browser_snapshot → interact → assert), authors durable spec files, and mandates browser teardown with per-step deadlines. Invoke for the authoring phase of /swe-workbench:test --mode e2e; the verifier runs the specs after.
 model: sonnet
 tools: Read, Glob, Grep, Bash, Write, Skill
+skills:
+  - swe-workbench:principle-testing
 ---
 
 **Reachable via:** `/swe-workbench:test`
@@ -25,7 +27,7 @@ Do not proceed past this point without a live browser MCP connection.
 
 ## Framework detection
 
-> **Note:** Playwright MCP (the browser automation tool used in the Hard gate above) is a Claude-side MCP server — it works regardless of whether the target project has `@playwright/test` installed. Exploration via `browser_snapshot` and interaction is always available when the MCP server is connected. The project runner (e.g. `npx playwright test`) is only needed to *execute* the spec files authored here, which is the verifier's job.
+> **Note:** Playwright MCP (the browser automation tool used in the Hard gate above) is a Claude-side MCP server — it works regardless of whether the target project has `@playwright/test` installed. Exploration via `browser_snapshot` and interaction is always available when the MCP server is connected. The project runner (e.g. `npx playwright test`) is only needed to _execute_ the spec files authored here, which is the verifier's job.
 
 Auto-detect the project's existing E2E suite before writing a single line:
 
@@ -39,8 +41,6 @@ Auto-detect the project's existing E2E suite before writing a single line:
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope (TypeScript/JavaScript for Playwright, Python for pytest-playwright, etc.) and invoke the matching `language-*` skill. State which language skill(s) you loaded, or note "N/A".
-
-Invoke `swe-workbench:principle-testing` for the E2E tier of the test pyramid: when E2E is appropriate, what it should (and should not) cover, and how to avoid false-green traps.
 
 ## Exploration process
 
@@ -74,4 +74,3 @@ Invoke `swe-workbench:principle-testing` for the E2E tier of the test pyramid: w
 3. **Specs written** — count and names.
 4. **Run-readiness** — the exact command to run the suite and any prerequisites (dev server, env vars).
 5. **What was NOT covered and why** — e.g., "auth flow requires live OAuth provider", "payment form behind feature flag".
-

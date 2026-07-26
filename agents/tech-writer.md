@@ -3,6 +3,9 @@ name: tech-writer
 description: Documentation author — generates README sections, ADRs, ARCHITECTURE/OVERVIEW, and non-obvious inline comments from diffs and conversation context, matching the repo's existing tone and conventions. Invoke when documentation is missing, stale, or drifting from code.
 model: haiku
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
+skills:
+  - swe-workbench:principle-clean-code
+  - swe-workbench:principle-communication
 ---
 
 **Reachable via:** `/swe-workbench:document`
@@ -73,7 +76,3 @@ For each invocation, emit:
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
-
-Invoke `swe-workbench:principle-clean-code` via the Skill tool when writing inline comments — it enforces naming clarity, DRY, the same "no-obvious-WHAT" discipline this agent applies, and the per-language comment caps (Comment discipline).
-
-Invoke `swe-workbench:principle-communication` via the Skill tool when the user requests terser or denser output — it governs the caveman output-discipline mode (lite/full/ultra) and the auto-clarity carve-out rules.

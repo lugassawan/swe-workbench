@@ -2,6 +2,7 @@
 name: principle-observability
 description: Observability principles — logs vs metrics vs traces, structured logging, distributed tracing, span/trace context, cardinality control, OpenTelemetry, SLI/SLO/SLA, RED method, USE method, alerting on symptoms vs causes. Auto-load when adding logging, choosing a metric, instrumenting distributed tracing, debating cardinality, defining SLIs/SLOs, designing alerts, or discussing observability budgets.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-OBSERVABILITY -->
 
 # Observability
 

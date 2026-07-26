@@ -33,15 +33,14 @@ Findings already in the orchestrator's context from the audit render. Each findi
 carries: `file_line`, `domain`, `severity`, `confidence`, `effort`, `symptom`,
 `root_cause`, `reasoning_chain`, `counter_evidence_considered`, `suggested_fix`.
 
-## Preamble — bind plugin root
+## Preamble — confirm runtime commands are on PATH
 
-Resolve and bind the plugin root before any script call. If the runtime scripts directory is
-missing (e.g. cwd is a worktree where `CLAUDE_PLUGIN_ROOT` is unset), abort loudly.
+Confirm the plugin's runtime commands are reachable before any script call. If they are not on
+`PATH` (e.g. the plugin is not installed or predates `bin/`), abort loudly.
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-[ -f "$_RT/runtime/clean-state-files.sh" ] || {
-  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+command -v swe-workbench-clean-state-files >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
 ```
@@ -140,7 +139,7 @@ Reply `confirm` to file all · `drop N` to remove group N · `edit N` to revise 
 After a successful `confirm`, reap all temp files and verify each was removed:
 
 ```bash
-bash "$_RT/runtime/clean-state-files.sh" \
+swe-workbench-clean-state-files \
   /tmp/audit-emit-<repo-slug>-<unix-ts>-1.md \
   … \
   /tmp/audit-emit-<repo-slug>-<unix-ts>-N.md \

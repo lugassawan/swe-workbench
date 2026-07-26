@@ -1,12 +1,14 @@
-"""Assert Fix B: each of the 6 PR-workflow skills binds _RT once + hard-fails if scripts missing.
+"""Assert Fix B: each PR-workflow skill confirms runtime commands are on PATH + hard-fails if missing.
 
-Root cause #2: skills resolved the plugin root inline, per-call, via
+Root cause #2 (original, pre-#560): skills resolved the plugin root inline, per-call, via
 ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}. When CLAUDE_PLUGIN_ROOT is unset and
 cwd is an ephemeral worktree, the fallback resolves to the worktree root — runtime/ scripts
 don't exist there, the call fails, and (with errors suppressed) the operator falls back to
 inline gh/jq silently.
 
-Fix: bind _RT once before worktree entry; add a hard-fail guard so a missing runtime/ is loud.
+#560 replaced $CLAUDE_PLUGIN_ROOT-based path construction with bare `swe-workbench-<name>`
+commands (bin/ is on PATH while the plugin is enabled). The guard now checks the command is
+reachable via `command -v`, once, before worktree entry, rather than checking a resolved path.
 """
 
 import re
@@ -14,69 +16,69 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-SKILLS_WITH_RT = [
+SKILLS_WITH_PREFLIGHT = [
     "workflow-pr-review",
     "workflow-pr-review-followup",
     "workflow-address-feedback",
     "workflow-audit-emit-issues",
     "workflow-cleanup-merged",
     "workflow-extend",
+    "workflow-pr-review-post",
 ]
 
-_RT_BINDING_RE = re.compile(r'_RT\s*=.*\$\{CLAUDE_PLUGIN_ROOT:-\$\(git rev-parse')
-_GUARD_STR = "runtime scripts not found"
+_PREFLIGHT_RE = re.compile(r'command -v swe-workbench-[\w-]+ >/dev/null 2>&1')
+_GUARD_STR = "not on PATH — reinstall or update the swe-workbench plugin"
 
 
 def _skill_text(skill_name: str) -> str:
     return (ROOT / "skills" / skill_name / "SKILL.md").read_text()
 
 
-def test_rt_binding_exists_in_each_skill():
-    """Each of the 6 skills must have exactly one _RT= binding capturing the plugin root."""
-    for skill in SKILLS_WITH_RT:
+def test_preflight_check_exists_in_each_skill():
+    """Each skill must contain at least one command -v swe-workbench-<name> preflight."""
+    for skill in SKILLS_WITH_PREFLIGHT:
         text = _skill_text(skill)
-        matches = _RT_BINDING_RE.findall(text)
+        matches = _PREFLIGHT_RE.findall(text)
         assert len(matches) >= 1, (
-            f"skills/{skill}/SKILL.md must contain a _RT= binding "
-            f"(_RT=\"${{CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}}\") — "
-            "this binds the plugin root before any worktree entry so the correct runtime/ is used"
+            f"skills/{skill}/SKILL.md must contain a 'command -v swe-workbench-<name> "
+            f">/dev/null 2>&1' preflight — this confirms the plugin's runtime commands "
+            "are on PATH before any worktree entry"
         )
 
 
 def test_hard_fail_guard_exists_in_each_skill():
-    """Each skill must contain the hard-fail guard string so missing runtime/ aborts loudly."""
-    for skill in SKILLS_WITH_RT:
+    """Each skill must contain the hard-fail guard string so a missing command aborts loudly."""
+    for skill in SKILLS_WITH_PREFLIGHT:
         text = _skill_text(skill)
         assert _GUARD_STR in text, (
             f"skills/{skill}/SKILL.md must contain the hard-fail guard message "
-            f"'{_GUARD_STR}' — missing runtime scripts must abort with a clear error, "
+            f"'{_GUARD_STR}' — a missing runtime command must abort with a clear error, "
             "not silently fall back to inline gh/jq"
         )
 
 
 def test_no_inline_root_resolution_at_script_call_sites():
-    """No skill may use ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)} at a script call site.
+    """No skill may use ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)} at a runtime-script call site.
 
-    Only the single _RT= binding line is allowed to contain this pattern.
-    All script invocations must use ${{_RT}}/runtime/... so the root is resolved once,
-    before worktree entry, and reused consistently.
+    All runtime-script invocations must use bare `swe-workbench-<name>` commands so PATH
+    resolution happens once, at plugin-load time, with no per-call path construction. A
+    remaining `_RT=` assignment line is allowed — some skills (e.g. workflow-cleanup-merged)
+    still bind the plugin root to resolve their own skill-local scripts/ helpers, which are
+    unrelated to runtime/ and out of #560's scope.
     """
-    for skill in SKILLS_WITH_RT:
+    for skill in SKILLS_WITH_PREFLIGHT:
         text = _skill_text(skill)
-        # Find all occurrences of the raw inline pattern
         raw_occurrences = [
             (i, ln.strip())
             for i, ln in enumerate(text.splitlines(), 1)
             if "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse" in ln
         ]
-        # The _RT= binding line is allowed; all others are violations
         violations = [
             (lineno, ln) for lineno, ln in raw_occurrences
             if not re.match(r'\s*_RT\s*=', ln)
-            and not ln.lstrip().startswith("#")
         ]
         assert not violations, (
             f"skills/{skill}/SKILL.md has inline ${{CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)}} "
-            f"at script call sites (only the _RT= binding is allowed):\n"
+            f"at a runtime-script call site — invoke the bare swe-workbench-<name> command instead:\n"
             + "\n".join(f"  line {no}: {ln}" for no, ln in violations)
         )

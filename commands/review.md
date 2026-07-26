@@ -97,7 +97,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **The post/skip `AskUserQuestion` prompt below fires in exactly one case: a postable specialist mode (security, accessibility, dependency, performance, tests, ux) resolved in PR mode.** It never fires for `contributor-trust` (advisory-only, see above — stops before reaching this section) and never fires for local-diff mode (there is no PR to post to — see the explicit "no posting prompt" note in `## Local-diff mode` above). General mode has its own posting flow inside `workflow-pr-review` and does not go through this sub-flow either.
 
-1. **Preflight:** reuse `runtime/preflight-pr.sh` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `workflow-pr-review`'s `${PR}.json` and `workflow-pr-review-followup`'s `${PR}-followup.json`, so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`.
+1. **Preflight:** reuse `swe-workbench-preflight-pr` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `workflow-pr-review`'s `${PR}.json` and `workflow-pr-review-followup`'s `${PR}-followup.json`, so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`.
 2. **Ephemeral worktree:** `rimba add pr:<N> --task "review-<mode>-<N>" --skip-deps --skip-hooks` when rimba is available. When rimba is absent, use the direct-git fallback from `workflow-pr-review` Step 2 but with the same mode-scoped naming as the rimba path — `WT="/tmp/swe-workbench-pr-review/<mode>-${PR}"`, branch `review-<mode>-${PR}` — so a specialist run's worktree/branch never collides with a general review's `pr-review-${PR}` or another specialist mode's own run.
 3. Run the specialist auditor against `git -C "$WT" diff "origin/$BASE"...HEAD`; print severity-organized findings (unchanged from the existing specialist output above).
 4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (matching the `AskUserQuestion` pattern `workflow-pr-review-post`'s own Step 5 CTA already uses, for the same reason: a clickable button beats "type a keyword"):
@@ -116,7 +116,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
    }
    ```
 
-   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — this is a clean exit, not an aborted-mid-scan state, so unlike `workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
+   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `swe-workbench-clean-state-files`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — this is a clean exit, not an aborted-mid-scan state, so unlike `workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
 5. **On `Post`:** normalize the auditor's documented finding rows into `FINDINGS[]` — `severity` and `body` (fold any extra columns, e.g. `test-reviewer`'s `Category`, into `body`) from every row; `path`/`line` from `File:Line` when present. Set `anchor=inline` when a `File:Line` exists AND the line falls on a `+` line (not a context line) in `git -C "$WT" diff "origin/$BASE"...HEAD`; `anchor=pr-level` otherwise — `dependency-auditor` rows have no `File:Line` and always anchor `pr-level`. Derive `DECISION`: at least one row with `severity ∈ {Critical, High}` → `COMMENT`; otherwise `APPROVE` (no footer to parse — these auditors don't emit one; this mirrors the general reviewer's own APPROVE-unless-Critical/High convention rather than flipping to `COMMENT` on any finding regardless of severity). Invoke `swe-workbench:workflow-pr-review-post` with:
    - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
    - `DECISION` — as derived above.
@@ -125,7 +125,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
    - `CALLER_TAG` — the mode name (e.g. `security`).
    - `FINDINGS[]` — as normalized above.
 
-   Then reap `${PR}-review-${MODE}.json` via `runtime/clean-state-files.sh` and tear down the worktree in the background using the same task name Step 2 created (as in the `skip` case above).
+   Then reap `${PR}-review-${MODE}.json` via `swe-workbench-clean-state-files` and tear down the worktree in the background using the same task name Step 2 created (as in the `skip` case above).
 
 ## Followup mode
 

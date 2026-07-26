@@ -157,15 +157,15 @@ def test_report_issue_redaction_before_preview():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_report_issue_step9_deletes_temp_files():
-    """commands/report-issue.md step 9 must invoke clean-state-files.sh on success."""
+    """commands/report-issue.md step 9 must invoke swe-workbench-clean-state-files on success."""
     text = REPORT_ISSUE_MD.read_text()
-    assert "clean-state-files.sh" in text, (
-        "commands/report-issue.md step 9 must call runtime/clean-state-files.sh "
+    assert "swe-workbench-clean-state-files" in text, (
+        "commands/report-issue.md step 9 must call swe-workbench-clean-state-files "
         "to delete the temp .md and .cmd files after successful issue creation"
     )
     assert "/tmp/report-issue-lugassawan-swe-workbench-" in text, (
         "commands/report-issue.md must reference the /tmp/report-issue-lugassawan-swe-workbench-* "
-        "file pattern in the clean-state-files.sh call"
+        "file pattern in the swe-workbench-clean-state-files call"
     )
 
 

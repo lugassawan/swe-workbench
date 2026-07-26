@@ -50,6 +50,19 @@ def test_frontmatter_name_is_reviewer():
     assert fm.get("name") == "reviewer", "frontmatter 'name' must be 'reviewer'"
 
 
+def test_frontmatter_preloads_principle_code_review():
+    """reviewer preloads principle-code-review via frontmatter rather than a
+    first-action Skill() tool call; its full principle-skill catalog is also
+    now preloaded, so this only asserts containment, not an exact list."""
+    body = _read()
+    fm = validate.parse_frontmatter(AGENT, text=body)
+    assert fm is not None, "reviewer.md must have valid YAML frontmatter"
+    assert isinstance(fm.get("skills"), list), "reviewer.md frontmatter 'skills:' must be a list"
+    assert "swe-workbench:principle-code-review" in fm["skills"], (
+        "reviewer.md frontmatter 'skills:' must preload 'swe-workbench:principle-code-review'"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Paired-guard symmetry heuristic
 # ---------------------------------------------------------------------------

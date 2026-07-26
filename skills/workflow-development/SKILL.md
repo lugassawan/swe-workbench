@@ -189,17 +189,16 @@ Commit logically grouped changes as you go. Never bundle unrelated changes.
 
 **Goal:** Confirm imports, format, quality, lint, and test all pass with evidence.
 
-Run in order — **Imports → Format → Quality → Lint → Test**. Imports come first because organizers
-(`goimports`, `ruff check --select I --fix`, `organize-imports-cli`, `spotless`) reshape lines that
-the formatter then normalises; reversing the order causes spurious rewrites on the next pass.
-Quality runs after Format so metrics evaluate normalised code, and before Lint so threshold violations
-surface as a distinct signal rather than mixed into lint noise. **Quality is optional** — if no
-`quality-command` is detected and the project has no complexity/duplication/length config, skip the
-stage with a note in the evidence block.
+Run in order — **Imports → Format → Quality → Lint → Test**. Imports come first because organizers (`goimports`, `ruff check --select I --fix`, `organize-imports-cli`, `spotless`) reshape lines that the formatter then normalises; reversing the order causes spurious rewrites on the next pass. Quality runs after Format so metrics evaluate normalised code, and before Lint so threshold violations surface as a distinct signal rather than mixed into lint noise. **Quality is optional** — if no `quality-command` is detected and the project has no complexity/duplication/length config, skip the stage with a note in the evidence block.
 
 Invoke `superpowers:verification-before-completion`.
 
-**Skip condition:** If Phase 2 sub-skill already ran full verification (imports + format + quality + lint + test) with evidence, mark as "completed by sub-skill" and proceed.
+**Comment scan (advisory-with-accounting, not a hard gate)** — run per `agents/shared/comment-scan.md`
+against the branch diff. It never fails verify on its own, but Phase 3 isn't "passed" until evidence
+carries one `KEEP <id> <reason>` or `FIXED <id>` line per must-triage finding, `FIXED` re-confirmed
+by a re-run.
+
+**Skip condition:** If Phase 2 sub-skill already ran full verification (imports + format + quality + lint + test + comment scan with verdicts) with evidence, mark as "completed by sub-skill" and proceed.
 
 ---
 

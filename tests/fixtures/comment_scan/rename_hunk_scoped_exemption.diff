@@ -1,0 +1,22 @@
+diff --git a/pkg/old.go b/pkg/new.go
+similarity index 60%
+rename from pkg/old.go
+rename to pkg/new.go
+index 1111111..2222222 100644
+--- a/pkg/old.go
++++ b/pkg/new.go
+@@ -1,6 +1,5 @@
+ package pkg
+
+-// x := 1
+ type Widget struct {
+ 	Name string
+ }
+@@ -20,3 +19,7 @@
+ func existing() {
+ 	x := 2
+ }
++
++func other() {
++	// x := 1
++}

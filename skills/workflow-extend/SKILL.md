@@ -88,12 +88,11 @@ Push. Then invoke `swe-workbench:workflow-commit-and-pr`. That skill will surfac
 
 Optional: if the user opts in ("append follow-on section"), fetch the current PR body first (`gh pr view --json body -q .body`), append the `## Follow-on` section, write to a tempfile, then `gh pr edit --body-file <tmp>` — this avoids overwriting collaborator edits.
 
-Before any script call in Phase B (when `$TS` is first written), bind the plugin root:
+Before any script call in Phase B (when `$TS` is first written), confirm runtime commands are reachable:
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-[ -f "$_RT/runtime/clean-state-files.sh" ] || {
-  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+command -v swe-workbench-clean-state-files >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
 ```
@@ -101,7 +100,7 @@ _RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
 After Phase D delivery succeeds, delete the spec temp file. The reap runs foreground without suppression:
 
 ```bash
-bash "$_RT/runtime/clean-state-files.sh" "/tmp/extend-${TS}.md"
+swe-workbench-clean-state-files "/tmp/extend-${TS}.md"
 [ -e "/tmp/extend-${TS}.md" ] && echo "⚠ state file NOT reaped: /tmp/extend-${TS}.md" >&2 || echo "✓ state file reaped: /tmp/extend-${TS}.md"
 ```
 

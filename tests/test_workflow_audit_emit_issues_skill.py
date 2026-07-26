@@ -254,31 +254,31 @@ def test_catalog_md_contains_name():
 # ── state-file cleanup assertions (issue #428) ───────────────────────────────
 
 def test_audit_emit_uses_clean_state_files_for_deletion():
-    """SKILL.md Phase 4 confirm path must invoke clean-state-files.sh (not inline rm -f)."""
+    """SKILL.md Phase 4 confirm path must invoke swe-workbench-clean-state-files (not inline rm -f)."""
     text = SKILL_MD.read_text()
-    assert "clean-state-files.sh" in text, (
-        "SKILL.md Phase 4 must call runtime/clean-state-files.sh to delete temp files after "
+    assert "swe-workbench-clean-state-files" in text, (
+        "SKILL.md Phase 4 must call swe-workbench-clean-state-files to delete temp files after "
         "successful issue filing — migrated from inline rm for consistency (issue #428)"
     )
 
 
 def test_audit_emit_cleanup_on_confirm_success():
-    """clean-state-files.sh invocation must appear after the Phase 4 confirm table row.
+    """swe-workbench-clean-state-files invocation must appear after the Phase 4 confirm table row.
 
     After Fix C, the reap block is a separate section below the table (not inline in the row).
-    We search for the bash invocation (not the [ -f ... ] guard check in the Preamble) so
+    We search for the bare-command invocation (not the command -v guard check in the Preamble) so
     the ordering check finds the correct occurrence.
     """
     text = SKILL_MD.read_text()
     confirm_idx = text.find("`confirm` (literal)")
-    # Use the executable invocation, not the guard check ([ -f "$_RT/runtime/clean-state-files.sh" ])
+    # Use the executable invocation, not the guard check (command -v swe-workbench-clean-state-files)
     # re.search is resilient to minor quoting/whitespace changes vs. text.find()
-    cleanup_match = re.search(r'bash\s+"\$_RT/runtime/clean-state-files\.sh"', text)
+    cleanup_match = re.search(r'^swe-workbench-clean-state-files\s+\\$', text, re.MULTILINE)
     assert confirm_idx != -1, "SKILL.md must have a 'confirm' table row"
-    assert cleanup_match, "SKILL.md must reference bash invocation of clean-state-files.sh"
+    assert cleanup_match, "SKILL.md must reference the bare swe-workbench-clean-state-files invocation"
     cleanup_idx = cleanup_match.start()
     assert cleanup_idx > confirm_idx, (
-        "clean-state-files.sh invocation must appear after the Phase 4 confirm table row"
+        "swe-workbench-clean-state-files invocation must appear after the Phase 4 confirm table row"
     )
 
 
@@ -310,16 +310,16 @@ def test_triggers_mention_audit_and_issues():
 
 
 def test_audit_emit_reap_no_suppression():
-    """The clean-state-files.sh call in the confirm path must have NO 2>/dev/null suppression.
+    """The swe-workbench-clean-state-files call in the confirm path must have NO 2>/dev/null suppression.
 
     The reap must run foreground; suppression would recreate the silent-orphan path.
     """
     text = SKILL_MD.read_text()
-    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
-    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    lines_with_reap = [ln for ln in text.splitlines() if "swe-workbench-clean-state-files" in ln]
+    assert lines_with_reap, "SKILL.md must contain a swe-workbench-clean-state-files call"
     suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
     assert not suppressed, (
-        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "swe-workbench-clean-state-files call must not carry 2>/dev/null — "
         "foreground reap must surface failures:\n" + "\n".join(suppressed)
     )
 
