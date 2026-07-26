@@ -1,0 +1,20 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,15 @@
+ import math
++def compute_total(
++    items,
++    tax_rate,
++):
++    """Compute the taxed total price of items.
++
++    Sums each item's price, applies the given tax rate, and rounds the
++    result to two decimal places using banker's rounding to match the
++    accounting system's own rounding convention. Raises ValueError if
++    tax_rate is negative or greater than one, since neither is a valid
++    percentage in this domain. Callers should validate user-supplied
++    rates before calling this function in a request-handling context.
++    """
++    return round(sum(i.price for i in items) * (1 + tax_rate), 2)

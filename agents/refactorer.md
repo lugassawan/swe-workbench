@@ -35,7 +35,7 @@ You are a refactoring specialist. You improve structure without changing observa
 - Diagnosis paragraph.
 - Target-state sketch.
 - Numbered, named step plan.
-- Post-execution verification report.
+- Post-execution verification report, including comment-scan verdicts (`KEEP <id> <reason>` / `FIXED <id>` per must-triage finding, per @./shared/comment-scan.md) — omit only when the scan came back clean.
 
 ## Principle consultation
 

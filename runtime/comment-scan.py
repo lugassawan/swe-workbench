@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Advisory comment-quality scanner for issue #546's verified gate.
+"""Advisory comment-quality scanner backing the comment-reduction verified gate.
 
 Pure function: unified diff text in on stdin, findings + a footer out on
 stdout. No git access inside this module — callers resolve the diff by
@@ -448,8 +448,26 @@ def _extract_block_runs(spec: LangSpec, view: list[ViewLine]) -> list[Run]:
 
 # ── Python docstring extraction ───────────────────────────────────────────────
 
-_PY_DEF_RE = re.compile(r"^\s*(def|class)\s+\w+.*:\s*$")
+_PY_DEF_RE = re.compile(r"^\s*(async\s+def|def|class)\s+\w+.*:\s*$")
+# Looser than _PY_DEF_RE: matches the *opening* line of a multi-line
+# signature, which has no trailing colon on that line (the colon is on the
+# closing "):" line instead) — used only by the backward scan below.
+_PY_DEF_OPEN_RE = re.compile(r"^\s*(async\s+def|def|class)\s+\w+")
 _PY_QUOTE_RE = re.compile(r'^\s*("""|\'\'\')')
+
+
+def _preceded_by_def_or_class(view: list[ViewLine], i: int) -> bool:
+    """Walk back through an unclosed multi-line signature to find the
+    def/class/async def line a docstring belongs to, not just the
+    immediately-prior line — a blank line breaks the search (no signature
+    spans one)."""
+    for k in range(i - 1, max(-1, i - 8), -1):
+        text = view[k].text
+        if _PY_DEF_OPEN_RE.match(text):
+            return True
+        if not text.strip():
+            return False
+    return False
 
 
 def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
@@ -463,7 +481,7 @@ def _extract_python_docstrings(view: list[ViewLine]) -> list[Run]:
         # Module docstring = view's first real content (`_leading_boundary`),
         # not literal index 0 — a shebang ahead of it must not disqualify it.
         preceding_ok = (boundary is not None and vl.lineno == boundary) or (
-            i > 0 and _PY_DEF_RE.match(view[i - 1].text)
+            i > 0 and _preceded_by_def_or_class(view, i)
         )
         if m and preceding_ok:
             quote = m.group(1)

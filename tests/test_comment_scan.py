@@ -1,4 +1,4 @@
-"""Tests for runtime/comment-scan.py, the issue #546 comment-quality scanner.
+"""Tests for runtime/comment-scan.py, the comment-quality scanner.
 
 Fixtures live under tests/fixtures/comment_scan/ as .diff files, never as
 source files — several fixtures (commented_out.diff) *are* commented-out
@@ -45,6 +45,22 @@ def test_over_cap_fires_on_long_docstring():
     over_cap = next(f for f in findings if f.detector == "OVER_CAP")
     assert over_cap.must_triage
     assert over_cap.path == "example.py"
+
+
+def test_over_cap_fires_on_long_docstring_under_async_def():
+    """Regression: `_PY_DEF_RE` originally didn't match `async def`, so a
+    docstring under an async function was invisible to the scanner
+    entirely — not just exempt from OVER_CAP, uncounted for DENSITY too."""
+    findings, _ = _scan("over_cap_async_def_docstring.diff")
+    assert _detectors(findings) == ["OVER_CAP"]
+
+
+def test_over_cap_fires_on_long_docstring_under_multiline_signature():
+    """Regression: a docstring following a multi-line def signature wasn't
+    recognized either — no single physical line matches the full
+    `def name(...):` pattern when the signature spans multiple lines."""
+    findings, _ = _scan("over_cap_multiline_signature_docstring.diff")
+    assert _detectors(findings) == ["OVER_CAP"]
 
 
 def test_over_cap_fires_on_long_inline_block():

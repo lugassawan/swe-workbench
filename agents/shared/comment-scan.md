@@ -1,6 +1,6 @@
 # Comment-scan invocation
 
-Advisory scan for unnecessary or over-cap comments (issue #546), backing `principle-clean-code`'s
+Advisory scan for unnecessary or over-cap comments, backing `principle-clean-code`'s
 Comment discipline caps with a deterministic, checkable artifact instead of prose recall alone.
 **Advisory-with-accounting, not a hard gate** — the scan never fails your verify step; it produces
 findings that verdict accounting (below) requires you to account for before calling verify done.
@@ -11,10 +11,22 @@ No git access lives inside the script — resolve the diff yourself and pipe it 
 
 ```bash
 _RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+[ -f "$_RT/runtime/comment-scan.py" ] || {
+  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+  exit 1
+}
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 MERGE_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null || true)
 git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | python3 "$_RT/runtime/comment-scan.py"
 ```
+
+**The existence check is load-bearing, not boilerplate.** This scan runs against an arbitrary target
+repo — if `CLAUDE_PLUGIN_ROOT` is unset for any reason, `$(git rev-parse --show-toplevel)` silently
+resolves to *that target repo's* root, not the plugin's install location. Without the guard,
+`$_RT/runtime/comment-scan.py` doesn't exist there and the invocation fails ambiguously (or, worse,
+gets silently treated as "not applicable" rather than "misconfigured"), rather than erroring loudly
+with a fix ("set CLAUDE_PLUGIN_ROOT and retry"). Same pattern as `runtime/README.md`'s canonical
+`$_RT` binding — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work

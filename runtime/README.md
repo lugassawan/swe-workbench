@@ -17,7 +17,7 @@ the swe-workbench plugin and are invoked at runtime by skills, commands, and age
 |--------|---------|
 | `clean-ephemeral.sh` | Safe `rm -rf` for ephemeral git worktrees (sanity-checked before removal) |
 | `clean-state-files.sh` | Safe `rm -f` for per-invocation `/tmp` state files |
-| `comment-scan.py` | Advisory comment-quality scanner (issue #546) — reads a unified diff on stdin, prints findings + a footer; never exits non-zero |
+| `comment-scan.py` | Advisory comment-quality scanner — reads a unified diff on stdin, prints findings + a footer; never exits non-zero |
 | `doctor.sh` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude, python3) |
 | `fetch-pr.sh` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
 | `gh-timeout.sh` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |

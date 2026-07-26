@@ -60,6 +60,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")
 - Design fork (if any) — surfaced for the orchestrator; you have no `Agent` tool and do not consult subagents yourself
+- Comment-scan verdicts (`KEEP <id> <reason>` / `FIXED <id>` per must-triage finding, per @./shared/comment-scan.md) — omit only when the scan came back clean
 
 ## Principle consultation
 

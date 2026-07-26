@@ -1,0 +1,19 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,13 @@
+ import asyncio
++async def fetch_all(urls):
++    """Fetch every URL concurrently and return the responses in order.
++
++    Spawns one task per URL via a TaskGroup, awaits them all, and returns
++    the results in the same order as the input list regardless of which
++    request finishes first. Retries a request once on a transient network
++    error before giving up and raising, so a single flaky host doesn't
++    fail the whole batch outright. Callers should still wrap the call in
++    their own timeout if partial results are acceptable on failure.
++    """
++    async with asyncio.TaskGroup() as tg:
++        tasks = [tg.create_task(fetch(u)) for u in urls]
++    return [t.result() for t in tasks]
