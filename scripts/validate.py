@@ -1333,6 +1333,16 @@ def _printf_hazard_in_line(line):
     return False
 
 
+def _ends_with_continuation(line):
+    """True if `line` ends in an odd number of trailing backslashes — bash
+    line-continuation requires the final backslash be unescaped; trailing
+    backslashes pair up as literal characters except a possible odd one out,
+    which escapes the newline (PR #564 review follow-up: a fixed 1-vs-2
+    suffix check missed this for 3+ trailing backslashes)."""
+    trailing = len(line) - len(line.rstrip('\\'))
+    return trailing % 2 == 1
+
+
 def _join_bash_continuations(block_lines):
     """Yield (start_offset, logical_line) pairs, joining a line ending in an
     unescaped trailing '\\' with the physical line(s) that follow — bash
@@ -1345,11 +1355,7 @@ def _join_bash_continuations(block_lines):
     while i < n:
         start = i
         parts = [block_lines[i]]
-        while (
-            parts[-1].endswith('\\')
-            and not parts[-1].endswith('\\\\')
-            and i + 1 < n
-        ):
+        while _ends_with_continuation(parts[-1]) and i + 1 < n:
             i += 1
             parts.append(block_lines[i])
         logical = ' '.join(p[:-1] if p.endswith('\\') else p for p in parts)

@@ -3169,6 +3169,14 @@ class TestCheckNoEchoVarHazard:
         validate.check_no_echo_var_hazard()
         assert any("echo" in f for f in validate.FAILURES)
 
+    def test_odd_triple_trailing_backslash_is_a_continuation(self, reset_validate):
+        """3 trailing backslashes: the last is unescaped (odd parity), so this
+        IS still a continuation — a fixed 1-vs-2 suffix check would miss it."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" \\\\\\', '  > /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
     def test_escaped_trailing_backslash_is_not_a_continuation(self, reset_validate):
         """A line ending in an escaped '\\\\' (literal backslash) is NOT a
         bash line-continuation — must not be joined with the next line."""
