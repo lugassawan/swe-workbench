@@ -456,14 +456,22 @@ _PY_DEF_OPEN_RE = re.compile(r"^\s*(async\s+def|def|class)\s+\w+")
 _PY_QUOTE_RE = re.compile(r'^\s*("""|\'\'\')')
 
 
+_PY_SIGNATURE_LOOKBACK_CAP = 50  # generous safety valve, not a correctness bound
+
+
 def _preceded_by_def_or_class(view: list[ViewLine], i: int) -> bool:
     """Walk back through an unclosed multi-line signature to find the
     def/class/async def line a docstring belongs to, not just the
-    immediately-prior line — a blank line breaks the search (no signature
-    spans one)."""
-    for k in range(i - 1, max(-1, i - 8), -1):
+    immediately-prior line. Tracks bracket depth rather than a fixed line
+    count — a signature with any number of one-per-line parameters (the
+    default shape under black/ruff's magic-trailing-comma style) still
+    resolves correctly, not just ones a few lines long. A blank line still
+    breaks the search (no real signature spans one)."""
+    depth = 0
+    for k in range(i - 1, max(-1, i - 1 - _PY_SIGNATURE_LOOKBACK_CAP), -1):
         text = view[k].text
-        if _PY_DEF_OPEN_RE.match(text):
+        depth += sum(text.count(c) for c in ")]}") - sum(text.count(c) for c in "([{")
+        if depth <= 0 and _PY_DEF_OPEN_RE.match(text):
             return True
         if not text.strip():
             return False

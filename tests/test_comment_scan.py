@@ -58,7 +58,12 @@ def test_over_cap_fires_on_long_docstring_under_async_def():
 def test_over_cap_fires_on_long_docstring_under_multiline_signature():
     """Regression: a docstring following a multi-line def signature wasn't
     recognized either — no single physical line matches the full
-    `def name(...):` pattern when the signature spans multiple lines."""
+    `def name(...):` pattern when the signature spans multiple lines.
+    Fixture uses 7 one-per-line parameters (the default shape under black/
+    ruff's magic-trailing-comma style) — a second regression: the original
+    fix used a fixed 7-line lookback cap, so it silently broke again on any
+    signature longer than that. The fix now tracks bracket depth instead of
+    a line count, so this covers both regressions in one fixture."""
     findings, _ = _scan("over_cap_multiline_signature_docstring.diff")
     assert _detectors(findings) == ["OVER_CAP"]
 
