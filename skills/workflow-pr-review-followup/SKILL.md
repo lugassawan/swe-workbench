@@ -55,7 +55,7 @@ Check that the PR is open before proceeding:
 
 ```bash
 RIMBA_OUT=$(rimba add pr:$PR --task "pr-followup-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
+WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 

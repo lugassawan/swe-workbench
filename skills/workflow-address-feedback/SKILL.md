@@ -121,7 +121,7 @@ If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to P
 **When rimba is available** (preferred):
 ```bash
 RIMBA_OUT=$(rimba add "pr:$PR" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
+WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 **When rimba is absent** (fallback):

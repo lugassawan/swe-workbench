@@ -53,7 +53,7 @@ CURRENT_USER=$(gh api /user -q .login)
 
 ```bash
 RIMBA_OUT=$(rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
+WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
