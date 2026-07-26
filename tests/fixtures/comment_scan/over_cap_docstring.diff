@@ -1,0 +1,18 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,12 @@
++def compute_total(items):
++    """Compute the total price of items.
++
++    This function iterates over every item in the list and sums up
++    the price field of each one, returning the aggregate total as
++    a float value that the caller can then use for display or for
++    further computation such as tax calculation downstream. It also
++    handles the case where the list is empty by returning zero, and
++    logs a warning if any item is missing its price attribute.
++    """
++    return sum(item.price for item in items)
+ def existing_function():
+     pass

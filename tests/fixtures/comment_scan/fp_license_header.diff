@@ -1,0 +1,15 @@
+diff --git a/new_script.sh b/new_script.sh
+index 1111111..2222222 100644
+--- a/new_script.sh
++++ b/new_script.sh
+@@ -1,1 +1,10 @@
++#!/usr/bin/env bash
++# Copyright 2026 Example Corp.
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++set -euo pipefail
++echo hello
