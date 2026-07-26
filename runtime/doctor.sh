@@ -70,6 +70,7 @@ else
 fi
 
 probe "claude"  "--version"  "https://docs.anthropic.com/en/docs/claude-code"
+probe "python3" "--version"  "https://www.python.org/downloads/"
 
 printf "%s\n" "─────────────────────────────────────"
 

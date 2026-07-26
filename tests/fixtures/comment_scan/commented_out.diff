@@ -1,0 +1,11 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,6 @@
+ import os
++
++def compute_total(items):
++    # x = legacy_totalizer(items)
++    total = sum(item.price for item in items)
++    return total

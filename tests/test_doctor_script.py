@@ -44,6 +44,10 @@ def _make_mock_tools(tmp_path: Path, omit: set | None = None) -> Path:
             #!/usr/bin/env bash
             echo "Claude Code 1.2.3"
         """),
+        "python3": textwrap.dedent("""\
+            #!/usr/bin/env bash
+            echo "Python 3.11.0"
+        """),
     }
 
     for name, body in tools.items():
@@ -81,8 +85,8 @@ def test_exit_code_zero_when_all_present(tmp_path):
     )
     assert "✓" in result.stdout, "Output must contain ✓ for present tools"
     lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
-    # header + separator + 5 tool lines + separator + summary = at least 9 non-empty lines
-    assert len(lines) >= 9, f"Expected at least 9 non-empty output lines, got {len(lines)}: {lines}"
+    # header + separator + 6 tool lines + separator + summary = at least 10 non-empty lines
+    assert len(lines) >= 10, f"Expected at least 10 non-empty output lines, got {len(lines)}: {lines}"
     assert "All dependencies present." in result.stdout, (
         "Summary line must say 'All dependencies present.' when all tools found"
     )

@@ -17,11 +17,18 @@ the swe-workbench plugin and are invoked at runtime by skills, commands, and age
 |--------|---------|
 | `clean-ephemeral.sh` | Safe `rm -rf` for ephemeral git worktrees (sanity-checked before removal) |
 | `clean-state-files.sh` | Safe `rm -f` for per-invocation `/tmp` state files |
-| `doctor.sh` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude) |
+| `comment-scan.py` | Advisory comment-quality scanner — reads a unified diff on stdin, prints findings + a footer; never exits non-zero |
+| `doctor.sh` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude, python3) |
 | `fetch-pr.sh` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
 | `gh-timeout.sh` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |
 | `preflight-pr.sh` | Consolidated pre-flight for PR-review skills: `gh auth` gate → `fetch-pr.sh` → emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as `printf %q`-quoted eval-able `KEY=VALUE` lines |
 | `reply-and-resolve.sh` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
+
+`comment-scan.py` is the one script in this directory invoked as `python3 "$_RT/runtime/comment-scan.py"`
+rather than `bash "$_RT/runtime/<name>.sh"` — it's a pure diff-in/findings-out function (no git calls
+of its own; see `agents/shared/comment-scan.md` for the canonical diff command), and Python's text
+processing is a better fit for the per-language comment-syntax analysis than bash. Same `$_RT`
+binding convention applies; only the interpreter differs.
 
 ## Reference pattern
 

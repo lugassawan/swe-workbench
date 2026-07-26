@@ -1,0 +1,10 @@
+diff --git a/big.py b/big.py
+index 1111111..2222222 100644
+--- a/big.py
++++ b/big.py
+@@ -2,0 +2,1 @@
++# first hunk's comment about the imports above
+@@ -51,0 +52,1 @@
++# second hunk's unrelated comment far below
+@@ -100,0 +101,1 @@
++# third hunk's comment, unrelated to the other two

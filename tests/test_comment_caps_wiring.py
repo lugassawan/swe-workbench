@@ -8,12 +8,22 @@ on the first pass rather than relying solely on the review backstop.
 
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 
 TECH_WRITER_AGENT = ROOT / "agents" / "tech-writer.md"
 CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
 
 CAPS_TOKENS = ("comment discipline", "comment cap", "comment quality")
+
+# Agents wired to the comment-scan gate via @./shared/comment-scan.md.
+SCAN_WIRED_AGENTS = {
+    "code-impl": CODE_IMPL_AGENT,
+    "debugger": ROOT / "agents" / "debugger.md",
+    "refactorer": ROOT / "agents" / "refactorer.md",
+    "test-writer": ROOT / "agents" / "test-writer.md",
+}
 
 
 def _section(body: str, heading: str) -> str:
@@ -68,4 +78,20 @@ def test_code_impl_absolute_rules_reference_comment_caps():
     assert _rule_mentions_caps(section), (
         "agents/code-impl.md '## Absolute rules' must reference principle-clean-code's "
         "comment caps as a stated rule, so implementation comments comply on the first pass"
+    )
+
+
+def test_comment_scan_shared_include_exists():
+    path = ROOT / "agents" / "shared" / "comment-scan.md"
+    assert path.exists(), "agents/shared/comment-scan.md must exist"
+
+
+@pytest.mark.parametrize("name", sorted(SCAN_WIRED_AGENTS))
+def test_agent_references_comment_scan_include(name):
+    path = SCAN_WIRED_AGENTS[name]
+    assert path.exists(), f"agents/{name}.md must exist"
+    body = path.read_text()
+    assert "@./shared/comment-scan.md" in body, (
+        f"agents/{name}.md must reference @./shared/comment-scan.md in its verify step "
+        "so the comment-scan gate is invoked on the first pass"
     )

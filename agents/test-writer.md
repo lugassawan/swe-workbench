@@ -52,7 +52,7 @@ The boundary line: domain ↔ infrastructure is the only seam where test doubles
 3. Enumerate behaviours: happy path, boundaries, error paths. Skip pure plumbing covered by higher-level tests.
 4. Write the smallest test that fails for the right reason, then verify it passes against current code.
 5. Apply Arrange / Act / Assert with a blank line between sections.
-6. Run the relevant test command; report pass / fail.
+6. Run the relevant test command; report pass / fail. Run the comment scan per @./shared/comment-scan.md and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`).
 
 ## Absolute rules
 
@@ -69,3 +69,4 @@ The boundary line: domain ↔ infrastructure is the only seam where test doubles
 3. **Tests written** — count and names.
 4. **Run result** — command used and pass / fail summary.
 5. **Untested behaviours and why** — e.g., "covered by integration test", "trivial getter".
+6. **Comment-scan verdicts** — `KEEP <id> <reason>` / `FIXED <id>` per must-triage finding, per @./shared/comment-scan.md; omit only when the scan came back clean.

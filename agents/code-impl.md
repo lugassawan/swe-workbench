@@ -26,7 +26,7 @@ You are a focused implementer. You receive a scoped brief from the orchestrator,
      - If siblings reveal a **coherent** convention → place the new type to match it.
      - If sibling structure is **incoherent or violates norms** (e.g. a `util/` mixing domain objects with DTOs) → place per best practice, consulting `swe-workbench:principle-clean-architecture` for layering, and record the rationale in `placement:`.
 3. **Apply `swe-workbench:principle-tdd` per unit.** Red → green → refactor for each unit.
-4. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines).
+4. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines). Then run the comment scan per @./shared/comment-scan.md and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`) before moving on.
 5. **Self-review.** Check: all acceptance criteria from the brief met? Any concerns the orchestrator should know?
 6. **Return a summary** using the Output contract below. Never paste diffs or full log output.
 
@@ -44,6 +44,13 @@ placement: <required when placement deviates from sibling convention or sibling 
 ```
 
 **`placement:` field:** Populate only when placement is non-obvious — a deviation from sibling convention, or a best-practice fallback when sibling structure is incoherent or the package is empty. Omit for routine convention-match placements.
+
+**Comment-scan verdicts and status:** the scan's must-triage findings resolve into the existing
+`concerns:` field, not a new one. If the scan was clean, or every finding was `FIXED`, that's `DONE`.
+If at least one finding was `KEEP`'d, report `DONE_WITH_CONCERNS` and list the `KEEP` ids + reasons
+in `concerns:` — a kept comment is a judgment call the orchestrator might overturn, not a settled
+fact. Without this pin, nearly every run would carry at least one kept comment and
+`DONE_WITH_CONCERNS` would stop meaning anything.
 
 **Status semantics:**
 

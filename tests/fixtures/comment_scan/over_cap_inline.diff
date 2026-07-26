@@ -1,0 +1,14 @@
+diff --git a/example.sh b/example.sh
+index 1111111..2222222 100644
+--- a/example.sh
++++ b/example.sh
+@@ -1,1 +1,7 @@
+ set -euo pipefail
++# This block explains at length why the following retry loop exists,
++# covering the transient network failure mode, the backoff schedule,
++# and the reason a fixed cap of five attempts was chosen over an
++# unbounded retry, which is more than the inline cap allows to pass
++# without at least a KEEP verdict recorded in the verify evidence.
++for i in 1 2 3 4 5; do
++  true
++done

@@ -1,0 +1,4 @@
+diff --git a/pkg/old_name.go b/pkg/new_name.go
+similarity index 100%
+rename from pkg/old_name.go
+rename to pkg/new_name.go
