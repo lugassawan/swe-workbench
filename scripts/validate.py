@@ -2,6 +2,7 @@
 """Plugin self-validator. Zero dependencies beyond python3 stdlib."""
 
 import json
+import os
 import py_compile
 import re
 import sys
@@ -908,6 +909,37 @@ def check_hook_scripts():
             fail(py_file.relative_to(ROOT), str(exc))
 
 
+# Every bin/ wrapper must be invokable as a bare command once <plugin>/bin is
+# on PATH: exec-bit set, a #!/usr/bin/env <interp> shebang (any interpreter,
+# not just bash — see docs/plugin-platform-decisions.md), and the
+# swe-workbench- prefix that is the only guard against colliding with a
+# user's own PATH entries (bin/ has no other enforcement mechanism for it).
+_SHEBANG_RE = re.compile(r'^#!/usr/bin/env \S+\n')
+
+
+def check_bin_wrappers():
+    bin_dir = ROOT / "bin"
+    if not bin_dir.is_dir():
+        return
+    for wrapper in sorted(bin_dir.iterdir()):
+        if not wrapper.is_file():
+            continue
+        rel = wrapper.relative_to(ROOT)
+        if not wrapper.name.startswith("swe-workbench-"):
+            fail(rel, "bin/ wrapper must be prefixed swe-workbench-")
+            continue
+        if not os.access(wrapper, os.X_OK):
+            fail(rel, "bin/ wrapper is not executable (chmod +x)")
+        try:
+            with wrapper.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+        except OSError as exc:
+            fail(rel, f"could not read wrapper: {exc}")
+            continue
+        if not _SHEBANG_RE.match(first_line):
+            fail(rel, "bin/ wrapper must start with a #!/usr/bin/env <interp> shebang")
+
+
 # ──────────────────────────────────────────────
 # Dependency-flow cycle checker
 # ──────────────────────────────────────────────
@@ -1472,6 +1504,7 @@ def main():
     check_unwired_principle_skills(cache=cache)
     check_examples()
     check_hook_scripts()
+    check_bin_wrappers()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
