@@ -61,7 +61,7 @@ lines.
    <path> [--label <label>]` line. Print the preview; **wait for the literal `confirm` reply** —
    never file before it.
 5. On `confirm`: run the sidecar command, return the issue URL, then reap both temp files via
-   `runtime/clean-state-files.sh` (same pattern as `workflow-audit-emit-issues` Phase 4).
+   `swe-workbench-clean-state-files` (same pattern as `workflow-audit-emit-issues` Phase 4).
 
 ## Create a test branch
 

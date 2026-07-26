@@ -269,11 +269,11 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 
 ## Step 6 — State reap
 
-Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is invoked as its own skill boundary, not a `source`d fragment of the caller's shell — `$_RT` from a caller's Step 1 is not inherited, so re-derive it here:
+Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is invoked as its own skill boundary, not a `source`d fragment of the caller's shell:
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-bash "$_RT/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
+command -v swe-workbench-clean-state-files >/dev/null 2>&1 || { echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2; exit 1; }
+swe-workbench-clean-state-files "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
 [ -e "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" ] \
   && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" >&2 \
   || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
@@ -297,4 +297,4 @@ This skill never touches the caller's own worktree or preflight state files (e.g
 | Dedup pr-level findings against `reviewThreads` | `reviewThreads` only covers inline comment threads; a pr-level finding has no `path`/`line` to match against. Batch and post once; re-running the same specialist mode on an unchanged PR will re-post the batch (known v1 limitation — no pr-level dedup yet). |
 | Assemble `comments[]` via `gh api` bracket-indexed field flags, string-concatenate `$BODY` into a JSON literal, post inline comments individually, use `-F body=` on the fallback POST, concatenate `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body, or `echo` a JSON payload (`$COMMENTS_JSON`/`$PAYLOAD`) to persist or inspect it | Bracket indices build a stringified-key *object*, not an array — GitHub rejects it. Build `comments[]` as real JSON via `jq --arg`/`--argjson`, submit atomically via `gh api --input -` (per-comment is the model-A fallback only). Use `-f body="$BODY"` (raw) for the fallback POST — see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). Inline bodies are `finding.body` verbatim; the byline/remark is Step 4-only. Use `printf '%s'` instead of `echo` for any payload — see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md). |
 | Set `posted_pr_level` before checking whether `gh pr comment` succeeded, report a dependency-mode (pr-level-only) run as "posted N inline comments", or restate posted findings in `$SUMMARY` | Gate the assignment on exit status. The byline reports `posted_inline`/`posted_pr_level` separately. Findings live in inline/pr-level comments; the summary is decision + byline only. |
-| Block on this skill's own cleanup, or assume `$_RT` is inherited from the caller's Step 1 | Step 6 reap is foreground (fast) — unlike worktree teardown, backgrounded separately. This skill is its own skill boundary — re-derive `_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"` at the top of Step 6. |
+| Block on this skill's own cleanup | Step 6 reap is foreground (fast) — unlike worktree teardown, backgrounded separately. This skill is its own skill boundary — the `command -v swe-workbench-clean-state-files` preflight at the top of Step 6 has no cross-caller state to inherit. |

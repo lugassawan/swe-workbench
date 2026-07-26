@@ -20,8 +20,7 @@
 # script only calls rm -f on named regular files — never recursive.
 #
 # Call form:
-#   bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" \
-#     <file1> [<file2>...] 2>/dev/null
+#   swe-workbench-clean-state-files <file1> [<file2>...] 2>/dev/null
 
 set -euo pipefail
 

@@ -10,23 +10,21 @@ findings that verdict accounting (below) requires you to account for before call
 No git access lives inside the script — resolve the diff yourself and pipe it in:
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-[ -f "$_RT/runtime/comment-scan.py" ] || {
-  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+command -v swe-workbench-comment-scan >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 MERGE_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null || true)
-git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | python3 "$_RT/runtime/comment-scan.py"
+git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | swe-workbench-comment-scan
 ```
 
-**The existence check is load-bearing, not boilerplate.** This scan runs against an arbitrary target
-repo — if `CLAUDE_PLUGIN_ROOT` is unset for any reason, `$(git rev-parse --show-toplevel)` silently
-resolves to *that target repo's* root, not the plugin's install location. Without the guard,
-`$_RT/runtime/comment-scan.py` doesn't exist there and the invocation fails ambiguously (or, worse,
-gets silently treated as "not applicable" rather than "misconfigured"), rather than erroring loudly
-with a fix ("set CLAUDE_PLUGIN_ROOT and retry"). Same pattern as `runtime/README.md`'s canonical
-`$_RT` binding — don't drop the check when copying the snippet.
+**The preflight check is load-bearing, not boilerplate.** This scan runs against an arbitrary target
+repo — if `swe-workbench-comment-scan` isn't on `PATH` for any reason (plugin not installed, or an
+install predating `bin/`), the invocation would otherwise fail ambiguously (or, worse, get silently
+treated as "not applicable" rather than "misconfigured") instead of erroring loudly with a fix
+("reinstall or update the swe-workbench plugin"). Same pattern as `runtime/README.md`'s canonical
+preflight — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work

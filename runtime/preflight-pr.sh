@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Consolidated pre-flight for PR-review workflows.
-# Usage: preflight-pr.sh <PR> <out_json> [fields]
+# Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]
 #
 # Outputs KEY=VALUE lines (printf %q quoted) for eval:
 #   BASE  HEAD_SHA  AUTHOR_LOGIN  OWNER  REPO  STATE
@@ -12,8 +12,8 @@
 # even when cwd is an ephemeral PR worktree (CLAUDE_PLUGIN_ROOT may be unset).
 set -euo pipefail
 
-PR="${1:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
-OUT_JSON="${2:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
+PR="${1:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
+OUT_JSON="${2:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
 FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
