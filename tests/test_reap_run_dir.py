@@ -69,6 +69,7 @@ def test_removes_well_formed_run_dir():
     "pr-followup-999-zZ9kL0",
     "address-feedback-7-abcdef",
     "review-security-15-a1b2c3",
+    "review-contributor-trust-15-a1b2c3",
     "extend-3-a1b2c3",
     "capture-1-a1b2c3",
     "audit-emit-1-a1b2c3",
@@ -83,8 +84,15 @@ def test_accepts_all_name_shapes(name):
 
 
 def test_absent_path_is_idempotent():
-    """A well-formed but non-existent run dir path exits 0 (nothing to do)."""
+    """A well-formed but non-existent run dir path exits 0 (nothing to do) —
+    including when the run-dir root itself has never been created (macOS
+    canonicalizes /tmp -> /private/tmp only once the directory exists, so
+    this case must not depend on an earlier test's RUN_ROOT.mkdir() side
+    effect to pass)."""
+    import shutil
+    shutil.rmtree(RUN_ROOT, ignore_errors=True)
     target = RUN_ROOT / "pr-review-999999-nonexi"
+    assert not RUN_ROOT.exists()
     assert not target.exists()
     result = run_script(str(target))
     assert result.returncode == 0, f"stderr: {result.stderr!r}"

@@ -53,7 +53,7 @@ expected: <what "passing" looks like>                      → maps to the expec
 scratch_dir: <worktree_root>/.scratch                      → maps to Scratch dir:
 ```
 
-`scratch_dir` gives `code-impl` a supplied alternative to the harness session scratchpad for any ad-hoc file it needs mid-implementation (a fixture, an intermediate artifact) — a directory under the worktree root, gitignored, torn down with the worktree itself. This is data, not exhortation: a subagent that ignores the field can still write to the scratchpad, a bounded low-consequence leak in a directory someone else cleans.
+`scratch_dir` gives `code-impl` a supplied alternative to the harness session scratchpad for any ad-hoc file it needs mid-implementation (a fixture, an intermediate artifact) — a directory under the worktree root, torn down with the worktree itself. This skill dispatches against arbitrary target repos, so the target repo's own `.gitignore` may not cover it — avoid `git add -A`/`git add .` while it's present, and stage explicit paths instead. This is data, not exhortation: a subagent that ignores the field can still write to the scratchpad, a bounded low-consequence leak in a directory someone else cleans.
 
 **Worked example — adding a new workflow skill:**
 

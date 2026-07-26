@@ -18,7 +18,8 @@
 #
 # <prefix> must be one of the flow prefixes reap-run-dir.sh's name-shape
 # allowlist accepts: pr-review, pr-followup, address-feedback,
-# review-<lowercase-letters>, extend, capture, audit-emit, hotfix. A run dir
+# review-<lowercase, hyphen-allowed> (e.g. review-security, review-contributor-trust),
+# extend, capture, audit-emit, hotfix. A run dir
 # this script cannot name correctly is a run dir reap-run-dir.sh can never
 # clean up, so the prefix is validated here too. <id> must be a bare
 # non-negative integer (typically a PR number).
@@ -49,7 +50,7 @@ ID="${2:-}"
 case "$PREFIX" in
   pr-review|pr-followup|address-feedback|extend|capture|audit-emit|hotfix) ;;
   review-*)
-    printf '%s' "$PREFIX" | grep -qE '^review-[a-z]+$' || reject "invalid review-* prefix: $PREFIX"
+    printf '%s' "$PREFIX" | grep -qE '^review-[a-z][a-z-]*$' || reject "invalid review-* prefix: $PREFIX"
     ;;
   *) reject "unrecognized flow prefix: $PREFIX" ;;
 esac
@@ -80,7 +81,7 @@ NOW_EPOCH=$(date +%s)
 for entry in "$RUN_ROOT"/*; do
   [ -e "$entry" ] || continue  # no-match glob guard (nullglob not assumed)
   base="$(basename "$entry")"
-  printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z]+|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$' || continue
+  printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$' || continue
   [ -O "$entry" ] || continue
   mtime_epoch=$(stat -f '%m' "$entry" 2>/dev/null || stat -c '%Y' "$entry" 2>/dev/null) || continue
   age_hours=$(( (NOW_EPOCH - mtime_epoch) / 3600 ))

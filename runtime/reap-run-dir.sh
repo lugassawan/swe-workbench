@@ -19,7 +19,7 @@
 #      /tmp/swe-workbench-run root — prefix containment is not enough.
 #   5. Target is not the run-dir root itself (implied by 4, asserted anyway).
 #   6. Basename matches the run-dir name shape (allowlist, not denylist):
-#        ^(pr-review|pr-followup|address-feedback|review-[a-z]+|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$
+#        ^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$
 #   7. Target is owned by the current user ([ -O ]) — /tmp is world-writable
 #      and sticky, so a squatted dir owned by another UID is refused.
 #   8. Target does NOT contain a .git entry — keeps scratch and worktree
@@ -63,6 +63,7 @@ TARGET="${TARGET%/}"
 # Resolve /tmp -> /private/tmp on macOS once, for the run-dir root.
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
 RUN_ROOT="${CANON_TMP}/swe-workbench-run"
+RAW_RUN_ROOT="/tmp/swe-workbench-run"
 
 # Canonicalize the parent directory (the target itself may not exist).
 parent="$(dirname "$TARGET")"
@@ -70,11 +71,21 @@ base="$(basename "$TARGET")"
 canon_parent=$(cd "$parent" 2>/dev/null && pwd -P) || canon_parent="$parent"
 canon_target="${canon_parent}/${base}"
 
-[ "$canon_target" != "$RUN_ROOT" ] || reject "refusing to remove the run-dir root itself: $TARGET"
+# Accepts either the canonicalized root or its raw /tmp spelling. The raw
+# fallback matters when the root itself has never been created: `cd` into a
+# missing parent fails, so canon_parent above falls back to the raw,
+# uncanonicalized $parent — comparing that against a canonicalized-only
+# RUN_ROOT would reject an otherwise-valid absent target on macOS, where
+# /tmp is a symlink to /private/tmp (breaks the idempotent-absent contract).
+is_run_root() {
+  [ "$1" = "$RUN_ROOT" ] || [ "$1" = "$RAW_RUN_ROOT" ]
+}
 
-[ "$canon_parent" = "$RUN_ROOT" ] || reject "path is not exactly one level under $RUN_ROOT: $TARGET"
+is_run_root "$canon_target" && reject "refusing to remove the run-dir root itself: $TARGET"
 
-if ! printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z]+|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$'; then
+is_run_root "$canon_parent" || reject "path is not exactly one level under $RUN_ROOT: $TARGET"
+
+if ! printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$'; then
   reject "basename does not match the run-dir name shape: $base"
 fi
 

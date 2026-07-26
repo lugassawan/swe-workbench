@@ -109,6 +109,16 @@ def test_rejects_review_prefix_with_uppercase():
     assert result.returncode != 0, f"stderr: {result.stderr!r}"
 
 
+def test_accepts_hyphenated_review_mode():
+    """A hyphenated specialist mode name (e.g. contributor-trust) must be
+    accepted, not just single-word modes — commands/review.md's postable-mode
+    table includes hyphenated normalized names."""
+    result = run_script("review-contributor-trust", "42")
+    assert result.returncode == 0, f"stderr: {result.stderr!r}"
+    run_dir = Path(parse_run_dir(result.stdout))
+    assert run_dir.is_dir()
+
+
 def test_rejects_non_numeric_id():
     result = run_script("pr-review", "abc")
     assert result.returncode != 0, f"stderr: {result.stderr!r}"
