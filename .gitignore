@@ -13,3 +13,4 @@ scripts/__pycache__/
 .superpowers/
 docs/superpowers/
 .rimba/*.local.toml
+.scratch/

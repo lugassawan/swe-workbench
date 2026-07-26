@@ -36,9 +36,9 @@ command -v swe-workbench-preflight-pr >/dev/null 2>&1 || {
 JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
 eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
 CURRENT_USER=$(gh api /user -q .login)
-PR_BRANCH=$(jq -r .headRefName "$JSON")
+PR_BRANCH=$(jq -r .headRefName "$JSON"); eval "$(swe-workbench-new-run-dir address-feedback "$PR")"
 ```
-`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2).
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2). `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files below (including `${PR}-triage.json`, which is a cross-invocation resume point and must never move here).
 
 Check that the PR is open before proceeding:
 ```bash
@@ -255,7 +255,7 @@ Then run **Phase 7 — Cleanup**.
 
 ### Phase 7 — Cleanup (always)
 
-Run on every exit that occurs after a worktree was **created** in Phase 2 (success, Q-quit, or error). Skip on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove.
+Run on every exit that occurs after a worktree was **created** in Phase 2 (success, Q-quit, or error). Skip the worktree-removal block on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove.
 ```bash
 if [ "${REUSED_WT:-0}" = "1" ]; then
   echo "Reused existing worktree at $WT — skipping cleanup (nothing was created)."
@@ -269,8 +269,9 @@ else
     echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
   fi
 fi
+swe-workbench-reap-run-dir "$RUN_DIR"; [ -e "$RUN_DIR" ] && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 || echo "✓ run dir reaped: $RUN_DIR"
 ```
-Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a warning and do not block completion. The fallback removes only the worktree directory — never delete `$PR_BRANCH` directly (e.g. via `git branch -D`), which would destroy the owner's actual PR head branch.
+Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a warning and do not block completion. The fallback removes only the worktree directory — never delete `$PR_BRANCH` directly (e.g. via `git branch -D`), which would destroy the owner's actual PR head branch. `$RUN_DIR` is reaped unconditionally in this phase, independent of the `REUSED_WT` branch above — it was allocated in Phase 1 regardless of whether Phase 2 later reused an existing worktree. A Phase 1 early-exit (before Phase 7 runs at all) leaves `$RUN_DIR` for the age-gated orphan sweep in `new-run-dir.sh` to reap on a later invocation — bounded to 24h, not indefinite.
 
 ## Failure modes
 

@@ -15,7 +15,9 @@ RUNTIME_SCRIPTS = [
     "doctor.sh",
     "fetch-pr.sh",
     "gh-timeout.sh",
+    "new-run-dir.sh",
     "preflight-pr.sh",
+    "reap-run-dir.sh",
     "reply-and-resolve.sh",
     "sync-pr-metadata.sh",
 ]

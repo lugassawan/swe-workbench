@@ -23,7 +23,9 @@ only the invocation surface moved.
 | `doctor.sh` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude, python3) |
 | `fetch-pr.sh` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
 | `gh-timeout.sh` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |
+| `new-run-dir.sh` | Allocate a mode-0700 run-scoped scratch dir under `/tmp/swe-workbench-run/` (`mktemp -d`, explicit template); also runs the age-gated (24h) orphan sweep at allocation time |
 | `preflight-pr.sh` | Consolidated pre-flight for PR-review skills: `gh auth` gate → `fetch-pr.sh` → emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as `printf %q`-quoted eval-able `KEY=VALUE` lines |
+| `reap-run-dir.sh` | Safe `rm -rf` for a single run-scoped scratch dir allocated by `new-run-dir.sh` (depth-exactly-one, name-shape, ownership, and `.git`-absence checks) |
 | `reply-and-resolve.sh` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
 
 `comment-scan.py` is the one script in this directory invoked via a wrapper that execs a different
