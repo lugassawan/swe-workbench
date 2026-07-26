@@ -22,15 +22,15 @@ def test_capture_has_required_frontmatter():
 
 
 def test_capture_step9_deletes_temp_files():
-    """commands/capture.md step 9 must invoke clean-state-files.sh on success."""
+    """commands/capture.md step 9 must invoke swe-workbench-clean-state-files on success."""
     text = CAPTURE_MD.read_text()
-    assert "clean-state-files.sh" in text, (
-        "commands/capture.md step 9 must call runtime/clean-state-files.sh "
+    assert "swe-workbench-clean-state-files" in text, (
+        "commands/capture.md step 9 must call swe-workbench-clean-state-files "
         "to delete the temp .md and .cmd files after successful issue creation"
     )
     assert "/tmp/capture-" in text, (
         "commands/capture.md must reference the /tmp/capture-<repo-slug>-<ts>* "
-        "file pattern in the clean-state-files.sh call"
+        "file pattern in the swe-workbench-clean-state-files call"
     )
 
 

@@ -55,23 +55,23 @@ def test_runtime_scripts_pass_bash_syntax_check():
 
 
 def test_preflight_pr_referenced_in_pr_review_skill():
-    """workflow-pr-review SKILL.md Step 1 must use preflight-pr.sh (not raw inline gh/jq)."""
+    """workflow-pr-review SKILL.md Step 1 must use swe-workbench-preflight-pr (not raw inline gh/jq)."""
     text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
-    assert "runtime/preflight-pr.sh" in text, (
-        "workflow-pr-review SKILL.md Step 1 must invoke runtime/preflight-pr.sh — "
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-pr-review SKILL.md Step 1 must invoke swe-workbench-preflight-pr — "
         "the consolidated pre-flight replaces the ~20-line inline gh/jq block"
     )
     assert 'eval "$(' in text, (
-        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source preflight-pr.sh output "
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source swe-workbench-preflight-pr output "
         "into the current shell (KEY=VALUE contract)"
     )
 
 
 def test_preflight_pr_referenced_in_pr_review_followup_skill():
-    """workflow-pr-review-followup SKILL.md Step 1 must use preflight-pr.sh."""
+    """workflow-pr-review-followup SKILL.md Step 1 must use swe-workbench-preflight-pr."""
     text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
-    assert "runtime/preflight-pr.sh" in text, (
-        "workflow-pr-review-followup SKILL.md Step 1 must invoke runtime/preflight-pr.sh"
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-pr-review-followup SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
     )
     assert 'eval "$(' in text, (
         "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
@@ -79,10 +79,10 @@ def test_preflight_pr_referenced_in_pr_review_followup_skill():
 
 
 def test_preflight_pr_referenced_in_address_feedback_skill():
-    """workflow-address-feedback SKILL.md Phase 1 must use preflight-pr.sh."""
+    """workflow-address-feedback SKILL.md Phase 1 must use swe-workbench-preflight-pr."""
     text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
-    assert "runtime/preflight-pr.sh" in text, (
-        "workflow-address-feedback SKILL.md Phase 1 must invoke runtime/preflight-pr.sh"
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-address-feedback SKILL.md Phase 1 must invoke swe-workbench-preflight-pr"
     )
     assert 'eval "$(' in text, (
         "workflow-address-feedback SKILL.md must use eval \"$(...)\" to source preflight output"
@@ -90,8 +90,8 @@ def test_preflight_pr_referenced_in_address_feedback_skill():
 
 
 def test_reply_and_resolve_referenced_in_address_feedback_skill():
-    """workflow-address-feedback SKILL.md must invoke runtime/reply-and-resolve.sh in Phase 5."""
+    """workflow-address-feedback SKILL.md must invoke swe-workbench-reply-and-resolve in Phase 5."""
     text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
-    assert "runtime/reply-and-resolve.sh" in text, (
-        "workflow-address-feedback SKILL.md Phase 5 must invoke runtime/reply-and-resolve.sh"
+    assert "swe-workbench-reply-and-resolve" in text, (
+        "workflow-address-feedback SKILL.md Phase 5 must invoke swe-workbench-reply-and-resolve"
     )

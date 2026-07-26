@@ -340,9 +340,9 @@ class TestSecurity:
 class TestDoctorGuard:
     def test_doctor_has_hard_fail_guard(self):
         text = DOCTOR_CMD.read_text()
-        assert '[ -n "$_RT" ]' in text, (
-            "doctor.md must contain the hard-fail guard checking $_RT"
+        assert "command -v swe-workbench-doctor" in text, (
+            "doctor.md must contain the hard-fail guard checking swe-workbench-doctor is on PATH"
         )
-        assert '$_RT/runtime/doctor.sh' in text, (
-            "doctor.md must invoke doctor.sh via $_RT after the guard"
+        assert "swe-workbench-doctor" in text, (
+            "doctor.md must invoke the bare swe-workbench-doctor command after the guard"
         )
