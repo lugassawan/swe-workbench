@@ -54,9 +54,9 @@ esac
 
 case "$SOURCE_MODE" in
   stdin)  DIFF=$(cat) ;;
-  staged) DIFF=$(git diff --no-color --cached -- "$TARGET_PATH") || usage "git diff --cached failed for '$TARGET_PATH'" ;;
-  range)  DIFF=$(git diff --no-color "$RANGE" -- "$TARGET_PATH") || usage "git diff failed for range '$RANGE' — check the rev-range is valid" ;;
-  head)   DIFF=$(git diff --no-color HEAD -- "$TARGET_PATH") || usage "git diff HEAD failed for '$TARGET_PATH'" ;;
+  staged) DIFF=$(git diff --no-color --src-prefix=a/ --dst-prefix=b/ --cached -- "$TARGET_PATH") || usage "git diff --cached failed for '$TARGET_PATH'" ;;
+  range)  DIFF=$(git diff --no-color --src-prefix=a/ --dst-prefix=b/ "$RANGE" -- "$TARGET_PATH") || usage "git diff failed for range '$RANGE' — check the rev-range is valid" ;;
+  head)   DIFF=$(git diff --no-color --src-prefix=a/ --dst-prefix=b/ HEAD -- "$TARGET_PATH") || usage "git diff HEAD failed for '$TARGET_PATH'" ;;
 esac
 
 DLL_PATH="$TARGET_PATH" DLL_PATTERN="$PATTERN" awk '
