@@ -83,7 +83,15 @@ for entry in "$RUN_ROOT"/*; do
   base="$(basename "$entry")"
   printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$' || continue
   [ -O "$entry" ] || continue
-  mtime_epoch=$(stat -f '%m' "$entry" 2>/dev/null || stat -c '%Y' "$entry" 2>/dev/null) || continue
+  # GNU (-c) tried first: BSD/macOS stat rejects the unrecognized -c option
+  # before touching any file argument, so it fails cleanly with no stdout.
+  # The reverse order is NOT safe: on GNU stat, -f means "filesystem status"
+  # (a flag, not a format-string parameter) — `stat -f '%m' "$entry"` is
+  # parsed as two file operands ("%m" and "$entry"), and GNU stat still
+  # prints filesystem info for the operand that exists even though the
+  # other fails, corrupting this capture with multi-line garbage instead of
+  # failing outright.
+  mtime_epoch=$(stat -c '%Y' "$entry" 2>/dev/null || stat -f '%m' "$entry" 2>/dev/null) || continue
   age_hours=$(( (NOW_EPOCH - mtime_epoch) / 3600 ))
   [ "$age_hours" -ge "$SWEEP_AGE_HOURS" ] || continue
   "$REAP" "$entry" >/dev/null 2>&1 || true
