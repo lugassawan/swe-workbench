@@ -49,7 +49,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 3. **Confirm root cause** — one sentence, backed by a concrete artifact.
 4. **Write the regression test first** — it must fail against current code for the stated reason.
 5. **Apply the minimal fix** — smallest diff that turns the test green. No bundled cleanups.
-6. **Verify** — full relevant test suite green. Note anything newly suspicious.
+6. **Verify** — full relevant test suite green. Note anything newly suspicious. Run the comment scan per @./shared/comment-scan.md and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`).
 
 ## Output contract
 
