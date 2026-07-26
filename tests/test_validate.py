@@ -3262,3 +3262,162 @@ class TestCheckNoPrintfVarFormat:
         val.FAILURES.clear()
         val.check_no_printf_var_format()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_no_unenumerated_tmp_write
+# ──────────────────────────────────────────────
+
+class TestCheckNoUnenumeratedTmpWrite:
+    """A literal /tmp/... write outside $RUN_DIR and outside
+    clean-state-files.sh's sanctioned PR-keyed prefixes is un-enumerable by
+    construction — nothing can ever reap it by name, and nothing bounds two
+    concurrent flows from clobbering it (#552). Regression gate for the old
+    global, never-reaped /tmp/payload.json."""
+
+    def _skill_with_block(self, root, name, block_lines):
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"---\nname: {name}\ndescription: d\n---\n\n"
+            "```bash\n" + "\n".join(block_lines) + "\n```\n"
+        )
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    # ── must flag ──
+
+    def test_unsanctioned_redirect_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" > /tmp/payload.json'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_append_redirect_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" >> /tmp/scratch.txt'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_body_file_flag_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh pr edit "$N" --body-file /tmp/scratch.txt'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_wrong_prefix_flags(self, reset_validate):
+        """A /tmp/ basename that doesn't match any sanctioned prefix (e.g. a
+        plausible-looking but unlisted name) must still be flagged."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > /tmp/some-other-flow-42.json'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    # ── must not flag ──
+
+    def test_run_dir_rooted_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" > "$RUN_DIR/payload.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_run_dir_rooted_body_file_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh pr edit "$N" --body-file "$RUN_DIR/body.md"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_run_dir_root_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > /tmp/swe-workbench-run/foo'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_pr_review_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > "/tmp/swe-workbench-pr-review/${PR}.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_address_feedback_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > "/tmp/swe-workbench-address-feedback/${PR}.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("prefix", [
+        "capture", "report-issue", "audit-emit", "extend", "hotfix", "cleanup-followup", "bug-triage",
+    ])
+    def test_sanctioned_basename_prefixes_pass(self, reset_validate, prefix):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", [f'cmd > /tmp/{prefix}-repo-42.md'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_variable_rooted_target_passes(self, reset_validate):
+        """A target that isn't a literal /tmp/... path at all (e.g. a plain
+        variable) is outside this gate's scope entirely."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh api foo > "$STATE_FILE"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd 2>/dev/null'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_prose_mention_outside_fence_is_ignored(self, reset_validate):
+        root = reset_validate
+        skill_dir = root / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: d\n---\n\n"
+            "Write the payload to /tmp/payload.json for inspection.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    # ── structural coverage ──
+
+    def test_reference_subdir_file_is_scanned(self, reset_validate):
+        root = reset_validate
+        ref_dir = root / "skills" / "my-skill" / "reference"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / "notes.md").write_text(
+            "# Notes\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("reference/notes.md" in f for f in validate.FAILURES)
+
+    def test_commands_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("my-cmd.md" in f for f in validate.FAILURES)
+
+    def test_agents_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("my-agent.md" in f for f in validate.FAILURES)
+
+    def test_live_tree_has_zero_violations(self, reset_validate, monkeypatch):
+        """After #552's allowlist extension + RUN_DIR wiring, the real tree is clean."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_unenumerated_tmp_write()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"

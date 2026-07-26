@@ -1484,6 +1484,65 @@ def check_no_printf_var_format(cache=None):
 
 
 # ──────────────────────────────────────────────
+# Un-enumerated /tmp scratch write gate (#552)
+# ──────────────────────────────────────────────
+
+# A redirect (`>`/`>>`) or `--body-file` flag whose target is a LITERAL
+# /tmp/... path (not a variable reference) — captures the target token,
+# quotes stripped, for the sanctioned-prefix check below. A variable-rooted
+# target ("$RUN_DIR/x", "$STATE_FILE") never matches: it doesn't start with
+# the literal text "/tmp/".
+_TMP_WRITE_TARGET_RE = re.compile(
+    r'(?:>{1,2}|--body-file[= ])\s*"?(/tmp/\S+?)"?(?=\s|$|[;&|)])'
+)
+
+# Sanctioned, enumerable prefixes: the run-dir root itself, the two PR-scoped
+# state directories, and clean-state-files.sh's own Path-B single-file-writer
+# allowlist (runtime/clean-state-files.sh:81) — kept in sync with that regex
+# by hand, since the two files serve different audiences (shell vs. this
+# Python gate) and a shared source would be more indirection than the four
+# lines it'd save.
+_SANCTIONED_TMP_PREFIX_RE = re.compile(
+    r'^/tmp/(?:'
+    r'swe-workbench-run/|swe-workbench-pr-review/|swe-workbench-address-feedback/|'
+    r'(?:capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-'
+    r')'
+)
+
+
+def _tmp_write_hazard_in_line(line):
+    """True if `line` redirects to, or passes `--body-file` with, a literal
+    `/tmp/...` path that is neither under the run-dir root / a PR-scoped
+    state dir, nor one of clean-state-files.sh's sanctioned basename
+    prefixes. Such a path is un-enumerable by construction (#552) — nothing
+    can ever reap it by name, and nothing bounds two concurrent flows from
+    silently clobbering it."""
+    for m in _TMP_WRITE_TARGET_RE.finditer(line):
+        if not _SANCTIONED_TMP_PREFIX_RE.match(m.group(1)):
+            return True
+    return False
+
+
+def check_no_unenumerated_tmp_write(cache=None):
+    """Flag bash blocks in skills/, commands/, agents/ that write to a literal
+    /tmp/... path outside both $RUN_DIR (runtime/new-run-dir.sh) and the
+    sanctioned PR-keyed prefixes (runtime/clean-state-files.sh). This is the
+    regression gate for #552: without it, a new shipped-prose call site can
+    reintroduce a global, never-reaped path like the old /tmp/payload.json.
+    """
+    _scan_bash_blocks_for_hazard(
+        cache,
+        _tmp_write_hazard_in_line,
+        lambda ln: (
+            f"line {ln}: bash block writes to a literal /tmp/... path that is "
+            f"neither $RUN_DIR-rooted nor a sanctioned PR-keyed prefix — "
+            f"allocate $RUN_DIR via swe-workbench-new-run-dir and write under "
+            f"it instead (see runtime/new-run-dir.sh)"
+        ),
+    )
+
+
+# ──────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────
 
@@ -1520,6 +1579,7 @@ def main():
     check_browser_tool_gate(cache=cache)
     check_no_echo_var_hazard(cache=cache)
     check_no_printf_var_format(cache=cache)
+    check_no_unenumerated_tmp_write(cache=cache)
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
