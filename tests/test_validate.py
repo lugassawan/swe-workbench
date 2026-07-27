@@ -259,6 +259,115 @@ class TestCheckHooksJson:
         validate.check_hooks_json()
         assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
 
+    def test_conforming_command_shape_passes(self, reset_validate):
+        root = reset_validate
+        good = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh'}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=good)
+        validate.check_hooks_json()
+        assert len(validate.FAILURES) == 0
+
+    def test_unquoted_command_fails_shape(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/x.sh"}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("does not match the required shape" in f for f in validate.FAILURES)
+
+    def test_bare_path_command_fails_shape(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": '"${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh'}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("does not match the required shape" in f for f in validate.FAILURES)
+
+    def test_if_key_fails(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh',
+                        "if": "Bash(git *)",
+                    }],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("carries an 'if' condition" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_hook_script_permissions
+# ──────────────────────────────────────────────
+
+class TestCheckHookScriptPermissions:
+    def test_conforming_permissions_pass(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o755)
+        validate.check_hook_script_permissions()
+        assert len(validate.FAILURES) == 0
+
+    def test_umask_002_mode_0775_still_passes(self, reset_validate):
+        """A checkout under umask 002 legitimately produces 0775 for a file
+        git tracks as executable — must not be a spurious failure (only the
+        exec bit matters, not the exact mode)."""
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o775)
+        validate.check_hook_script_permissions()
+        assert len(validate.FAILURES) == 0
+
+    def test_not_executable_fails(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o644)
+        validate.check_hook_script_permissions()
+        assert any("must be executable" in f for f in validate.FAILURES)
+
+    def test_python_hook_checked_too(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.py"
+        script.write_text("#!/usr/bin/env python3\nprint('hi')\n", encoding="utf-8")
+        script.chmod(0o644)
+        validate.check_hook_script_permissions()
+        assert any("example.py" in f and "must be executable" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills

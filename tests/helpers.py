@@ -42,7 +42,10 @@ def make_plugin_tree(
             "PreToolUse": [
                 {
                     "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": "exit 0"}],
+                    "hooks": [{
+                        "type": "command",
+                        "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/example.sh',
+                    }],
                 }
             ]
         }
