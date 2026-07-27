@@ -62,7 +62,7 @@ rule syntax to filter when this hook runs (e.g. `Bash(git *)`). Only runs if the
 the pattern."* — it filters a tool-call payload against a pattern; it is not a general-purpose
 guard.
 
-Applied to every entry in `hooks/hooks.json` (issue #557), no `if` buys anything:
+Applied to every entry in `hooks/hooks.json`, no `if` buys anything:
 
 | Hook | Event | Why `if` buys nothing |
 |---|---|---|
@@ -81,5 +81,3 @@ controls (`bash_guard.sh`, `secret_guard.py`) that originally motivated the ques
 in the table above hits the same failure mode: `if` is one more predicate that can silently
 disable a hook (a miss reads as "hook chose not to fire," not as an error) for zero filtering
 benefit over what `matcher` already provides or what the script can check for itself at runtime.
-
-Cross-reference: #547, #557.
