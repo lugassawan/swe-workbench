@@ -147,3 +147,51 @@ class TestDoctorGuard:
         assert "swe-workbench-doctor" in text, (
             "doctor.md must invoke the bare swe-workbench-doctor command after the guard"
         )
+
+
+# ──────────────────────────────────────────────
+# SKILL.md bin/ script reference checks
+# ──────────────────────────────────────────────
+
+
+def test_preflight_pr_referenced_in_pr_review_skill():
+    """workflow-pr-review SKILL.md Step 1 must use swe-workbench-preflight-pr (not raw inline gh/jq)."""
+    text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-pr-review SKILL.md Step 1 must invoke swe-workbench-preflight-pr — "
+        "the consolidated pre-flight replaces the ~20-line inline gh/jq block"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source swe-workbench-preflight-pr output "
+        "into the current shell (KEY=VALUE contract)"
+    )
+
+
+def test_preflight_pr_referenced_in_pr_review_followup_skill():
+    """workflow-pr-review-followup SKILL.md Step 1 must use swe-workbench-preflight-pr."""
+    text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-pr-review-followup SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
+    )
+
+
+def test_preflight_pr_referenced_in_address_feedback_skill():
+    """workflow-address-feedback SKILL.md Phase 1 must use swe-workbench-preflight-pr."""
+    text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
+    assert "swe-workbench-preflight-pr" in text, (
+        "workflow-address-feedback SKILL.md Phase 1 must invoke swe-workbench-preflight-pr"
+    )
+    assert 'eval "$(' in text, (
+        "workflow-address-feedback SKILL.md must use eval \"$(...)\" to source preflight output"
+    )
+
+
+def test_reply_and_resolve_referenced_in_address_feedback_skill():
+    """workflow-address-feedback SKILL.md must invoke swe-workbench-reply-and-resolve in Phase 5."""
+    text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
+    assert "swe-workbench-reply-and-resolve" in text, (
+        "workflow-address-feedback SKILL.md Phase 5 must invoke swe-workbench-reply-and-resolve"
+    )

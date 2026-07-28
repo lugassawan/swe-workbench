@@ -1,4 +1,4 @@
-"""Tests for runtime/sync-pr-metadata.sh — PR metadata drift sync helper.
+"""Tests for bin/swe-workbench-sync-pr-metadata — PR metadata drift sync helper.
 
 Each test invokes the script with a recording `gh` stub. The stub logs each
 invocation to a temp file so tests can assert which gh sub-commands were called
@@ -16,7 +16,7 @@ from pathlib import Path
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "sync-pr-metadata.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-sync-pr-metadata"
 ROOT = Path(__file__).parent.parent
 
 

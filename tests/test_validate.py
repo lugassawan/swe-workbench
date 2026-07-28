@@ -436,6 +436,30 @@ class TestCheckBinWrappers:
         validate.check_bin_wrappers()
         assert len(validate.FAILURES) == 0
 
+    def test_sh_suffix_fails(self, reset_validate):
+        """#571 collapsed runtime/ into bin/ — bin/ scripts are bare command names,
+        never carrying a .sh/.py extension."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example.sh"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must be a bare command name" in f for f in validate.FAILURES)
+
+    def test_runtime_dir_reappearing_fails(self, reset_validate):
+        """A reappearing runtime/ means the wrapper/script split from before #571 is
+        being silently reintroduced — this must fail loudly, not no-op."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        runtime_dir = root / "runtime"
+        runtime_dir.mkdir(exist_ok=True)
+        (runtime_dir / "example.sh").write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        validate.check_bin_wrappers()
+        assert any("runtime/ must not exist" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # check_skills

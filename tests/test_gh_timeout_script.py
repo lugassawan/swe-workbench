@@ -1,4 +1,4 @@
-"""Tests for runtime/gh-timeout.sh — per-call timeout wrapper for `gh` (issue #504).
+"""Tests for bin/swe-workbench-gh-timeout — per-call timeout wrapper for `gh` (issue #504).
 
 Each test invokes the script as a subprocess with fake `timeout`/`gtimeout`/`gh`
 stubs prepended to a PATH that is tightly scoped per test, mirroring the
@@ -24,7 +24,7 @@ from shutil import which
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "gh-timeout.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-gh-timeout"
 ROOT = Path(__file__).parent.parent
 
 BASH_BIN = which("bash") or "/bin/bash"
@@ -72,10 +72,10 @@ def _run(args: list[str], *, bin_dir: Path, extra_env: dict | None = None):
 # ── Existence ────────────────────────────────────────────────────────────────
 
 def test_script_exists_and_executable():
-    """runtime/gh-timeout.sh must exist and be executable."""
+    """bin/swe-workbench-gh-timeout must exist and be executable."""
     import os
-    assert SCRIPT.exists(), "runtime/gh-timeout.sh must exist"
-    assert os.access(SCRIPT, os.X_OK), "runtime/gh-timeout.sh must be executable (chmod +x)"
+    assert SCRIPT.exists(), "bin/swe-workbench-gh-timeout must exist"
+    assert os.access(SCRIPT, os.X_OK), "bin/swe-workbench-gh-timeout must be executable (chmod +x)"
 
 
 # ── Applies the deadline (default 60s), forwards args verbatim ────────────────

@@ -1,4 +1,4 @@
-"""Tests for runtime/reply-and-resolve.sh — PR thread reply + resolve dispatcher.
+"""Tests for bin/swe-workbench-reply-and-resolve — PR thread reply + resolve dispatcher.
 
 Each test invokes the script with a recording `gh` stub. The stub logs each
 invocation to a temp file so tests can assert which gh sub-commands were called
@@ -19,7 +19,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "reply-and-resolve.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-reply-and-resolve"
 ROOT = Path(__file__).parent.parent
 
 
@@ -232,14 +232,14 @@ def test_body_flag_is_lowercase_f_not_uppercase_f():
     logs "$1 $2" (sub-command + URL), not flags, so it can't catch a regression
     here — this test reads the script source directly instead.
 
-    Call sites go through the gh-timeout.sh wrapper (issue #504), so the
+    Call sites go through the swe-workbench-gh-timeout wrapper (issue #504), so the
     literal substring "gh api" no longer appears on these lines — match the
     wrapper invocation pattern instead.
     """
     text = SCRIPT.read_text()
     body_lines = [
         ln for ln in text.splitlines()
-        if "body=" in ln and re.search(r'gh-timeout\.sh"\s+api\b', ln)
+        if "body=" in ln and re.search(r'swe-workbench-gh-timeout"\s+api\b', ln)
     ]
     assert len(body_lines) == 2, f"expected exactly 2 gh api body= call sites, found {len(body_lines)}: {body_lines}"
     for ln in body_lines:

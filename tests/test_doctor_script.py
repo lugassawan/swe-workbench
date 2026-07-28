@@ -1,4 +1,4 @@
-"""End-to-end tests for runtime/doctor.sh (closes #238)."""
+"""End-to-end tests for bin/swe-workbench-doctor (closes #238)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DOCTOR_SH = ROOT / "runtime" / "doctor.sh"
+DOCTOR_SH = ROOT / "bin" / "swe-workbench-doctor"
 
 from conftest import _CLEAN_ENV
 
@@ -70,9 +70,9 @@ def _run_doctor(env: dict) -> subprocess.CompletedProcess:
 
 
 def test_script_exists_and_executable():
-    """runtime/doctor.sh must exist and be executable."""
-    assert DOCTOR_SH.exists(), "runtime/doctor.sh must exist"
-    assert os.access(DOCTOR_SH, os.X_OK), "runtime/doctor.sh must be executable (chmod +x)"
+    """bin/swe-workbench-doctor must exist and be executable."""
+    assert DOCTOR_SH.exists(), "bin/swe-workbench-doctor must exist"
+    assert os.access(DOCTOR_SH, os.X_OK), "bin/swe-workbench-doctor must be executable (chmod +x)"
 
 
 def test_exit_code_zero_when_all_present(tmp_path):

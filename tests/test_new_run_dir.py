@@ -1,4 +1,4 @@
-"""Tests for runtime/new-run-dir.sh — run-scoped scratch directory allocation.
+"""Tests for bin/swe-workbench-new-run-dir — run-scoped scratch directory allocation.
 
 Mirrors tests/test_reap_run_dir.py and tests/test_clean_ephemeral.py. Each
 test invokes the script as a subprocess and parses its `RUN_DIR=<path>`
@@ -18,7 +18,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "new-run-dir.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-new-run-dir"
 REPO_ROOT = Path(__file__).parent.parent
 
 RUN_ROOT = Path("/tmp/swe-workbench-run")

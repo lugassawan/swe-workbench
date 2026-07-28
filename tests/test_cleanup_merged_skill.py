@@ -341,11 +341,11 @@ def test_sweep_residuals_script_never_touches_shared_parent_dirs():
     assert 'rm -rf "/tmp/swe-workbench-address-feedback"' not in src, (
         "sweep-residuals.sh must never bare-rm-rf the shared address-feedback parent dir"
     )
-    assert "clean-ephemeral.sh" in src, (
-        "sweep-residuals.sh must route worktree removal through runtime/clean-ephemeral.sh"
+    assert "swe-workbench-clean-ephemeral" in src, (
+        "sweep-residuals.sh must route worktree removal through bin/swe-workbench-clean-ephemeral"
     )
-    assert "clean-state-files.sh" in src, (
-        "sweep-residuals.sh must route state-file removal through runtime/clean-state-files.sh"
+    assert "swe-workbench-clean-state-files" in src, (
+        "sweep-residuals.sh must route state-file removal through bin/swe-workbench-clean-state-files"
     )
 
 

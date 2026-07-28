@@ -102,12 +102,13 @@ def test_followup_skill_no_fragile_owner_extraction():
 
 
 def test_followup_skill_has_owner_repo_guard_clause():
-    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
-    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
+    """preflight-pr must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to bin/swe-workbench-preflight-pr
+    text = (ROOT / "bin" / "swe-workbench-preflight-pr").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
-        "so fork-PR failures produce an actionable error rather than silently misrouting API calls"
+        "bin/swe-workbench-preflight-pr must include the guard-clause error message for missing "
+        "OWNER/REPO so fork-PR failures produce an actionable error rather than silently misrouting "
+        "API calls"
     )
 
 
