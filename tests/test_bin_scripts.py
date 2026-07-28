@@ -1,12 +1,9 @@
 """Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571).
 
 bin/ is now the sole home for these twelve scripts — runtime/ is retired, and there is no
-wrapper/target split left to check. Each script must: carry the swe-workbench- prefix (the
-only guard against a future user PATH collision — see docs/plugin-platform-decisions.md),
-be executable, start with a #!/usr/bin/env <interp> shebang matching its own interpreter,
-never reference $CLAUDE_PLUGIN_ROOT, and resolve any sibling script via
-dirname "${BASH_SOURCE[0]}" / dirname "$0" — never a bare PATH lookup, since a script running
-by absolute path must not depend on <plugin>/bin being on PATH for its own internal calls.
+wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
+start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
+and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" — never a bare PATH lookup.
 """
 
 import os
