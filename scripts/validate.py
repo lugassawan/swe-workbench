@@ -164,6 +164,16 @@ def check_marketplace_json(plugin_data):
             )
 
 
+# Closed-form shape for every hooks.json command string (issue #557): an
+# explicit interpreter plus a quoted, braced CLAUDE_PLUGIN_ROOT expansion.
+# This is a positive invariant this repo owns, not validation against the
+# platform schema — a future hook needing arguments must widen this regex
+# explicitly, which is the fail-loud behaviour intended.
+_HOOK_COMMAND_SHAPE_RE = re.compile(
+    r'^(?:bash|python3) "\$\{CLAUDE_PLUGIN_ROOT\}"/hooks/[A-Za-z0-9_.-]+$'
+)
+
+
 def check_hooks_json():
     path = ROOT / "hooks" / "hooks.json"
     try:
@@ -195,8 +205,21 @@ def check_hooks_json():
                     continue
                 if not isinstance(hook.get("type"), str):
                     fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}].type must be a string")
-                if not isinstance(hook.get("command"), str):
+                command = hook.get("command")
+                if not isinstance(command, str):
                     fail(path.relative_to(ROOT), f"hooks.{event}[{i}].hooks[{j}].command must be a string")
+                elif not _HOOK_COMMAND_SHAPE_RE.match(command):
+                    fail(
+                        path.relative_to(ROOT),
+                        f"hooks.{event}[{i}].hooks[{j}].command {command!r} does not match the "
+                        f"required shape '(bash|python3) \"${{CLAUDE_PLUGIN_ROOT}}\"/hooks/<script>' (#557)",
+                    )
+                if "if" in hook:
+                    fail(
+                        path.relative_to(ROOT),
+                        f"hooks.{event}[{i}].hooks[{j}] carries an 'if' condition — no hooks.json "
+                        f"entry may use 'if' (see docs/plugin-platform-decisions.md §4)",
+                    )
 
 
 def check_skills(cache=None):
@@ -909,6 +932,28 @@ def check_hook_scripts():
             fail(py_file.relative_to(ROOT), str(exc))
 
 
+def check_hook_script_permissions():
+    """Every hooks/*.sh and hooks/*.py must be executable.
+
+    hooks.json now always spells out an explicit interpreter (bash/python3),
+    so the exec bit is no longer load-bearing for hook invocation itself —
+    but it must stay set so a script also works when run directly (e.g. by a
+    developer debugging it, or a future caller that invokes it bare). This
+    closes a real gap: skill_usage_record.sh, skill_usage_flush.sh, and
+    workflow_resume_hint.sh previously had zero exec-bit coverage anywhere
+    in this repo's checks or tests (#557).
+
+    Checks the exec bit only (os.access, matching check_bin_wrappers() below)
+    rather than an exact 0755 mode: a checkout under umask 002 legitimately
+    produces 0775 for a file git tracks as executable, and that must not be
+    a spurious failure unrelated to any file actually edited.
+    """
+    hooks_dir = ROOT / "hooks"
+    for script in sorted(list(hooks_dir.glob("*.sh")) + list(hooks_dir.glob("*.py"))):
+        if not os.access(script, os.X_OK):
+            fail(script.relative_to(ROOT), "must be executable (chmod +x)")
+
+
 # Every bin/ wrapper must be invokable as a bare command once <plugin>/bin is
 # on PATH: exec-bit set, a #!/usr/bin/env <interp> shebang (any interpreter,
 # not just bash — see docs/plugin-platform-decisions.md), and the
@@ -1573,6 +1618,7 @@ def main():
     check_unwired_principle_skills(cache=cache)
     check_examples()
     check_hook_scripts()
+    check_hook_script_permissions()
     check_bin_wrappers()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
