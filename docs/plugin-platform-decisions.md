@@ -67,7 +67,6 @@ Applied to every entry in `hooks/hooks.json`, no `if` buys anything:
 | Hook | Event | Why `if` buys nothing |
 |---|---|---|
 | `bash_guard.sh` | `PreToolUse` / `Bash` | `Bash(*)` is exactly redundant with `matcher` |
-| `inject_plugin_root.sh` | `PreToolUse` / `Bash` | Same |
 | `skill_usage_record.sh` | `PreToolUse` / `Skill` | `Skill(*)` is exactly redundant with `matcher` |
 | `worktree_permission_grant.sh` | `PreToolUse` / `Read\|Edit\|Write` | Worktree root is runtime-resolved, not a static path rule |
 | `secret_guard.py` | `PreToolUse` / `Write\|Edit` | Same as `worktree_permission_grant.sh` — no static pattern captures "contains a credential" |
