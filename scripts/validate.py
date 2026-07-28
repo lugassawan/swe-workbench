@@ -970,6 +970,8 @@ def check_bin_wrappers():
     for wrapper in sorted(bin_dir.iterdir()):
         if not wrapper.is_file():
             continue
+        if wrapper.name == "README.md":
+            continue
         rel = wrapper.relative_to(ROOT)
         if not wrapper.name.startswith("swe-workbench-"):
             fail(rel, "bin/ wrapper must be prefixed swe-workbench-")

@@ -370,6 +370,74 @@ class TestCheckHookScriptPermissions:
 
 
 # ──────────────────────────────────────────────
+# check_bin_wrappers
+# ──────────────────────────────────────────────
+
+class TestCheckBinWrappers:
+    def test_conforming_wrapper_passes(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+    def test_unprefixed_wrapper_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must be prefixed swe-workbench-" in f for f in validate.FAILURES)
+
+    def test_non_executable_wrapper_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o644)
+        validate.check_bin_wrappers()
+        assert any("not executable" in f for f in validate.FAILURES)
+
+    def test_bad_shebang_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("echo hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must start with a #!/usr/bin/env" in f for f in validate.FAILURES)
+
+    def test_readme_does_not_fail(self, reset_validate):
+        """bin/README.md documents the wrapper convention and is not a wrapper itself —
+        it must not be flagged for missing the swe-workbench- prefix or exec bit."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        readme = bin_dir / "README.md"
+        readme.write_text("# bin/\n", encoding="utf-8")
+        readme.chmod(0o644)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+    def test_umask_002_mode_0775_passes(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o775)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+
+# ──────────────────────────────────────────────
 # check_skills
 # ──────────────────────────────────────────────
 
