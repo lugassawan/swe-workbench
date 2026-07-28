@@ -23,7 +23,6 @@ from shutil import which
 from conftest import _CLEAN_ENV
 
 SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-diff-line-lookup"
-WRAPPER = Path(__file__).parent.parent / "bin" / "swe-workbench-diff-line-lookup"
 ROOT = Path(__file__).parent.parent
 
 BASH_BIN = which("bash") or "/bin/bash"
@@ -64,11 +63,6 @@ def _init_repo(tmp_path: Path) -> Path:
 def test_script_exists_and_executable():
     assert SCRIPT.exists(), "bin/swe-workbench-diff-line-lookup must exist"
     assert os.access(SCRIPT, os.X_OK), "bin/swe-workbench-diff-line-lookup must be executable (chmod +x)"
-
-
-def test_wrapper_exists_and_executable():
-    assert WRAPPER.exists(), "bin/swe-workbench-diff-line-lookup must exist"
-    assert os.access(WRAPPER, os.X_OK), "bin/swe-workbench-diff-line-lookup must be executable (chmod +x)"
 
 
 # ── Unit 1: usage surface (exit 64) ────────────────────────────────────────────
