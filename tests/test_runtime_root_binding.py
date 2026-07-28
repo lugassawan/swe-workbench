@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
+DOCTOR_CMD = ROOT / "commands" / "doctor.md"
 
 SKILLS_WITH_PREFLIGHT = [
     "workflow-pr-review",
@@ -130,3 +131,19 @@ def test_rt_defined_in_every_block_that_uses_it():
                 f"skills/{skill}/SKILL.md has a bash block referencing $_RT/$_SCRIPTS "
                 f"without defining _RT in the same block:\n{block_text}"
             )
+
+
+# ──────────────────────────────────────────────
+# doctor.md guard (static)
+# ──────────────────────────────────────────────
+
+
+class TestDoctorGuard:
+    def test_doctor_has_hard_fail_guard(self):
+        text = DOCTOR_CMD.read_text()
+        assert "command -v swe-workbench-doctor" in text, (
+            "doctor.md must contain the hard-fail guard checking swe-workbench-doctor is on PATH"
+        )
+        assert "swe-workbench-doctor" in text, (
+            "doctor.md must invoke the bare swe-workbench-doctor command after the guard"
+        )
