@@ -1,9 +1,9 @@
 # Plugin platform decisions
 
 Rulings made while migrating skills, commands, and agents to invoke plugin scripts as bare PATH
-commands instead of resolving them through `$CLAUDE_PLUGIN_ROOT` (#560), and while collapsing the
+commands instead of resolving them through `$CLAUDE_PLUGIN_ROOT`, and while collapsing the
 resulting `runtime/`/`bin/` wrapper split back into a single `bin/` directory and retiring the
-`CLAUDE_PLUGIN_ROOT` injector hook (#571). Recorded here so they don't have to be re-litigated.
+`CLAUDE_PLUGIN_ROOT` injector hook. Recorded here so they don't have to be re-litigated.
 
 ## 1. `${CLAUDE_PLUGIN_DATA}` — considered, not adopted
 
