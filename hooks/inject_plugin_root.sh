@@ -6,8 +6,8 @@
 # tool calls, so a command like `bash "$CLAUDE_PLUGIN_ROOT/runtime/foo.sh"`
 # resolves to an empty prefix and fails. This hook's OWN environment does
 # have the authoritative value (proven by the fact that hooks.json invokes
-# every hook via $CLAUDE_PLUGIN_ROOT/hooks/<script>), so it reads it and
-# re-injects it into the command about to run.
+# every hook via bash "${CLAUDE_PLUGIN_ROOT}"/hooks/<script>), so it reads
+# it and re-injects it into the command about to run.
 #
 # Surgical scope: only rewrites commands that reference CLAUDE_PLUGIN_ROOT
 # and don't already assign it. Never blocks — exit 0 in every branch.
