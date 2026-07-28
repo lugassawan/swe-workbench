@@ -26,7 +26,11 @@ orchestrator: true
 ### Step 1 — Preflight Guard
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+command -v swe-workbench-doctor >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+  exit 1
+}
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
 _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
 eval "$("$_SCRIPTS/preflight-guard.sh")"
 ```
@@ -93,6 +97,8 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ### Step 4 — Detect Result
 
 ```bash
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+_SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
 _DETECT_OUT="$("$_SCRIPTS/detect-conflicts.sh")"
 eval "$(head -1 <<<"$_DETECT_OUT")"
 UNMERGED=$(tail -n +2 <<<"$_DETECT_OUT")
@@ -114,6 +120,8 @@ For **each** file in `UNMERGED`:
 3. Prompt for one of: **keep-mine**, **keep-main**, **manual**.
    - **keep-mine / keep-main**: apply via
      ```bash
+     _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+     _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
      "$_SCRIPTS/apply-resolution.sh" "<file>" "<mine|main>" "<merge|rebase>"
      ```
      This script does the ours/theirs translation (see Common Mistakes) and stages the file — do not call `git checkout --ours/--theirs` directly from this skill.
@@ -133,6 +141,8 @@ Surfaces *functional* duplication a textual diff structurally cannot see — the
    - `CHECK_REDUNDANCY=on` but `MERGE_BASE` came back empty from Step 3 (unrelated histories) → report "redundancy check skipped: unrelated histories" and proceed to Step 7.
 2. **Gather** (deterministic):
    ```bash
+   _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+   _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
    _REDUND_OUT="$("$_SCRIPTS/redundancy-scope.sh" "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
    eval "$(grep -E '^(MERGE_BASE|CANDIDATES)=' <<<"$_REDUND_OUT")"
    ```

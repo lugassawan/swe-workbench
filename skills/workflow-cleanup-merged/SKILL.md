@@ -81,7 +81,7 @@ command -v swe-workbench-clean-state-files >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
 _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>" "$DEFAULT_BRANCH")"
 ```
@@ -113,6 +113,7 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 
 ### Step 5 — Residual Sweep (PR-scoped)
 ```bash
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
 _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/sweep-residuals.sh" "<number>")"
 ```
@@ -120,6 +121,8 @@ This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: i
 
 ### Step 6 — Delete Branches
 ```bash
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/delete-branches.sh" "<headRefName>")"
 ```
 The script self-detects `MAIN_REPO` and anchors `cd` internally. It emits exactly two `KEY=VALUE` lines:
@@ -170,6 +173,7 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
    ```bash
+   _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
    _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
    eval "$("$_SCRIPTS/check-rimba-hook.sh")"
    ```
@@ -191,6 +195,7 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 **Preconditions:**
 - rimba MCP server is active in the session, OR the rimba binary resolves on PATH or a known install location:
   ```bash
+  _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
   _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
   RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
   ```
@@ -227,6 +232,7 @@ If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, 
 Run the companion script and eval its `KEY=VALUE` output:
 
 ```bash
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
 _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 ```

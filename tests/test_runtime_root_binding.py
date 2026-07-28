@@ -24,10 +24,12 @@ SKILLS_WITH_PREFLIGHT = [
     "workflow-cleanup-merged",
     "workflow-extend",
     "workflow-pr-review-post",
+    "workflow-branch-sync",
 ]
 
 _PREFLIGHT_RE = re.compile(r'command -v swe-workbench-[\w-]+ >/dev/null 2>&1')
 _GUARD_STR = "not on PATH — reinstall or update the swe-workbench plugin"
+_RT_DERIVATION = '_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"'
 
 
 def _skill_text(skill_name: str) -> str:
@@ -58,13 +60,13 @@ def test_hard_fail_guard_exists_in_each_skill():
 
 
 def test_no_inline_root_resolution_at_script_call_sites():
-    """No skill may use ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)} at a runtime-script call site.
+    """No skill may use ${CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)} anywhere.
 
     All runtime-script invocations must use bare `swe-workbench-<name>` commands so PATH
-    resolution happens once, at plugin-load time, with no per-call path construction. A
-    remaining `_RT=` assignment line is allowed — some skills (e.g. workflow-cleanup-merged)
-    still bind the plugin root to resolve their own skill-local scripts/ helpers, which are
-    unrelated to runtime/ and out of #560's scope.
+    resolution happens once, at plugin-load time, with no per-call path construction. Skills
+    that need their own skill-local root (to resolve their skills/<name>/scripts/ helpers)
+    now derive it from the resolved `swe-workbench-doctor` command instead — see
+    test_rt_derived_from_doctor_command. There is no remaining exemption for this pattern.
     """
     for skill in SKILLS_WITH_PREFLIGHT:
         text = _skill_text(skill)
@@ -73,12 +75,58 @@ def test_no_inline_root_resolution_at_script_call_sites():
             for i, ln in enumerate(text.splitlines(), 1)
             if "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse" in ln
         ]
-        violations = [
-            (lineno, ln) for lineno, ln in raw_occurrences
-            if not re.match(r'\s*_RT\s*=', ln)
-        ]
-        assert not violations, (
+        assert not raw_occurrences, (
             f"skills/{skill}/SKILL.md has inline ${{CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)}} "
-            f"at a runtime-script call site — invoke the bare swe-workbench-<name> command instead:\n"
-            + "\n".join(f"  line {no}: {ln}" for no, ln in violations)
+            f"— this pattern is retired; derive _RT from `command -v swe-workbench-doctor` instead:\n"
+            + "\n".join(f"  line {no}: {ln}" for no, ln in raw_occurrences)
         )
+
+
+def test_rt_derived_from_doctor_command():
+    """Every _RT= assignment must derive the skill root from the resolved doctor command.
+
+    Not every skill in SKILLS_WITH_PREFLIGHT binds _RT — only those with skill-local
+    scripts/ helpers (e.g. workflow-branch-sync, workflow-cleanup-merged) do. For those that
+    do, the RHS must be exactly the pinned form so every skill resolves its root identically.
+    """
+    for skill in SKILLS_WITH_PREFLIGHT:
+        text = _skill_text(skill)
+        assign_lines = [ln.strip() for ln in text.splitlines() if re.match(r'\s*_RT\s*=', ln)]
+        for ln in assign_lines:
+            assert ln == _RT_DERIVATION, (
+                f"skills/{skill}/SKILL.md defines _RT via an unexpected form: {ln!r} — "
+                f"expected {_RT_DERIVATION!r}"
+            )
+
+
+def _bash_blocks(text: str) -> list[list[str]]:
+    """Extract fenced ```bash ... ``` blocks, allowing leading indentation on the fence."""
+    lines = text.splitlines()
+    blocks = []
+    i = 0
+    while i < len(lines):
+        if re.match(r'^\s*```bash\s*$', lines[i]):
+            start = i + 1
+            j = start
+            while j < len(lines) and lines[j].strip() != "```":
+                j += 1
+            blocks.append(lines[start:j])
+            i = j + 1
+        else:
+            i += 1
+    return blocks
+
+
+def test_rt_defined_in_every_block_that_uses_it():
+    """Each Bash tool call is a fresh shell — a block referencing $_RT/$_SCRIPTS must define
+    _RT itself, not rely on a prior block's assignment having "stuck"."""
+    for skill in SKILLS_WITH_PREFLIGHT:
+        text = _skill_text(skill)
+        for block in _bash_blocks(text):
+            block_text = "\n".join(block)
+            if not re.search(r'\$_RT\b|\$_SCRIPTS\b', block_text):
+                continue
+            assert re.search(r'^\s*_RT\s*=', block_text, re.MULTILINE), (
+                f"skills/{skill}/SKILL.md has a bash block referencing $_RT/$_SCRIPTS "
+                f"without defining _RT in the same block:\n{block_text}"
+            )
