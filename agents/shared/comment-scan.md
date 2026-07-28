@@ -23,7 +23,7 @@ git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | swe-workbench-comment-scan
 repo — if `swe-workbench-comment-scan` isn't on `PATH` for any reason (plugin not installed, or an
 install predating `bin/`), the invocation would otherwise fail ambiguously (or, worse, get silently
 treated as "not applicable" rather than "misconfigured") instead of erroring loudly with a fix
-("reinstall or update the swe-workbench plugin"). Same pattern as `runtime/README.md`'s canonical
+("reinstall or update the swe-workbench plugin"). Same pattern as `bin/README.md`'s canonical
 preflight — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
