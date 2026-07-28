@@ -1,4 +1,4 @@
-"""Tests for runtime/reap-run-dir.sh — run-scoped scratch directory removal.
+"""Tests for bin/swe-workbench-reap-run-dir — run-scoped scratch directory removal.
 
 Mirrors tests/test_clean_ephemeral.py and tests/test_clean_state_files.py.
 Each test invokes the script as a subprocess.
@@ -15,7 +15,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "reap-run-dir.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-reap-run-dir"
 REPO_ROOT = Path(__file__).parent.parent
 
 RUN_ROOT = Path("/tmp/swe-workbench-run")

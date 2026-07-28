@@ -966,13 +966,17 @@ def check_bin_wrappers():
     bin_dir = ROOT / "bin"
     if not bin_dir.is_dir():
         return
-    wrapper_names = {p.name for p in bin_dir.iterdir() if p.is_file()}
     for wrapper in sorted(bin_dir.iterdir()):
         if not wrapper.is_file():
+            continue
+        if wrapper.name == "README.md":
             continue
         rel = wrapper.relative_to(ROOT)
         if not wrapper.name.startswith("swe-workbench-"):
             fail(rel, "bin/ wrapper must be prefixed swe-workbench-")
+            continue
+        if wrapper.suffix in (".sh", ".py"):
+            fail(rel, "bin/ wrapper must be a bare command name, not carry a .sh/.py extension")
             continue
         if not os.access(wrapper, os.X_OK):
             fail(rel, "bin/ wrapper is not executable (chmod +x)")
@@ -985,14 +989,16 @@ def check_bin_wrappers():
         if not _SHEBANG_RE.match(first_line):
             fail(rel, "bin/ wrapper must start with a #!/usr/bin/env <interp> shebang")
 
-    # Reverse direction: every runtime/ script must have a matching bin/ wrapper,
-    # so a newly added script can't silently ship without its bare-command entry point.
+    # #571 collapsed runtime/ into bin/ — the wrapper/script split is retired.
+    # A reappearing runtime/ means that split is being silently reintroduced.
     runtime_dir = ROOT / "runtime"
     if runtime_dir.is_dir():
-        for script in sorted(list(runtime_dir.glob("*.sh")) + list(runtime_dir.glob("*.py"))):
-            expected = f"swe-workbench-{script.stem}"
-            if expected not in wrapper_names:
-                fail(script.relative_to(ROOT), f"has no matching bin/{expected} wrapper")
+        fail(
+            runtime_dir.relative_to(ROOT),
+            "runtime/ must not exist — scripts live directly in bin/ as bare "
+            "swe-workbench-<name> commands (see #571); do not recreate the "
+            "wrapper/script split",
+        )
 
 
 # ──────────────────────────────────────────────
@@ -1542,8 +1548,8 @@ _TMP_WRITE_TARGET_RE = re.compile(
 )
 
 # Sanctioned, enumerable prefixes: the run-dir root itself, the two PR-scoped
-# state directories, and clean-state-files.sh's own Path-B single-file-writer
-# allowlist (runtime/clean-state-files.sh:81) — kept in sync with that regex
+# state directories, and swe-workbench-clean-state-files' own Path-B single-file-writer
+# allowlist (bin/swe-workbench-clean-state-files:81) — kept in sync with that regex
 # by hand, since the two files serve different audiences (shell vs. this
 # Python gate) and a shared source would be more indirection than the four
 # lines it'd save.
@@ -1570,8 +1576,8 @@ def _tmp_write_hazard_in_line(line):
 
 def check_no_unenumerated_tmp_write(cache=None):
     """Flag bash blocks in skills/, commands/, agents/ that write to a literal
-    /tmp/... path outside both $RUN_DIR (runtime/new-run-dir.sh) and the
-    sanctioned PR-keyed prefixes (runtime/clean-state-files.sh). This is the
+    /tmp/... path outside both $RUN_DIR (bin/swe-workbench-new-run-dir) and the
+    sanctioned PR-keyed prefixes (bin/swe-workbench-clean-state-files). This is the
     regression gate for #552: without it, a new shipped-prose call site can
     reintroduce a global, never-reaped path like the old /tmp/payload.json.
     """
@@ -1582,7 +1588,7 @@ def check_no_unenumerated_tmp_write(cache=None):
             f"line {ln}: bash block writes to a literal /tmp/... path that is "
             f"neither $RUN_DIR-rooted nor a sanctioned PR-keyed prefix — "
             f"allocate $RUN_DIR via swe-workbench-new-run-dir and write under "
-            f"it instead (see runtime/new-run-dir.sh)"
+            f"it instead (see bin/swe-workbench-new-run-dir)"
         ),
     )
 

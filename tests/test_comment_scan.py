@@ -1,4 +1,4 @@
-"""Tests for runtime/comment-scan.py, the comment-quality scanner.
+"""Tests for bin/swe-workbench-comment-scan, the comment-quality scanner.
 
 Fixtures live under tests/fixtures/comment_scan/ as .diff files, never as
 source files — several fixtures (commented_out.diff) *are* commented-out
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -16,8 +17,9 @@ FIXTURES = ROOT / "tests" / "fixtures" / "comment_scan"
 
 
 def _load_module():
-    path = ROOT / "runtime" / "comment-scan.py"
-    spec = importlib.util.spec_from_file_location("comment_scan", path)
+    path = ROOT / "bin" / "swe-workbench-comment-scan"
+    loader = SourceFileLoader("comment_scan", str(path))
+    spec = importlib.util.spec_from_file_location("comment_scan", path, loader=loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules["comment_scan"] = module
     spec.loader.exec_module(module)

@@ -1,4 +1,4 @@
-"""Tests for runtime/diff-line-lookup.sh — post-diff line resolver (issue #551).
+"""Tests for bin/swe-workbench-diff-line-lookup — post-diff line resolver (issue #551).
 
 Resolves the exact post-diff line number for a literal code snippet, so review-comment
 posting no longer hand-counts the offset from a hunk header (`@@ -a,b +c,d @@`).
@@ -11,7 +11,7 @@ Behavioral paths under test:
   - Not-found paths (exit 1): absent entirely, found on a context line, found on a removed line
   - Ambiguity (exit 2): multiple matching `+` lines, stdout empty, all candidates on stderr
   - Git-internal modes: default (git diff HEAD), --staged, --range=<rev>
-  - Wiring: RUNTIME_SCRIPTS, pr.yml shellcheck list, runtime/README.md, agents/reviewer.md,
+  - Wiring: SCRIPTS dict, pr.yml shellcheck list, bin/README.md, agents/reviewer.md,
     workflow-pr-review-post/SKILL.md
 """
 
@@ -22,8 +22,7 @@ from shutil import which
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "diff-line-lookup.sh"
-WRAPPER = Path(__file__).parent.parent / "bin" / "swe-workbench-diff-line-lookup"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-diff-line-lookup"
 ROOT = Path(__file__).parent.parent
 
 BASH_BIN = which("bash") or "/bin/bash"
@@ -62,13 +61,8 @@ def _init_repo(tmp_path: Path) -> Path:
 # ── Existence ────────────────────────────────────────────────────────────────
 
 def test_script_exists_and_executable():
-    assert SCRIPT.exists(), "runtime/diff-line-lookup.sh must exist"
-    assert os.access(SCRIPT, os.X_OK), "runtime/diff-line-lookup.sh must be executable (chmod +x)"
-
-
-def test_wrapper_exists_and_executable():
-    assert WRAPPER.exists(), "bin/swe-workbench-diff-line-lookup must exist"
-    assert os.access(WRAPPER, os.X_OK), "bin/swe-workbench-diff-line-lookup must be executable (chmod +x)"
+    assert SCRIPT.exists(), "bin/swe-workbench-diff-line-lookup must exist"
+    assert os.access(SCRIPT, os.X_OK), "bin/swe-workbench-diff-line-lookup must be executable (chmod +x)"
 
 
 # ── Unit 1: usage surface (exit 64) ────────────────────────────────────────────
@@ -395,10 +389,10 @@ def test_mnemonic_prefix_config_does_not_break_header_matching(tmp_path):
 
 # ── Unit 6: wiring assertions ───────────────────────────────────────────────────
 
-def test_runtime_scripts_list_contains_diff_line_lookup():
-    text = (ROOT / "tests" / "test_runtime_scripts.py").read_text()
-    assert '"diff-line-lookup.sh"' in text, (
-        "tests/test_runtime_scripts.py RUNTIME_SCRIPTS must include diff-line-lookup.sh"
+def test_bin_scripts_dict_contains_diff_line_lookup():
+    text = (ROOT / "tests" / "test_bin_scripts.py").read_text()
+    assert '"swe-workbench-diff-line-lookup"' in text, (
+        "tests/test_bin_scripts.py SCRIPTS must include swe-workbench-diff-line-lookup"
     )
 
 
@@ -410,10 +404,10 @@ def test_pr_yml_shellcheck_list_contains_wrapper():
     )
 
 
-def test_runtime_readme_has_row():
-    text = (ROOT / "runtime" / "README.md").read_text()
-    assert "diff-line-lookup.sh" in text, (
-        "runtime/README.md must document diff-line-lookup.sh in the current runtime scripts table"
+def test_bin_readme_has_row():
+    text = (ROOT / "bin" / "README.md").read_text()
+    assert "swe-workbench-diff-line-lookup" in text, (
+        "bin/README.md must document swe-workbench-diff-line-lookup in the current scripts table"
     )
 
 
