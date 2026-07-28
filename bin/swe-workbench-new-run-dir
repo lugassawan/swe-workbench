@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# new-run-dir.sh <prefix> <id>
+# swe-workbench-new-run-dir <prefix> <id>
 #
 # Allocates a fresh run-scoped scratch directory under
 # /tmp/swe-workbench-run/ for ad-hoc bash artifacts (assembled JSON
@@ -7,7 +7,7 @@
 # documented bash produces but never enumerates ahead of time. Distinct from
 # the PR-scoped state files under /tmp/swe-workbench-pr-review/ and
 # /tmp/swe-workbench-address-feedback/, which survive the invocation by
-# design (resume points) and stay reaped by name via clean-state-files.sh.
+# design (resume points) and stay reaped by name via swe-workbench-clean-state-files.
 #
 # Prints RUN_DIR=<path> on stdout, for `eval` in the caller (matches the
 # KEY=VALUE convention in skills/workflow-cleanup-merged/scripts/sweep-residuals.sh).
@@ -16,12 +16,12 @@
 #   eval "$(swe-workbench-new-run-dir pr-review 42)"
 #   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-42-a1b2c3
 #
-# <prefix> must be one of the flow prefixes reap-run-dir.sh's name-shape
-# allowlist accepts: pr-review, pr-followup, address-feedback,
+# <prefix> must be one of the flow prefixes swe-workbench-reap-run-dir's
+# name-shape allowlist accepts: pr-review, pr-followup, address-feedback,
 # review-<lowercase, hyphen-allowed> (e.g. review-security, review-contributor-trust),
 # extend, capture, audit-emit, hotfix. A run dir
-# this script cannot name correctly is a run dir reap-run-dir.sh can never
-# clean up, so the prefix is validated here too. <id> must be a bare
+# this script cannot name correctly is a run dir swe-workbench-reap-run-dir
+# can never clean up, so the prefix is validated here too. <id> must be a bare
 # non-negative integer (typically a PR number).
 #
 # Also performs the age-gated orphan sweep, at allocation time rather than at

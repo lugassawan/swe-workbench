@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync).
-# Usage: sync-pr-metadata.sh <pr> <new_title> <body_file>
+# Usage: swe-workbench-sync-pr-metadata <pr> <new_title> <body_file>
 # Empty new_title skips --title; empty body_file skips --body-file.
 set -euo pipefail
 PR="${1:?sync-pr-metadata: PR number required}"

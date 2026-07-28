@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve the post-diff line number for a literal code snippet — for the GitHub
 # Reviews API `line` field. Replaces hand-counting the offset from a hunk header.
-# Usage: diff-line-lookup.sh <path> <pattern> [--range=<rev-range> | --staged | --stdin]
+# Usage: swe-workbench-diff-line-lookup <path> <pattern> [--range=<rev-range> | --staged | --stdin]
 set -euo pipefail
 
 usage() {

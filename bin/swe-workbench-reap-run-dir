@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# reap-run-dir.sh <run-dir>
+# swe-workbench-reap-run-dir <run-dir>
 #
-# Remove a single run-scoped scratch directory allocated by new-run-dir.sh,
-# but only after proving it is a sanctioned artifact.  Exits 1 (never
-# silently) when any safety check fails.
+# Remove a single run-scoped scratch directory allocated by
+# swe-workbench-new-run-dir, but only after proving it is a sanctioned
+# artifact.  Exits 1 (never silently) when any safety check fails.
 #
-# This is a separate script from clean-state-files.sh (file-only, rm -f) and
-# clean-ephemeral.sh (worktree removal, whose Path A looseness is load-bearing
-# for bare-N basenames) because it enforces one check neither sibling can
+# This is a separate script from swe-workbench-clean-state-files (file-only,
+# rm -f) and swe-workbench-clean-ephemeral (worktree removal, whose Path A
+# looseness is load-bearing for bare-N basenames) because it enforces one
+# check neither sibling can
 # express: the target directory must sit exactly one level below the shared
 # /tmp/swe-workbench-run/ parent, and must not be a git worktree.
 #

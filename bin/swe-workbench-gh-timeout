@@ -3,7 +3,7 @@
 # a PR-helper script. Override the deadline (seconds) with GH_TIMEOUT_SECS (default 60).
 # Degrades to plain `gh` when neither `timeout` nor `gtimeout` (macOS/coreutils) is present.
 # On timeout, exits 124 and prints a diagnostic to stderr so a stall is not misreported
-# by a caller (e.g. fetch-pr.sh's "PR not found" branch).
+# by a caller (e.g. swe-workbench-fetch-pr's "PR not found" branch).
 set -euo pipefail
 
 secs="${GH_TIMEOUT_SECS:-60}"

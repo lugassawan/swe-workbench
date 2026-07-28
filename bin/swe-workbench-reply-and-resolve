@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reply to a PR review thread (REST) and optionally resolve it (GraphQL).
-# Usage: reply-and-resolve.sh <owner> <repo> <pr> <comment_databaseid> <thread_id> <reply_body> [kind]
+# Usage: swe-workbench-reply-and-resolve <owner> <repo> <pr> <comment_databaseid> <thread_id> <reply_body> [kind]
 # Empty reply_body skips the reply (COMMENT_DATABASEID is then ignored); empty thread_id skips the resolve
 # (ADDRESSED -> both, CLARIFIED -> reply only, DEFERRED -> neither).
 # kind (optional, default "review"): the existing thread-reply + resolve behavior above.

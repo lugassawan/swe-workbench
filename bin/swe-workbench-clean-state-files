@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clean-state-files.sh <file>...
+# swe-workbench-clean-state-files <file>...
 #
 # Delete named workflow state files, but only after proving each is a
 # sanctioned /tmp artifact.  Exits 1 (never silently) when any safety
@@ -17,7 +17,7 @@
 #        ^(capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-
 #      and parent directory is directly /tmp.
 #
-# Unlike clean-ephemeral.sh (which rm -rf a worktree directory), this
+# Unlike swe-workbench-clean-ephemeral (which rm -rf a worktree directory), this
 # script only calls rm -f on named regular files — never recursive.
 #
 # Call form:
