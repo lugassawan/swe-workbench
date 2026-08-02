@@ -80,3 +80,25 @@ controls (`bash_guard.sh`, `secret_guard.py`) that originally motivated the ques
 in the table above hits the same failure mode: `if` is one more predicate that can silently
 disable a hook (a miss reads as "hook chose not to fire," not as an error) for zero filtering
 benefit over what `matcher` already provides or what the script can check for itself at runtime.
+
+## 5. `swe-workbench-skill-script` dispatcher replaces the doctor-anchor `_RT=` derivation
+
+**(a) Why the doctor-anchor derivation was replaced.** #571 collapsed `runtime/` into `bin/` and
+retired the `CLAUDE_PLUGIN_ROOT` injector hook. Skills with their own `scripts/` helpers
+(`workflow-cleanup-merged`, `workflow-branch-sync`) still needed to resolve a skill-local path, so
+#578 introduced `_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"` at every
+call site as a stand-in root derivation. That traded one copy-pasted preamble for another: 10
+occurrences across 2 files, and still path construction living in skill prose rather than in a
+script — the same shape of duplication `bin/README.md`'s "Reference pattern" exists to prevent for
+every other `bin/` script. `bin/swe-workbench-skill-script <skill> <script> [args...]` (#569)
+owns that resolution once, as a dispatcher: skill prose invokes it as a bare command, with no
+`_RT`/`_SCRIPTS` variables anywhere.
+
+**(b) Why the `command -v swe-workbench-<name>` guard itself is not extractable.** A PATH-
+availability guard cannot live inside a PATH-resolved helper. If `bin/` is off `PATH`, the helper
+(dispatcher or otherwise) is unreachable too — the caller gets the shell's bare
+`command not found` (exit 127) instead of the guard's actionable message ("reinstall or update the
+swe-workbench plugin"). The guard has to run *before* anything that depends on `bin/` being on
+`PATH`, which rules out delegating it to a script that is itself only reachable via `PATH`. It
+stays exactly where it is today: one `command -v` line at the top of each skill's first executable
+block, per `bin/README.md`'s "Reference pattern".

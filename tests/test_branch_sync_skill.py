@@ -218,9 +218,9 @@ def test_step4_captures_detect_conflicts_output_once():
     called twice (which could observe different repo state between calls)."""
     body = _body()
     step4 = body.split("### Step 4")[1].split("### Step 5")[0]
-    # Count actual invocations (the $_SCRIPTS/... call form), not prose mentions
+    # Count actual invocations (the dispatcher call form), not prose mentions
     # of the filename in the explanatory sentence.
-    assert step4.count("$_SCRIPTS/detect-conflicts.sh") == 1
+    assert step4.count("swe-workbench-skill-script workflow-branch-sync detect-conflicts.sh") == 1
     assert "_DETECT_OUT" in step4
 
 
