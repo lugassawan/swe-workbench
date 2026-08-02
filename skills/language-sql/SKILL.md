@@ -31,6 +31,25 @@ description: SQL idioms — query tuning, EXPLAIN plans, table definitions, cons
 - Know the anomalies you are allowing: dirty reads, non-repeatable reads, phantoms, and write skew.
 - Use optimistic concurrency with version columns when conflicts are rare and retriable.
 
+## DDL migration footguns (MySQL 8.0)
+- `BEGIN`/`COMMIT` around DDL grants no atomicity in MySQL: each DDL statement auto-commits independently, wrapper or not. Treat it as a readability convention, not a safety net.
+- A run killed mid-way (CI timeout, dropped connection) leaves earlier statements committed while the tracker records nothing — drifted schema, no audit trail. Plan recovery forward-only; make each statement independently re-runnable.
+- `ADD COLUMN` already gets `ALGORITHM=INSTANT` (metadata-only) by default on 8.0.12+. An explicit `INPLACE` or `COPY` overrides that default and forces a full table+index rebuild — treat as a defect unless the column is genuinely `INSTANT`-ineligible (pre-8.0.29: end-of-table adds only; `ROW_FORMAT=COMPRESSED` always). `DROP COLUMN` only becomes `INSTANT`-eligible on 8.0.29+.
+- `ADD INDEX`/`DROP INDEX` are the exception: `ALGORITHM=INPLACE, LOCK=NONE` is correct and expected here — `INSTANT` cannot build an index, so do not flag `INPLACE` on index DDL.
+- Check `information_schema.tables.table_rows` before choosing an approach; migration cost is invisible in the DDL text and scales with table size, not statement count.
+- On tables over 50M rows, split `INSTANT`-eligible column adds into their own migration file, separate from index builds — a mid-run failure then leaves a smaller, more legible partial state.
+
+```sql
+-- Suspect: forces a full rebuild MySQL would otherwise skip (8.0.12+ defaults to INSTANT)
+ALTER TABLE orders ADD COLUMN notes TEXT, ALGORITHM=INPLACE, LOCK=NONE;
+
+-- Preferred: let MySQL pick INSTANT; add columns without the override
+ALTER TABLE orders ADD COLUMN notes TEXT;
+
+-- Correct: INSTANT cannot build an index; INPLACE is required here
+ALTER TABLE orders ADD INDEX idx_orders_customer_id (customer_id), ALGORITHM=INPLACE, LOCK=NONE;
+```
+
 ## Deadlock avoidance
 - Touch shared tables and rows in a consistent order across code paths.
 - Lock only what you need, as late as possible, and commit as soon as the invariant is protected.
@@ -99,4 +118,5 @@ ROLLBACK;
 - Schema changes without rollback or compatibility planning.
 - Unbounded queries in production paths.
 - Relying on implicit ordering without `ORDER BY`.
+- Wrapping MySQL DDL in `BEGIN`/`COMMIT` for atomicity, or an unqualified `ALGORITHM=INPLACE` on a column add — see DDL migration footguns above.
 - Never build SQL by concatenating untrusted input — use parameterized queries or prepared statements. ORM raw-query escape hatches (e.g. Django's `extra()`, SQLAlchemy's `text()`) are equally dangerous. See `swe-workbench:principle-security`.
