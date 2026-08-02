@@ -11,6 +11,12 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 FAILURES = []
 
+# SKILL.md line caps (#568). A skill declaring 'orchestrator: true' in its
+# frontmatter gets the higher cap — see check_orchestrator_flag_earned() for
+# the rule that the flag itself must be earned (size or composition).
+BASE_SKILL_CAP = 150
+ORCHESTRATOR_SKILL_CAP = 300
+
 # Hook events that fire unconditionally and have no tool name to match against.
 # Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
 # must carry a "matcher" field. Only true lifecycle events belong in this set.
@@ -258,12 +264,61 @@ def check_skills(cache=None):
                 f"frontmatter name {fm.get('name')!r} does not match directory name {skill_dir_name!r}",
             )
         is_orchestrator = fm.get("orchestrator", "").lower() == "true"
-        cap = 300 if is_orchestrator else 150
+        cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
         if line_count > cap:
             fail(
                 skill_md.relative_to(ROOT),
                 f"exceeds {cap}-line cap ({line_count} lines)"
                 + ("" if is_orchestrator else "; add 'orchestrator: true' to frontmatter if intentional"),
+            )
+
+
+_ORCHESTRATOR_NAMESPACED_REF_RE = re.compile(r'`swe-workbench:([\w-]+)`')
+_ORCHESTRATOR_BARE_REF_RE = re.compile(r'`([\w-]+)`')
+
+
+def check_orchestrator_flag_earned(cache=None):
+    """A skill declaring 'orchestrator: true' must earn the higher cap (#568):
+    either by needing the extra headroom (line count > BASE_SKILL_CAP) or by
+    coordinating other skills/agents. A skill at or under BASE_SKILL_CAP that
+    references nothing has an inert flag and should have it removed.
+
+    Reference detection is a coarse heuristic: any backtick-quoted token that
+    resolves to a real skill/agent id counts, even a purely contrastive or
+    negative mention (e.g. "unlike `other-skill`, this one does X"). It does
+    not verify the mention is actually a delegation."""
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+    skills_cache = cache[1] if cache is not None else None
+
+    valid_ids = {p.name for p in skills_dir.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()}
+    valid_ids |= {p.stem for p in agents_dir.glob("*.md")}
+
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        skill_dir_name = skill_md.parent.name
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # already reported by check_skills
+        else:
+            text = skill_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(skill_md, text=text)
+        if fm is None or fm.get("orchestrator", "").lower() != "true":
+            continue
+        line_count = len(text.splitlines())
+        if line_count > BASE_SKILL_CAP:
+            continue  # headroom earns the flag outright
+        own_valid_ids = valid_ids - {skill_dir_name}
+        referenced = (
+            set(_ORCHESTRATOR_NAMESPACED_REF_RE.findall(text))
+            | set(_ORCHESTRATOR_BARE_REF_RE.findall(text))
+        ) & own_valid_ids
+        if not referenced:
+            fail(
+                skill_md.relative_to(ROOT),
+                f"declares 'orchestrator: true' but is {line_count} lines (at or under the "
+                f"{BASE_SKILL_CAP}-line base cap) and references no other skill or agent; "
+                "remove the flag, or reference the skills/agents it coordinates",
             )
 
 
@@ -1692,6 +1747,7 @@ def main():
     check_marketplace_json(plugin_data)
     check_hooks_json()
     check_skills(cache=cache)
+    check_orchestrator_flag_earned(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)
     check_commands()
