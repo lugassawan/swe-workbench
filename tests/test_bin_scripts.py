@@ -1,9 +1,10 @@
-"""Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571).
+"""Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is now the sole home for these twelve scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these thirteen scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
-and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" — never a bare PATH lookup.
+and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
+Path(__file__).parent (python3) — never a bare PATH lookup.
 """
 
 import os
@@ -28,6 +29,7 @@ SCRIPTS = {
     "swe-workbench-gh-timeout": "bash",
     "swe-workbench-new-run-dir": "bash",
     "swe-workbench-preflight-pr": "bash",
+    "swe-workbench-pr-review-submit": "python3",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reply-and-resolve": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
@@ -38,6 +40,7 @@ SIBLING_CALLERS = {
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
     "swe-workbench-preflight-pr": ["swe-workbench-gh-timeout", "swe-workbench-fetch-pr"],
+    "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }
@@ -91,7 +94,10 @@ def test_bash_scripts_pass_syntax_check():
 
 
 def test_python_script_compiles():
-    py_compile.compile(str(BIN / "swe-workbench-comment-scan"), doraise=True)
+    for name, interp in SCRIPTS.items():
+        if interp != "python3":
+            continue
+        py_compile.compile(str(BIN / name), doraise=True)
 
 
 def test_no_claude_plugin_root_reference():
@@ -103,15 +109,18 @@ def test_no_claude_plugin_root_reference():
 
 
 _SCRIPT_DIR_RE = re.compile(r'\$\(dirname "(\$0|\$\{BASH_SOURCE\[0\]\})"\)')
+_PY_SCRIPT_DIR_RE = re.compile(r"Path\(__file__\)(\.resolve\(\))?\.parent")
 
 
 def test_sibling_calls_resolve_via_script_dir():
-    """Sibling-calling scripts must resolve via dirname "$0"/"${BASH_SOURCE[0]}", never bare PATH."""
+    """Sibling-calling scripts must resolve via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
+    Path(__file__).parent (python3) — never bare PATH."""
     for name, siblings in SIBLING_CALLERS.items():
         text = (BIN / name).read_text()
-        assert _SCRIPT_DIR_RE.search(text), (
-            f"bin/{name} calls a sibling script but does not resolve SCRIPT_DIR via "
-            'dirname "$0" or dirname "${BASH_SOURCE[0]}"'
+        script_dir_re = _PY_SCRIPT_DIR_RE if SCRIPTS[name] == "python3" else _SCRIPT_DIR_RE
+        assert script_dir_re.search(text), (
+            f"bin/{name} calls a sibling script but does not resolve its own script dir via "
+            f"{'Path(__file__).parent' if SCRIPTS[name] == 'python3' else 'dirname \"$0\"/dirname \"${BASH_SOURCE[0]}\"'}"
         )
         for sibling in siblings:
             assert sibling in text, (

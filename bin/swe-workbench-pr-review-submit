@@ -1,0 +1,595 @@
+#!/usr/bin/env python3
+"""Posting mechanism for workflow-pr-review-post's Steps 1-4 (issue #550).
+
+Fetches existing review threads, dedups a findings payload against them,
+pre-validates inline anchors against the PR diff, posts pr-level batches,
+applies the self-review + diff-scoping decision flip, and submits the
+review — atomically when possible, with a bounded 422 retry and a
+per-comment fallback when it isn't. This module owns the mechanism only;
+the input contract, the Step 5 AskUserQuestion CTA (main-thread-only, can't
+move into a script), and the failure-mode/common-mistakes documentation
+stay in skills/workflow-pr-review-post/SKILL.md.
+
+Atomicity and idempotency rationale (why this isn't a simple per-finding
+loop): the GitHub Reviews API's POST .../pulls/{n}/reviews accepts a
+comments[] array and posts the whole batch as one review in one call. That
+buys atomicity (either every candidate lands with the review, or none do)
+but costs debuggability — a single bad (path, line) 422s the entire batch,
+and the error body carries no per-comment index to identify which row
+failed. Steps 2's pre-validate pass exists to catch that class of error
+before it can poison the batch; the 422 handler below exists for the
+residual case (the diff moved between pre-validate and submit).
+
+There is no idempotency key for this endpoint, so a client-side failure
+(timeout, 5xx) is genuinely ambiguous — the POST may have landed
+server-side even though the client never saw success. Blind-retrying would
+double-post every comment in the batch on the ~50% of ambiguous failures
+where it actually landed. Instead, an ambiguous failure triggers a cheap
+read-your-write check (list reviews, filter by current user + head SHA)
+before conceding to the per-comment ("model-A") fallback. The one
+*intentional* retry is scoped narrowly: a confirmed 422 (stale commit_id,
+or a line that went out-of-diff between pre-validate and submit) is
+re-validated against a freshly-fetched HEAD and retried exactly once.
+
+Why `gh api` bracket-indexed field flags (-f "comments[0][path]=...") can't
+build the comments[] payload: they build a JSON *object* keyed by
+stringified indices ({"comments":{"0":{...}}}), not an array — GitHub's
+Reviews API requires an array and rejects the object shape outright. This
+module builds the payload as real Python data structures and serializes it
+once with json.dumps, which sidesteps that failure mode entirely (see
+docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
+docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
+neither applies here since no shell ever sees this payload as a string to
+re-interpret).
+
+All `gh` calls funnel through _gh()/_gh_json(), which dispatch to the
+sibling swe-workbench-gh-timeout script (resolved via Path(__file__).parent,
+the Python equivalent of the bin/ dirname "$0" convention) rather than a
+bare PATH lookup, so every network call inherits gh-timeout's per-call
+deadline — including gh pr diff, which the prior hand-written prose called
+unwrapped.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+REMARK_TEXT = "([swe-workbench](https://github.com/lugassawan/swe-workbench))"
+JACCARD_THRESHOLD = 0.4
+LINE_FUZZ = 5
+
+_STOPWORDS_MIN_LEN = 1
+
+
+# ── Pure helpers ─────────────────────────────────────────────────────────────
+
+
+def tokenize(text: str) -> set[str]:
+    return {w for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", (text or "").lower()) if len(w) > _STOPWORDS_MIN_LEN}
+
+
+def jaccard(a: str, b: str) -> float:
+    ta, tb = tokenize(a), tokenize(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+@dataclass
+class Thread:
+    id: str
+    path: str
+    line: int
+    is_resolved: bool
+    head_comment_id: str | None
+    head_comment_body: str
+    reactor_logins: set[str] = field(default_factory=set)
+
+
+def thread_matches(finding_path: str, finding_line: int, finding_body: str, thread: Thread) -> bool:
+    if thread.is_resolved:
+        return False
+    if thread.path != finding_path:
+        return False
+    if thread.line < 0 or abs(thread.line - finding_line) > LINE_FUZZ:
+        return False
+    return jaccard(finding_body, thread.head_comment_body) >= JACCARD_THRESHOLD
+
+
+def build_byline(byline: str, is_private: bool | None, n_inline: int, posted_pr_level: int, deduped: int) -> str:
+    remark = REMARK_TEXT if is_private is False else ""
+    return f"{byline}{remark}. Posted {n_inline} inline comment(s) and {posted_pr_level} PR-level note(s), deduped {deduped}."
+
+
+def build_summary(decision: str, byline_full: str, is_self_review: bool) -> str:
+    if is_self_review:
+        return f"{byline_full}\n"
+    return f"**Review Decision: {decision}**\n\n{byline_full}\n"
+
+
+def resolve_event(decision: str, blocking_scope: str, current_user: str, author_login: str) -> tuple[str, str, bool, bool]:
+    """Returns (event, decision, is_self_review, identity_known)."""
+    identity_known = bool(current_user) and bool(author_login)
+    is_self_review = identity_known and current_user == author_login
+    if decision == "COMMENT" and blocking_scope == "OUT-OF-DIFF-ONLY" and identity_known and not is_self_review:
+        decision = "APPROVE"
+    event = "COMMENT" if is_self_review else decision
+    return event, decision, is_self_review, identity_known
+
+
+def partition_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
+    inline = [f for f in findings if f.get("anchor") == "inline"]
+    pr_level = [f for f in findings if f.get("anchor") == "pr-level"]
+    return inline, pr_level
+
+
+# ── gh layer ─────────────────────────────────────────────────────────────────
+
+
+class PostingError(Exception):
+    pass
+
+
+def _script_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _gh(args: list[str], input_data: str | None = None) -> subprocess.CompletedProcess:
+    cmd = ["bash", str(_script_dir() / "swe-workbench-gh-timeout"), *args]
+    # Always pass a (possibly empty) string so subprocess pipes and immediately closes
+    # stdin, rather than inheriting the parent's — an inherited pipe with no EOF would
+    # hang any call gh doesn't itself need stdin for.
+    return subprocess.run(cmd, input=input_data if input_data is not None else "", capture_output=True, text=True)
+
+
+def _gh_json(args: list[str], input_data: str | None = None):
+    """Returns (data, proc) — data is None on non-zero exit or unparseable stdout."""
+    proc = _gh(args, input_data=input_data)
+    if proc.returncode != 0:
+        return None, proc
+    try:
+        return json.loads(proc.stdout), proc
+    except (json.JSONDecodeError, ValueError):
+        return None, proc
+
+
+# ── Step 1 — fetch existing review threads (paginated) ────────────────────────
+
+_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { endCursor hasNextPage }
+        nodes {
+          id isResolved path line startLine
+          comments(first: 10) {
+            nodes {
+              id databaseId body
+              author { login }
+              reactions(first: 20, content: THUMBS_UP) {
+                nodes { user { login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def _thread_from_node(node: dict) -> Thread:
+    comments = (node.get("comments") or {}).get("nodes") or []
+    head = comments[0] if comments else None
+    reactors: set[str] = set()
+    if head:
+        for r in (head.get("reactions") or {}).get("nodes") or []:
+            login = ((r or {}).get("user") or {}).get("login")
+            if login:
+                reactors.add(login)
+    start_line = node.get("startLine")
+    line = node.get("line")
+    effective_line = start_line if start_line is not None else line
+    return Thread(
+        id=node["id"],
+        path=node.get("path") or "",
+        line=effective_line if effective_line is not None else -1,
+        is_resolved=bool(node.get("isResolved")),
+        head_comment_id=(head or {}).get("id"),
+        head_comment_body=(head or {}).get("body") or "",
+        reactor_logins=reactors,
+    )
+
+
+def fetch_threads(owner: str, repo: str, pr: str) -> list[Thread]:
+    threads: list[Thread] = []
+    after: str | None = None
+    while True:
+        args = [
+            "api", "graphql",
+            "-F", f"number={pr}", "-F", f"owner={owner}", "-F", f"repo={repo}",
+            "-f", f"query={_THREADS_QUERY}",
+        ]
+        if after:
+            args += ["-F", f"after={after}"]
+        data, proc = _gh_json(args)
+        if data is None:
+            raise PostingError(f"failed to fetch review threads: {proc.stderr.strip() or proc.stdout.strip()}")
+        try:
+            rt = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+        except (KeyError, TypeError) as exc:
+            raise PostingError(f"unexpected reviewThreads response shape: {exc}") from exc
+        for node in rt.get("nodes") or []:
+            threads.append(_thread_from_node(node))
+        page = rt.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+    return threads
+
+
+# ── Step 2 — dedup + react, pre-validate, assemble ─────────────────────────────
+
+_REACTION_MUTATION = """
+mutation($subjectId: ID!) {
+  addReaction(input: {subjectId: $subjectId, content: THUMBS_UP}) { reaction { id } }
+}
+"""
+
+
+def dedup_and_react(threads: list[Thread], inline_findings: list[dict], current_user: str) -> tuple[list[dict], int]:
+    survivors: list[dict] = []
+    deduped = 0
+    for finding in inline_findings:
+        match = next(
+            (t for t in threads if thread_matches(finding["path"], finding["line"], finding["body"], t)),
+            None,
+        )
+        if match is None:
+            survivors.append(finding)
+            continue
+        deduped += 1
+        if current_user and match.head_comment_id and current_user not in match.reactor_logins:
+            _gh(["api", "graphql", "-F", f"subjectId={match.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
+    return survivors, deduped
+
+
+def _git_show_line(head_sha: str, path: str, line: int) -> str | None:
+    proc = subprocess.run(["git", "show", f"{head_sha}:{path}"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    lines = proc.stdout.splitlines()
+    if line < 1 or line > len(lines):
+        return None
+    content = lines[line - 1]
+    return content if content else None
+
+
+def _line_is_in_diff(path: str, line: int, head_sha: str, pr_diff: str, script_dir: Path) -> bool:
+    if not isinstance(line, int) or line < 1:
+        return False
+    content = _git_show_line(head_sha, path, line)
+    if not content:
+        return False
+    proc = subprocess.run(
+        ["bash", str(script_dir / "swe-workbench-diff-line-lookup"), path, content, "--stdin"],
+        input=pr_diff, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return False
+    return proc.stdout.strip() == f"{path}:{line}"
+
+
+def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Returns (still_in_diff, demoted_to_pr_level)."""
+    in_diff: list[dict] = []
+    demoted: list[dict] = []
+    for finding in survivors:
+        if _line_is_in_diff(finding["path"], finding["line"], head_sha, pr_diff, script_dir):
+            in_diff.append(finding)
+        else:
+            demoted.append(finding)
+    return in_diff, demoted
+
+
+def post_pr_level(pr: str, findings: list[dict]) -> int:
+    if not findings:
+        return 0
+    body = "\n\n---\n\n".join(f["body"] for f in findings)
+    proc = _gh(["pr", "comment", str(pr), "--body", body])
+    if proc.returncode == 0:
+        return len(findings)
+    print(
+        f"[warn] gh pr comment failed — pr-level batch of {len(findings)} finding(s) NOT posted.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+# ── Step 4 — submit ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class SubmitResult:
+    posted_inline: int
+    posted_pr_level: int
+    submitted: bool
+    review_url: str
+
+
+def _extract_review_url(stdout: str) -> str:
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    return data.get("html_url") or "" if isinstance(data, dict) else ""
+
+
+def _landed_review_url(owner: str, repo: str, pr: str, current_user: str, head_sha: str) -> str | None:
+    if not current_user:
+        return None
+    data, _proc = _gh_json(["api", f"repos/{owner}/{repo}/pulls/{pr}/reviews"])
+    if not isinstance(data, list):
+        return None
+    matches = [
+        r for r in data
+        if (r.get("user") or {}).get("login") == current_user and r.get("commit_id") == head_sha
+    ]
+    if not matches:
+        return None
+    return matches[-1].get("html_url") or ""
+
+
+def _post_review(owner: str, repo: str, pr: str, head_sha: str, event: str, body: str, comments: list[dict] | None):
+    payload = {"commit_id": head_sha, "event": event, "body": body}
+    if comments:
+        payload["comments"] = comments
+    return _gh(
+        ["api", "--method", "POST", f"repos/{owner}/{repo}/pulls/{pr}/reviews", "--input", "-"],
+        input_data=json.dumps(payload),
+    )
+
+
+def submit_review(
+    *, owner: str, repo: str, pr: str, head_sha: str, event: str,
+    comments: list[dict], summary_fn, current_user: str, posted_pr_level: int,
+    pr_diff: str, script_dir: Path,
+) -> SubmitResult:
+    """summary_fn(n_inline, posted_pr_level) -> review body text."""
+    n = len(comments)
+    posted_inline = 0
+    submitted = False
+    review_url = ""
+
+    if n > 0:
+        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
+        if proc.returncode == 0:
+            posted_inline, submitted, review_url = n, True, _extract_review_url(proc.stdout)
+        elif "422" in (proc.stdout + proc.stderr):
+            new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
+            head_sha = (new_head_data or {}).get("headRefOid") or head_sha
+            still_in_diff, newly_demoted = [], []
+            for c in comments:
+                if _line_is_in_diff(c["path"], c["line"], head_sha, pr_diff, script_dir):
+                    still_in_diff.append(c)
+                else:
+                    newly_demoted.append(c)
+            if newly_demoted:
+                posted_pr_level += post_pr_level(pr, newly_demoted)
+            comments = still_in_diff
+            n = len(comments)
+            if n > 0:
+                proc2 = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
+                if proc2.returncode == 0:
+                    posted_inline, submitted, review_url = n, True, _extract_review_url(proc2.stdout)
+                else:
+                    landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
+                    if landed is not None:
+                        posted_inline, submitted, review_url = n, True, landed
+        else:
+            landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
+            if landed is not None:
+                posted_inline, submitted, review_url = n, True, landed
+
+    if not submitted:
+        posted_inline = 0
+        demoted: list[dict] = []
+        for c in comments:
+            proc = _gh([
+                "api", f"repos/{owner}/{repo}/pulls/{pr}/comments",
+                "-f", f"body={c['body']}",
+                "-F", f"path={c['path']}",
+                "-F", f"line={c['line']}",
+                "-F", "side=RIGHT",
+                "-F", f"commit_id={head_sha}",
+            ])
+            if proc.returncode == 0:
+                posted_inline += 1
+            else:
+                demoted.append(c)
+        if demoted:
+            posted_pr_level += post_pr_level(pr, demoted)
+        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
+        if proc.returncode == 0:
+            submitted, review_url = True, _extract_review_url(proc.stdout)
+
+    return SubmitResult(posted_inline=posted_inline, posted_pr_level=posted_pr_level, submitted=submitted, review_url=review_url)
+
+
+def _repo_is_private(owner: str, repo: str) -> bool | None:
+    data, _proc = _gh_json(["repo", "view", f"{owner}/{repo}", "--json", "isPrivate"])
+    if not isinstance(data, dict):
+        return None
+    val = data.get("isPrivate")
+    return val if isinstance(val, bool) else None
+
+
+# ── Input contract validation ───────────────────────────────────────────────
+
+_BLOCKING_SCOPES = ("NONE", "OUT-OF-DIFF-ONLY", "IN-DIFF")
+
+
+def _byline_problem(byline: str) -> str | None:
+    if REMARK_TEXT in byline:
+        return "must not embed the swe-workbench remark"
+    if re.search(r"(?i)\bposted\b", byline) or re.search(r"(?i)\bdeduped\b", byline):
+        return "must not embed posted/deduped counts"
+    return None
+
+
+def _finding_problem(row) -> str | None:
+    if not isinstance(row, dict):
+        return "each row must be a JSON object"
+    if not isinstance(row.get("severity"), str) or not row["severity"]:
+        return "severity must be a non-empty string"
+    if not isinstance(row.get("body"), str) or not row["body"]:
+        return "body must be a non-empty string"
+    anchor = row.get("anchor")
+    if anchor not in ("inline", "pr-level"):
+        return "anchor must be 'inline' or 'pr-level'"
+    if anchor == "inline":
+        if not isinstance(row.get("path"), str) or not row["path"]:
+            return "inline rows require a non-empty path"
+        if not isinstance(row.get("line"), int) or isinstance(row.get("line"), bool) or row["line"] < 1:
+            return "inline rows require a positive integer line"
+    return None
+
+
+def validate_payload(args) -> tuple[list[dict] | None, tuple[str, str] | None]:
+    """Returns (findings, error) — error is a (field, problem) tuple, or None on success."""
+    if not re.match(r"^[^/\s]+/[^/\s]+$", args.repo or ""):
+        return None, ("--repo", "must be in the form owner/repo")
+    if not re.match(r"^[1-9][0-9]*$", args.pr or ""):
+        return None, ("--pr", "must match [1-9][0-9]*")
+    if not re.match(r"^[0-9a-fA-F]{40}$", args.head_sha or ""):
+        return None, ("--head-sha", "must be a 40-character git SHA")
+    if not args.base:
+        return None, ("--base", "must be non-empty")
+    if args.decision not in ("APPROVE", "COMMENT"):
+        return None, ("--decision", "must be APPROVE or COMMENT")
+    if not args.byline:
+        return None, ("--byline", "must be non-empty")
+    problem = _byline_problem(args.byline)
+    if problem:
+        return None, ("--byline", problem)
+    if not args.caller_tag:
+        return None, ("--caller-tag", "must be non-empty")
+    if args.blocking_scope not in _BLOCKING_SCOPES:
+        return None, ("--blocking-scope", f"must be one of {', '.join(_BLOCKING_SCOPES)}")
+    for field_name, value in (("--current-user", args.current_user), ("--author-login", args.author_login)):
+        if value and not re.match(r"^[^\s]+$", value):
+            return None, (field_name, "must be a plain login string")
+
+    try:
+        raw = sys.stdin.read() if args.findings_json == "-" else Path(args.findings_json).read_text()
+    except OSError as exc:
+        return None, ("--findings-json", f"could not read file ({exc})")
+    try:
+        findings = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return None, ("--findings-json", f"invalid JSON ({exc})")
+    if not isinstance(findings, list):
+        return None, ("--findings-json", "must be a JSON array")
+    for i, row in enumerate(findings):
+        problem = _finding_problem(row)
+        if problem:
+            return None, (f"--findings-json[{i}]", problem)
+
+    return findings, None
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="swe-workbench-pr-review-submit")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--pr", required=True)
+    p.add_argument("--head-sha", required=True)
+    p.add_argument("--base", required=True)
+    p.add_argument("--decision", required=True)
+    p.add_argument("--byline", required=True)
+    p.add_argument("--caller-tag", required=True)
+    p.add_argument("--findings-json", required=True)
+    p.add_argument("--blocking-scope", default="IN-DIFF")
+    p.add_argument("--current-user", default="")
+    p.add_argument("--author-login", default="")
+    p.add_argument("--debug-dir", default=None)
+    return p
+
+
+def _emit(key: str, value) -> None:
+    print(f"{key}={shlex.quote(str(value))}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+
+    findings, error = validate_payload(args)
+    if error is not None:
+        field_name, problem = error
+        print(f"workflow-pr-review-post: invalid payload — {field_name} {problem}. Refusing to post.", file=sys.stderr)
+        return 1
+
+    owner, repo = args.repo.split("/", 1)
+    inline_findings, pr_level_findings = partition_findings(findings)
+
+    try:
+        threads = fetch_threads(owner, repo, args.pr)
+        survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
+
+        pr_diff = _gh(["pr", "diff", args.pr]).stdout
+        script_dir = _script_dir()
+        in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
+
+        posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
+
+        event, decision, is_self_review, _identity_known = resolve_event(
+            args.decision, args.blocking_scope, args.current_user, args.author_login,
+        )
+        is_private = _repo_is_private(owner, repo)
+
+        comments = [{"path": f["path"], "line": f["line"], "side": "RIGHT", "body": f["body"]} for f in in_diff]
+
+        def summary_fn(n_inline: int, pr_level_count: int) -> str:
+            byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
+            return build_summary(decision, byline_full, is_self_review)
+
+        result = submit_review(
+            owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
+            comments=comments, summary_fn=summary_fn, current_user=args.current_user,
+            posted_pr_level=posted_pr_level, pr_diff=pr_diff, script_dir=script_dir,
+        )
+    except PostingError as exc:
+        print(f"workflow-pr-review-post: {exc}", file=sys.stderr)
+        return 1
+
+    if args.debug_dir:
+        debug_dir = Path(args.debug_dir)
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        (debug_dir / f"{args.caller_tag}-threads.json").write_text(
+            json.dumps([t.__dict__ for t in threads], default=list, indent=2)
+        )
+        (debug_dir / f"{args.caller_tag}-payload.json").write_text(json.dumps(comments, indent=2))
+
+    _emit("POSTED_INLINE", result.posted_inline)
+    _emit("POSTED_PR_LEVEL", result.posted_pr_level)
+    _emit("DEDUPED", deduped)
+    _emit("SUBMITTED", "true" if result.submitted else "false")
+    _emit("EVENT", event)
+    _emit("DECISION", decision)
+    _emit("REVIEW_URL", result.review_url)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
