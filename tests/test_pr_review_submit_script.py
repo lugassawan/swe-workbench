@@ -709,6 +709,51 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
     assert len(diff_calls) == 2, "the 422 retry must re-fetch the PR diff alongside HEAD, not reuse the stale one"
 
 
+def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
+    """A refetch failure during the 422 retry is a degraded retry, not a foundational one —
+    it must warn and fall back to the stale diff (PR #580 followup review fix) rather than
+    aborting an in-flight submission."""
+    head = _init_repo(tmp_path)
+    (tmp_path / "other.txt").write_text("noop\n")
+    _git(["add", "other.txt"], cwd=tmp_path)
+    _git(["commit", "-m", "second"], cwd=tmp_path)
+    new_head = _git(["rev-parse", "HEAD"], cwd=tmp_path).stdout.strip()
+    pr_diff = (
+        "diff --git a/src.py b/src.py\n"
+        "index e69de29..1234567 100644\n"
+        "--- a/src.py\n"
+        "+++ b/src.py\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+line1\n"
+        "+line2\n"
+        "+line3\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},  # pr diff
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": new_head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": "", "stderr": "gh: rate limited", "exit": 1},  # PR diff re-fetch fails
+            _review_post_response(),  # retry POST succeeds, using the stale diff
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "SUBMITTED=true" in result.stdout
+    assert "POSTED_INLINE=1" in result.stdout
+    assert "PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: gh: rate limited" in result.stderr
+
+
 def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
     head = _init_repo(tmp_path)
     pr_diff = (

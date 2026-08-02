@@ -322,7 +322,8 @@ def _refetch_pr_diff(pr: str, stale_pr_diff: str) -> str:
     this fix) rather than aborting an in-flight submission."""
     proc = _gh(["pr", "diff", str(pr)])
     if proc.returncode != 0:
-        print(f"[warn] PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: {proc.stderr.strip()}", file=sys.stderr)
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        print(f"[warn] PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: {detail}", file=sys.stderr)
         return stale_pr_diff
     return proc.stdout
 
