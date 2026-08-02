@@ -521,6 +521,137 @@ class TestCheckSkills:
 
 
 # ──────────────────────────────────────────────
+# check_orchestrator_flag_earned (#568)
+# ──────────────────────────────────────────────
+
+class TestCheckOrchestratorFlagEarned:
+    def _skill_body(self, extra_lines=95, orchestrator=True, extra_text=""):
+        fm = "---\nname: my-skill\ndescription: A skill\n"
+        if orchestrator:
+            fm += "orchestrator: true\n"
+        fm += "---\n"
+        body = fm + extra_text + "\n" + ("x\n" * extra_lines)
+        return body
+
+    def test_flag_short_no_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body()})
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_short_bare_agent_ref_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="Delegates to `some-agent`.\n")},
+            agents=[{"name": "some-agent", "description": "d"}],
+        )
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_short_namespaced_skill_ref_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": self._skill_body(
+                    extra_text="Composes `swe-workbench:other-skill`.\n"
+                ),
+                "other-skill": "---\nname: other-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_over_base_cap_no_refs_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body(extra_lines=196)})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_no_flag_short_no_refs_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body(orchestrator=False)})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_short_self_reference_only_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="See `my-skill` for details.\n")},
+        )
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_short_nonexistent_ref_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="See `nonexistent-thing` for details.\n")},
+        )
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_exactly_at_base_cap_no_refs_fails(self, reset_validate):
+        """line_count == BASE_SKILL_CAP (150) is still 'at or under' and must fail —
+        pins the boundary so a future '>' vs '>=' swap would be caught."""
+        root = reset_validate
+        fm = "---\nname: my-skill\ndescription: A skill\norchestrator: true\n---\n"
+        body = fm + "x\n" * (validate.BASE_SKILL_CAP - fm.count("\n"))
+        assert len(body.splitlines()) == validate.BASE_SKILL_CAP
+        make_plugin_tree(root, skills={"my-skill": body})
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_one_over_base_cap_no_refs_passes(self, reset_validate):
+        """line_count == BASE_SKILL_CAP + 1 already has the headroom and must pass."""
+        root = reset_validate
+        fm = "---\nname: my-skill\ndescription: A skill\norchestrator: true\n---\n"
+        body = fm + "x\n" * (validate.BASE_SKILL_CAP + 1 - fm.count("\n"))
+        assert len(body.splitlines()) == validate.BASE_SKILL_CAP + 1
+        make_plugin_tree(root, skills={"my-skill": body})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_is_skipped_without_double_reporting(self, reset_validate):
+        """A None cache entry (unreadable file) is check_skills's failure to report,
+        not this check's — it must not raise and must not add its own failure."""
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body()})
+        skill_md = root / "skills" / "my-skill" / "SKILL.md"
+        cache = ({}, {skill_md: None})
+        validate.check_orchestrator_flag_earned(cache=cache)
+        assert len(validate.FAILURES) == 0
+
+    def test_green_baseline_live_repo(self, reset_validate, monkeypatch):
+        """Live repo must have zero unearned orchestrator: true flags (#568) —
+        every current flag is earned by size or by composition."""
+        real_root = Path(__file__).parent.parent
+        monkeypatch.setattr(validate, "ROOT", real_root)
+        cache = validate._build_cache()
+        validate.check_orchestrator_flag_earned(cache=cache)
+        assert validate.FAILURES == []
+
+
+class TestOrchestratorFlagDocs:
+    """Docs must name the literal frontmatter key and cap number where authors
+    read them, not bury the rule in the validator's failure-path hint (#568)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    def test_extending_md_names_flag_and_cap(self):
+        text = (self.REAL_ROOT / "docs" / "extending.md").read_text(encoding="utf-8")
+        assert "orchestrator: true" in text
+        assert "300" in text
+
+    def test_contributing_md_names_flag_and_cap(self):
+        text = (self.REAL_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        assert "orchestrator: true" in text
+        assert "300" in text
+
+
+# ──────────────────────────────────────────────
 # check_agents
 # ──────────────────────────────────────────────
 

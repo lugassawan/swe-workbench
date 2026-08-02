@@ -71,7 +71,7 @@ It checks:
 - `.claude-plugin/plugin.json` — JSON well-formedness, required fields (`name`, `version`, `description`).
 - `.claude-plugin/marketplace.json` — JSON well-formedness, `plugins[0].name` and `plugins[0].version` match `plugin.json`.
 - `hooks/hooks.json` — JSON well-formedness and structural shape.
-- `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`).
+- `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`). A skill at or under 150 lines that declares `orchestrator: true` must reference at least one other skill or agent — the flag must be earned by composition or by size, not added opportunistically. See `docs/extending.md` (`## Philosophy`).
 - `agents/*.md` — required frontmatter (`name`, `description`).
 - `commands/*.md` — required frontmatter (`description`).
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
