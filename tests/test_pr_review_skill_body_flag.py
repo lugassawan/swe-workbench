@@ -188,6 +188,7 @@ def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp
         _repo_view_response(),
         {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
         {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+        {"stdout": _PR_DIFF, "exit": 0},  # re-fetch PR diff alongside HEAD
         {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
         {"stdout": "[]", "exit": 0},  # read-your-write: nothing landed
         {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds

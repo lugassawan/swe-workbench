@@ -305,6 +305,28 @@ def _line_is_in_diff(path: str, line: int, head_sha: str, pr_diff: str, script_d
     return proc.stdout.strip() == f"{path}:{line}"
 
 
+def _fetch_pr_diff(pr: str) -> str:
+    """Loud, actionable failure — an empty diff from a failed/timed-out call would otherwise
+    flow silently into validate_lines and demote every inline finding to one pr-level comment,
+    with no error and no stderr warning."""
+    proc = _gh(["pr", "diff", str(pr)])
+    if proc.returncode != 0:
+        raise PostingError(f"failed to fetch PR diff: {proc.stderr.strip() or proc.stdout.strip()}")
+    return proc.stdout
+
+
+def _refetch_pr_diff(pr: str, stale_pr_diff: str) -> str:
+    """Best-effort refetch for the 422-retry path: re-validating against a stale diff after a
+    stale-commit_id 422 is the exact bug this exists to fix, but a refetch failure here is a
+    degraded retry, not a foundational one — fall back to the stale diff (no worse than before
+    this fix) rather than aborting an in-flight submission."""
+    proc = _gh(["pr", "diff", str(pr)])
+    if proc.returncode != 0:
+        print(f"[warn] PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: {proc.stderr.strip()}", file=sys.stderr)
+        return stale_pr_diff
+    return proc.stdout
+
+
 def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_dir: Path) -> tuple[list[dict], list[dict]]:
     """Returns (still_in_diff, demoted_to_pr_level)."""
     in_diff: list[dict] = []
@@ -392,11 +414,15 @@ def submit_review(
         if proc.returncode == 0:
             posted_inline, submitted, review_url = n, True, _extract_review_url(proc.stdout)
         elif "422" in (proc.stdout + proc.stderr):
-            # Confirmed 422 (stale commit_id, or a line pre-validate missed): re-fetch HEAD,
-            # genuinely re-validate every comment against it, demote anything now out-of-diff
-            # into the pr-level batch, then retry the atomic POST exactly once.
+            # Confirmed 422 (stale commit_id, or a line pre-validate missed): re-fetch HEAD and
+            # the PR diff together, genuinely re-validate every comment against both, demote
+            # anything now out-of-diff into the pr-level batch, then retry the atomic POST
+            # exactly once. Re-fetching only head_sha while re-validating file content against
+            # it but line-position against the stale diff text would defeat the point of this
+            # retry — the diff moving is exactly the scenario it exists to handle.
             new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
             head_sha = (new_head_data or {}).get("headRefOid") or head_sha
+            pr_diff = _refetch_pr_diff(pr, pr_diff)
             still_in_diff, newly_demoted = [], []
             for c in comments:
                 if _line_is_in_diff(c["path"], c["line"], head_sha, pr_diff, script_dir):
@@ -579,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
         threads = fetch_threads(owner, repo, args.pr)
         survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
 
-        pr_diff = _gh(["pr", "diff", args.pr]).stdout
+        pr_diff = _fetch_pr_diff(args.pr)
         in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
 
         posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)

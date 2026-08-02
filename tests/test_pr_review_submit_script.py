@@ -539,6 +539,24 @@ def test_pagination_follows_has_next_page_across_two_pages(tmp_path):
 # ── Behavioral: pre-validate / demote out-of-diff findings ───────────────────
 
 
+def test_failed_pr_diff_fetch_aborts_loudly_instead_of_silent_demotion(tmp_path):
+    """A failed `gh pr diff` must not silently flow an empty diff into validate_lines and
+    demote every inline finding to one pr-level comment with no signal (PR #580 review fix)."""
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [
+        _threads_response([]),
+        {"stdout": "", "stderr": "gh: connection reset", "exit": 1},  # pr diff fails
+    ])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+    ])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode != 0
+    assert "failed to fetch PR diff" in result.stderr
+    calls = _gh_calls(state_dir)
+    assert len(calls) == 2, "must abort immediately after the failed pr diff call, no further gh calls"
+
+
 def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     head = _init_repo(tmp_path)
     pr_diff = (
@@ -667,6 +685,7 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
             _repo_view_response(True),
             {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # first atomic POST 422s
             {"stdout": json.dumps({"headRefOid": new_head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             _review_post_response(),  # retry POST succeeds
         ],
     )
@@ -686,6 +705,8 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
     assert len(post_calls) == 2, "a confirmed 422 must retry exactly once"
     head_view_calls = [c for c in calls if c["argv"][:2] == ["pr", "view"]]
     assert len(head_view_calls) == 1
+    diff_calls = [c for c in calls if c["argv"][:2] == ["pr", "diff"]]
+    assert len(diff_calls) == 2, "the 422 retry must re-fetch the PR diff alongside HEAD, not reuse the stale one"
 
 
 def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
@@ -708,6 +729,7 @@ def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
             _repo_view_response(True),
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
             {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
             {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
