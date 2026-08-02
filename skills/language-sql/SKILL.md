@@ -119,5 +119,5 @@ ROLLBACK;
 - Schema changes without rollback or compatibility planning.
 - Unbounded queries in production paths.
 - Relying on implicit ordering without `ORDER BY`.
-- Wrapping MySQL DDL in `BEGIN`/`COMMIT` for atomicity, or an unnecessary `ALGORITHM=INPLACE`/`COPY` on a column add — see DDL migration footguns above.
+- Wrapping MySQL DDL in `BEGIN`/`COMMIT` for atomicity, or an unnecessary `ALGORITHM=INPLACE`/`COPY` on a column add/drop — see DDL migration footguns above.
 - Never build SQL by concatenating untrusted input — use parameterized queries or prepared statements. ORM raw-query escape hatches (e.g. Django's `extra()`, SQLAlchemy's `text()`) are equally dangerous. See `swe-workbench:principle-security`.
