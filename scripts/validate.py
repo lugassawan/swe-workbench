@@ -249,6 +249,20 @@ def check_hooks_json():
                     )
 
 
+def _skill_cap_info(fm):
+    """Return (is_orchestrator, cap) for a skill's parsed frontmatter dict.
+
+    Single source of truth for the orchestrator-flag detection rule and cap
+    selection (300 if 'orchestrator: true', else 150) — shared by
+    check_skills() (which also needs is_orchestrator for its failure message)
+    and check_skill_cap_headroom() (#567), so the two checks can never drift
+    on what counts as 'orchestrator' or what cap applies.
+    """
+    is_orchestrator = fm.get("orchestrator", "").lower() == "true"
+    cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+    return is_orchestrator, cap
+
+
 def check_skills(cache=None):
     skills_dir = ROOT / "skills"
     skills_cache = cache[1] if cache is not None else None
@@ -276,8 +290,7 @@ def check_skills(cache=None):
                 skill_md.relative_to(ROOT),
                 f"frontmatter name {fm.get('name')!r} does not match directory name {skill_dir_name!r}",
             )
-        is_orchestrator = fm.get("orchestrator", "").lower() == "true"
-        cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+        is_orchestrator, cap = _skill_cap_info(fm)
         if line_count > cap:
             fail(
                 skill_md.relative_to(ROOT),
@@ -291,9 +304,9 @@ def check_skill_cap_headroom(cache=None):
     its cap (#567) — early signal that a skill is approaching the hard cap
     that check_skills() enforces, before it actually trips that failure.
 
-    Cap detection mirrors check_skills(): 'orchestrator: true' in frontmatter
-    means ORCHESTRATOR_SKILL_CAP (300), otherwise BASE_SKILL_CAP (150). This
-    check only ever calls warn(), never fail() — it must not affect the
+    Cap detection reuses _skill_cap_info() — the same helper check_skills()
+    uses — so this never drifts from that check's orchestrator-flag rule.
+    This check only ever calls warn(), never fail() — it must not affect the
     build's exit code. Skills with missing/malformed frontmatter or an
     unreadable file are skipped here; check_skills() already reports those.
     """
@@ -313,8 +326,7 @@ def check_skill_cap_headroom(cache=None):
         if fm is None:
             continue  # malformed frontmatter — already reported by check_skills
         line_count = len(text.splitlines())
-        is_orchestrator = fm.get("orchestrator", "").lower() == "true"
-        cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+        _, cap = _skill_cap_info(fm)
         threshold = cap * CAP_HEADROOM_WARN_FRACTION
         if line_count > threshold:
             warn(
