@@ -24,4 +24,4 @@ Absolute rules:
 - Verification and review always run *after* the PR is opened, never before — this command's entire identity is deferred verification. Do not reorder to verify-then-PR; that is `/swe-workbench:implement`.
 - Write the deferred-verification marker (`<!-- swe-workbench:deferred-verification -->`) into the PR body at open time. Strip it only if the regression test is backfilled AND verification is green, before requesting merge — never strip it preemptively.
 - If the ticket lacks acceptance criteria, stop and ask the user — do not invent scope, even under time pressure.
-- Do not invent architectural answers — escalate any genuine design fork to `senior-engineer`.
+- Do not invent architectural answers — escalate any genuine design fork to `swe-workbench:senior-engineer`.

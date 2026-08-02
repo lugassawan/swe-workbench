@@ -13,7 +13,7 @@ When the skill completes, print a summary listing each artifact (worktree, local
 
 ## Output
 
-The `workflow-cleanup-merged` skill produces a structured artifact summary. Expect one status line per artifact:
+The `swe-workbench:workflow-cleanup-merged` skill produces a structured artifact summary. Expect one status line per artifact:
 
 - **Worktree** — path and whether it was removed or was already absent.
 - **Local branch** — branch name and whether it was deleted or was already gone.

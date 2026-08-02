@@ -89,7 +89,7 @@ Non-web symptoms (backend panics, CLI failures, test assertion errors): skip thi
 
 Non-production, non-on-call symptoms: skip this step entirely — no gate, no prompt.
 
-Delegate to the `debugger` subagent. Its output must include:
+Delegate to the `swe-workbench:debugger` subagent. Its output must include:
 
 1. **Repro** — exact steps, inputs, and the observed failure (command, stack trace, or assertion delta).
 2. **Hypotheses** — 2–3 candidate causes, each falsifiable with the observation that would confirm or rule it out.
@@ -101,6 +101,6 @@ Delegate to the `debugger` subagent. Its output must include:
 
 Absolute rule: no fix without a failing test first. This command changes behavior to match spec — it is not a refactor.
 
-**Design-fork escalation.** The debugger has no `Agent` tool and cannot consult subagents itself — if its diagnosis surfaces a design fork, it surfaces the fork in its output instead. When that happens, you (the orchestrator) consult the `senior-engineer` subagent before finalizing the plan, per the worker→orchestrator consult contract in `swe-workbench:workflow-development`'s SKILL.md (Phase 2). Fold its read into the plan; do not invent the architectural answer yourself.
+**Design-fork escalation.** The debugger has no `Agent` tool and cannot consult subagents itself — if its diagnosis surfaces a design fork, it surfaces the fork in its output instead. When that happens, you (the orchestrator) consult the `swe-workbench:senior-engineer` subagent before finalizing the plan, per the worker→orchestrator consult contract in `swe-workbench:workflow-development`'s SKILL.md (Phase 2). Fold its read into the plan; do not invent the architectural answer yourself.
 
 **Plan output:** If you (the orchestrator) author a plan based on the subagent's response **and that plan modifies the codebase** (fix / make / implement) — whether saved to a plan file or passed to `ExitPlanMode` — first activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section in the plan per `skills/workflow-development/templates/plan-workflow-section.md`. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so the placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/swe-workbench:debug` always produces a fix (file edits), Mode A always applies here.

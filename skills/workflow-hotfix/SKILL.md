@@ -93,7 +93,7 @@ swe-workbench-clean-state-files /tmp/hotfix-pr-body-<N>.txt
 
 ## Phase 4 — Verify + Review (after the PR is open)
 
-Run exactly the same two gates `workflow-development` runs, just against the now-open PR:
+Run exactly the same two gates `workflow-development` runs, just against the now-open PR: <!-- validate: prose-ref -->
 
 - **Verify:** `superpowers:verification-before-completion` (imports/format/quality/lint/test).
 - **Review — BOTH in parallel, neither optional:**

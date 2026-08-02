@@ -7,7 +7,7 @@ Target: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
-Delegate to the `refactorer` subagent. Its output must include:
+Delegate to the `swe-workbench:refactorer` subagent. Its output must include:
 
 1. **Diagnosis** — which smell is present (Long Method, Feature Envy, Primitive Obsession, Shotgun Surgery, Divergent Change, etc.) and why it hurts.
 2. **Target state** — the shape of the code after refactoring, referenced to Fowler's catalog.
