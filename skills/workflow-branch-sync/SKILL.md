@@ -26,13 +26,11 @@ orchestrator: true
 ### Step 1 — Preflight Guard
 
 ```bash
-command -v swe-workbench-doctor >/dev/null 2>&1 || {
+command -v swe-workbench-skill-script >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
-_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-_SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-eval "$("$_SCRIPTS/preflight-guard.sh")"
+eval "$(swe-workbench-skill-script workflow-branch-sync preflight-guard.sh)"
 ```
 
 Emits `CURRENT_BRANCH`, `DEFAULT_BRANCH` (detected — never hardcode `main`), `IS_DEFAULT`, `DETACHED`, `DIRTY`.
@@ -97,9 +95,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ### Step 4 — Detect Result
 
 ```bash
-_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-_SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-_DETECT_OUT="$("$_SCRIPTS/detect-conflicts.sh")"
+_DETECT_OUT="$(swe-workbench-skill-script workflow-branch-sync detect-conflicts.sh)"
 eval "$(head -1 <<<"$_DETECT_OUT")"
 UNMERGED=$(tail -n +2 <<<"$_DETECT_OUT")
 ```
@@ -120,9 +116,7 @@ For **each** file in `UNMERGED`:
 3. Prompt for one of: **keep-mine**, **keep-main**, **manual**.
    - **keep-mine / keep-main**: apply via
      ```bash
-     _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-     _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-     "$_SCRIPTS/apply-resolution.sh" "<file>" "<mine|main>" "<merge|rebase>"
+     swe-workbench-skill-script workflow-branch-sync apply-resolution.sh "<file>" "<mine|main>" "<merge|rebase>"
      ```
      This script does the ours/theirs translation (see Common Mistakes) and stages the file — do not call `git checkout --ours/--theirs` directly from this skill.
    - **manual**: open the file in place for the user to edit, wait for confirmation. Before staging, verify no conflict markers remain: `grep -qE '^(<{7}|={7}|>{7})' "<file>"` must find **nothing**. If a marker is still present, do not stage — warn the user and re-prompt for confirmation instead of silently committing broken content. Once clean, `git add "<file>"`.
@@ -141,9 +135,7 @@ Surfaces *functional* duplication a textual diff structurally cannot see — the
    - `CHECK_REDUNDANCY=on` but `MERGE_BASE` came back empty from Step 3 (unrelated histories) → report "redundancy check skipped: unrelated histories" and proceed to Step 7.
 2. **Gather** (deterministic):
    ```bash
-   _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-   _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-   _REDUND_OUT="$("$_SCRIPTS/redundancy-scope.sh" "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
+   _REDUND_OUT="$(swe-workbench-skill-script workflow-branch-sync redundancy-scope.sh "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
    eval "$(grep -E '^(MERGE_BASE|CANDIDATES)=' <<<"$_REDUND_OUT")"
    ```
    Only the plain `MERGE_BASE=`/`CANDIDATES=` scalar lines are eval-safe and get eval'd here — the `CANDIDATE`/`MAIN_ADD` records are structured, not simple `KEY=VALUE`, and are parsed as data below, never eval'd. If `CANDIDATES=0`, report "no redundancy candidates found" and proceed to Step 7 — never dispatch the subagent for zero candidates.

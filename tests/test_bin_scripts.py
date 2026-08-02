@@ -1,6 +1,6 @@
 """Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is the sole home for these thirteen scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these fourteen scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
 and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
@@ -10,6 +10,7 @@ Path(__file__).parent (python3) — never a bare PATH lookup.
 import os
 import py_compile
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,7 @@ SCRIPTS = {
     "swe-workbench-pr-review-submit": "python3",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-skill-script": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }
 
@@ -146,3 +148,104 @@ def test_e2e_comment_scan_reads_stdin():
         env=dict(_CLEAN_ENV),
     )
     assert result.returncode == 0, f"bin/swe-workbench-comment-scan failed:\n{result.stderr}"
+
+
+# ──────────────────────────────────────────────
+# swe-workbench-skill-script dispatcher (issue #569): runtime behavior
+# ──────────────────────────────────────────────
+#
+# These tests build an isolated <tmp>/bin + <tmp>/skills tree (copying only the dispatcher
+# itself) rather than exercising it against the real skills/ directory, so the dispatcher's
+# own traversal-rejection and passthrough behavior is verified independently of any real
+# skill script's content or future changes.
+
+
+def _isolated_dispatcher(tmp_path):
+    """Copy the dispatcher into <tmp_path>/bin/ so its self-located ROOT is <tmp_path>."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dispatcher = bin_dir / "swe-workbench-skill-script"
+    shutil.copy2(BIN / "swe-workbench-skill-script", dispatcher)
+    dispatcher.chmod(0o755)
+    return dispatcher
+
+
+def _write_scratch_script(tmp_path, skill, script, body):
+    scripts_dir = tmp_path / "skills" / skill / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    path = scripts_dir / script
+    path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_e2e_skill_script_dispatches_and_passes_stdout_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "greet.sh", 'echo "hello $1"')
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "greet.sh", "world"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0
+    assert result.stdout == "hello world\n"
+
+
+def test_e2e_skill_script_passes_exit_code_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "fail.sh", "exit 3")
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "fail.sh"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 3
+
+
+def test_e2e_skill_script_passes_args_with_spaces_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "echo-arg.sh", 'printf "%s" "$1"')
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "echo-arg.sh", "a file with spaces.txt"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0
+    assert result.stdout == "a file with spaces.txt"
+
+
+def test_e2e_skill_script_rejects_missing_target():
+    result = subprocess.run(
+        [str(BIN / "swe-workbench-skill-script"), "bogus-skill", "nope.sh"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "not found" in result.stderr
+
+
+def test_e2e_skill_script_rejects_traversal():
+    dispatcher = BIN / "swe-workbench-skill-script"
+    cases = [
+        ("../etc", "passwd"),
+        ("workflow-cleanup-merged", "../../../etc/passwd"),
+        ("a/b", "script.sh"),
+        ("skill", "a/b.sh"),
+        ("..", "script.sh"),
+        ("foo..bar", "script.sh"),
+    ]
+    for skill, script in cases:
+        result = subprocess.run(
+            [str(dispatcher), skill, script],
+            capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode == 1, f"expected rejection for skill={skill!r} script={script!r}"
+        assert result.stdout == ""
+        assert result.stderr.strip(), f"expected a stderr message for skill={skill!r} script={script!r}"
+
+
+def test_e2e_skill_script_requires_both_args():
+    dispatcher = BIN / "swe-workbench-skill-script"
+    for args in ([], ["only-skill"]):
+        result = subprocess.run(
+            [str(dispatcher), *args],
+            capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode != 0, f"expected non-zero exit for args={args!r}"
