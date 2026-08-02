@@ -521,6 +521,67 @@ class TestCheckSkills:
 
 
 # ──────────────────────────────────────────────
+# check_skill_cap_headroom (#567)
+# ──────────────────────────────────────────────
+
+class TestCheckSkillCapHeadroom:
+    def _valid_skill(self, name="my-skill", extra_lines=0, orchestrator=False):
+        body = f"---\nname: {name}\ndescription: A skill\n"
+        if orchestrator:
+            body += "orchestrator: true\n"
+        body += "---\n"
+        body += "x\n" * extra_lines
+        return body
+
+    def test_below_threshold_no_warning(self, reset_validate):
+        root = reset_validate
+        # 150-line base cap; 90% threshold is 135 lines — stay comfortably under.
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=50)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+        assert len(validate.FAILURES) == 0
+
+    def test_above_90_percent_base_cap_warns(self, reset_validate):
+        root = reset_validate
+        # 4 frontmatter lines + 140 filler = 144 lines, > 135 (90% of 150).
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=140)})
+        validate.check_skill_cap_headroom()
+        assert any("my-skill" in w and "150-line cap" in w for w in validate.WARNINGS)
+
+    def test_above_90_percent_never_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=140)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.FAILURES) == 0
+
+    def test_orchestrator_cap_used_when_flagged(self, reset_validate):
+        root = reset_validate
+        # 145 lines total: over 90% of BASE_SKILL_CAP (135) but well under 90%
+        # of ORCHESTRATOR_SKILL_CAP (270) — must NOT warn once flagged.
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(extra_lines=140, orchestrator=True)},
+        )
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+
+    def test_orchestrator_above_90_percent_of_300_warns(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(extra_lines=268, orchestrator=True)},
+        )
+        validate.check_skill_cap_headroom()
+        assert any("300-line cap" in w for w in validate.WARNINGS)
+
+    def test_malformed_frontmatter_skipped_not_warned(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": "No frontmatter\n" + ("x\n" * 200)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+
+
+# ──────────────────────────────────────────────
 # check_orchestrator_flag_earned (#568)
 # ──────────────────────────────────────────────
 
