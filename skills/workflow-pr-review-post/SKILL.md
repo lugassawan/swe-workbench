@@ -75,9 +75,8 @@ the full rationale, and
 building the payload in Python sidesteps entirely.
 
 `eval` sets `POSTED_INLINE`, `POSTED_PR_LEVEL`, `DEDUPED`, `SUBMITTED`, `EVENT`, `DECISION`,
-`REVIEW_URL` — every value `printf %q`-quoted. Finding bodies are never echoed (mirrors the
-eval-injection invariant `tests/test_preflight_pr_script.py::test_preflight_does_not_echo_body`
-enforces repo-wide).
+`REVIEW_URL` — every value `printf %q`-quoted. Finding bodies are never echoed to stdout, so a
+body containing shell metacharacters can never inject into the `eval`.
 
 ## Step 5 — Address-feedback CTA (conditional)
 
@@ -112,7 +111,7 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 
 | Mistake | Fix |
 |---|---|
-| Re-deriving the fetch/dedup/pre-validate/submit mechanism inline instead of calling `swe-workbench-pr-review-submit` | The script is the single source of truth for posting mechanics (#550) — every caller invokes it the same way |
+| Re-deriving the fetch/dedup/pre-validate/submit mechanism inline instead of calling `swe-workbench-pr-review-submit` | The script is the single source of truth for posting mechanics — every caller invokes it the same way |
 | Passing a byline that embeds the swe-workbench remark or `posted`/`deduped` counts | The script appends both once it knows the real counts and confirmed repo visibility — an embedded byline fails input-contract validation |
 | Assuming pr-level findings dedup across runs | They don't (known v1 limitation) — re-running the same specialist mode on an unchanged PR re-posts the batch |
 | Reading `$POSTED_INLINE`/etc. before checking `$SUBMITTED` | A `false` `SUBMITTED` means the fallback exhausted its options; treat the counts as best-effort in that case |
