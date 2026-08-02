@@ -1,1 +1,5 @@
 pip-tools==7.5.3
+# pip 26.2 removed pip._internal.utils.compat.stdlib_pkgs, which pip-tools'
+# own sync module still imports — breaks even the latest pip-tools (7.6.0)
+# as of 2026-08-02. Pin below it until upstream ships a fix.
+pip<26.2
