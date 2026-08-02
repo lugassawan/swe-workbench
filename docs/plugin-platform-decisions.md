@@ -83,16 +83,16 @@ benefit over what `matcher` already provides or what the script can check for it
 
 ## 5. `swe-workbench-skill-script` dispatcher replaces the doctor-anchor `_RT=` derivation
 
-**(a) Why the doctor-anchor derivation was replaced.** #571 collapsed `runtime/` into `bin/` and
-retired the `CLAUDE_PLUGIN_ROOT` injector hook. Skills with their own `scripts/` helpers
+**(a) Why the doctor-anchor derivation was replaced.** Once `runtime/` collapsed into `bin/` and
+the `CLAUDE_PLUGIN_ROOT` injector hook was retired, skills with their own `scripts/` helpers
 (`workflow-cleanup-merged`, `workflow-branch-sync`) still needed to resolve a skill-local path, so
-#578 introduced `_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"` at every
-call site as a stand-in root derivation. That traded one copy-pasted preamble for another: 10
-occurrences across 2 files, and still path construction living in skill prose rather than in a
-script — the same shape of duplication `bin/README.md`'s "Reference pattern" exists to prevent for
-every other `bin/` script. `bin/swe-workbench-skill-script <skill> <script> [args...]` (#569)
-owns that resolution once, as a dispatcher: skill prose invokes it as a bare command, with no
-`_RT`/`_SCRIPTS` variables anywhere.
+a stand-in root derivation —
+`_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"` — was introduced at every
+call site. That traded one copy-pasted preamble for another: 10 occurrences across 2 files, and
+still path construction living in skill prose rather than in a script — the same shape of
+duplication `bin/README.md`'s "Reference pattern" exists to prevent for every other `bin/` script.
+`bin/swe-workbench-skill-script <skill> <script> [args...]` owns that resolution once, as a
+dispatcher: skill prose invokes it as a bare command, with no `_RT`/`_SCRIPTS` variables anywhere.
 
 **(b) Why the `command -v swe-workbench-<name>` guard itself is not extractable.** A PATH-
 availability guard cannot live inside a PATH-resolved helper. If `bin/` is off `PATH`, the helper
