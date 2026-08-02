@@ -2886,6 +2886,26 @@ class TestCheckLspToolGate:
         validate.check_lsp_tool_gate()
         assert any("shared/lsp.md" in f for f in validate.FAILURES)
 
+    def test_grants_lsp_list_form_missing_include_fails(self, reset_validate):
+        """List-form tools: (e.g. `tools:\\n  - Read\\n  - LSP`) must be treated
+        as granting LSP just like the scalar comma-separated form — otherwise a
+        contributor could silently bypass the gate by switching YAML encodings (#559)."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools:\n  - Read\n  - LSP\n---\n\n"
+            "No shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
     def test_grants_lsp_shared_file_reworded_sentence_fails(self, reset_validate):
         root = reset_validate
         agents_dir = root / "agents"

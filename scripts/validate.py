@@ -1293,11 +1293,12 @@ def check_lsp_tool_gate(cache=None):
     agents/shared/lsp.md, and that shared file must carry the LSP-unavailable
     fallback sentence (#559).
 
-    Only ever inspects the tools: frontmatter scalar (parsed via
-    parse_frontmatter, split on ',' with exact-token membership) — never a
-    body-text regex. agents/shared/principles.md uses "LSP" for the Liskov
-    Substitution Principle, so a body-text match would false-positive on every
-    agent preloading principle-solid.
+    Only ever inspects the tools: frontmatter value (parsed via
+    parse_frontmatter, either the scalar split on ',' or the YAML sequence
+    form, with exact-token membership) — never a body-text regex.
+    agents/shared/principles.md uses "LSP" for the Liskov Substitution
+    Principle, so a body-text match would false-positive on every agent
+    preloading principle-solid.
 
     If no agent grants LSP, this returns without requiring the shared file to
     exist — that keeps the check from ossifying a future removal of LSP.
@@ -1324,9 +1325,12 @@ def check_lsp_tool_gate(cache=None):
         if not fm:
             continue
         tools = fm.get("tools")
-        if not isinstance(tools, str):
+        if isinstance(tools, str):
+            tokens = {t.strip() for t in tools.split(",")}
+        elif isinstance(tools, list):
+            tokens = {str(t).strip() for t in tools}
+        else:
             continue
-        tokens = {t.strip() for t in tools.split(",")}
         if "LSP" not in tokens:
             continue
         granting.append((md, text))
