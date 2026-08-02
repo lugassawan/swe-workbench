@@ -60,8 +60,8 @@ Never string-concatenate a free-form value directly into a JSON literal (`"body"
 
 ## Where this is enforced
 
-- `runtime/reply-and-resolve.sh` uses `-f body=` for both reply call sites (reply bodies start
-  with `@{author}`); guarded by
+- `bin/swe-workbench-reply-and-resolve` uses `-f body=` for both reply call sites (reply
+  bodies start with `@{author}`); guarded by
   `tests/test_reply_and_resolve_script.py::test_body_flag_is_lowercase_f_not_uppercase_f`.
 - `skills/workflow-pr-review-post/SKILL.md` (the shared posting core used by
   `workflow-pr-review`, `workflow-pr-review-followup`, and the `/swe-workbench:review`

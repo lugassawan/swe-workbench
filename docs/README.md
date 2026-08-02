@@ -10,3 +10,6 @@
 - [skill-usage-telemetry.md](skill-usage-telemetry.md) — how subagent skill invocations are surfaced in the transcript.
 - [worktree-permission-grant.md](worktree-permission-grant.md) — automatic permission grants for isolated worktree agents.
 - [gh-api-field-flags.md](gh-api-field-flags.md) — `-f` vs `-F` on `gh api`: avoid silent `@`-expansion when posting comment bodies.
+- [shell-echo-vs-printf.md](shell-echo-vs-printf.md) — `echo` vs `printf` on variables holding JSON: zsh expands backslash escapes and corrupts the data.
+- [skill-preload.md](skill-preload.md) — `skills:` frontmatter preloads unconditional principle skills at dispatch; the silent-no-op trap and manual verification runbook.
+- [plugin-platform-decisions.md](plugin-platform-decisions.md) — rulings from the bare-PATH-command migration and the `runtime/`/`bin/` collapse: why `CLAUDE_PLUGIN_DATA` wasn't adopted, why CI has no closed-world plugin-schema validator, and the `bin/` dev-loop caveat.

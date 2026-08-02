@@ -1,0 +1,15 @@
+diff --git a/newmod.py b/newmod.py
+index 1111111..2222222 100644
+--- a/newmod.py
++++ b/newmod.py
+@@ -1,1 +1,13 @@
++"""This module handles widget rendering for the frame buffer pipeline.
++
++It covers layout, sizing, and the color-space conversion needed before
++handing pixels to the compositor, plus a small cache to avoid recomputing
++layouts for widgets whose bounding box has not changed since last frame,
++and a fallback path for headless rendering in CI where no compositor is
++available at all, which is exercised by the headless test suite. It also
++logs a warning the first time the fallback path is used per process.
++"""
++import os

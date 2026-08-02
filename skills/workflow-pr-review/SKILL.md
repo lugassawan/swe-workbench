@@ -35,17 +35,17 @@ This skill orchestrates; analysis is delegated to:
 ### Step 1 — Pre-flight
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-[ -f "$_RT/runtime/clean-state-files.sh" ] || {
-  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+command -v swe-workbench-preflight-pr >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
 JSON="/tmp/swe-workbench-pr-review/${PR}.json"
-eval "$("$_RT/runtime/preflight-pr.sh" "$PR" "$JSON")"
+eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
 CURRENT_USER=$(gh api /user -q .login)
+eval "$(swe-workbench-new-run-dir pr-review "$PR")"
 ```
 
-`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context).
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context). `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts (assembled JSON payloads, submit-response captures) that this flow's bash produces but never enumerates ahead of time. Distinct from `$JSON` above, which is a deliberate PR-keyed state file reaped by name in Step 7.
 
 ### Step 2 — Ephemeral worktree
 
@@ -53,7 +53,7 @@ CURRENT_USER=$(gh api /user -q .login)
 
 ```bash
 RIMBA_OUT=$(rimba add pr:$PR --task "pr-review-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
+WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
 [ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
 ```
 
@@ -62,7 +62,7 @@ WT=$(echo "$RIMBA_OUT" | awk '/Path:/{print $2}')
 ```bash
 WT="/tmp/swe-workbench-pr-review/${PR}"
 if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null
+  git worktree remove --force "$WT" 2>/dev/null || swe-workbench-clean-ephemeral "$WT" 2>/dev/null
 fi
 mkdir -p "$(dirname "$WT")"
 git fetch origin "pull/${PR}/head:pr-review-${PR}" --force
@@ -109,6 +109,7 @@ Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `li
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
 - `BYLINE` — `_Reviewed by \`reviewer\`_` (identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` Step 4).
 - `CALLER_TAG` — `general` (scopes the core's own threads-cache filename so it never collides with a concurrent followup or specialist run on the same PR).
+- `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` Step 2).
 - `FINDINGS[]` — as parsed above.
 
 The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
@@ -118,10 +119,14 @@ The core owns thread fetch + dedup, inline/PR-level posting, the self-review gat
 Foreground state-file reap for this skill's own preflight state (the core reaps its own separately) — runs immediately after Step 6 returns; failures surface (no `2>/dev/null` or `|| true`):
 
 ```bash
-bash "$_RT/runtime/clean-state-files.sh" "/tmp/swe-workbench-pr-review/${PR}.json"
+swe-workbench-clean-state-files "/tmp/swe-workbench-pr-review/${PR}.json"
 [ -e "/tmp/swe-workbench-pr-review/${PR}.json" ] \
   && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}.json" >&2 \
   || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}.json"
+swe-workbench-reap-run-dir "$RUN_DIR"
+[ -e "$RUN_DIR" ] \
+  && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 \
+  || echo "✓ run dir reaped: $RUN_DIR"
 ```
 
 Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:
@@ -130,7 +135,7 @@ Worktree teardown stays backgrounded (slow); it no longer carries state-file cle
 ( rimba remove "pr-review-$PR" --force 2>/dev/null \
   || { git worktree remove --force "$WT" 2>/dev/null; \
        git branch -D "pr-review-$PR" 2>/dev/null; \
-       bash "$_RT/runtime/clean-ephemeral.sh" "$WT" 2>/dev/null; } ) &
+       swe-workbench-clean-ephemeral "$WT" 2>/dev/null; } ) &
 ```
 
 Delete the workflow-state checkpoint file (see `docs/workflow-state.md`) now that the flow has reached its terminal step.

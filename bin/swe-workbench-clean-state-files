@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clean-state-files.sh <file>...
+# swe-workbench-clean-state-files <file>...
 #
 # Delete named workflow state files, but only after proving each is a
 # sanctioned /tmp artifact.  Exits 1 (never silently) when any safety
@@ -13,15 +13,15 @@
 #   3. Path is under one of the sanctioned tmp locations:
 #        /tmp/swe-workbench-pr-review/<file>
 #        /tmp/swe-workbench-address-feedback/<file>
-#      OR basename matches ^(capture|report-issue|audit-emit|extend)- and
-#      parent directory is directly /tmp.
+#      OR basename matches
+#        ^(capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-
+#      and parent directory is directly /tmp.
 #
-# Unlike clean-ephemeral.sh (which rm -rf a worktree directory), this
+# Unlike swe-workbench-clean-ephemeral (which rm -rf a worktree directory), this
 # script only calls rm -f on named regular files — never recursive.
 #
 # Call form:
-#   bash "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/runtime/clean-state-files.sh" \
-#     <file1> [<file2>...] 2>/dev/null
+#   swe-workbench-clean-state-files <file1> [<file2>...] 2>/dev/null
 
 set -euo pipefail
 
@@ -79,7 +79,7 @@ validate_one() {
 
   # Path B: basename matches a known single-file-writer pattern, parent is /tmp.
   if [ "$canon_parent" = "$CANON_TMP" ] || [ "$parent" = "/tmp" ]; then
-    if printf '%s' "$base" | grep -qE '^(capture|report-issue|audit-emit|extend)-'; then
+    if printf '%s' "$base" | grep -qE '^(capture|report-issue|audit-emit|extend|hotfix|cleanup-followup|bug-triage)-'; then
       return 0
     fi
   fi

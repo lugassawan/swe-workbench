@@ -49,22 +49,22 @@ def test_pr_review_skill_no_fragile_owner_extraction():
 
 
 def test_pr_review_skill_has_owner_repo_guard_clause():
-    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
-    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
+    """preflight-pr must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to bin/swe-workbench-preflight-pr
+    text = (ROOT / "bin" / "swe-workbench-preflight-pr").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
-        "so failures produce an actionable error rather than silently misrouting API calls"
+        "bin/swe-workbench-preflight-pr must include the guard-clause error message for missing "
+        "OWNER/REPO so failures produce an actionable error rather than silently misrouting API calls"
     )
 
 
 # --- Cleanup call-site assertions (guard bypass fix) ---
 
 def test_pr_review_skill_cleanup_uses_clean_ephemeral_script():
-    """Step 7 background cleanup and pre-flight stale removal must use clean-ephemeral.sh, not bare rm -rf."""
+    """Step 7 background cleanup and pre-flight stale removal must use swe-workbench-clean-ephemeral, not bare rm -rf."""
     text = SKILL_MD.read_text()
-    assert "clean-ephemeral.sh" in text, (
-        "SKILL.md cleanup blocks must invoke runtime/clean-ephemeral.sh — "
+    assert "swe-workbench-clean-ephemeral" in text, (
+        "SKILL.md cleanup blocks must invoke swe-workbench-clean-ephemeral — "
         "bare 'rm -rf $WT' under /Users/... is blocked by the bash guard (exit 2)"
     )
 
@@ -75,9 +75,9 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
     assert not re.search(r'rm\s+-[rR][fF]\s+"?\$WT"?(?!\s*2>)', text) or \
            not re.search(r'rm\s+-[rR][fF]\s+"?\$WT"?\s*(?:2>/dev/null\s*)?(?:;|\))', text), (
         "SKILL.md must not use 'rm -rf \"$WT\"' directly — "
-        "route through clean-ephemeral.sh to avoid the bash guard blocking home-tree paths"
+        "route through swe-workbench-clean-ephemeral to avoid the bash guard blocking home-tree paths"
     )
-    # Stricter: no standalone rm -rf "$WT" outside of clean-ephemeral.sh invocations
+    # Stricter: no standalone rm -rf "$WT" outside of swe-workbench-clean-ephemeral invocations
     lines_with_rm = [
         line for line in text.splitlines()
         if re.search(r'rm\s+-[a-zA-Z]*[rR][a-zA-Z]*[fF]', line)
@@ -85,7 +85,7 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
         and "clean-ephemeral" not in line
     ]
     assert not lines_with_rm, (
-        f"Found bare rm -rf \"$WT\" lines (should use clean-ephemeral.sh):\n"
+        f"Found bare rm -rf \"$WT\" lines (should use swe-workbench-clean-ephemeral):\n"
         + "\n".join(lines_with_rm)
     )
 
@@ -93,15 +93,15 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_pr_review_skill_cleanup_deletes_pr_json():
-    """Step 7 success-path must invoke clean-state-files.sh with this skill's own
+    """Step 7 success-path must invoke swe-workbench-clean-state-files with this skill's own
     preflight state file. The threads-cache file moved to workflow-pr-review-post's
     own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job."""
     text = SKILL_MD.read_text()
-    assert "clean-state-files.sh" in text, (
-        "SKILL.md Step 7 must call runtime/clean-state-files.sh to remove its own per-run state file"
+    assert "swe-workbench-clean-state-files" in text, (
+        "SKILL.md Step 7 must call swe-workbench-clean-state-files to remove its own per-run state file"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to clean-state-files.sh"
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to swe-workbench-clean-state-files"
     )
 
 
@@ -111,12 +111,12 @@ def test_post_core_cleanup_deletes_own_threads_json():
     concurrent callers (general/followup/specialist) reviewing the same PR never share
     (and can't clobber) each other's threads cache."""
     text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
-    assert "clean-state-files.sh" in text, (
-        "workflow-pr-review-post/SKILL.md must call runtime/clean-state-files.sh to reap its own state"
+    assert "swe-workbench-clean-state-files" in text, (
+        "workflow-pr-review-post/SKILL.md must call swe-workbench-clean-state-files to reap its own state"
     )
     assert "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" in text, (
         "workflow-pr-review-post/SKILL.md must pass its own CALLER_TAG-scoped "
-        "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json to clean-state-files.sh"
+        "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json to swe-workbench-clean-state-files"
     )
 
 
@@ -138,35 +138,35 @@ def test_pr_review_skill_passes_caller_tag_general():
 
 
 def test_pr_review_skill_state_cleanup_outside_background_subshell():
-    """clean-state-files.sh must NOT appear inside the background ( ... ) & subshell.
+    """swe-workbench-clean-state-files must NOT appear inside the background ( ... ) & subshell.
 
     The reap must run in the foreground so failures surface immediately rather than being
     silently dropped by the backgrounded, output-suppressed worktree-teardown subshell.
     This is the inverse of the previous #428 assertion, which encoded the bug as correct.
     """
     text = SKILL_MD.read_text()
-    subshell_match = re.search(r'\([^)]*clean-state-files\.sh[^)]*\)\s*&', text)
+    subshell_match = re.search(r'\([^)]*swe-workbench-clean-state-files[^)]*\)\s*&', text)
     assert not subshell_match, (
-        "SKILL.md Step 7 clean-state-files.sh call must NOT be inside the background ( ... ) & "
+        "SKILL.md Step 7 swe-workbench-clean-state-files call must NOT be inside the background ( ... ) & "
         "subshell — the reap must run foreground so failures are visible (recurrence of #428/#429)"
     )
 
 
 def test_pr_review_skill_state_cleanup_no_suppression():
-    """clean-state-files.sh call must have NO 2>/dev/null and NO || true guard.
+    """swe-workbench-clean-state-files call must have NO 2>/dev/null and NO || true guard.
 
     The reap runs foreground (fix for #428/#429 recurrence): suppression guards would re-hide
-    the same silent-orphan path. A non-zero exit from clean-state-files.sh is a real failure.
+    the same silent-orphan path. A non-zero exit from swe-workbench-clean-state-files is a real failure.
     """
     text = SKILL_MD.read_text()
-    # Find the line(s) containing clean-state-files.sh and assert none carry 2>/dev/null
+    # Find the line(s) containing swe-workbench-clean-state-files and assert none carry 2>/dev/null
     lines_with_reap = [
-        ln for ln in text.splitlines() if "clean-state-files.sh" in ln
+        ln for ln in text.splitlines() if "swe-workbench-clean-state-files" in ln
     ]
-    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    assert lines_with_reap, "SKILL.md must contain a swe-workbench-clean-state-files call"
     suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
     assert not suppressed, (
-        f"clean-state-files.sh call must not carry 2>/dev/null (foreground reap must be visible):\n"
+        f"swe-workbench-clean-state-files call must not carry 2>/dev/null (foreground reap must be visible):\n"
         + "\n".join(suppressed)
     )
 

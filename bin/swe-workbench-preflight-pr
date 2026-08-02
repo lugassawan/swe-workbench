@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Consolidated pre-flight for PR-review workflows.
-# Usage: preflight-pr.sh <PR> <out_json> [fields]
+# Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]
 #
 # Outputs KEY=VALUE lines (printf %q quoted) for eval:
 #   BASE  HEAD_SHA  AUTHOR_LOGIN  OWNER  REPO  STATE
@@ -9,21 +9,21 @@
 # eval "$(...)" enables code injection.  Read them from <out_json> with jq.
 #
 # Resolves sibling scripts via dirname "$0" so the script works correctly
-# even when cwd is an ephemeral PR worktree (CLAUDE_PLUGIN_ROOT may be unset).
+# from any cwd, including an ephemeral PR worktree.
 set -euo pipefail
 
-PR="${1:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
-OUT_JSON="${2:?Usage: preflight-pr.sh <PR> <out_json> [fields]}"
+PR="${1:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
+OUT_JSON="${2:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
 FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-bash "$SCRIPT_DIR/gh-timeout.sh" auth status >/dev/null || {
+bash "$SCRIPT_DIR/swe-workbench-gh-timeout" auth status >/dev/null || {
   echo "gh not authenticated. Run 'gh auth login'." >&2
   exit 1
 }
 
-bash "$SCRIPT_DIR/fetch-pr.sh" "$PR" "$OUT_JSON" "$FIELDS"
+bash "$SCRIPT_DIR/swe-workbench-fetch-pr" "$PR" "$OUT_JSON" "$FIELDS"
 
 BASE=$(jq -r .baseRefName     "$OUT_JSON")
 HEAD_SHA=$(jq -r .headRefOid  "$OUT_JSON")
@@ -33,13 +33,13 @@ STATE=$(jq -r .state          "$OUT_JSON")
 for _var in BASE HEAD_SHA AUTHOR_LOGIN STATE; do
   _val="${!_var}"
   if [ -z "$_val" ] || [ "$_val" = "null" ]; then
-    echo "preflight-pr.sh: field $_var is empty/null in $OUT_JSON — PR data may be incomplete." >&2
+    echo "swe-workbench-preflight-pr: field $_var is empty/null in $OUT_JSON — PR data may be incomplete." >&2
     exit 1
   fi
 done
 
-OWNER=$(bash "$SCRIPT_DIR/gh-timeout.sh" repo view --json owner -q .owner.login)
-REPO=$(bash "$SCRIPT_DIR/gh-timeout.sh" repo view --json name   -q .name)
+OWNER=$(bash "$SCRIPT_DIR/swe-workbench-gh-timeout" repo view --json owner -q .owner.login)
+REPO=$(bash "$SCRIPT_DIR/swe-workbench-gh-timeout" repo view --json name   -q .name)
 if [ -z "$OWNER" ] || [ "$OWNER" = "null" ] || [ -z "$REPO" ] || [ "$REPO" = "null" ]; then
   echo "Could not determine base repo owner/name. Run 'gh repo view' to verify the current remote is set correctly." >&2
   exit 1

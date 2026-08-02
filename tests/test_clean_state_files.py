@@ -1,4 +1,4 @@
-"""Tests for runtime/clean-state-files.sh — file-only state cleanup helper.
+"""Tests for bin/swe-workbench-clean-state-files — file-only state cleanup helper.
 
 Mirrors tests/test_clean_ephemeral.py.  Each test invokes the script as a
 subprocess.  Exit code 0 + file removed → allowed deletion.  Exit code 1 +
@@ -13,7 +13,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "clean-state-files.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-clean-state-files"
 ROOT = Path(__file__).parent.parent
 TMP = Path("/tmp")
 
@@ -47,7 +47,7 @@ def _tmp_addr_feedback_dir() -> Path:
 # ── script existence ──────────────────────────────────────────────────────────
 
 def test_script_exists_and_is_executable():
-    """runtime/clean-state-files.sh must exist and be executable."""
+    """bin/swe-workbench-clean-state-files must exist and be executable."""
     assert SCRIPT.exists(), f"missing {SCRIPT}"
     assert os.access(SCRIPT, os.X_OK), f"{SCRIPT} must be executable"
 
@@ -109,9 +109,14 @@ def test_accepts_two_pr_review_files(tmp_path):
     ("audit-emit", "md"),
     ("audit-emit", "cmd"),
     ("extend", "md"),
+    ("hotfix", "txt"),
+    ("cleanup-followup", "md"),
+    ("cleanup-followup", "cmd"),
+    ("bug-triage", "md"),
 ])
 def test_accepts_single_file_writer_patterns(prefix, ext, tmp_path):
-    """All four single-file-writer basename patterns under /tmp are accepted."""
+    """All single-file-writer basename patterns under /tmp are accepted, including the
+    three call sites (hotfix, cleanup-followup, bug-triage) that were previously rejected."""
     f = TMP / f"{prefix}-{tmp_path.name}.{ext}"
     f.write_text("test")
     try:

@@ -6,16 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/bash_guard.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/inject_plugin_root.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/bash_guard.sh"
           }
         ]
       },
@@ -24,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/skill_usage_record.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/skill_usage_record.sh"
           }
         ]
       },
@@ -33,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/worktree_permission_grant.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/worktree_permission_grant.sh"
           }
         ]
       },
@@ -42,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/secret_guard.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/secret_guard.py"
           }
         ]
       }
@@ -53,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/skill_autoload_hint.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/skill_autoload_hint.sh"
           }
         ]
       }
@@ -63,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/skill_usage_flush.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/skill_usage_flush.sh"
           }
         ]
       }
@@ -74,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
           }
         ]
       },
@@ -83,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
           }
         ]
       },
@@ -92,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PLUGIN_ROOT/hooks/workflow_resume_hint.sh"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
           }
         ]
       }

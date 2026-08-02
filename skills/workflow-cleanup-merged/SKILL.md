@@ -77,11 +77,11 @@ DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 
 Then invoke the companion script, passing the resolved default branch as `$2`:
 
 ```bash
-_RT="${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}"
-[ -f "$_RT/runtime/clean-state-files.sh" ] || {
-  echo "swe-workbench runtime scripts not found under $_RT/runtime — set CLAUDE_PLUGIN_ROOT and retry." >&2
+command -v swe-workbench-clean-state-files >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
 _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
 eval "$("$_SCRIPTS/sync-and-verify.sh" "<headRefName>" "$DEFAULT_BRANCH")"
 ```
@@ -113,14 +113,15 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 
 ### Step 5 — Residual Sweep (PR-scoped)
 ```bash
-_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
-eval "$("$_SCRIPTS/sweep-residuals.sh" "<number>")"
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"; eval "$("$_SCRIPTS/sweep-residuals.sh" "<number>")"
 ```
 This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `workflow-pr-review`, `workflow-pr-review-followup`, and `workflow-address-feedback` when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, and `#<number>`'s orphaned `/tmp` state JSON (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, so an interrupted session's local-only work is never silently discarded. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed by `eval` unless this sweep clears it first. The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0. After it runs, also delete any scratchpad files **you** (the agent executing this skill) created for this PR's review/feedback/cleanup work — scoped to `#<number>` only, never a blanket wipe of the scratchpad directory; the harness scratchpad path layout is undocumented and version-fragile, so this step stays prose guidance rather than shipped shell code.
 
 ### Step 6 — Delete Branches
 ```bash
-eval "$("$_SCRIPTS/delete-branches.sh" "<headRefName>")"
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"; eval "$("$_SCRIPTS/delete-branches.sh" "<headRefName>")"
 ```
 The script self-detects `MAIN_REPO` and anchors `cd` internally. It emits exactly two `KEY=VALUE` lines:
 - `LOCAL_DELETED=0|1` — `1` if the script deleted the local branch; `0` if it was already gone.
@@ -170,8 +171,8 @@ Execute the first strategy whose preconditions hold. Fall through to the next if
 
 1. `core.hooksPath` resolves to a directory containing an executable `post-merge` file that invokes `rimba clean --merged --force`. Detection:
    ```bash
-   _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
-   eval "$("$_SCRIPTS/check-rimba-hook.sh")"
+   _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+   _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"; eval "$("$_SCRIPTS/check-rimba-hook.sh")"
    ```
    `RIMBA_HOOK_ACTIVE=1` is required. (The grep inside the script excludes comment-only lines so a documented-but-disabled invocation does not yield a false positive.)
 2. After Step 3 sync, HEAD on `$MAIN_REPO` is on `$DEFAULT_BRANCH` (the hook's own branch guard requires it).
@@ -191,8 +192,8 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 **Preconditions:**
 - rimba MCP server is active in the session, OR the rimba binary resolves on PATH or a known install location:
   ```bash
-  _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
-  RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
+  _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+  _SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"; RIMBA=$("$_SCRIPTS/resolve-rimba.sh")
   ```
   `RIMBA` must be non-empty (or MCP server active).
 
@@ -227,8 +228,8 @@ If the rimba `remove` or `clean` (MCP tool or `$RIMBA` binary) reports failure, 
 Run the companion script and eval its `KEY=VALUE` output:
 
 ```bash
-_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"
-eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
+_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
+_SCRIPTS="$_RT/skills/workflow-cleanup-merged/scripts"; eval "$("$_SCRIPTS/probe-worktree.sh" "<headRefName>")"
 ```
 
 - `WORKTREE`: matching worktree path, or empty if none (skip Batch B when empty).

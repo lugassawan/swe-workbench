@@ -189,27 +189,27 @@ def test_cleanup_merged_step8_gates_on_marker():
 
 
 def test_hotfix_skill_reaps_marker_stamp_temp_file():
-    """SKILL.md Phase 3 must reap /tmp/hotfix-pr-body-<N>.txt via clean-state-files.sh after
+    """SKILL.md Phase 3 must reap /tmp/hotfix-pr-body-<N>.txt via swe-workbench-clean-state-files after
     the marker lands — otherwise every hotfix PR leaves a stray temp file behind."""
     text = SKILL_MD.read_text()
     phase3 = text.split("## Phase 3")[1].split("## Phase 4")[0]
-    assert "clean-state-files.sh" in phase3, (
-        "Phase 3 must call runtime/clean-state-files.sh to reap /tmp/hotfix-pr-body-<N>.txt"
+    assert "swe-workbench-clean-state-files" in phase3, (
+        "Phase 3 must call swe-workbench-clean-state-files to reap /tmp/hotfix-pr-body-<N>.txt"
     )
     assert "/tmp/hotfix-pr-body-<N>.txt" in phase3, (
-        "Phase 3 must pass /tmp/hotfix-pr-body-<N>.txt to clean-state-files.sh"
+        "Phase 3 must pass /tmp/hotfix-pr-body-<N>.txt to swe-workbench-clean-state-files"
     )
 
 
 def test_hotfix_skill_phase5_names_and_reaps_its_temp_file():
     """SKILL.md Phase 5 must name an explicit temp-file path (not leave it implicit) and
-    reap it via clean-state-files.sh, same as Phase 3."""
+    reap it via swe-workbench-clean-state-files, same as Phase 3."""
     text = SKILL_MD.read_text()
     phase5 = text.split("## Phase 5")[1].split("## Project Detection")[0]
     assert "/tmp/hotfix-pr-body-<N>.txt" in phase5, (
         "Phase 5 must name its temp-file path explicitly, not leave it as an unnamed "
         "'a temp file'"
     )
-    assert "clean-state-files.sh" in phase5, (
-        "Phase 5 must reap its temp file via runtime/clean-state-files.sh, same as Phase 3"
+    assert "swe-workbench-clean-state-files" in phase5, (
+        "Phase 5 must reap its temp file via swe-workbench-clean-state-files, same as Phase 3"
     )

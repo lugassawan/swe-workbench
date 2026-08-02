@@ -37,7 +37,7 @@ esac
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_clean_contract; exit 0; }
 ROOT_DIR=$(cd "$SCRIPT_DIR/../../.." && pwd) || { emit_clean_contract; exit 0; }
-RUNTIME_DIR="$ROOT_DIR/runtime"
+BIN_DIR="$ROOT_DIR/bin"
 RIMBA=$("$SCRIPT_DIR/resolve-rimba.sh" 2>/dev/null) || RIMBA=""
 
 SWEPT_WORKTREES=0
@@ -70,9 +70,9 @@ for f in "${STATE_FILES[@]}"; do
 done
 
 if [ "${#TO_REAP[@]}" -gt 0 ]; then
-  # clean-state-files.sh validates all args before deleting any and exits 1 on
-  # the first invalid one — never let that abort us under set -e.
-  "$RUNTIME_DIR/clean-state-files.sh" "${TO_REAP[@]}" >/dev/null 2>&1 || true
+  # swe-workbench-clean-state-files validates all args before deleting any and
+  # exits 1 on the first invalid one — never let that abort us under set -e.
+  "$BIN_DIR/swe-workbench-clean-state-files" "${TO_REAP[@]}" >/dev/null 2>&1 || true
   for f in "${TO_REAP[@]}"; do
     [ -e "$f" ] || SWEPT_STATE_FILES=$((SWEPT_STATE_FILES + 1))
   done
@@ -146,7 +146,7 @@ if [ -n "${MAIN_REPO:-}" ]; then
         git branch -D "$label" >/dev/null 2>&1 || true
       fi
       if [ -d "$path" ]; then
-        "$RUNTIME_DIR/clean-ephemeral.sh" "$path" >/dev/null 2>&1 || true
+        "$BIN_DIR/swe-workbench-clean-ephemeral" "$path" >/dev/null 2>&1 || true
       fi
     fi
 

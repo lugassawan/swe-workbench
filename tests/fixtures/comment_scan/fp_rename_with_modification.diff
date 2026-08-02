@@ -1,0 +1,24 @@
+diff --git a/pkg/old_widget.go b/pkg/new_widget.go
+similarity index 60%
+rename from pkg/old_widget.go
+rename to pkg/new_widget.go
+index 1111111..2222222 100644
+--- a/pkg/old_widget.go
++++ b/pkg/new_widget.go
+@@ -1,10 +1,13 @@
+ package pkg
+
+-// Widget represents a configurable widget with a name and size that
+-// callers can render onto the current frame buffer without needing
+-// to understand the underlying rasterization pipeline at all.
++// Widget represents a configurable widget with a name and size that
++// callers can render onto the current frame buffer without needing
++// to understand the underlying rasterization pipeline at all.
+ type Widget struct {
+ 	Name string
+ 	Size int
+ }
++
++func helper() {
++	// w := &Widget{Name: name, Size: size}
++}

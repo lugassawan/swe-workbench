@@ -1,0 +1,66 @@
+diff --git a/big.py b/big.py
+index 1111111..2222222 100644
+--- a/big.py
++++ b/big.py
+@@ -1,1 +1,61 @@
+ import os
++# checkpoint
++value_1 = 1
++value_2 = 2
++# checkpoint
++value_3 = 3
++value_4 = 4
++# checkpoint
++value_5 = 5
++value_6 = 6
++# checkpoint
++value_7 = 7
++value_8 = 8
++# checkpoint
++value_9 = 9
++value_10 = 10
++# checkpoint
++value_11 = 11
++value_12 = 12
++# checkpoint
++value_13 = 13
++value_14 = 14
++# checkpoint
++value_15 = 15
++value_16 = 16
++# checkpoint
++value_17 = 17
++value_18 = 18
++# checkpoint
++value_19 = 19
++value_20 = 20
++# checkpoint
++value_21 = 21
++value_22 = 22
++# checkpoint
++value_23 = 23
++value_24 = 24
++# checkpoint
++value_25 = 25
++value_26 = 26
++# checkpoint
++value_27 = 27
++value_28 = 28
++# checkpoint
++value_29 = 29
++value_30 = 30
++# checkpoint
++value_31 = 31
++value_32 = 32
++# checkpoint
++value_33 = 33
++value_34 = 34
++# checkpoint
++value_35 = 35
++value_36 = 36
++# checkpoint
++value_37 = 37
++value_38 = 38
++# checkpoint
++value_39 = 39
++value_40 = 40

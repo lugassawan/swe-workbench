@@ -46,20 +46,20 @@ def test_address_feedback_triggers_txt():
 
 
 def test_address_feedback_skill_references_reply_rest_endpoint():
-    """SKILL.md must reference the reply REST endpoint directly or via reply-and-resolve.sh."""
+    """SKILL.md must reference the reply REST endpoint directly or via swe-workbench-reply-and-resolve."""
     text = SKILL_MD.read_text()
-    assert re.search(r"pulls/.*comments/.*replies", text) or "reply-and-resolve.sh" in text, (
+    assert re.search(r"pulls/.*comments/.*replies", text) or "swe-workbench-reply-and-resolve" in text, (
         "SKILL.md must either reference the REST reply endpoint pattern "
-        "(pulls/{N}/comments/{id}/replies) or invoke runtime/reply-and-resolve.sh"
+        "(pulls/{N}/comments/{id}/replies) or invoke swe-workbench-reply-and-resolve"
     )
 
 
 def test_address_feedback_skill_references_resolve_mutation():
-    """SKILL.md must reference resolveReviewThread directly or via reply-and-resolve.sh."""
+    """SKILL.md must reference resolveReviewThread directly or via swe-workbench-reply-and-resolve."""
     text = SKILL_MD.read_text()
-    assert "resolveReviewThread" in text or "reply-and-resolve.sh" in text, (
+    assert "resolveReviewThread" in text or "swe-workbench-reply-and-resolve" in text, (
         "SKILL.md must reference the resolveReviewThread GraphQL mutation "
-        "or delegate to runtime/reply-and-resolve.sh"
+        "or delegate to swe-workbench-reply-and-resolve"
     )
 
 
@@ -95,12 +95,12 @@ def test_address_feedback_skill_no_fragile_owner_extraction():
 
 
 def test_address_feedback_skill_has_owner_repo_guard_clause():
-    """preflight-pr.sh must include a guard clause that exits if OWNER or REPO cannot be determined."""
-    # Fix A moved the OWNER/REPO guard to runtime/preflight-pr.sh
-    text = (ROOT / "runtime" / "preflight-pr.sh").read_text()
+    """preflight-pr must include a guard clause that exits if OWNER or REPO cannot be determined."""
+    # Fix A moved the OWNER/REPO guard to bin/swe-workbench-preflight-pr
+    text = (ROOT / "bin" / "swe-workbench-preflight-pr").read_text()
     assert re.search(r"Could not determine base repo owner", text), (
-        "runtime/preflight-pr.sh must include the guard-clause error message for missing OWNER/REPO "
-        "so failures produce an actionable error rather than silently misrouting API calls"
+        "bin/swe-workbench-preflight-pr must include the guard-clause error message for missing "
+        "OWNER/REPO so failures produce an actionable error rather than silently misrouting API calls"
     )
 
 
@@ -193,8 +193,8 @@ def test_address_feedback_skill_phase6_apply_is_preview_gated():
     assert re.search(r"Reply\s+`yes`", phase6), (
         "Phase 6 must gate the metadata update behind 'Reply `yes`' (same convention as Phase 1)"
     )
-    assert "sync-pr-metadata.sh" in phase6, (
-        "Phase 6 must apply the revision via runtime/sync-pr-metadata.sh"
+    assert "swe-workbench-sync-pr-metadata" in phase6, (
+        "Phase 6 must apply the revision via swe-workbench-sync-pr-metadata"
     )
 
 
@@ -356,10 +356,10 @@ def test_address_feedback_skill_skips_already_clarified_threads():
 # --- Cleanup call-site assertions (guard bypass fix) ---
 
 def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
-    """Phase 6 fallback must invoke clean-ephemeral.sh, not bare rm -rf "$WT"."""
+    """Phase 6 fallback must invoke swe-workbench-clean-ephemeral, not bare rm -rf "$WT"."""
     text = SKILL_MD.read_text()
-    assert "clean-ephemeral.sh" in text, (
-        "SKILL.md Phase 6 fallback must use runtime/clean-ephemeral.sh — "
+    assert "swe-workbench-clean-ephemeral" in text, (
+        "SKILL.md Phase 6 fallback must use swe-workbench-clean-ephemeral — "
         "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
     )
 
@@ -374,7 +374,7 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
         and "clean-ephemeral" not in line
     ]
     assert not lines_with_rm, (
-        f"Found bare rm -rf \"$WT\" lines in Phase 6 (should use clean-ephemeral.sh):\n"
+        f"Found bare rm -rf \"$WT\" lines in Phase 6 (should use swe-workbench-clean-ephemeral):\n"
         + "\n".join(lines_with_rm)
     )
 
@@ -382,19 +382,19 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_address_feedback_skill_deletes_three_state_files():
-    """Phase 5 success path must invoke clean-state-files.sh with all three state files."""
+    """Phase 5 success path must invoke swe-workbench-clean-state-files with all three state files."""
     text = SKILL_MD.read_text()
-    assert "clean-state-files.sh" in text, (
-        "SKILL.md must call runtime/clean-state-files.sh to remove address-feedback state files"
+    assert "swe-workbench-clean-state-files" in text, (
+        "SKILL.md must call swe-workbench-clean-state-files to remove address-feedback state files"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to clean-state-files.sh"
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to swe-workbench-clean-state-files"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}-threads.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to clean-state-files.sh"
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to swe-workbench-clean-state-files"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}-triage.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to clean-state-files.sh"
+        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to swe-workbench-clean-state-files"
     )
 
 
@@ -444,17 +444,17 @@ def test_address_feedback_skill_phase6_does_not_delete_triage_json():
 
 
 def test_address_feedback_skill_phase5_reap_no_suppression():
-    """Phase 5 clean-state-files.sh call must have NO 2>/dev/null suppression.
+    """Phase 5 swe-workbench-clean-state-files call must have NO 2>/dev/null suppression.
 
     The reap runs foreground; suppression would recreate the silent-orphan path
     that was the root cause of the #428/#429 recurrence.
     """
     text = SKILL_MD.read_text()
-    lines_with_reap = [ln for ln in text.splitlines() if "clean-state-files.sh" in ln]
-    assert lines_with_reap, "SKILL.md must contain a clean-state-files.sh call"
+    lines_with_reap = [ln for ln in text.splitlines() if "swe-workbench-clean-state-files" in ln]
+    assert lines_with_reap, "SKILL.md must contain a swe-workbench-clean-state-files call"
     suppressed = [ln for ln in lines_with_reap if "2>/dev/null" in ln]
     assert not suppressed, (
-        "clean-state-files.sh call must not carry 2>/dev/null — "
+        "swe-workbench-clean-state-files call must not carry 2>/dev/null — "
         "foreground reap must be visible so orphaned state files surface as failures:\n"
         + "\n".join(suppressed)
     )
@@ -540,10 +540,10 @@ def test_address_feedback_skill_keys_pr_comments_namespaced():
 
 
 def test_address_feedback_skill_phase5_dispatches_issue_kind():
-    """Phase 5 must dispatch reply-and-resolve.sh with KIND=issue and empty comment-id/thread-id for PR comments."""
+    """Phase 5 must dispatch swe-workbench-reply-and-resolve with KIND=issue and empty comment-id/thread-id for PR comments."""
     text = SKILL_MD.read_text()
-    assert re.search(r'reply-and-resolve\.sh.*\n.*"\$OWNER" "\$REPO" "\$PR" "" "" "\$REPLY_BODY" "issue"', text), (
-        'SKILL.md Phase 5 must call reply-and-resolve.sh with '
+    assert re.search(r'swe-workbench-reply-and-resolve.*\n.*"\$OWNER" "\$REPO" "\$PR" "" "" "\$REPLY_BODY" "issue"', text), (
+        'SKILL.md Phase 5 must call swe-workbench-reply-and-resolve with '
         '"$OWNER" "$REPO" "$PR" "" "" "$REPLY_BODY" "issue" for PR comments — '
         "empty COMMENT_DATABASEID/THREAD_ID (PR comments have no thread) and explicit issue KIND"
     )
@@ -560,7 +560,7 @@ def test_address_feedback_skill_reply_body_embeds_handled_marker():
 
 
 def test_address_feedback_skill_pr_comments_state_file_in_reap():
-    """Phase 5 reap must include ${PR}-pr-comments.json in both the clean-state-files.sh call and the report loop."""
+    """Phase 5 reap must include ${PR}-pr-comments.json in both the swe-workbench-clean-state-files call and the report loop."""
     text = SKILL_MD.read_text()
     assert "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" in text, (
         "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-pr-comments.json "
@@ -569,7 +569,7 @@ def test_address_feedback_skill_pr_comments_state_file_in_reap():
     lines_with_path = [ln for ln in text.splitlines() if "${PR}-pr-comments.json" in ln]
     assert len(lines_with_path) >= 2, (
         "SKILL.md must reference ${PR}-pr-comments.json at least twice — once in the "
-        "clean-state-files.sh call and once in the post-reap report loop"
+        "swe-workbench-clean-state-files call and once in the post-reap report loop"
     )
 
 

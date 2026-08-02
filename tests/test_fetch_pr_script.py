@@ -1,4 +1,4 @@
-"""Tests for runtime/fetch-pr.sh — PR metadata fetcher with error handling.
+"""Tests for bin/swe-workbench-fetch-pr — PR metadata fetcher with error handling.
 
 Each test invokes the script as a subprocess with a fake `gh` stub prepended
 to PATH, mirroring the test_clean_ephemeral.py / test_clean_state_files.py pattern.
@@ -17,7 +17,7 @@ import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "runtime" / "fetch-pr.sh"
+SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-fetch-pr"
 ROOT = Path(__file__).parent.parent
 
 

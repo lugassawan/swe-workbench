@@ -2,6 +2,7 @@
 name: principle-api-design
 description: API design principles — contract-first thinking, semantic versioning, idempotency keys, pagination (offset vs cursor), error shape consistency, evolvability and backward compatibility, REST vs RPC vs event-driven trade-offs, hypermedia, resource modeling, deprecation strategy. Auto-load when designing an API, choosing REST or RPC or events, adding api versioning, designing idempotent endpoints, adding pagination, shaping error responses, deprecating an endpoint, or evolving a public contract.
 ---
+<!-- preload-canary: SWB-PRELOAD-PRINCIPLE-API-DESIGN -->
 
 # API Design
 

@@ -22,10 +22,10 @@ def test_doctor_command_file_exists():
 
 
 def test_doctor_mentions_probe_targets():
-    """commands/doctor.md must reference the probe script and each tool name."""
+    """commands/doctor.md must reference the probe command and each tool name."""
     assert DOCTOR_CMD.exists(), "commands/doctor.md must exist"
     text = DOCTOR_CMD.read_text()
-    assert "runtime/doctor.sh" in text, "doctor.md must reference runtime/doctor.sh"
+    assert "swe-workbench-doctor" in text, "doctor.md must reference swe-workbench-doctor"
     for tool in ("gh", "git", "jq", "rimba", "claude"):
         assert tool in text, f"doctor.md must mention probe target '{tool}'"
 
@@ -73,16 +73,16 @@ def test_doctor_in_readme():
 
 
 def test_doctor_invokes_script_portably():
-    """doctor.md must invoke the script via a CLAUDE_PLUGIN_ROOT-derived path
-    (portable for plugin installs, #328), guarded so an empty
-    CLAUDE_PLUGIN_ROOT fails loudly instead of silently resolving to a bare
-    relative path (#530)."""
+    """doctor.md must invoke the bare swe-workbench-doctor command (portable for
+    plugin installs via the bin/ PATH entry, #560), guarded so a missing
+    command fails loudly instead of silently falling back to inline gh/jq
+    (#530)."""
     text = DOCTOR_CMD.read_text()
-    assert "CLAUDE_PLUGIN_ROOT" in text, (
-        "doctor.md must reference CLAUDE_PLUGIN_ROOT for plugin-install portability"
+    assert "command -v swe-workbench-doctor" in text, (
+        "doctor.md must guard with a command -v swe-workbench-doctor preflight"
     )
-    assert "$_RT/runtime/doctor.sh" in text, (
-        "doctor.md must invoke the script via $_RT (bound from CLAUDE_PLUGIN_ROOT) after the guard"
+    assert "swe-workbench-doctor" in text, (
+        "doctor.md must invoke the bare swe-workbench-doctor command after the guard"
     )
     assert "bash scripts/doctor.sh" not in text, (
         "doctor.md must not invoke the script via a non-portable bare relative path"

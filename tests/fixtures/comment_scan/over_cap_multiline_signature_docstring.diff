@@ -1,0 +1,25 @@
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,1 +1,21 @@
+ import math
++def compute_total(
++    items,
++    tax_rate,
++    discount,
++    currency,
++    rounding_mode,
++    audit_log,
++    dry_run,
++):
++    """Compute the taxed, discounted total price of items.
++
++    Applies tax then discount, rounds using the given rounding mode, and
++    writes an audit log entry unless dry_run is set. Raises ValueError if
++    tax_rate or discount is negative, since neither is valid in this
++    domain. Callers in a request-handling context should validate
++    user-supplied rates before calling this function directly. It also
++    logs a warning the first time dry_run suppresses a real write.
++    """
++    return round(sum(i.price for i in items) * (1 + tax_rate) * (1 - discount), 2)

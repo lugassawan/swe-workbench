@@ -45,6 +45,54 @@ class TestParseFrontmatter:
         fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
         assert fm == {"name": "x"}
 
+    def test_empty_value_no_items_stays_empty_string(self, tmp_path):
+        text = "---\nname: x\ntools:\ndescription: A skill\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["tools"] == ""
+
+    def test_block_sequence_becomes_list(self, tmp_path):
+        text = "---\nname: x\nskills:\n  - swe-workbench:principle-code-review\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review"]
+
+    def test_scalar_then_orphan_dash_line_does_not_attach(self, tmp_path):
+        text = "---\nname: x\ndescription: A skill\n- orphan\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["name"] == "x"
+        assert fm["description"] == "A skill"
+        assert "- orphan" not in fm.values()
+
+    def test_multiple_block_sequences_in_one_block(self, tmp_path):
+        text = (
+            "---\n"
+            "name: x\n"
+            "skills:\n"
+            "  - swe-workbench:principle-code-review\n"
+            "  - swe-workbench:principle-tdd\n"
+            "tools:\n"
+            "  - Read\n"
+            "  - Write\n"
+            "---\nBody"
+        )
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review", "swe-workbench:principle-tdd"]
+        assert fm["tools"] == ["Read", "Write"]
+
+    def test_block_sequence_survives_blank_line_before_items(self, tmp_path):
+        text = "---\nname: x\nskills:\n\n  - swe-workbench:principle-code-review\n---\nBody"
+        fm = validate.parse_frontmatter(tmp_path / "x.md", text=text)
+        assert fm["skills"] == ["swe-workbench:principle-code-review"]
+
+    def test_live_tree_agent_tools_still_str(self):
+        agents_dir = validate.ROOT / "agents"
+        for agent_md in sorted(agents_dir.glob("*.md")):
+            fm = validate.parse_frontmatter(agent_md)
+            assert fm is not None
+            if "tools" in fm:
+                assert isinstance(fm["tools"], str), (
+                    f"{agent_md}: tools frontmatter unexpectedly parsed as {type(fm['tools'])}"
+                )
+
 
 # ──────────────────────────────────────────────
 # check_plugin_json
@@ -210,6 +258,207 @@ class TestCheckHooksJson:
         make_plugin_tree(root, hooks_json=bad)
         validate.check_hooks_json()
         assert any("PreToolUse[0].hooks[0] must be an object" in f for f in validate.FAILURES)
+
+    def test_conforming_command_shape_passes(self, reset_validate):
+        root = reset_validate
+        good = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh'}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=good)
+        validate.check_hooks_json()
+        assert len(validate.FAILURES) == 0
+
+    def test_unquoted_command_fails_shape(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/hooks/x.sh"}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("does not match the required shape" in f for f in validate.FAILURES)
+
+    def test_bare_path_command_fails_shape(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": '"${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh'}],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("does not match the required shape" in f for f in validate.FAILURES)
+
+    def test_if_key_fails(self, reset_validate):
+        root = reset_validate
+        bad = {
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh',
+                        "if": "Bash(git *)",
+                    }],
+                }]
+            }
+        }
+        make_plugin_tree(root, hooks_json=bad)
+        validate.check_hooks_json()
+        assert any("carries an 'if' condition" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_hook_script_permissions
+# ──────────────────────────────────────────────
+
+class TestCheckHookScriptPermissions:
+    def test_conforming_permissions_pass(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o755)
+        validate.check_hook_script_permissions()
+        assert len(validate.FAILURES) == 0
+
+    def test_umask_002_mode_0775_still_passes(self, reset_validate):
+        """A checkout under umask 002 legitimately produces 0775 for a file
+        git tracks as executable — must not be a spurious failure (only the
+        exec bit matters, not the exact mode)."""
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o775)
+        validate.check_hook_script_permissions()
+        assert len(validate.FAILURES) == 0
+
+    def test_not_executable_fails(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.sh"
+        script.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        script.chmod(0o644)
+        validate.check_hook_script_permissions()
+        assert any("must be executable" in f for f in validate.FAILURES)
+
+    def test_python_hook_checked_too(self, reset_validate):
+        root = reset_validate
+        hooks_dir = root / "hooks"
+        hooks_dir.mkdir(exist_ok=True)
+        script = hooks_dir / "example.py"
+        script.write_text("#!/usr/bin/env python3\nprint('hi')\n", encoding="utf-8")
+        script.chmod(0o644)
+        validate.check_hook_script_permissions()
+        assert any("example.py" in f and "must be executable" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_bin_wrappers
+# ──────────────────────────────────────────────
+
+class TestCheckBinWrappers:
+    def test_conforming_wrapper_passes(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+    def test_unprefixed_wrapper_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must be prefixed swe-workbench-" in f for f in validate.FAILURES)
+
+    def test_non_executable_wrapper_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o644)
+        validate.check_bin_wrappers()
+        assert any("not executable" in f for f in validate.FAILURES)
+
+    def test_bad_shebang_fails(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("echo hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must start with a #!/usr/bin/env" in f for f in validate.FAILURES)
+
+    def test_readme_does_not_fail(self, reset_validate):
+        """bin/README.md documents the wrapper convention and is not a wrapper itself —
+        it must not be flagged for missing the swe-workbench- prefix or exec bit."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        readme = bin_dir / "README.md"
+        readme.write_text("# bin/\n", encoding="utf-8")
+        readme.chmod(0o644)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+    def test_umask_002_mode_0775_passes(self, reset_validate):
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o775)
+        validate.check_bin_wrappers()
+        assert len(validate.FAILURES) == 0
+
+    def test_sh_suffix_fails(self, reset_validate):
+        """#571 collapsed runtime/ into bin/ — bin/ scripts are bare command names,
+        never carrying a .sh/.py extension."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "swe-workbench-example.sh"
+        wrapper.write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        validate.check_bin_wrappers()
+        assert any("must be a bare command name" in f for f in validate.FAILURES)
+
+    def test_runtime_dir_reappearing_fails(self, reset_validate):
+        """A reappearing runtime/ means the wrapper/script split from before #571 is
+        being silently reintroduced — this must fail loudly, not no-op."""
+        root = reset_validate
+        bin_dir = root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        runtime_dir = root / "runtime"
+        runtime_dir.mkdir(exist_ok=True)
+        (runtime_dir / "example.sh").write_text("#!/usr/bin/env bash\necho hi\n", encoding="utf-8")
+        validate.check_bin_wrappers()
+        assert any("runtime/ must not exist" in f for f in validate.FAILURES)
 
 
 # ──────────────────────────────────────────────
@@ -684,6 +933,112 @@ class TestCheckAgentSkillRefs:
 
 
 # ──────────────────────────────────────────────
+# check_preloaded_skills
+# ──────────────────────────────────────────────
+
+class TestCheckPreloadedSkills:
+    def _skill(self, skill_id, canary=True):
+        canary_line = f"<!-- preload-canary: SWB-PRELOAD-{skill_id.upper()} -->\n" if canary else ""
+        return f"---\nname: {skill_id}\ndescription: d\n---\n{canary_line}\nBody.\n"
+
+    def _agent(self, root, name, skills_block, body_extra):
+        (root / "agents" / f"{name}.md").write_text(
+            f"---\nname: {name}\ndescription: d\ntools: Read, Skill\n{skills_block}---\n"
+            f"\n{body_extra}\n> See @./shared/principles.md\n",
+            encoding="utf-8",
+        )
+
+    def test_well_formed_preload_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_agent_without_skills_key_is_skipped(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(root, "my-agent", "", "No preload here.")
+        validate.check_preloaded_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_bare_unnamespaced_entry_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("not namespaced" in f for f in validate.FAILURES)
+
+    def test_unresolvable_skill_id_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-missing\n",
+            "- `swe-workbench:principle-missing` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any(
+            "does not resolve to skills/principle-missing/SKILL.md" in f
+            for f in validate.FAILURES
+        )
+
+    def test_missing_body_backtick_does_not_fail(self, reset_validate):
+        """Body-bullet retention is no longer required — check_unwired_principle_skills
+        (not check_preloaded_skills) is what enforces wiring, and it accepts
+        frontmatter-only wiring too."""
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "No body reference here.",
+        )
+        validate.check_preloaded_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_missing_canary_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": self._skill("principle-foo", canary=False)},
+        )
+        self._agent(
+            root, "my-agent",
+            "skills:\n  - swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("preload-canary" in f for f in validate.FAILURES)
+
+    def test_scalar_skills_value_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"principle-foo": self._skill("principle-foo")})
+        self._agent(
+            root, "my-agent",
+            "skills: swe-workbench:principle-foo\n",
+            "- `swe-workbench:principle-foo` — rationale",
+        )
+        validate.check_preloaded_skills()
+        assert any("block sequence" in f for f in validate.FAILURES)
+
+    def test_empty_skills_value_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        self._agent(root, "my-agent", "skills:\n", "No preload here.")
+        validate.check_preloaded_skills()
+        assert any("block sequence" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
 # check_command_skill_refs
 # ──────────────────────────────────────────────
 
@@ -780,15 +1135,21 @@ class TestTestReviewerAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_principle_code_review_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-code-review`" in text, (
-            "agent must reference swe-workbench:principle-code-review"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-code-review`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-code-review" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-code-review (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -1568,6 +1929,25 @@ class TestCheckUnwiredPrincipleSkills:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             self._agent_body("\n- `swe-workbench:principle-foo` — rationale\n"),
+            encoding="utf-8",
+        )
+        validate.check_unwired_principle_skills()
+        assert len(validate.FAILURES) == 0
+
+    def test_frontmatter_only_wiring_passes(self, reset_validate):
+        """A skill listed only in an agent's 'skills:' frontmatter (no
+        backticked body mention) counts as wired on its own — retention of
+        a body bullet is no longer required once a skill is preloaded."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"},
+        )
+        agents_dir = root / "agents"
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n"
+            "skills:\n  - swe-workbench:principle-foo\n---\n"
+            "\nSee @./shared/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_unwired_principle_skills()
@@ -2496,9 +2876,12 @@ class TestE2eTestWriterAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -2572,9 +2955,12 @@ class TestE2eTestVerifierAgent:
 
     def test_principle_testing_wired(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "`swe-workbench:principle-testing`" in text, (
-            "agent must reference swe-workbench:principle-testing"
+        fm = validate.parse_frontmatter(self.AGENT_PATH, text=text)
+        fm_skills = fm.get("skills") if fm else None
+        wired = "`swe-workbench:principle-testing`" in text or (
+            isinstance(fm_skills, list) and "swe-workbench:principle-testing" in fm_skills
         )
+        assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -2762,3 +3148,477 @@ class TestPhase4DispatchesBothReviewers:
             "Phase 4 dispatch sites are missing required tokens (#458):\n"
             + "\n".join(f"  {f}" for f in failures)
         )
+
+
+# ──────────────────────────────────────────────
+# check_no_echo_var_hazard
+# ──────────────────────────────────────────────
+
+class TestCheckNoEchoVarHazard:
+    """zsh (the user's likely login shell) expands backslash escapes in echo's
+    argument, corrupting embedded JSON piped or redirected through it (#549).
+    See docs/shell-echo-vs-printf.md."""
+
+    def _skill_with_block(self, root, name, block_lines):
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"---\nname: {name}\ndescription: d\n---\n\n"
+            "```bash\n" + "\n".join(block_lines) + "\n```\n"
+        )
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    # ── must flag ──
+
+    def test_echo_redirect_to_file_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" > /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f and "printf" in f for f in validate.FAILURES)
+
+    def test_echo_append_redirect_to_file_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" >> /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_piped_into_python_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(
+            root, "my-skill",
+            ["PR_STATE=$(echo \"$PR_JSON\" | python3 -c 'import sys; print(sys.stdin.read())')"],
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_piped_into_grep_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["echo \"$RESP\" | grep -q '422'"])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    # ── must not flag ──
+
+    def test_echo_literal_string_no_variable_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "literal status message"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_to_stderr_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "warn: $x" >&2'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_non_echo_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh api foo > "$STATE_FILE"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_non_echo_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["cmd 2>/dev/null"])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_with_logical_or_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$x" || true'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_printf_correct_form_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["printf '%s' \"$JSON\" > /tmp/payload.json"])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_with_ampersand_bounded_command_passes(self, reset_validate):
+        """A benign echo followed by an unrelated '&&'-joined piped command
+        must not be misattributed as the echo's own hazard."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$a" && ls | wc -l'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_quoted_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$VAR" > "/dev/null"'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    # ── quote-aware / command-position hardening ──
+
+    def test_echo_json_with_embedded_semicolon_flags(self, reset_validate):
+        """A literal ';' inside the quoted argument must not truncate the
+        scan before the real pipe that follows it on the same line."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON; extra" | grep -q x'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_in_brace_group_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['{ echo "$JSON" | tee out; }'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_in_case_arm_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['  a) echo "$JSON" > out ;;'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    # ── structural coverage ──
+
+    def test_reference_subdir_file_is_scanned(self, reset_validate):
+        root = reset_validate
+        ref_dir = root / "skills" / "my-skill" / "reference"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / "notes.md").write_text(
+            "# Notes\n\n```bash\necho \"$JSON\" > /tmp/payload.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("reference/notes.md" in f for f in validate.FAILURES)
+
+    def test_prose_mention_outside_fence_is_ignored(self, reset_validate):
+        root = reset_validate
+        skill_dir = root / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: d\n---\n\n"
+            "Don't echo $JSON straight to a file — pipe it through printf instead.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_commands_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```bash\necho \"$JSON\" > /tmp/x.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("my-cmd.md" in f for f in validate.FAILURES)
+
+    def test_agents_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n```bash\necho \"$JSON\" > /tmp/x.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_echo_var_hazard()
+        assert any("my-agent.md" in f for f in validate.FAILURES)
+
+    def test_live_tree_has_zero_violations(self, reset_validate, monkeypatch):
+        """After the existing-site normalization (issue #549), the real tree is clean."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_echo_var_hazard()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+    # ── PR #564 review follow-ups ──
+
+    def test_echo_ampersand_greater_redirect_flags(self, reset_validate):
+        """'&>'/'&>>' (combined stdout+stderr redirect) must not be misread as
+        a bare '&'/'&&' command separator — it's a real file redirect."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" &> /tmp/out.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_ampersand_greater_append_redirect_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" &>> /tmp/out.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_ampersand_greater_devnull_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" &> /dev/null'])
+        validate.check_no_echo_var_hazard()
+        assert validate.FAILURES == []
+
+    def test_echo_command_substitution_flags(self, reset_validate):
+        """The escape-expansion risk applies to whatever string is echoed,
+        not just bare variables — $(...) carries the same risk."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$(cat file.json)" > out.txt'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_backtick_substitution_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "`cat file.json`" > out.txt'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_echo_line_continuation_flags(self, reset_validate):
+        """A hazard split across a backslash line-continuation is one logical
+        bash command and must not evade per-physical-line scanning."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" \\', '  > /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_odd_triple_trailing_backslash_is_a_continuation(self, reset_validate):
+        """3 trailing backslashes: the last is unescaped (odd parity), so this
+        IS still a continuation — a fixed 1-vs-2 suffix check would miss it."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['echo "$JSON" \\\\\\', '  > /tmp/payload.json'])
+        validate.check_no_echo_var_hazard()
+        assert any("echo" in f for f in validate.FAILURES)
+
+    def test_escaped_trailing_backslash_is_not_a_continuation(self, reset_validate):
+        """A line ending in an escaped '\\\\' (literal backslash) is NOT a
+        bash line-continuation — must not be joined with the next line."""
+        root = reset_validate
+        self._skill_with_block(
+            root, "my-skill",
+            ['echo "literal ending in backslash \\\\"', 'echo "$OTHER" | grep x'],
+        )
+        validate.check_no_echo_var_hazard()
+        # The second line is its own independent hazard — still flagged, and
+        # exactly once — a wrongful join would either merge it into a single
+        # (differently-worded) violation or mask it entirely.
+        assert len(validate.FAILURES) == 1
+        assert "echo" in validate.FAILURES[0]
+
+
+# ──────────────────────────────────────────────
+# check_no_printf_var_format
+# ──────────────────────────────────────────────
+
+class TestCheckNoPrintfVarFormat:
+    """`printf "$VAR"` uses $VAR as the FORMAT string, not an argument — a
+    literal %s inside it reads a nonexistent argument, and %n is a
+    memory-write primitive in some printf(1) implementations (#549 PR #564
+    review follow-up). Must always be printf '%s' "$VAR"."""
+
+    def _skill_with_block(self, root, name, block_lines):
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"---\nname: {name}\ndescription: d\n---\n\n"
+            "```bash\n" + "\n".join(block_lines) + "\n```\n"
+        )
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    def test_bare_double_quoted_var_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf "$VAR"'])
+        validate.check_no_printf_var_format()
+        assert any("printf" in f for f in validate.FAILURES)
+
+    def test_bare_braced_var_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf "${VAR}"'])
+        validate.check_no_printf_var_format()
+        assert any("printf" in f for f in validate.FAILURES)
+
+    def test_bare_unquoted_var_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf $VAR'])
+        validate.check_no_printf_var_format()
+        assert any("printf" in f for f in validate.FAILURES)
+
+    def test_dash_v_bare_var_flags(self, reset_validate):
+        """printf -v NAME "$VAR" — the format-string position is still the
+        first token after the -v NAME pair, not NAME itself."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf -v out "$VAR"'])
+        validate.check_no_printf_var_format()
+        assert any("printf" in f for f in validate.FAILURES)
+
+    def test_literal_format_with_var_argument_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["printf '%s' \"$VAR\""])
+        validate.check_no_printf_var_format()
+        assert validate.FAILURES == []
+
+    def test_literal_format_with_newline_and_var_argument_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["printf '%s\\n' \"$VAR\""])
+        validate.check_no_printf_var_format()
+        assert validate.FAILURES == []
+
+    def test_literal_format_no_variable_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ["printf 'literal only'"])
+        validate.check_no_printf_var_format()
+        assert validate.FAILURES == []
+
+    def test_live_tree_has_zero_violations(self, reset_validate, monkeypatch):
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_printf_var_format()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_no_unenumerated_tmp_write
+# ──────────────────────────────────────────────
+
+class TestCheckNoUnenumeratedTmpWrite:
+    """A literal /tmp/... write outside $RUN_DIR and outside
+    clean-state-files.sh's sanctioned PR-keyed prefixes is un-enumerable by
+    construction — nothing can ever reap it by name, and nothing bounds two
+    concurrent flows from clobbering it (#552). Regression gate for the old
+    global, never-reaped /tmp/payload.json."""
+
+    def _skill_with_block(self, root, name, block_lines):
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"---\nname: {name}\ndescription: d\n---\n\n"
+            "```bash\n" + "\n".join(block_lines) + "\n```\n"
+        )
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    # ── must flag ──
+
+    def test_unsanctioned_redirect_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" > /tmp/payload.json'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_append_redirect_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" >> /tmp/scratch.txt'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_body_file_flag_flags(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh pr edit "$N" --body-file /tmp/scratch.txt'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    def test_unsanctioned_wrong_prefix_flags(self, reset_validate):
+        """A /tmp/ basename that doesn't match any sanctioned prefix (e.g. a
+        plausible-looking but unlisted name) must still be flagged."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > /tmp/some-other-flow-42.json'])
+        validate.check_no_unenumerated_tmp_write()
+        assert any("RUN_DIR" in f for f in validate.FAILURES)
+
+    # ── must not flag ──
+
+    def test_run_dir_rooted_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['printf \'%s\' "$X" > "$RUN_DIR/payload.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_run_dir_rooted_body_file_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh pr edit "$N" --body-file "$RUN_DIR/body.md"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_run_dir_root_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > /tmp/swe-workbench-run/foo'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_pr_review_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > "/tmp/swe-workbench-pr-review/${PR}.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_address_feedback_dir_prefix_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd > "/tmp/swe-workbench-address-feedback/${PR}.json"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("prefix", [
+        "capture", "report-issue", "audit-emit", "extend", "hotfix", "cleanup-followup", "bug-triage",
+    ])
+    def test_sanctioned_basename_prefixes_pass(self, reset_validate, prefix):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", [f'cmd > /tmp/{prefix}-repo-42.md'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_variable_rooted_target_passes(self, reset_validate):
+        """A target that isn't a literal /tmp/... path at all (e.g. a plain
+        variable) is outside this gate's scope entirely."""
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['gh api foo > "$STATE_FILE"'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_devnull_redirect_passes(self, reset_validate):
+        root = reset_validate
+        self._skill_with_block(root, "my-skill", ['cmd 2>/dev/null'])
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    def test_prose_mention_outside_fence_is_ignored(self, reset_validate):
+        root = reset_validate
+        skill_dir = root / "skills" / "my-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: d\n---\n\n"
+            "Write the payload to /tmp/payload.json for inspection.\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert validate.FAILURES == []
+
+    # ── structural coverage ──
+
+    def test_reference_subdir_file_is_scanned(self, reset_validate):
+        root = reset_validate
+        ref_dir = root / "skills" / "my-skill" / "reference"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / "notes.md").write_text(
+            "# Notes\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("reference/notes.md" in f for f in validate.FAILURES)
+
+    def test_commands_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        commands_dir = root / "commands"
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        (commands_dir / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("my-cmd.md" in f for f in validate.FAILURES)
+
+    def test_agents_dir_is_scanned(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\n```bash\ncmd > /tmp/unsanctioned.json\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_no_unenumerated_tmp_write()
+        assert any("my-agent.md" in f for f in validate.FAILURES)
+
+    def test_live_tree_has_zero_violations(self, reset_validate, monkeypatch):
+        """After #552's allowlist extension + RUN_DIR wiring, the real tree is clean."""
+        import validate as val
+        monkeypatch.setattr(val, "ROOT", Path(__file__).parent.parent)
+        val.FAILURES.clear()
+        val.check_no_unenumerated_tmp_write()
+        assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"

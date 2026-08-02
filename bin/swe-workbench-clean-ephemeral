@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clean-ephemeral.sh <path>
+# swe-workbench-clean-ephemeral <path>
 #
 # Remove an ephemeral git worktree directory, but only after proving it is a
 # sanctioned artifact.  Exits 1 (never silently) when any safety check fails.
