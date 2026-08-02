@@ -19,7 +19,7 @@ def test_migrate_command_file_exists():
     fm = validate.parse_frontmatter(MIGRATE_CMD, text=text)
     assert fm is not None, "migrate.md must have valid frontmatter"
     assert "description" in fm, "migrate.md frontmatter must have a description field"
-    assert "`migrator`" in text, "migrate.md must reference the `migrator` subagent"
+    assert "`swe-workbench:migrator`" in text, "migrate.md must reference the `swe-workbench:migrator` subagent"
 
 
 def test_migrate_command_invokes_ticket_context():

@@ -3,7 +3,7 @@ description: File a plugin bug or feature request directly into lugassawan/swe-w
 argument-hint: "[<one-line thought> — omit to draft from conversation/memory]"
 ---
 
-> **Override (this command only):** The `product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/swe-workbench:report-issue`. You MUST pass `--repo lugassawan/swe-workbench` on every `gh` invocation in this flow. No other rule is changed.
+> **Override (this command only):** The `swe-workbench:product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/swe-workbench:report-issue`. You MUST pass `--repo lugassawan/swe-workbench` on every `gh` invocation in this flow. No other rule is changed.
 
 The user wants to file a plugin issue: $ARGUMENTS
 
@@ -93,7 +93,7 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 ---
 
-Delegate to the `product-manager` subagent. Its response must deliver all of the following before any issue is filed:
+Delegate to the `swe-workbench:product-manager` subagent. Its response must deliver all of the following before any issue is filed:
 
 1. **Auth + repo check.** Set `repo="lugassawan/swe-workbench"`. Run `gh auth status` to check permissions — if the output indicates the token lacks repo/issue write scope, print a one-line warning:
    > Warning: your gh token may lack issue-write scope on `lugassawan/swe-workbench`; filing may fail at confirm time.
@@ -133,7 +133,7 @@ Delegate to the `product-manager` subagent. Its response must deliver all of the
 
    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
 
-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it.
+   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
    - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
      - Email addresses → `[internal-email]`
      - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`

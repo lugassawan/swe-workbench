@@ -100,7 +100,7 @@ git worktree add --detach "$WT" "${MODE_TAG}-${PR}"
 
 Read `title` and `body` from the saved JSON. Match `[A-Z]+-\d+`, atlassian/Confluence URLs, or `#\d+`/PR refs in either field plus the last 5 commit messages (`git -C "$WT" log --oneline -5`). If matched, invoke `swe-workbench:ticket-context` and capture its summary as a prelude to the reviewer prompt.
 
-### Step 4 — Invoke `reviewer`
+### Step 4 — Invoke `swe-workbench:reviewer`
 
 Pass the agent:
 - Working-directory hint: absolute path of the worktree (`$WT`).

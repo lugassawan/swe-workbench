@@ -111,7 +111,7 @@ Capture the script's output **once** into `_DETECT_OUT`, then split it — do no
 
 For **each** file in `UNMERGED`:
 
-1. Dispatch the `conflict-resolver` subagent with the file path, `OPERATION`, and the conflicted content (both sides, retrievable via `git show :2:<file>` / `git show :3:<file>` for a merge, or the equivalent staged blobs during a rebase — the subagent may also use `git log`/`git blame` on both sides for judgement).
+1. Dispatch the `swe-workbench:conflict-resolver` subagent with the file path, `OPERATION`, and the conflicted content (both sides, retrievable via `git show :2:<file>` / `git show :3:<file>` for a merge, or the equivalent staged blobs during a rebase — the subagent may also use `git log`/`git blame` on both sides for judgement).
 2. Present the subagent's per-hunk rationale and its file-level recommendation to the user, alongside both sides' content.
 3. Prompt for one of: **keep-mine**, **keep-main**, **manual**.
    - **keep-mine / keep-main**: apply via
@@ -180,7 +180,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 7 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 | `--check-redundancy` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 6 with a one-line reason ("unrelated histories") — never crash, never treat this as a sync failure. |
 | `redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
-| `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. |
+| `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. <!-- validate: prose-ref --> |
 | `redundancy-scope.sh` enumerated a candidate but `redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
 | A branch and main both add the identical path (add/add conflict) | The path already appeared in Step 5's resolved `UNMERGED` list, yet also surfaces as a Step 6 `CANDIDATE` | Narrow overlap: the two steps can disagree since Step 6 reasons independently. Prefer the Step 5 resolution — Step 5's keep-mine/keep-main choice for a path already-resolved there takes precedence over a same-path Step 6 finding. |
 

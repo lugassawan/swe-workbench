@@ -35,12 +35,12 @@ Do not delegate to any agent until the gate passes.
 
 Dispatch the following two-agent pipeline in sequence:
 
-1. **`e2e-test-writer`** — explores the live app via Playwright MCP, authors durable spec files, and produces a behaviour inventory + spec paths.
-2. **`e2e-test-verifier`** — receives the spec paths from step 1, runs them via the project's detected E2E command, and distrusts false-greens.
+1. **`swe-workbench:e2e-test-writer`** — explores the live app via Playwright MCP, authors durable spec files, and produces a behaviour inventory + spec paths.
+2. **`swe-workbench:e2e-test-verifier`** — receives the spec paths from step 1, runs them via the project's detected E2E command, and distrusts false-greens.
 
-If `e2e-test-writer` returns a `BLOCKED:` sentinel, surface it to the user and stop — do not invoke `e2e-test-verifier`.
+If `swe-workbench:e2e-test-writer` returns a `BLOCKED:` sentinel, surface it to the user and stop — do not invoke `swe-workbench:e2e-test-verifier`.
 
-If `e2e-test-verifier` returns a `BLOCKED:` sentinel, surface it to the user.
+If `swe-workbench:e2e-test-verifier` returns a `BLOCKED:` sentinel, surface it to the user.
 
 ### E2E output contract
 
@@ -136,7 +136,7 @@ No verifier is invoked for this path.
 
 ## Unit path (default)
 
-Delegate to the `test-writer` subagent. Its output must include:
+Delegate to the `swe-workbench:test-writer` subagent. Its output must include:
 
 1. **Behaviour inventory** — numbered list of all behaviours identified.
 2. **Test file location and naming** — where the new tests live.

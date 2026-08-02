@@ -17,7 +17,7 @@ Single source of truth for how development work flows. Three modes:
 ## When This Skill Activates
 
 - **Mode A:** Writing or finalizing an implementation plan (before `ExitPlanMode`)
-- **Mode B:** User says "implement this", "build this", "execute this plan", "run the implementation plan end to end" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle.
+- **Mode B:** User says "implement this", "build this", "execute this plan", "run the implementation plan end to end" — any branch → code → deliver flow. For focused bug diagnosis prefer `/swe-workbench:debug` (invokes the `debugger` subagent, which composes `superpowers:systematic-debugging`); escalate here when the fix needs the full 5-phase lifecycle. <!-- validate: prose-ref -->
   - **Prefer entering here rather than calling `superpowers:executing-plans` directly** — Phase 2 already delegates to it while adding the surrounding Branch → Verify → Review → Deliver lifecycle.
 - **Mode C:** User says "orchestrate these issues", "run in parallel", multi-issue campaigns with >3 issues
 
@@ -112,7 +112,7 @@ Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
 - **Independent tasks, same session** → invoke `superpowers:subagent-driven-development`
 - **No plan / ad-hoc** → implement directly with `swe-workbench:principle-tdd` per unit
-- **Scope/complexity warrants isolation** → invoke `swe-workbench:workflow-delegated-implementation` to group changes and dispatch each cohesive group to a focused `code-impl` sub-agent; consume the summary (not the diff) to stay lean
+- **Scope/complexity warrants isolation** → invoke `swe-workbench:workflow-delegated-implementation` to group changes and dispatch each cohesive group to a focused `swe-workbench:code-impl` sub-agent; consume the summary (not the diff) to stay lean
 
 If a delegated `code-impl` run returns with verification evidence, mark Phase 3 "completed by sub-skill" per the deduplication rule above.
 
@@ -125,7 +125,7 @@ Commit logically grouped changes as you go. Never bundle unrelated changes.
 | Tests | Test files and test utilities |
 | Wiring | Integration, routing, CLI registration |
 
-**Design-fork consult contract.** Worker subagents hold no `Agent` tool (verified: 0 of 21) — none can consult a peer subagent itself, regardless of what an individual agent's prompt text says. `debugger` follows this contract: it surfaces a design fork in its output rather than attempting the consult. (Other worker prompts may still self-instruct to consult a subagent directly — that is a pre-existing instance of the same bug class, not a license to violate the tool grant; fix on sight.) The orchestrator (the top-level context activating this skill, which holds `Agent`) owns the `senior-engineer` consult: it reads the surfaced fork, invokes `senior-engineer` for the boundary/trade-off read, validates the resulting direction, and folds it back into the plan before continuing.
+**Design-fork consult contract.** Worker subagents hold no `Agent` tool (verified: 0 of 21) — none can consult a peer subagent itself, regardless of what an individual agent's prompt text says. `swe-workbench:debugger` follows this contract: it surfaces a design fork in its output rather than attempting the consult. (Other worker prompts may still self-instruct to consult a subagent directly — that is a pre-existing instance of the same bug class, not a license to violate the tool grant; fix on sight.) The orchestrator (the top-level context activating this skill, which holds `Agent`) owns the `swe-workbench:senior-engineer` consult: it reads the surfaced fork, invokes `swe-workbench:senior-engineer` for the boundary/trade-off read, validates the resulting direction, and folds it back into the plan before continuing.
 
 ---
 

@@ -7,11 +7,11 @@ Target: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its summary to the delegation context. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
-Delegate to the `security-auditor` subagent with the resolved diff (PR diff via `gh pr diff <N>` if $ARGUMENTS is a PR number — stripping a leading `#` if present; otherwise the local-diff cascade: `git diff` → `git diff --staged` → `git diff origin/main...HEAD`). Ask for a prioritized findings report.
+Delegate to the `swe-workbench:security-auditor` subagent with the resolved diff (PR diff via `gh pr diff <N>` if $ARGUMENTS is a PR number — stripping a leading `#` if present; otherwise the local-diff cascade: `git diff` → `git diff --staged` → `git diff origin/main...HEAD`). Ask for a prioritized findings report.
 
 ## Output
 
-The `security-auditor` subagent produces a severity-organized findings report. Expect:
+The `swe-workbench:security-auditor` subagent produces a severity-organized findings report. Expect:
 
 - **Critical** — data exfiltration, authentication bypass, direct secret exposure, remote code execution risk.
 - **High** — exploitable injection (SQLi, XSS, SSRF, XXE), broken access control, insecure deserialization.

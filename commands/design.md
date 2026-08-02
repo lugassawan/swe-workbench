@@ -16,7 +16,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
-Delegate to the `senior-engineer` subagent. Its response must contain:
+Delegate to the `swe-workbench:senior-engineer` subagent. Its response must contain:
 
 1. **Problem restatement** — confirm the real question and surface implicit constraints (scale, team size, change frequency, latency budget, compliance).
 2. **Options** — 2–3 candidate approaches, each with sketch, strengths, weaknesses, and reversibility.

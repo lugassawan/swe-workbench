@@ -45,7 +45,7 @@ Obtain a Unix timestamp: `TS=$(date +%s)`. Write spec to `/tmp/extend-${TS}.md` 
 
 | User phrase | Action |
 |---|---|
-| "consult senior-engineer" / "this is architectural" | Invoke `senior-engineer` subagent for a boundary read; fold its AC output into the spec before confirming. |
+| "consult senior-engineer" / "this is architectural" | Invoke `swe-workbench:senior-engineer` subagent for a boundary read; fold its AC output into the spec before confirming. |
 | "frame as a bug" / "this is a regression" | Route entirely to `swe-workbench:debugger` subagent; skip Phases B–D (debugger has its own verify+review loop). Commit per debugger output on the existing branch. |
 | "also file an issue" / "track this in github" | After Phase D delivery, chain `product-manager` agent (its confirm gate handles filing). |
 
@@ -58,7 +58,7 @@ Render `skills/workflow-extend/templates/plan-extend-section.md` into the spec. 
 - `[[detect:commit-style]]` → from `git log --oneline -5` (detect `[type]` vs `type:` pattern)
 - `[[detect:test-command]]`, `[[detect:format-command]]`, `[[detect:lint-command]]` → from Makefile grep or `package.json` scripts
 
-Do NOT invoke `workflow-development` Mode A here — this skill renders its own template. Phase 1 (Branch) is intentionally absent.
+Do NOT invoke `swe-workbench:workflow-development` Mode A here — this skill renders its own template. Phase 1 (Branch) is intentionally absent.
 
 ## Phase C — Implement, Verify, Review
 

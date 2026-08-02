@@ -1520,6 +1520,153 @@ class TestCheckSkillSkillRefs:
 
 
 # ──────────────────────────────────────────────
+# check_bare_actionable_refs (#586)
+# ──────────────────────────────────────────────
+
+class TestCheckBareActionableRefs:
+    def test_bare_agent_id_in_command_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "reviewer.md").write_text(
+            "---\nname: reviewer\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nDelegate to the `reviewer` subagent.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("reviewer" in f and "swe-workbench:reviewer" in f for f in validate.FAILURES)
+
+    def test_bare_skill_id_in_command_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nInvoke `foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("foo" in f for f in validate.FAILURES)
+
+    def test_namespaced_ref_in_command_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nInvoke `swe-workbench:foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_inside_fenced_block_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```\nDelegate to the `foo` skill.\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_exemption_marker_suppresses_in_command(self, reset_validate):
+        """Rule 1's marker escape hatch (used for real at report-issue.md's
+        redaction allowlist), isolated from the live-tree test."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNever redact `foo`. <!-- validate: prose-ref -->\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_command_id_in_command_passes(self, reset_validate):
+        """report-issue.md:136 regression — a bare id that resolves only to a
+        command (not a skill or agent) is never in the checked id set."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "capture.md").write_text(
+            "---\ndescription: d\n---\n\nCommand body.\n", encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNever redact `capture`.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_in_skill_prose_without_action_cue_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nRelated: `target-skill` handles that.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_on_skill_dispatch_line_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nInvoke `target-skill` now.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert any("target-skill" in f for f in validate.FAILURES)
+
+    def test_self_reference_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nActivating `my-skill` now.\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_exemption_marker_suppresses(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": (
+                    "---\nname: my-skill\ndescription: d\n---\n\n"
+                    "Invoke `target-skill` now. <!-- validate: prose-ref -->\n"
+                ),
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_actionable_refs_live_tree_passes(self, reset_validate, monkeypatch):
+        """The real repo must already be fully normalized (#586)."""
+        monkeypatch.setattr(validate, "ROOT", Path(__file__).parent.parent)
+        validate.FAILURES.clear()
+        cache = validate._build_cache()
+        validate.check_bare_actionable_refs(cache=cache)
+        assert validate.FAILURES == [], f"validate.py failures: {validate.FAILURES}"
+
+
+# ──────────────────────────────────────────────
 # check_workflow_development_activation_contract
 # ──────────────────────────────────────────────
 

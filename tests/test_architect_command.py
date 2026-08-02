@@ -20,7 +20,7 @@ def test_architect_command_file_exists():
     assert fm is not None, "architect.md must have valid frontmatter"
     assert "description" in fm, "architect.md frontmatter must have a description field"
     # `name` is intentionally absent: commands are auto-discovered by filename; validate.py only requires `description`.
-    assert "`architect`" in text, "architect.md must reference the `architect` subagent"
+    assert "`swe-workbench:architect`" in text, "architect.md must reference the `swe-workbench:architect` subagent"
 
 
 def test_architect_command_invokes_ticket_context():

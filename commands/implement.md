@@ -19,15 +19,15 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 Activate the `swe-workbench:workflow-development` skill in **Mode B (Implementation-Time Behavior)**. Execute all five phases in order:
 
 **Phase 1 — Branch**
-Isolate this work in a worktree when the scope warrants it (non-trivial changes, risk of destabilizing main). For tiny single-file changes, skip with a written rationale. `workflow-development` Phase 1 will detect the worktree provider automatically: `rimba add <task>` when rimba is available (PATH or common install locations), otherwise `superpowers:using-git-worktrees`.
+Isolate this work in a worktree when the scope warrants it (non-trivial changes, risk of destabilizing main). For tiny single-file changes, skip with a written rationale. `swe-workbench:workflow-development` Phase 1 will detect the worktree provider automatically: `rimba add <task>` when rimba is available (PATH or common install locations), otherwise `superpowers:using-git-worktrees`.
 
 **Phase 2 — Implement**
-- **Architectural consult (conditional):** If the ticket implies a new service, a boundary or contract change, a technology choice, or any non-trivial design fork — invoke the `senior-engineer` subagent *before* plan-writing for a boundary/trade-off read. Fold its output into the plan.
+- **Architectural consult (conditional):** If the ticket implies a new service, a boundary or contract change, a technology choice, or any non-trivial design fork — invoke the `swe-workbench:senior-engineer` subagent *before* plan-writing for a boundary/trade-off read. Fold its output into the plan.
 - If no written plan exists, draft one via `superpowers:writing-plans`. **Whenever you author or finalize a plan that modifies the codebase — whether saved to a plan file or passed to `ExitPlanMode`** — first activate `swe-workbench:workflow-development` in **Mode A** and embed the rendered `## Workflow` section per `skills/workflow-development/templates/plan-workflow-section.md` **before the plan is finalized (i.e. before `ExitPlanMode`)**. Run the skill's project-detection (`git branch -a`, `git log --oneline -20`, Makefile grep, PR-template lookup) so placeholders are substituted from this repo, not left as `[[detect:…]]`. Since `/swe-workbench:implement` always modifies the codebase, Mode A always applies here.
   - **Defect guard:** if the plan being finalized lacks a `## Workflow` section, add it before emitting the plan rather than passing an incomplete plan to `ExitPlanMode`.
-- Execute via `superpowers:executing-plans` for sequential work, `superpowers:subagent-driven-development` for parallelizable units, or `swe-workbench:workflow-delegated-implementation` when scope/complexity warrants grouping changes into focused `code-impl` sub-agent dispatches to keep the orchestrator context lean.
+- Execute via `superpowers:executing-plans` for sequential work, `superpowers:subagent-driven-development` for parallelizable units, or `swe-workbench:workflow-delegated-implementation` when scope/complexity warrants grouping changes into focused `swe-workbench:code-impl` sub-agent dispatches to keep the orchestrator context lean.
 - Apply `swe-workbench:principle-tdd` per implementation unit: red → green → refactor.
-- **Mid-implementation forks:** If an architectural decision emerges that was not anticipated in the plan, pause and consult `senior-engineer` rather than guessing. Update the plan before continuing.
+- **Mid-implementation forks:** If an architectural decision emerges that was not anticipated in the plan, pause and consult `swe-workbench:senior-engineer` rather than guessing. Update the plan before continuing.
 
 **Phase 3 — Verify**
 Run `superpowers:verification-before-completion` before claiming any phase done. Do not advance to Phase 4 until this passes clean.
@@ -46,5 +46,5 @@ Absolute rules:
 - If the ticket lacks acceptance criteria, stop and ask the user — do not invent scope.
 - Do not skip Phase 3 (verify) or Phase 4 (review) under any circumstances.
 - Phase 2 is TDD per unit: write the failing test first, then the implementation, then refactor.
-- Do not invent architectural answers — escalate any design fork to `senior-engineer`.
+- Do not invent architectural answers — escalate any design fork to `swe-workbench:senior-engineer`.
 - Do not open the PR (Phase 5) until Phases 3 and 4 both pass clean.

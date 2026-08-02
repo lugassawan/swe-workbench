@@ -182,7 +182,7 @@ def test_report_issue_step9_cleanup_on_success_only():
 def _branch_b_slice(text):
     pos = text.find("### Branch B")
     assert pos != -1, "commands/report-issue.md must contain a '### Branch B' heading"
-    end = text.find("Delegate to the `product-manager` subagent", pos)
+    end = text.find("Delegate to the `swe-workbench:product-manager` subagent", pos)
     assert end != -1, (
         "commands/report-issue.md must contain the delegation block after Branch B"
     )

@@ -18,13 +18,13 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 ## When NOT to invoke
 
 - Design-time hot-path review (Big-O, allocation choices, N+1 avoidance) → use `swe-workbench:principle-performance` directly.
-- You already have a profile and only need the ranked hotspot read → invoke the `performance-tuner` agent directly via `/swe-workbench:review --mode perf`.
+- You already have a profile and only need the ranked hotspot read → invoke the `swe-workbench:performance-tuner` agent directly via `/swe-workbench:review --mode perf`.
 - Reviewing a PR diff for perf regressions → `/swe-workbench:review --mode perf`.
 
 ## Composition
 
 - **`swe-workbench:principle-performance`** — design-time discipline (Big-O, allocation, N+1, data locality). Run inline or hand off; never skip the discipline layer.
-- **`performance-tuner` agent** — ranked hotspot analysis given a captured profile. Hand the profile artifact at Phase 3; do not invoke before a profile exists.
+- **`swe-workbench:performance-tuner` agent** — ranked hotspot analysis given a captured profile. Hand the profile artifact at Phase 3; do not invoke before a profile exists.
 - **`swe-workbench:observability-context`** — production signal framing at Phase 1 only (a Sentry error rate, regression, or alert that motivated this investigation). Never invoke it at Phase 3 or later, and never let its output substitute for the profile artifact `performance-tuner` requires — see the Evidence-class caveat in Phase 1 below.
 
 ## Phases
@@ -44,7 +44,7 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 
 ### Phase 3 — Rank hotspots
 
-1. Hand the profile artifact to the **`performance-tuner` agent** (`/swe-workbench:review --mode perf`) for ranked hotspot read.
+1. Hand the profile artifact to the **`swe-workbench:performance-tuner` agent** (`/swe-workbench:review --mode perf`) for ranked hotspot read.
 2. Classify each hotspot by bottleneck taxonomy: CPU-bound · memory/GC · I/O · lock-contention.
 3. Surface the top 3 ranked hotspots with their taxonomy label before hypothesizing.
 

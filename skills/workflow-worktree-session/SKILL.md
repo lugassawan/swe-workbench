@@ -18,7 +18,7 @@ Triggers: user named or pointed at a worktree that already exists, or is resumin
 
 Examples: "open the `feat-login` worktree", "switch to `test-enter`", "move into `.worktrees/auth`", "cd into the worktree I made", "continue work in the worktree I made", "resume in the worktree", "I've been cd-ing into the worktree", "I've been cd-prefixing commands".
 
-1. Discover the path. Resolve rimba using the detection helper in `workflow-development` Phase 1 (`$RIMBA`). If non-empty, run `$RIMBA list --json` to list worktrees. Otherwise use `git worktree list --porcelain`:
+1. Discover the path. Resolve rimba using the detection helper in `workflow-development` Phase 1 (`$RIMBA`). If non-empty, run `$RIMBA list --json` to list worktrees. Otherwise use `git worktree list --porcelain`: <!-- validate: prose-ref -->
 
    ```bash
    git worktree list --porcelain \

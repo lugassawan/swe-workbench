@@ -25,8 +25,8 @@ Structured runbook for the full upgrade lifecycle: triage → bump → test → 
 ## Composition
 
 - **`swe-workbench:principle-security`** — supply-chain integrity, CVE triage, SBOM, lockfile pinning, frozen installs.
-- **`security-auditor` agent** — CVE confirmation and dependency-graph risk read.
-- **`reviewer` agent** — breakage diff read for ambiguous API/type changes.
+- **`swe-workbench:security-auditor` agent** — CVE confirmation and dependency-graph risk read.
+- **`swe-workbench:reviewer` agent** — breakage diff read for ambiguous API/type changes.
 
 > **Sub-skill:** `swe-workbench:workflow-commit-and-pr` — used at Phase 5 for commit format enforcement and PR filing.
 
@@ -55,7 +55,7 @@ Structured runbook for the full upgrade lifecycle: triage → bump → test → 
 
 | Class | Typical cause | Action |
 |-------|--------------|--------|
-| Type / compile errors | API renamed or signature changed | Update call sites; consult `reviewer` for large diffs |
+| Type / compile errors | API renamed or signature changed | Update call sites; consult `swe-workbench:reviewer` for large diffs |
 | Behavioral test failures | Semantic change in dep behavior | Read changelog/release notes; update assertions |
 | Transitive / peer conflicts | Two deps require incompatible sub-dep | Force-resolve or isolate in its own PR |
 | CVE still flagged post-bump | Transitive pin to old version | Override transitive dep version explicitly |
