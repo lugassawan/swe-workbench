@@ -43,8 +43,9 @@ description: SQL idioms — query tuning, EXPLAIN plans, table definitions, cons
 -- Suspect: forces a full rebuild MySQL would otherwise skip (8.0.12+ defaults to INSTANT)
 ALTER TABLE orders ADD COLUMN notes TEXT, ALGORITHM=INPLACE, LOCK=NONE;
 
--- Preferred: let MySQL pick INSTANT; add columns without the override
-ALTER TABLE orders ADD COLUMN notes TEXT;
+-- Preferred: pin INSTANT explicitly — errors loudly if ineligible instead of
+-- silently degrading to INPLACE/COPY the way an omitted ALGORITHM clause would
+ALTER TABLE orders ADD COLUMN notes TEXT, ALGORITHM=INSTANT;
 
 -- Correct: INSTANT cannot build an index; INPLACE is required here
 ALTER TABLE orders ADD INDEX idx_orders_customer_id (customer_id), ALGORITHM=INPLACE, LOCK=NONE;
@@ -118,5 +119,5 @@ ROLLBACK;
 - Schema changes without rollback or compatibility planning.
 - Unbounded queries in production paths.
 - Relying on implicit ordering without `ORDER BY`.
-- Wrapping MySQL DDL in `BEGIN`/`COMMIT` for atomicity, or an unqualified `ALGORITHM=INPLACE` on a column add — see DDL migration footguns above.
+- Wrapping MySQL DDL in `BEGIN`/`COMMIT` for atomicity, or an unnecessary `ALGORITHM=INPLACE`/`COPY` on a column add — see DDL migration footguns above.
 - Never build SQL by concatenating untrusted input — use parameterized queries or prepared statements. ORM raw-query escape hatches (e.g. Django's `extra()`, SQLAlchemy's `text()`) are equally dangerous. See `swe-workbench:principle-security`.

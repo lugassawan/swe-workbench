@@ -12,6 +12,7 @@ Acceptance criteria:
   failure leaves a smaller, more legible state.
 """
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -62,8 +63,6 @@ def test_ddl_atomicity_language_and_begin():
     assert "BEGIN" in section, (
         f"'## {HEADING}' must reference BEGIN when explaining DDL auto-commit behavior"
     )
-    import re
-
     assert re.search(r"atomic|auto-?commit", section, re.IGNORECASE), (
         f"'## {HEADING}' must state that DDL statements auto-commit independently "
         "(no atomicity from BEGIN/COMMIT)"
@@ -76,14 +75,17 @@ def test_add_drop_column_flags_inplace_copy_as_suspect():
     assert section.strip(), f"'## {HEADING}' section is empty or missing"
     assert "ADD COLUMN" in section, f"'## {HEADING}' must mention ADD COLUMN"
     assert "INSTANT" in section, f"'## {HEADING}' must mention ALGORITHM=INSTANT as the 8.0 default"
-    import re
-
     assert re.search(r"INPLACE|COPY", section), (
         f"'## {HEADING}' must call out INPLACE/COPY as overriding the INSTANT default"
     )
     assert re.search(r"overrides?|defect|suspect", section, re.IGNORECASE), (
         f"'## {HEADING}' must characterize an explicit INPLACE/COPY on a column add/drop as "
         "an override/defect, not a neutral fact"
+    )
+    assert re.search(r"DROP COLUMN.{0,120}8\.0\.29|8\.0\.29.{0,120}DROP COLUMN", section, re.DOTALL), (
+        f"'## {HEADING}' must tie DROP COLUMN's INSTANT eligibility specifically to 8.0.29, "
+        "distinct from ADD COLUMN's pre-8.0.29 end-of-table-only rule — the ticket's own premise "
+        "conflated the two"
     )
 
 
@@ -93,8 +95,6 @@ def test_add_drop_index_marks_inplace_as_correct():
     assert section.strip(), f"'## {HEADING}' section is empty or missing"
     assert "INDEX" in section, f"'## {HEADING}' must mention ADD INDEX/DROP INDEX"
     assert "LOCK=NONE" in section, f"'## {HEADING}' must reference LOCK=NONE for index builds"
-    import re
-
     assert re.search(r"correct|expected|necessary", section, re.IGNORECASE), (
         f"'## {HEADING}' must state that INPLACE/LOCK=NONE is correct and expected for index "
         "operations, not a blanket ban on INPLACE"
