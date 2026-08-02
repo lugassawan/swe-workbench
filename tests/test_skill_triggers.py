@@ -198,6 +198,68 @@ def test_prompt_ranks_target_skill_top1(
     )
 
 
+# ── Family margin guard (issue #566) ──────────────────────────────────────
+
+# Minimum BM25 margin a workflow-* fixture must hold over its nearest non-sibling
+# workflow-* competitor. 9x _SCORE_MARGIN: tight enough to catch the class of
+# generic-description regression #566 found (hotfix margins of 0.243 / 0.829 / 0.920
+# against other workflow-* skills), loose enough to leave the tightest *unrelated*
+# family pair — workflow-codebase-audit vs workflow-codebase-knowledge at 1.077,
+# a pair this change never touches — comfortably green. A 1.0 floor would leave
+# that untouched pair only 4.5% from red.
+_FAMILY_MARGIN = 0.9
+
+_WORKFLOW_FIXTURES = [
+    (skill_name, prompt)
+    for skill_name, prompt in _FIXTURES
+    if skill_name.startswith("workflow-")
+]
+assert _WORKFLOW_FIXTURES, (
+    f"No workflow-* trigger fixtures found under {_SKILLS_DIR} — "
+    "check triggers.txt naming/glob before trusting this guard"
+)
+
+
+@pytest.mark.parametrize(
+    "skill_name,prompt",
+    _WORKFLOW_FIXTURES,
+    ids=[f"{s}::{p[:50]}" for s, p in _WORKFLOW_FIXTURES],
+)
+def test_workflow_family_margin(skill_name, prompt, real_corpus, real_index, sibling_sets):
+    """Every workflow-* fixture must clear its nearest non-sibling workflow-*
+    competitor by >= _FAMILY_MARGIN, regardless of overall rank.
+
+    Scoped to workflow-* vs workflow-* on purpose: this is the family #566 flagged
+    as prone to generic, lifecycle-plumbing descriptions that bleed BM25 signal
+    onto siblings. Other sub-1.0 margins in the corpus (e.g. language-swift,
+    principle-resiliency) have non-workflow targets and are out of scope here.
+    """
+    ranked = _rank_skills(prompt, real_corpus, real_index)
+    scores = dict(ranked)
+    target_score = scores[skill_name]
+
+    _all_groups = [s for s in sibling_sets if skill_name in s]
+    my_siblings = set().union(*_all_groups) if _all_groups else {skill_name}
+
+    rivals = [
+        (n, sc)
+        for n, sc in ranked
+        if n != skill_name and n.startswith("workflow-") and n not in my_siblings
+    ]
+    if not rivals:
+        return
+
+    nearest_name, nearest_score = max(rivals, key=lambda kv: kv[1])
+    margin = target_score - nearest_score
+    assert margin >= _FAMILY_MARGIN, (
+        f"prompt for `{skill_name}` scores {target_score:.3f} but nearest non-sibling "
+        f"workflow-* rival `{nearest_name}` scores {nearest_score:.3f} "
+        f"(margin {margin:.3f} < {_FAMILY_MARGIN}). "
+        f"Tighten skills/{skill_name}/SKILL.md description to reduce overlap with "
+        f"`{nearest_name}`."
+    )
+
+
 # ── Deliberate-vague acceptance test (acceptance criterion #5) ───────────
 
 def test_deliberately_vague_description_is_flagged():
