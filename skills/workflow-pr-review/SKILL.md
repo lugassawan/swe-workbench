@@ -134,9 +134,9 @@ Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `li
 
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
-- `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `reviewer`_ `` for first-pass, `` _Re-reviewed by `reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` Step 4).
+- `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `reviewer`_ `` for first-pass, `` _Re-reviewed by `reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `CALLER_TAG` — `$CALLER_TAG` from the mode table above (`general` / `followup`; scopes the core's own threads-cache filename so it never collides with a concurrent run of the other mode or a specialist run on the same PR).
-- `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` Step 2).
+- `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `FINDINGS[]` — as parsed above.
 
 The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
