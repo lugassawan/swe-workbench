@@ -21,13 +21,19 @@ def test_review_command_recognizes_check_followup_flag():
     )
 
 
-def test_review_command_followup_delegates_to_followup_skill():
-    """commands/review.md must delegate --check-followup to swe-workbench:workflow-pr-review-followup."""
+def test_review_command_followup_delegates_to_pr_review_skill_in_followup_mode():
+    """commands/review.md must delegate --check-followup to swe-workbench:workflow-pr-review
+    with MODE=followup — the standalone followup skill was folded into workflow-pr-review as
+    a mode (#565), so followup is no longer a separate skill target."""
     assert REVIEW_CMD.exists(), "commands/review.md must exist"
     text = REVIEW_CMD.read_text()
-    assert "swe-workbench:workflow-pr-review-followup" in text, (
-        "commands/review.md must reference swe-workbench:workflow-pr-review-followup "
+    assert "swe-workbench:workflow-pr-review" in text, (
+        "commands/review.md must reference swe-workbench:workflow-pr-review "
         "as the delegation target for --check-followup"
+    )
+    assert "MODE=followup" in text, (
+        "commands/review.md must pass MODE=followup when delegating --check-followup "
+        "to swe-workbench:workflow-pr-review"
     )
 
 

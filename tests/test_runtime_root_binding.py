@@ -28,7 +28,6 @@ DOCTOR_CMD = ROOT / "commands" / "doctor.md"
 
 SKILLS_WITH_PREFLIGHT = [
     "workflow-pr-review",
-    "workflow-pr-review-followup",
     "workflow-address-feedback",
     "workflow-audit-emit-issues",
     "workflow-cleanup-merged",
@@ -177,14 +176,15 @@ def test_preflight_pr_referenced_in_pr_review_skill():
     )
 
 
-def test_preflight_pr_referenced_in_pr_review_followup_skill():
-    """workflow-pr-review-followup SKILL.md Step 1 must use swe-workbench-preflight-pr."""
-    text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
+def test_preflight_pr_referenced_in_pr_review_followup_mode():
+    """The standalone followup skill was folded into workflow-pr-review as a mode (#565);
+    its Step 1 (shared by both first-pass and followup) must use swe-workbench-preflight-pr."""
+    text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
     assert "swe-workbench-preflight-pr" in text, (
-        "workflow-pr-review-followup SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
+        "workflow-pr-review SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
     )
     assert 'eval "$(' in text, (
-        "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source preflight output"
     )
 
 

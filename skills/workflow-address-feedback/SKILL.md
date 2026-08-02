@@ -16,7 +16,7 @@ orchestrator: true
 
 ## When NOT to invoke
 
-- The reviewer side of the loop → use `swe-workbench:workflow-pr-review` or `swe-workbench:workflow-pr-review-followup`.
+- The reviewer side of the loop → use `swe-workbench:workflow-pr-review` (first-pass or followup mode).
 - The user just wants to reply to a single comment without the full triage flow.
 - The PR is closed/merged.
 

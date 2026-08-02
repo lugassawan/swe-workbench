@@ -5,8 +5,10 @@ Tests for the diff-scoping leniency contract (issue #304).
 
 Contract layers:
   Unit 1 — agents/reviewer.md  (scope classification, per-finding marker, verdict line)
-  Unit 2a — workflow-pr-review/SKILL.md and workflow-pr-review-followup/SKILL.md
-            (Step 4 instruction, Step 5 parse — consumer-owned, unchanged by #499)
+  Unit 2a — workflow-pr-review/SKILL.md (Step 4 instruction, Step 5 parse — both
+            first-pass and followup modes share this single file since #565 folded the
+            standalone followup skill into workflow-pr-review as a mode; consumer-owned,
+            unchanged by #499)
   Unit 2b — workflow-pr-review-post/SKILL.md (Step 2 422 reroute, Step 3 flip + self-review
             gate, Step 4 lean body — moved here from both consumers by #499; pinned once
             against the single shared core instead of twice against each duplicate)
@@ -23,7 +25,6 @@ POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
 SKILLS = [
     ROOT / "skills" / "workflow-pr-review" / "SKILL.md",
-    ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md",
 ]
 
 
@@ -184,7 +185,7 @@ def test_diff_scoping_contract_documented_in_post_core():
 
 @pytest.mark.parametrize("skill_path", SKILLS, ids=[p.parent.name for p in SKILLS])
 def test_consumers_reference_post_core_instead_of_duplicating_contract(skill_path):
-    """The two consumers must delegate to the core, not restate its Step 6/7 mechanism."""
+    """workflow-pr-review (both modes) must delegate to the core, not restate its Step 6/7 mechanism."""
     text = skill_path.read_text()
     assert "swe-workbench:workflow-pr-review-post" in text, (
         f"{skill_path.parent.name}: must invoke swe-workbench:workflow-pr-review-post "

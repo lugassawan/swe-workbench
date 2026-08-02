@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PR-scoped backstop: force-removes residual ephemeral artifacts left behind by
-# workflow-pr-review, workflow-pr-review-followup, and workflow-address-feedback
+# workflow-pr-review (either mode) and workflow-address-feedback
 # for one specific PR number — rimba worktrees (pr-review-<N>, pr-followup-<N>,
 # address-feedback-<N>) and their /tmp/swe-workbench-* state-file JSON.
 #
@@ -110,8 +110,8 @@ if [ -n "${MAIN_REPO:-}" ]; then
     esac
   done < <(git worktree list --porcelain)
 
-  # Bare-N /tmp fallback paths (rimba-absent convention, per workflow-pr-review
-  # and workflow-pr-review-followup Step 2): the worktree is checked out
+  # Bare-N /tmp fallback paths (rimba-absent convention, per workflow-pr-review's
+  # Step 2, shared by both modes): the worktree is checked out
   # --detach, so no `branch refs/heads/...` line exists to match in porcelain,
   # AND its basename is bare "<N>" / "<N>-followup", not the task label — so
   # the scan above cannot find it. Check the known literal paths directly.

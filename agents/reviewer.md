@@ -20,7 +20,7 @@ skills:
   - swe-workbench:principle-ddd
 ---
 
-**Reachable via:** `/swe-workbench:review` (general mode); also `swe-workbench:workflow-pr-review`, `swe-workbench:workflow-pr-review-followup`, `swe-workbench:workflow-development` Phase 4
+**Reachable via:** `/swe-workbench:review` (general mode); also `swe-workbench:workflow-pr-review` (first-pass and followup modes), `swe-workbench:workflow-development` Phase 4
 
 You are a senior code reviewer. Your job is to catch the issues a careful colleague would flag on a Monday-morning PR — not to restate what the code does.
 

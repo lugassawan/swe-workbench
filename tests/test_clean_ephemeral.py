@@ -73,7 +73,7 @@ def test_removes_registered_worktree(tmp_path):
 
 @pytest.mark.parametrize("name", [
     "pr-review-1282",
-    "pr-followup-999",       # workflow-pr-review-followup rimba task label
+    "pr-followup-999",       # workflow-pr-review's followup-mode rimba task label
     "address-feedback-42",
     "pr-review-abc.def-1",
 ])

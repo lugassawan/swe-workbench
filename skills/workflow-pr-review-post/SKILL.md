@@ -1,6 +1,6 @@
 ---
 name: workflow-pr-review-post
-description: Posting core shared by workflow-pr-review, workflow-pr-review-followup, and the specialist /swe-workbench:review PR-mode sub-flow — takes a normalized findings/decision/byline payload, dedupes against existing review threads (±5-line fuzzy match + Jaccard ≥ 0.4), posts new inline or PR-level comments, applies the self-review + diff-scoping decision flip, and submits APPROVE or COMMENT.
+description: Posting core shared by workflow-pr-review (both first-pass and followup modes) and the specialist /swe-workbench:review PR-mode sub-flow — takes a normalized findings/decision/byline payload, dedupes against existing review threads (±5-line fuzzy match + Jaccard ≥ 0.4), posts new inline or PR-level comments, applies the self-review + diff-scoping decision flip, and submits APPROVE or COMMENT.
 orchestrator: true
 ---
 
@@ -10,8 +10,7 @@ orchestrator: true
 
 ## When to invoke
 
-- Called by `swe-workbench:workflow-pr-review` (general PR mode) after its Step 5 footer parse.
-- Called by `swe-workbench:workflow-pr-review-followup` after its Step 5 footer parse.
+- Called by `swe-workbench:workflow-pr-review` (first-pass or followup mode) after its Step 5 footer parse.
 - Called by `/swe-workbench:review <PR#> --mode <specialist>` after the user replies `post` to the confirmation prompt (specialist PR-mode sub-flow).
 
 ## When NOT to invoke
