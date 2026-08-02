@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Posting mechanism for workflow-pr-review-post's Steps 1-4 (issue #550).
+"""Posting mechanism for workflow-pr-review-post's `## Post` section (issue #550).
 
 Fetches existing review threads, dedups a findings payload against them,
 pre-validates inline anchors against the PR diff, posts pr-level batches,

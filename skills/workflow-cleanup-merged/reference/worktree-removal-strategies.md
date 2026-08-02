@@ -34,9 +34,9 @@ The hook silently swallows errors (`|| true`). If the verification gate yields `
 
 **Procedure:**
 
-1. **Route by how rimba is available** (mirror the MCP → binary → shell ordering of `skills/workflow-development/SKILL.md:113-116`):
+1. **Route by how rimba is available** (mirror the MCP → binary → shell ordering used for rimba resolution in `skills/workflow-development/reference/branch-resolution.md`):
    - **rimba MCP server active in session** → invoke the rimba `remove` tool (`task: <headRefName>`); for bulk stale-worktree cleanup (e.g., after a Mode C orchestration run) invoke the `clean` tool (`mode: merged` — equivalent to the binary's `--merged` flag). No shell process needed.
-   - **`$RIMBA` non-empty (binary resolved by `resolve-rimba.sh`)** → run `$RIMBA remove <headRefName>` (or `$RIMBA clean --merged` for bulk cleanup — same scope as the hook at line 136; `--force` is intentionally omitted for manual use).
+   - **`$RIMBA` non-empty (binary resolved by `resolve-rimba.sh`)** → run `$RIMBA remove <headRefName>` (or `$RIMBA clean --merged` for bulk cleanup — same scope as the "rimba + post-merge hook (fast path)" section's `rimba clean --merged --force` above, `--force` intentionally omitted here for manual use).
    - **rimba absent** → fall through to the **shell fallback** strategy below.
 
    Either rimba path handles worktree location, dirty/unpushed checks, and removal internally.
