@@ -16,11 +16,14 @@ Scope: skills/workflow-pr-review-post/SKILL.md (the input contract) plus
 bin/swe-workbench-pr-review-submit (the posting mechanism, since #550 moved
 Steps 1-4 out of this file's bash+jq prose and into that script). The two
 tests below pin input-contract prose that still lives in SKILL.md; every
-other #531 behavior (visibility detection, self-review event forcing,
-empty-comments fallthrough, the bounded 422 retry, never-blind-retry,
-pre-submit-summary-from-N, dedup counting, fallback-never-drops) now has a
-direct behavioral equivalent in tests/test_pr_review_submit_script.py —
-see its module docstring for the full mapping.
+other #531 behavior (visibility detection: test_build_byline_*; self-review
+event forcing: test_resolve_event_self_review_never_yields_approve;
+empty-comments fallthrough: test_n_zero_skips_atomic_post_entirely; the
+bounded 422 retry: test_confirmed_422_retries_once_demotes_and_posts_second_review;
+never-blind-retry: test_5xx_issues_zero_retries_and_one_read_your_write_call;
+pre-submit-summary-from-N: test_atomic_post_carries_candidate_count_in_body;
+fallback-never-drops: test_double_422_falls_through_to_per_comment_model_a)
+now has a direct behavioral equivalent in tests/test_pr_review_submit_script.py.
 """
 
 import re

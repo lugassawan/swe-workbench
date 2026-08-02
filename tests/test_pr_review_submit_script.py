@@ -404,6 +404,25 @@ def test_inline_finding_missing_path_aborts(tmp_path):
     assert _gh_calls(state_dir) == []
 
 
+def test_finding_body_embedding_remark_aborts(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [{
+        "severity": "High",
+        "body": f"nice work {prs.REMARK_TEXT}",
+        "anchor": "pr-level",
+    }])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode != 0
+    assert "--findings-json[0]" in result.stderr
+    assert _gh_calls(state_dir) == []
+
+
+def test_check_siblings_raises_on_missing_sibling(tmp_path):
+    with pytest.raises(prs.PostingError):
+        prs._check_siblings(tmp_path)
+
+
 def test_malformed_findings_json_aborts(tmp_path):
     stub_dir, state_dir = _write_gh_stub(tmp_path, [])
     responses_file = tmp_path / "gh_responses.json"

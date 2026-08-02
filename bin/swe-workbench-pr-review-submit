@@ -26,7 +26,10 @@ server-side even though the client never saw success. Blind-retrying would
 double-post every comment in the batch on the ~50% of ambiguous failures
 where it actually landed. Instead, an ambiguous failure triggers a cheap
 read-your-write check (list reviews, filter by current user + head SHA)
-before conceding to the per-comment ("model-A") fallback. The one
+before conceding to the per-comment ("model-A") fallback — this confirmation
+requires --current-user to be known; with identity unknown (a valid,
+documented state) the check can't filter by author and is skipped, the same
+fail-open posture the pre-#550 bash carried. The one
 *intentional* retry is scoped narrowly: a confirmed 422 (stale commit_id,
 or a line that went out-of-diff between pre-validate and submit) is
 re-validated against a freshly-fetched HEAD and retried exactly once.
@@ -54,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -139,6 +143,18 @@ class PostingError(Exception):
 
 def _script_dir() -> Path:
     return Path(__file__).resolve().parent
+
+
+def _check_siblings(script_dir: Path) -> None:
+    """Loud, actionable failure on a corrupted install — mirrors the `command -v ... ||
+    { echo reinstall or update ...; exit 1; }` preflight every other bin/ script uses,
+    adapted for sibling resolution via Path(__file__).parent rather than PATH lookup."""
+    for name in ("swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"):
+        path = script_dir / name
+        if not (path.is_file() and os.access(path, os.X_OK)):
+            raise PostingError(
+                f"sibling script {name} not found at {path} — reinstall or update the swe-workbench plugin."
+            )
 
 
 def _gh(args: list[str], input_data: str | None = None) -> subprocess.CompletedProcess:
@@ -371,10 +387,14 @@ def submit_review(
     review_url = ""
 
     if n > 0:
+        # Atomic path: one POST carrying every candidate comment plus the review event/body.
         proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
         if proc.returncode == 0:
             posted_inline, submitted, review_url = n, True, _extract_review_url(proc.stdout)
         elif "422" in (proc.stdout + proc.stderr):
+            # Confirmed 422 (stale commit_id, or a line pre-validate missed): re-fetch HEAD,
+            # genuinely re-validate every comment against it, demote anything now out-of-diff
+            # into the pr-level batch, then retry the atomic POST exactly once.
             new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
             head_sha = (new_head_data or {}).get("headRefOid") or head_sha
             still_in_diff, newly_demoted = [], []
@@ -392,15 +412,23 @@ def submit_review(
                 if proc2.returncode == 0:
                     posted_inline, submitted, review_url = n, True, _extract_review_url(proc2.stdout)
                 else:
+                    # Retry failed too (double-422, or network/5xx one level deeper) — same
+                    # ambiguous-failure class as below, so reuse the read-your-write check
+                    # before conceding to the model-A fallback.
                     landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
                     if landed is not None:
                         posted_inline, submitted, review_url = n, True, landed
         else:
+            # Network/5xx: no idempotency key on this endpoint, so a blind retry risks
+            # double-posting a POST that actually landed server-side. Confirm via a
+            # read-your-write check (list reviews, filter by current user + head SHA) instead.
             landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
             if landed is not None:
                 posted_inline, submitted, review_url = n, True, landed
 
     if not submitted:
+        # Reached when N==0 (today's plain submit), OR the atomic POST 422'd twice, OR it
+        # failed on network/5xx with no confirmed landing — model-A per-comment fallback.
         posted_inline = 0
         demoted: list[dict] = []
         for c in comments:
@@ -415,7 +443,7 @@ def submit_review(
             if proc.returncode == 0:
                 posted_inline += 1
             else:
-                demoted.append(c)
+                demoted.append(c)  # never dropped silently — folds into one follow-up pr-level comment
         if demoted:
             posted_pr_level += post_pr_level(pr, demoted)
         proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
@@ -453,6 +481,8 @@ def _finding_problem(row) -> str | None:
         return "severity must be a non-empty string"
     if not isinstance(row.get("body"), str) or not row["body"]:
         return "body must be a non-empty string"
+    if REMARK_TEXT in row["body"]:
+        return "body must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
     anchor = row.get("anchor")
     if anchor not in ("inline", "pr-level"):
         return "anchor must be 'inline' or 'pr-level'"
@@ -542,13 +572,14 @@ def main(argv: list[str] | None = None) -> int:
 
     owner, repo = args.repo.split("/", 1)
     inline_findings, pr_level_findings = partition_findings(findings)
+    script_dir = _script_dir()
 
     try:
+        _check_siblings(script_dir)
         threads = fetch_threads(owner, repo, args.pr)
         survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
 
         pr_diff = _gh(["pr", "diff", args.pr]).stdout
-        script_dir = _script_dir()
         in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
 
         posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
