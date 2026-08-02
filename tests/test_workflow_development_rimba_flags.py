@@ -18,8 +18,11 @@ Defects addressed:
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SKILL = ROOT / "skills" / "workflow-development" / "SKILL.md"
 TEMPLATE = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
+# SKILL.md's Phase 1 heading now keeps only a one-sentence summary + pointer;
+# the rimba-resolution mechanics this file's "skill_*" tests assert on live in
+# reference/branch-resolution.md.
+BRANCH_RESOLUTION = ROOT / "skills" / "workflow-development" / "reference" / "branch-resolution.md"
 
 
 def _phase1_section(text: str) -> str:
@@ -47,12 +50,11 @@ def test_skill_documents_all_five_branch_prefix_flags():
     Without these flags documented, agents always emit bare `rimba add <task>`
     and every branch gets the default `feature/` prefix regardless of work type.
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
 
     for flag in ("--bugfix", "--hotfix", "--docs", "--test", "--chore"):
         assert flag in phase1, (
-            f"SKILL.md Phase 1 must document the rimba flag '{flag}' so agents "
+            f"reference/branch-resolution.md must document the rimba flag '{flag}' so agents "
             f"can pick the correct branch prefix for non-feature work"
         )
 
@@ -64,14 +66,13 @@ def test_skill_documents_fix_alias_for_bugfix():
     It must be surfaced as a flag alias only — never as a `fix/` branch prefix,
     which rimba does not produce (see test_skill_no_longer_uses_wrong_feat_fix_prefixes).
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
 
     assert "--fix" in phase1, (
-        "SKILL.md Phase 1 must document the `--fix` alias for `--bugfix`"
+        "reference/branch-resolution.md must document the `--fix` alias for `--bugfix`"
     )
     assert "alias" in phase1.lower(), (
-        "SKILL.md Phase 1 must describe `--fix` as an alias, not a separate flag"
+        "reference/branch-resolution.md must describe `--fix` as an alias, not a separate flag"
     )
 
 
@@ -99,22 +100,21 @@ def test_skill_no_longer_uses_wrong_feat_fix_prefixes():
     The wrong prefix names actively mislead agents building their mental model.
     Both correct prefixes (feature/ and bugfix/) must appear in Phase 1.
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
 
     # Wrong prefixes must be absent (backtick-quoted as they appear in the prose)
     assert "`feat/`" not in phase1, (
-        "SKILL.md Phase 1 must not use `feat/` as a branch prefix — "
+        "reference/branch-resolution.md must not use `feat/` as a branch prefix — "
         "rimba produces `feature/`, not `feat/`"
     )
     assert "`fix/`" not in phase1, (
-        "SKILL.md Phase 1 must not use `fix/` as a branch prefix — "
+        "reference/branch-resolution.md must not use `fix/` as a branch prefix — "
         "rimba produces `bugfix/`, not `fix/`"
     )
 
     # Correct prefixes must be present
-    assert "feature/" in phase1, "SKILL.md Phase 1 must document the `feature/` prefix"
-    assert "bugfix/" in phase1, "SKILL.md Phase 1 must document the `bugfix/` prefix"
+    assert "feature/" in phase1, "reference/branch-resolution.md must document the `feature/` prefix"
+    assert "bugfix/" in phase1, "reference/branch-resolution.md must document the `bugfix/` prefix"
 
 
 def test_template_no_longer_uses_wrong_feat_fix_prefixes():
@@ -184,21 +184,20 @@ def test_skill_documents_monorepo_scope():
     the old "omit for repo-wide changes" guidance was actively wrong because it
     ignores the repo's branch convention.
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
 
     assert "<service>/" in phase1, (
-        "SKILL.md Phase 1 must document the <service>/<task> monorepo scope syntax"
+        "reference/branch-resolution.md must document the <service>/<task> monorepo scope syntax"
     )
     # A concrete example must be present so agents can pattern-match
     assert "backend-api/" in phase1 or "frontend/" in phase1, (
-        "SKILL.md Phase 1 must include a worked monorepo example "
+        "reference/branch-resolution.md must include a worked monorepo example "
         "(e.g. rimba add backend-api/auth-redirect --bugfix)"
     )
     # Must document the majority-service heuristic — "omit" alone is wrong advice
     lower = phase1.lower()
     assert "majority" in lower or "most" in lower, (
-        "SKILL.md Phase 1 must explain the majority-service heuristic for "
+        "reference/branch-resolution.md must explain the majority-service heuristic for "
         "cross-cutting changes (pick the service where most file edits land)"
     )
 
@@ -238,21 +237,20 @@ def test_skill_documents_post_create_timing():
     --skip-deps/--skip-hooks is only for test suites that need no installation step;
     agents must never skip deps and then reinstall manually.
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
 
     assert "--skip-deps" in phase1, (
-        "SKILL.md Phase 1 must document --skip-deps so agents know the flag exists "
+        "reference/branch-resolution.md must document --skip-deps so agents know the flag exists "
         "and when it is appropriate (no-install test suites only)"
     )
     assert "--skip-hooks" in phase1, (
-        "SKILL.md Phase 1 must document --skip-hooks alongside --skip-deps"
+        "reference/branch-resolution.md must document --skip-hooks alongside --skip-deps"
     )
 
     # Prose must tell agents to wait for rimba when deps are needed
     lower = phase1.lower()
     assert "wait" in lower, (
-        "SKILL.md Phase 1 must instruct agents to wait for rimba add to complete "
+        "reference/branch-resolution.md must instruct agents to wait for rimba add to complete "
         "when deps are required — 'wait' must appear in the timing guidance"
     )
 
@@ -292,31 +290,30 @@ def test_skill_documents_parallel_impl_during_install():
 
     Required tokens: git stash, stash pop, red, green, background, before deps.
     """
-    body = SKILL.read_text()
-    phase1 = _phase1_section(body)
+    phase1 = BRANCH_RESOLUTION.read_text()
     lower = phase1.lower()
 
     assert "git stash" in phase1, (
-        "SKILL.md Phase 1 must document 'git stash' as the TDD reconciliation mechanic"
+        "reference/branch-resolution.md must document 'git stash' as the TDD reconciliation mechanic"
     )
     assert "stash pop" in phase1, (
-        "SKILL.md Phase 1 must document 'git stash pop' to restore implementation after RED"
+        "reference/branch-resolution.md must document 'git stash pop' to restore implementation after RED"
     )
     assert "**RED**" in phase1, (
-        "SKILL.md Phase 1 must reference the **RED** step so agents know verification is preserved"
+        "reference/branch-resolution.md must reference the **RED** step so agents know verification is preserved"
     )
     assert "**GREEN**" in phase1, (
-        "SKILL.md Phase 1 must reference the **GREEN** step so agents know verification is preserved"
+        "reference/branch-resolution.md must reference the **GREEN** step so agents know verification is preserved"
     )
     assert "background" in lower, (
-        "SKILL.md Phase 1 must document backgrounding the rimba call so the session is free to implement"
+        "reference/branch-resolution.md must document backgrounding the rimba call so the session is free to implement"
     )
     assert "path:" in lower, (
-        "SKILL.md Phase 1 must state that Path: is available before deps finish "
+        "reference/branch-resolution.md must state that Path: is available before deps finish "
         "so agents know when coding may begin"
     )
     assert "deps" in lower, (
-        "SKILL.md Phase 1 must mention deps so agents know to wait for full completion"
+        "reference/branch-resolution.md must mention deps so agents know to wait for full completion"
     )
 
 

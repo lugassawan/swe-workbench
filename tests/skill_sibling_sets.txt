@@ -14,16 +14,16 @@
 # belongs to any of these three skills.
 principle-clean-architecture, principle-ddd, principle-event-driven
 
-# workflow-pr-review and workflow-pr-review-followup share genuine trigger surface:
-# both are invoked by reviewers on a specific PR number and both run the reviewer
-# agent against the PR diff. A prompt like "review pull request #123" legitimately
-# belongs to either skill — the distinction (first-pass vs re-check) is determined
-# by context the BM25 ranker cannot resolve. workflow-pr-review-post joins the group
-# because it is the shared posting/dedup/submit mechanism both orchestrators delegate
-# to — it necessarily reuses the same dedup/inline-comment/decision vocabulary, so a
-# prompt like "dedupe and post review findings to this PR" legitimately lands on any
-# of the three; only the caller (first-pass, re-check, or specialist sub-flow) differs.
-workflow-pr-review, workflow-pr-review-followup, workflow-pr-review-post
+# The standalone followup skill was folded into workflow-pr-review (both first-pass
+# and re-check are now modes of the same skill, selected by --check-followup), so
+# this group no longer needs a first-pass-vs-re-check entry. It still needs
+# workflow-pr-review-post: that skill is the shared posting/dedup/submit mechanism
+# workflow-pr-review delegates to in both modes, so it necessarily reuses the same
+# dedup/inline-comment/decision vocabulary — a prompt like "dedupe and post review
+# findings to this PR" legitimately lands on either skill. This is genuine shared
+# trigger surface from the division of responsibility (orchestrator vs. posting
+# core), not a drifted description on either skill's part.
+workflow-pr-review, workflow-pr-review-post
 
 # principle-data-modeling and principle-release-engineering both cover the
 # expand-contract pattern, but from different angles: principle-data-modeling owns

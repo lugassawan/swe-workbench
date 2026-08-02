@@ -28,7 +28,6 @@ DOCTOR_CMD = ROOT / "commands" / "doctor.md"
 
 SKILLS_WITH_PREFLIGHT = [
     "workflow-pr-review",
-    "workflow-pr-review-followup",
     "workflow-address-feedback",
     "workflow-audit-emit-issues",
     "workflow-cleanup-merged",
@@ -128,18 +127,24 @@ def test_skill_local_scripts_invoked_via_dispatcher():
 
     Skills with their own scripts/ dir (workflow-cleanup-merged, workflow-branch-sync) must
     reference each helper as `swe-workbench-skill-script <skill> <script>`, never a
-    constructed path — this is the replacement for the retired _RT/_SCRIPTS pattern.
+    constructed path — this is the replacement for the retired _RT/_SCRIPTS pattern. A skill
+    may satisfy this from a companion `reference/*.md` file instead of SKILL.md itself when
+    the invocation lives in content extracted there (e.g. workflow-cleanup-merged's Worktree
+    Removal Strategies), so this check searches SKILL.md plus any reference/ markdown.
     """
     assert _SKILLS_WITH_LOCAL_SCRIPTS, "no skills with a scripts/ dir found — fixture list must not be empty"
     for skill in _SKILLS_WITH_LOCAL_SCRIPTS:
         text = _skill_text(skill)
+        reference_dir = ROOT / "skills" / skill / "reference"
+        if reference_dir.is_dir():
+            text += "\n".join(p.read_text() for p in sorted(reference_dir.glob("*.md")))
         script_names = sorted(p.name for p in (ROOT / "skills" / skill / "scripts").glob("*.sh"))
         assert script_names, f"skills/{skill}/scripts/ has no .sh files"
         for name in script_names:
             pattern = re.compile(rf'swe-workbench-skill-script {re.escape(skill)} {re.escape(name)}\b')
             assert pattern.search(text), (
-                f"skills/{skill}/SKILL.md must invoke skills/{skill}/scripts/{name} via "
-                f"'swe-workbench-skill-script {skill} {name}'"
+                f"skills/{skill}/SKILL.md (or a skills/{skill}/reference/*.md companion) must "
+                f"invoke skills/{skill}/scripts/{name} via 'swe-workbench-skill-script {skill} {name}'"
             )
 
 
@@ -177,14 +182,15 @@ def test_preflight_pr_referenced_in_pr_review_skill():
     )
 
 
-def test_preflight_pr_referenced_in_pr_review_followup_skill():
-    """workflow-pr-review-followup SKILL.md Step 1 must use swe-workbench-preflight-pr."""
-    text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
+def test_preflight_pr_referenced_in_pr_review_followup_mode():
+    """The standalone followup skill was folded into workflow-pr-review as a mode (#565);
+    its Step 1 (shared by both first-pass and followup) must use swe-workbench-preflight-pr."""
+    text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
     assert "swe-workbench-preflight-pr" in text, (
-        "workflow-pr-review-followup SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
+        "workflow-pr-review SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
     )
     assert 'eval "$(' in text, (
-        "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source preflight output"
     )
 
 

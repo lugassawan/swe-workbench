@@ -85,14 +85,16 @@ import validate  # noqa: E402  (available via pyproject.toml pythonpath)
 
 @pytest.fixture(autouse=True)
 def reset_validate(monkeypatch, tmp_path):
-    """Clear FAILURES and redirect ROOT to a temp directory before each test.
+    """Clear FAILURES/WARNINGS and redirect ROOT to a temp directory before each test.
 
-    Both setup and teardown clear FAILURES so the fixture is safe under
+    Both setup and teardown clear FAILURES/WARNINGS so the fixture is safe under
     pytest-xdist: each worker process gets its own copy of the validate module
     (xdist is process-based, not thread-based), but within a worker the fixture
     still prevents cross-test contamination regardless of execution order.
     """
     validate.FAILURES.clear()
+    validate.WARNINGS.clear()
     monkeypatch.setattr(validate, "ROOT", tmp_path)
     yield tmp_path
     validate.FAILURES.clear()
+    validate.WARNINGS.clear()

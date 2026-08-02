@@ -10,12 +10,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 FAILURES = []
+WARNINGS = []
 
 # SKILL.md line caps (#568). A skill declaring 'orchestrator: true' in its
 # frontmatter gets the higher cap — see check_orchestrator_flag_earned() for
 # the rule that the flag itself must be earned (size or composition).
 BASE_SKILL_CAP = 150
 ORCHESTRATOR_SKILL_CAP = 300
+
+# Headroom warning threshold (#567): fraction of a skill's cap at which
+# check_skill_cap_headroom() starts warning, ahead of check_skills()'s hard
+# failure at 100%.
+CAP_HEADROOM_WARN_FRACTION = 0.90
 
 # Hook events that fire unconditionally and have no tool name to match against.
 # Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
@@ -56,6 +62,13 @@ _LSP_SHARED_INCLUDE = "@./shared/lsp.md"
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
+
+
+def warn(path, reason):
+    """Non-fatal counterpart to fail(): appends to WARNINGS, never FAILURES.
+    Must never be able to cause a non-zero exit — see main()'s WARNINGS
+    reporting, which prints but does not gate sys.exit(1)."""
+    WARNINGS.append(f"  {path}: {reason}")
 
 
 _FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
@@ -236,6 +249,20 @@ def check_hooks_json():
                     )
 
 
+def _skill_cap_info(fm):
+    """Return (is_orchestrator, cap) for a skill's parsed frontmatter dict.
+
+    Single source of truth for the orchestrator-flag detection rule and cap
+    selection (300 if 'orchestrator: true', else 150) — shared by
+    check_skills() (which also needs is_orchestrator for its failure message)
+    and check_skill_cap_headroom() (#567), so the two checks can never drift
+    on what counts as 'orchestrator' or what cap applies.
+    """
+    is_orchestrator = fm.get("orchestrator", "").lower() == "true"
+    cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+    return is_orchestrator, cap
+
+
 def check_skills(cache=None):
     skills_dir = ROOT / "skills"
     skills_cache = cache[1] if cache is not None else None
@@ -263,13 +290,49 @@ def check_skills(cache=None):
                 skill_md.relative_to(ROOT),
                 f"frontmatter name {fm.get('name')!r} does not match directory name {skill_dir_name!r}",
             )
-        is_orchestrator = fm.get("orchestrator", "").lower() == "true"
-        cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+        is_orchestrator, cap = _skill_cap_info(fm)
         if line_count > cap:
             fail(
                 skill_md.relative_to(ROOT),
                 f"exceeds {cap}-line cap ({line_count} lines)"
                 + ("" if is_orchestrator else "; add 'orchestrator: true' to frontmatter if intentional"),
+            )
+
+
+def check_skill_cap_headroom(cache=None):
+    """Warn (non-fatally) when a skill's SKILL.md line count crosses 90% of
+    its cap (#567) — early signal that a skill is approaching the hard cap
+    that check_skills() enforces, before it actually trips that failure.
+
+    Cap detection reuses _skill_cap_info() — the same helper check_skills()
+    uses — so this never drifts from that check's orchestrator-flag rule.
+    This check only ever calls warn(), never fail() — it must not affect the
+    build's exit code. Skills with missing/malformed frontmatter or an
+    unreadable file are skipped here; check_skills() already reports those.
+    """
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # unreadable — already reported by check_skills
+        else:
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        fm = parse_frontmatter(skill_md, text=text)
+        if fm is None:
+            continue  # malformed frontmatter — already reported by check_skills
+        line_count = len(text.splitlines())
+        _, cap = _skill_cap_info(fm)
+        threshold = cap * CAP_HEADROOM_WARN_FRACTION
+        if line_count > threshold:
+            warn(
+                skill_md.relative_to(ROOT),
+                f"{line_count} lines — within {round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% "
+                f"of the {cap}-line cap; consider extracting content before it hits the hard cap",
             )
 
 
@@ -1747,6 +1810,7 @@ def main():
     check_marketplace_json(plugin_data)
     check_hooks_json()
     check_skills(cache=cache)
+    check_skill_cap_headroom(cache=cache)
     check_orchestrator_flag_earned(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)
@@ -1774,6 +1838,12 @@ def main():
     check_no_echo_var_hazard(cache=cache)
     check_no_printf_var_format(cache=cache)
     check_no_unenumerated_tmp_write(cache=cache)
+
+    if WARNINGS:
+        print(f"WARNING — {len(WARNINGS)} skill(s) near their line cap:")
+        for w in WARNINGS:
+            print(w)
+        print()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)

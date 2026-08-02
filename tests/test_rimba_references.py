@@ -5,6 +5,9 @@ ROOT = Path(__file__).parent.parent
 # tests/ intentionally excluded — fixture strings are not agent-readable docs
 DOC_DIRS = [ROOT / "skills", ROOT / "commands"]
 WORKFLOW_DEV = ROOT / "skills" / "workflow-development" / "SKILL.md"
+WORKFLOW_DEV_BRANCH_RESOLUTION = (
+    ROOT / "skills" / "workflow-development" / "reference" / "branch-resolution.md"
+)
 
 
 def test_rimba_add_task_flag_requires_pr_mode():
@@ -19,7 +22,17 @@ def test_rimba_add_task_flag_requires_pr_mode():
 
 
 def test_workflow_development_documents_all_add_modes():
-    """workflow-development must document task, pr:, and branch: add modes."""
-    text = WORKFLOW_DEV.read_text(encoding="utf-8")
+    """workflow-development must document task, pr:, and branch: add modes.
+
+    Phase 1's rimba-resolution mechanics live in reference/branch-resolution.md
+    (SKILL.md keeps only a one-sentence summary + pointer), so the tokens are
+    checked across both files.
+    """
+    text = WORKFLOW_DEV.read_text(encoding="utf-8") + WORKFLOW_DEV_BRANCH_RESOLUTION.read_text(
+        encoding="utf-8"
+    )
     for token in ("rimba add", "pr:", "branch:", "--task"):
-        assert token in text, f"workflow-development SKILL.md must document `{token}` add mode"
+        assert token in text, (
+            f"workflow-development SKILL.md / reference/branch-resolution.md must "
+            f"document `{token}` add mode"
+        )

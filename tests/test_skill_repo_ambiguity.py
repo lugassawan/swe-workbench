@@ -26,7 +26,6 @@ VERSION_CONTROL_SKILL = ROOT / "skills" / "principle-version-control" / "SKILL.m
 CLEANUP_MERGED_SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 SYNC_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sync-and-verify.sh"
 PR_REVIEW_SKILL = ROOT / "skills" / "workflow-pr-review" / "SKILL.md"
-PR_REVIEW_FOLLOWUP_SKILL = ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md"
 POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
 # Regex matching literal "main" used as a branch name in checkout/pull commands
@@ -256,7 +255,7 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
     buggy_url = "https://github.com/${OWNER}/${REPO}"
     bare_paren = re.compile(r'^(BYLINE|SUMMARY|REMARK)=.*\(swe-workbench\)', re.MULTILINE)
 
-    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL, POST_CORE_SKILL):
+    for skill_path in (PR_REVIEW_SKILL, POST_CORE_SKILL):
         body = skill_path.read_text()
         skill_name = skill_path.parent.name
 
@@ -282,7 +281,7 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
         f"{POST_CORE_SKILL.parent.name}/SKILL.md does not contain the canonical link '{canonical}'.\n"
         f"The core owns the swe-workbench remark and must hardcode the tool URL there."
     )
-    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL):
+    for skill_path in (PR_REVIEW_SKILL,):
         body = skill_path.read_text()
         assert canonical not in body, (
             f"{skill_path.parent.name}/SKILL.md must NOT contain the canonical link '{canonical}' "
