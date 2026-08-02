@@ -1,6 +1,6 @@
 ---
 name: workflow-extend
-description: Captures a mid-PR sub-idea and implements it on the same branch as the existing PR — skips Phase 1 (Branch), preserves Verify → Review → Deliver, and uses workflow-commit-and-pr to update existing PR. Never creates a new branch or new PR.
+description: Captures a mid-PR sub-idea — a small related improvement surfaced mid-flight — and implements onto the same branch as the existing PR without opening anything new, delivering through the update existing PR path. Never a new branch, never a new PR. Activated by /swe-workbench:extend.
 orchestrator: true
 ---
 
