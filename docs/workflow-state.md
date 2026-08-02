@@ -17,7 +17,12 @@ the workflow continues at the correct step.
 |---|---|
 | **Path** | `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>.json` |
 | **Example** | `.claude/cache/workflow-state/feature-286-workflow-state-persistence.json` |
-| **Directory** | `.claude/cache/` — the plugin's ephemeral-state home; gitignored |
+| **Directory** | `.claude/cache/` — the plugin's ephemeral-state home |
+
+Consumer repos must add `.claude/cache/` to their own `.gitignore` — the plugin has no way
+to write it for you. `/swe-workbench:doctor` checks for this at doctor time (a **Repo
+hygiene** section warns if the directory is not gitignored, or if anything under it is
+already tracked) but never edits `.gitignore` or runs `git rm` itself.
 
 Both the model (writer) and the hook (reader) resolve the git toplevel via
 `git rev-parse --show-toplevel` from the session's cwd. This means the path agreement
