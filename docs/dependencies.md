@@ -22,6 +22,14 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 **Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … run \`claude mcp add …\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/swe-workbench:test` (unit) and non-web-UI `/swe-workbench:debug` are completely unaffected by these servers.
 
+## Language servers (optional, graceful-fallback)
+
+| Server | Used by | Install | Required? |
+|---|---|---|---|
+| Any LSP server configured in Claude Code (`gopls`, `tsserver`, `pyright`, `rust-analyzer`, …) | `reviewer`, `auditor`, `debugger`, `refactorer` — symbol expansion via the `LSP` tool | Configured in Claude Code itself; this plugin declares and installs none | Optional |
+
+**Fallback behaviour:** unlike the browser servers above, LSP absence never blocks. Agents attempt one call, state `LSP unavailable — falling back to Grep` once, and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries.
+
 ## Claude Code native tools
 
 The following tools are built into Claude Code itself — no plugin install required:
