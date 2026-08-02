@@ -206,7 +206,7 @@ def test_prompt_ranks_target_skill_top1(
 # against other workflow-* skills), loose enough to leave the tightest *unrelated*
 # family pair — workflow-codebase-audit vs workflow-codebase-knowledge at 1.077,
 # a pair this change never touches — comfortably green. A 1.0 floor would leave
-# that untouched pair only 4.5% from red.
+# that untouched pair only 0.077 above the line (1.077 vs. 1.0).
 _FAMILY_MARGIN = 0.9
 
 _WORKFLOW_FIXTURES = [
