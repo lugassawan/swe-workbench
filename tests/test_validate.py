@@ -2842,6 +2842,140 @@ class TestCheckBrowserToolGate:
 
 
 # ──────────────────────────────────────────────
+# LSP tool gate (#559)
+# ──────────────────────────────────────────────
+
+class TestCheckLspToolGate:
+    """check_lsp_tool_gate: any agent granting LSP in its tools: frontmatter must
+    carry @./shared/lsp.md, and the shared file must carry the LSP-unavailable
+    fallback sentence. The gate must key on the tools: frontmatter scalar only —
+    never on body-text "LSP", since agents/shared/principles.md uses "LSP" for the
+    Liskov Substitution Principle and most agents preload principle-solid (#559)."""
+
+    def test_grants_lsp_with_include_and_shared_file_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_grants_lsp_missing_include_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "No shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_list_form_missing_include_fails(self, reset_validate):
+        """List-form tools: (e.g. `tools:\\n  - Read\\n  - LSP`) must be treated
+        as granting LSP just like the scalar comma-separated form — otherwise a
+        contributor could silently bypass the gate by switching YAML encodings (#559)."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools:\n  - Read\n  - LSP\n---\n\n"
+            "No shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_shared_file_reworded_sentence_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP is unavailable, fall back to Grep instead.\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("fallback sentence" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_shared_file_absent_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_liskov_substitution_body_text_does_not_trigger_gate(self, reset_validate):
+        """The Liskov regression guard: body prose mentioning LSP must never be
+        mistaken for a tools: grant — this is the test that matters most."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep\n---\n\n"
+            "LSP is about honoring contracts between base and derived types.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_lspx_token_not_treated_as_granting(self, reset_validate):
+        """Token-boundary guard: a substring test would match a hypothetical LSPX tool."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, LSPX\n---\n\n"
+            "Body text without any LSP shared include.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_no_agent_grants_lsp_no_shared_file_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep\n---\n\n"
+            "Nothing special here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+
+# ──────────────────────────────────────────────
 # e2e-test-writer agent structural assertions
 # ──────────────────────────────────────────────
 
