@@ -18,6 +18,9 @@ ROOT = Path(__file__).parent.parent
 SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 TEMPLATE = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
 SWEEP_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sweep-residuals.sh"
+WORKTREE_REMOVAL_STRATEGIES_REF = (
+    ROOT / "skills" / "workflow-cleanup-merged" / "reference" / "worktree-removal-strategies.md"
+)
 
 
 def test_cleanup_merged_step3_calls_exit_worktree_before_cwd_anchor():
@@ -70,10 +73,10 @@ def test_cleanup_merged_rimba_path_handles_partial_success():
     must treat this as partial success and fall through to Step 6 (Delete Branches,
     after the #535 reorder moved Residual Sweep to Step 5) for branch cleanup.
     """
-    body = SKILL.read_text()
-    assert "### rimba (MCP / binary)" in body, "rimba strategy section must exist"
-    assert "### shell fallback" in body, "shell fallback section must exist as boundary"
-    rimba_block = body.split("### rimba (MCP / binary)")[1].split("### shell fallback")[0]
+    body = WORKTREE_REMOVAL_STRATEGIES_REF.read_text()
+    assert "## rimba (MCP / binary)" in body, "rimba strategy section must exist"
+    assert "## shell fallback" in body, "shell fallback section must exist as boundary"
+    rimba_block = body.split("## rimba (MCP / binary)")[1].split("## shell fallback")[0]
 
     has_partial = "partial" in rimba_block.lower()
     has_fallthrough = "fall through to Step 6" in rimba_block or "fall through to step 6" in rimba_block.lower()
