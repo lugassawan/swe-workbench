@@ -90,10 +90,8 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || true
 if [[ -n "${root}" ]]; then
   WARN=0
 
-  # Check A — is the pattern present? One check-ignore call per representative
-  # path (never batched — `-q` only accepts a single pathname). The two nested
-  # probes catch asymmetric coverage — e.g. a rule that only ignores one sidecar
-  # subdirectory (skill-usage/) but not the other (workflow-state/).
+  # Check A — pattern present? One check-ignore call per path (no batching:
+  # `-q` takes one pathname). Nested probes catch asymmetric per-subdirectory coverage.
   not_ignored=0
   for probe_path in \
     ".claude/cache/" \

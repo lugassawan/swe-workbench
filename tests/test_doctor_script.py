@@ -264,8 +264,7 @@ def test_hygiene_warns_when_already_tracked(tmp_path):
     (repo / ".gitignore").write_text(".claude/cache/\n")
     result = _run_doctor(env, cwd=repo)
     assert result.returncode == 0
-    assert "already tracked" in result.stdout.lower() or "tracked" in result.stdout.lower()
-    assert "1" in result.stdout
+    assert "1 file already tracked under .claude/cache/." in result.stdout
     assert "git rm -r --cached .claude/cache/" in result.stdout
     # pattern check must stay clean — the tracked-file warning is independent
     assert "not gitignored" not in result.stdout
