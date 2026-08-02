@@ -48,6 +48,8 @@ Build a plain-prose prompt from the parsed flags:
 
 Pass this to the `auditor` subagent. The agent is read-only and self-paces to the time-box.
 
+Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `LSP` expands from it — one attempt only; on no servers or error, state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
+
 ### Phase 3 — Schema validation
 
 Every finding returned by the auditor must include all three reasoning fields:
