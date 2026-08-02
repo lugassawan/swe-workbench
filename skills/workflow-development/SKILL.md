@@ -162,7 +162,8 @@ Verify baseline tests pass before writing any code.
 
 **Goal:** Write code following the plan, committing incrementally.
 
-New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline) — assess at write-time so comments are lean on the first pass, rather than relying on the Phase 4 review backstop.
+- New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline) — assess at write-time so comments are lean on the first pass, rather than relying on the Phase 4 review backstop.
+- **Symbol navigation.** Use `Grep`/`Glob` to locate an anchor (`filePath`/`line`/`character`), then `LSP` to expand from it (`goToDefinition`, `findReferences`, `prepareCallHierarchy`/`incomingCalls`/`outgoingCalls`); attempt one LSP call — on no servers or error, state `LSP unavailable — falling back to Grep` once, use Grep for the rest of the run, and do not retry.
 
 Choose execution strategy:
 - **Sequential or separate session** → invoke `superpowers:executing-plans`
