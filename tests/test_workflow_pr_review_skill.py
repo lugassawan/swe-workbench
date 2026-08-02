@@ -105,21 +105,6 @@ def test_pr_review_skill_cleanup_deletes_pr_json():
     )
 
 
-def test_post_core_cleanup_deletes_own_threads_json():
-    """workflow-pr-review-post owns its own threads-cache reap, distinct from either
-    consumer's preflight-state file (issue #499). The filename is CALLER_TAG-scoped so
-    concurrent callers (general/followup/specialist) reviewing the same PR never share
-    (and can't clobber) each other's threads cache."""
-    text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
-    assert "swe-workbench-clean-state-files" in text, (
-        "workflow-pr-review-post/SKILL.md must call swe-workbench-clean-state-files to reap its own state"
-    )
-    assert "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" in text, (
-        "workflow-pr-review-post/SKILL.md must pass its own CALLER_TAG-scoped "
-        "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json to swe-workbench-clean-state-files"
-    )
-
-
 def test_post_core_requires_caller_tag_input():
     """The core's input contract must require CALLER_TAG so the threads-cache filename
     stays scoped per caller (issue #499 follow-up fix)."""

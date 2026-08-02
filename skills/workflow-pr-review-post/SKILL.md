@@ -20,236 +20,68 @@ orchestrator: true
 - `--mode contributor-trust` → never invoked; `contributor-auditor`'s contract is advisory-only, never posts.
 - Directly by a user prompt with no pre-computed payload — this skill is pure mechanism; something upstream must have already run an auditor and derived a decision.
 
-## Input contract (validation preamble — abort on any violation)
+## Input contract
 
-Before Step 1, verify every required field is present and well-formed. **Abort immediately** (print the specific missing/invalid field; do not post or submit anything) if any check fails — no compiler enforces this markdown contract, so this preamble is the only guard:
+The posting mechanism itself lives in `bin/swe-workbench-pr-review-submit` — it validates every
+field below and aborts (`workflow-pr-review-post: invalid payload — <field> <problem>. Refusing
+to post.`, non-zero exit, before any network call) on a violation, so this table documents the
+contract callers must satisfy, not a check this skill performs itself.
 
-| Field | Requirement |
-|---|---|
-| `PR` | non-empty, matches `[1-9][0-9]*` |
-| `OWNER`, `REPO` | non-empty |
-| `HEAD_SHA` | non-empty (40-char git SHA) |
-| `BASE` | non-empty |
-| `CURRENT_USER`, `AUTHOR_LOGIN` | may be empty (identity-unknown is a valid state — see Step 3), but if provided must be plain login strings |
-| `DECISION` | exactly `APPROVE` or `COMMENT` |
-| `BYLINE` | non-empty, **identity-only** markdown clause (e.g. `_Reviewed by \`reviewer\`_`) — **must NOT** embed the swe-workbench remark (` ([swe-workbench](https://github.com/lugassawan/swe-workbench))`) or `posted`/`deduped` counts; this skill appends the remark conditionally (public repos only) and its own stats clause in Step 4, since repo visibility and those counts aren't known until Step 2/4 run |
-| `BLOCKING_SCOPE` | one of `NONE`, `OUT-OF-DIFF-ONLY`, `IN-DIFF`; default `IN-DIFF` if the caller omits it (fail-safe). `workflow-pr-review`/`workflow-pr-review-followup` set this from the reviewer agent's own in-diff/out-of-diff classification; the specialist PR-mode sub-flow intentionally omits it (specialist auditors don't classify diff-scope), which falls back to `IN-DIFF` — the diff-scoping flip (Step 3) accordingly never fires for specialist-mode reviews. This is a deliberate divergence, not an oversight. |
-| `FINDINGS[]` | each row has `severity`, `body`, and `anchor ∈ {inline, pr-level}`; `anchor=inline` rows must also have `path` and `line`. **Inline comment bodies must NOT contain the byline/remark** in any form — a `comments[]` body is `finding.body` verbatim; the byline/remark is a review-level concern built once in Step 4, never folded into a per-finding body |
-| `CALLER_TAG` | non-empty, one of `general`, `followup`, or the specialist mode name (e.g. `security`, `dependency`) — scopes this skill's own state file so two callers reviewing the same PR concurrently never share (and can't clobber) each other's threads cache |
+| Field | CLI flag | Requirement |
+|---|---|---|
+| `PR` | `--pr` | non-empty, matches `[1-9][0-9]*` |
+| `OWNER`/`REPO` | `--repo owner/repo` | non-empty |
+| `HEAD_SHA` | `--head-sha` | 40-char git SHA |
+| `BASE` | `--base` | non-empty |
+| `DECISION` | `--decision` | `APPROVE` or `COMMENT` |
+| `BYLINE` | `--byline` | non-empty, **identity-only** markdown clause (e.g. `_Reviewed by \`reviewer\`_`) — must NOT embed the swe-workbench remark or `posted`/`deduped` counts; the script appends both (remark only on a confirmed-public repo — fail-safe omits it on private/unknown) |
+| `BLOCKING_SCOPE` | `--blocking-scope` | `NONE` / `OUT-OF-DIFF-ONLY` / `IN-DIFF`, default `IN-DIFF` (fail-safe). Set from the reviewer agent's in-diff/out-of-diff classification; the specialist PR-mode sub-flow omits it, so the diff-scoping flip never fires there — deliberate, not an oversight. |
+| `CURRENT_USER`/`AUTHOR_LOGIN` | `--current-user`/`--author-login` | optional; empty = identity unknown (self-review flip and auto-approve both stay suppressed — never guesses) |
+| `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, body, anchor}`; `anchor=inline` rows also carry `{path, line}`. **Inline comment bodies must NOT contain the byline/remark** in any form — a `comments[]` body is `finding.body` verbatim; the byline/remark is a review-level concern the script builds once. |
+| `CALLER_TAG` | `--caller-tag` | non-empty — `general`, `followup`, or the specialist mode name; also scopes an optional `--debug-dir` dump (`<tag>-threads.json` / `<tag>-payload.json`) so two callers reviewing the same PR concurrently never collide |
 
-Abort message: `"workflow-pr-review-post: invalid payload — <field> <problem>. Refusing to post."` `RUN_DIR` is an optional caller-supplied field (the caller's own `swe-workbench-new-run-dir` allocation), not subject to this abort check — it names the destination for the optional mid-workflow debug persist of `$COMMENTS_JSON` in Step 2; this skill never allocates or reaps it, that stays the caller's responsibility alongside its own worktree teardown.
-
-## Step 1 — Fetch existing review threads
-
-```bash
-gh api graphql -F number="$PR" -F owner="$OWNER" -F repo="$REPO" -f query='
-  query($owner: String!, $repo: String!, $number: Int!) {
-    repository(owner: $owner, name: $repo) {
-      pullRequest(number: $number) {
-        reviewThreads(first: 100) {
-          nodes {
-            id isResolved path line startLine
-            comments(first: 10) {
-              nodes {
-                id databaseId body
-                author { login }
-                reactions(first: 20, content: THUMBS_UP) {
-                  nodes { user { login } }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }' > "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
-```
-
-Pagination via `pageInfo { endCursor hasNextPage }` if a real PR exceeds 100 threads (known v1 limit — document, don't implement, unless it's actually hit).
-
-Uses its own `${PR}-post-threads-${CALLER_TAG}.json` state file — scoped by `CALLER_TAG` so it's distinct both from any `${PR}.json`/`${PR}-threads.json`/`${PR}-followup*.json` files the caller may hold, AND from another caller's own `${PR}-post-threads-*.json` reviewing the same PR concurrently (e.g. a general review and a specialist `--mode security` review both in flight — without the tag, both would share one cache file and one run's Step 6 reap could delete the other's cache mid-flight).
-
-## Step 2 — Dedup + pre-validate + assemble
-
-Partition `FINDINGS[]` by `anchor`.
-
-### Inline findings (`anchor=inline`)
-
-For each: **fuzzy-match** against fetched threads, against ANY author:
-- Same `path` (exact, repo-relative).
-- `|finding.line - thread.line| ≤ 5` (use `startLine` for multi-line ranges).
-- Body Jaccard token overlap ≥ 0.4.
-- `isResolved == false`.
-
-**On match**: skip posting, increment `$deduped`. If `$CURRENT_USER` has not already 👍'd (check `reactions.nodes[].user.login`; use `reactions(first: 20, ...)` — 5 truncates busy threads), add a 👍 to the thread head (first comment's `id`):
+## Post
 
 ```bash
-gh api graphql -F subjectId="$THREAD_HEAD_ID" -f query='
-  mutation($subjectId: ID!) {
-    addReaction(input: {subjectId: $subjectId, content: THUMBS_UP}) { reaction { id } }
-  }'
+command -v swe-workbench-pr-review-submit >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+  exit 1
+}
+eval "$(swe-workbench-pr-review-submit \
+  --repo "$OWNER/$REPO" --pr "$PR" --head-sha "$HEAD_SHA" --base "$BASE" \
+  --decision "$DECISION" --byline "$BYLINE" --caller-tag "$CALLER_TAG" \
+  --findings-json "$FINDINGS_JSON_PATH" --blocking-scope "$BLOCKING_SCOPE" \
+  --current-user "$CURRENT_USER" --author-login "$AUTHOR_LOGIN")"
 ```
 
-**On no match**: the finding survives dedup and becomes a candidate for the pending review's `comments[]` batch, posted atomically in Step 4 (`POST .../pulls/{n}/reviews`) instead of individually here. A candidate's body is `finding.body` **verbatim** — never `$BYLINE`/`$BYLINE_FULL`/`$REMARK` concatenated in; the byline is a review-level concern built once in Step 4 (inline comments must never repeat it).
+This one call replaces the fetch/dedup/pre-validate/assemble/self-review-gate/atomic-submit
+mechanism previously written out as bash+jq prose here: fetches existing review threads
+(paginated), dedups inline findings against them (±5-line fuzzy match + Jaccard ≥ 0.4 body
+overlap, any author, unresolved only) with a 👍 reaction on match, pre-validates surviving inline
+anchors against the PR diff — demoting out-of-diff/ambiguous rows into a single pr-level batch
+comment rather than dropping them — applies the self-review + diff-scoping decision flip, and
+submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
+confirmed 422 (re-fetches HEAD via `headRefOid`, genuinely re-validates/demotes, retries once) and
+a per-comment fallback otherwise. The core never submits APPROVE on self-review — GitHub blocks a
+self-authored `APPROVE` outright, so `EVENT` is forced to `COMMENT` regardless of `$DECISION`. A
+network/5xx failure is **never** blind-retried (no idempotency
+key for this endpoint); the script confirms via a read-your-write check before conceding to the
+fallback. The core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark
+(appended to the byline on a confirmed-public repo only) — callers' own `BYLINE` stays
+identity-only and never embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for
+the full rationale, and
+[`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md) /
+[`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md) for the shell-side pitfalls
+building the payload in Python sidesteps entirely.
 
-**Pre-validate before assembly**: the atomic Reviews API POST in Step 4 submits the whole batch in one call — one bad `(path, line)` 422s the *entire* review, and the error body carries no per-comment index to identify which row failed (an assumption to confirm on a scratch PR), so a stale or invalid line must be caught here, before it can poison the batch. Confirm each survivor's `line` lands on a `+` (added/modified) line for `path` in the diff at `$HEAD_SHA` via `swe-workbench-diff-line-lookup` — never by hand-parsing hunk headers — using `line_is_in_diff`, defined once here (fetching the PR diff once into `$PR_DIFF` and reusing it across every survivor and Step 4's retry, never re-fetching per row) and reused by Step 4's retry: `command -v swe-workbench-diff-line-lookup >/dev/null 2>&1 || { echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2; exit 1; }; PR_DIFF="${PR_DIFF:-$(gh pr diff "$PR")}"; line_is_in_diff() { local repo_path="$1" line="$2" head_sha="$3" content resolved; case "$line" in ''|*[!0-9]*) return 1 ;; esac; content=$(git show "${head_sha}:${repo_path}" | sed -n "${line}p") || return 1; [ -n "$content" ] || return 1; resolved=$(printf '%s\n' "$PR_DIFF" | swe-workbench-diff-line-lookup "$repo_path" "$content" --stdin 2>/dev/null) || return 1; [ "$resolved" = "${repo_path}:${line}" ]; }`. A line that no longer resolves (helper exits non-zero — not found, or ambiguous because the extracted content is too short to be distinctive) is treated the same as out-of-diff: **In-diff** (`line_is_in_diff` returns 0) → assemble into `comments[]` below. **Out-of-diff / unresolved** → re-anchor the finding `pr-level` and fold it into the PR-level batch below — this is the contract's existing home for out-of-diff rows.
-
-Assemble each in-diff survivor into the pending review's `comments[]` **JSON array** via `jq` — **not** `gh api` bracket-indexed field flags. `gh api -f "comments[0][path]=..." -f "comments[1][path]=..."` builds a JSON *object* keyed by stringified indices (`{"comments":{"0":{...},"1":{...}}}`), not an array — GitHub's Reviews API requires `comments` to be an array and rejects the object shape outright, so that syntax can never work here (verified against a live `gh` install; do not reintroduce it). `jq --arg`/`--argjson` give the same raw-string safety `-f body=` gives a scalar field: a finding body starting with `@author…` is embedded as a literal JSON string value, never file-expanded — there is no `-f`/`-F` hazard once the payload is built as real JSON rather than passed through `gh api`'s own field-flag parser (see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md)). Never string-concatenate `$BODY` directly into a JSON literal — a body containing `"` or `\` would break the JSON or inject fields; always go through `jq --arg`. If you pause mid-workflow to inspect `$COMMENTS_JSON`, persist it with `printf '%s' "$COMMENTS_JSON" > "$RUN_DIR/payload.json"`, never `echo` — zsh expands the JSON's `\n` escapes into raw newlines and corrupts it (see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md)). Never write it to a bare `/tmp/payload.json` — that path is global (not PR-keyed), so two concurrent reviews would silently overwrite each other's payload, and no per-PR reaper could ever find it. `$RUN_DIR` is the caller's own allocation (mode 0700, PR-keyed by construction) and gets reaped along with the rest of the caller's run-scoped scratch.
-
-```bash
-COMMENTS_JSON="[]"
-for row in "${INLINE_SURVIVORS[@]}"; do   # each row resolves REPO_PATH, LINE, BODY — dedup- and diff-validated
-  COMMENTS_JSON=$(jq --arg path "$REPO_PATH" --argjson line "$LINE" --arg body "$BODY" \
-    '. + [{path: $path, line: $line, side: "RIGHT", body: $body}]' <<<"$COMMENTS_JSON")
-done
-N=$(jq 'length' <<<"$COMMENTS_JSON")
-```
-
-Freeze `N` here — the **candidate** inline count. `N` becomes `posted_inline` only once Step 4's atomic submit actually lands; a whole-review 422 can still change that outcome (see Step 4 and Failure modes).
-
-### PR-level findings (`anchor=pr-level`)
-
-No thread to dedup against — `dependency-auditor` rows (no `File:Line`), any inline row demoted above, and any inline row whose line fell out-of-diff both land here. Batch ALL pr-level findings (original + demoted) into **one** general PR comment (not deduped across runs — see Common mistakes), posted here in Step 2 — **before** Step 4's review submit — so `posted_pr_level` is already a landed count by the time the byline is built:
-
-```bash
-if gh pr comment "$PR" --body "$PR_LEVEL_BODY"; then
-  posted_pr_level=$PR_LEVEL_FINDING_COUNT   # count each batched finding individually even though they share one API call
-else
-  posted_pr_level=0
-  echo "[warn] gh pr comment failed — pr-level batch of $PR_LEVEL_FINDING_COUNT finding(s) NOT posted." >&2
-fi
-```
-
-Only issue this call when at least one pr-level finding exists (including demoted rows). `posted_pr_level` must be set **after** the call, gated on its exit status — never increment it unconditionally before knowing whether the post actually landed, or a failed batch gets reported as posted in Step 4's byline and wrongly fires Step 5's CTA on a `posted > 0` that corresponds to nothing on the PR. Maintain `posted=$((posted_inline + posted_pr_level))` as the combined total used by the CTA/suppression outcome-axis checks below (Steps 4–5); the byline in Step 4 reports the split counts separately so a dependency-mode run (pr-level only) doesn't misreport itself as having posted inline comments.
-
-## Step 3 — Self-review gate + diff-scoping flip + submit event
-
-```bash
-if [ -z "$CURRENT_USER" ] || [ -z "$AUTHOR_LOGIN" ]; then
-  echo "[warn] IS_SELF_REVIEW: identity unknown (CURRENT_USER='$CURRENT_USER' AUTHOR_LOGIN='$AUTHOR_LOGIN'); treating as cross-author but diff-scoping flip suppressed (identity unknown)." >&2
-  IS_SELF_REVIEW=false
-elif [ "$CURRENT_USER" = "$AUTHOR_LOGIN" ]; then IS_SELF_REVIEW=true
-else IS_SELF_REVIEW=false; fi
-
-IDENTITY_KNOWN=$([ -n "$CURRENT_USER" ] && [ -n "$AUTHOR_LOGIN" ] && echo true || echo false)
-if [ "$DECISION" = "COMMENT" ] && [ "$BLOCKING_SCOPE" = "OUT-OF-DIFF-ONLY" ] \
-   && [ "$IS_SELF_REVIEW" = false ] && [ "$IDENTITY_KNOWN" = true ]; then
-  DECISION=APPROVE
-fi
-
-if [ "$IS_SELF_REVIEW" = true ]; then EVENT=COMMENT; else EVENT="$DECISION"; fi
-```
-
-Identity unknown (`CURRENT_USER` or `AUTHOR_LOGIN` empty) → `IS_SELF_REVIEW=false` but `IDENTITY_KNOWN=false` suppresses the flip (fail-safe: never auto-approve when authorship can't be verified).
-
-`$EVENT` — not `$DECISION` — is what Step 4 actually submits to the Reviews API. GitHub blocks a self-authored `APPROVE` outright but allows a self-authored `COMMENT`, so on self-review `EVENT` is forced to `COMMENT` regardless of `$DECISION` (e.g. a clean scan with no findings still yields `DECISION=APPROVE`) — this replaces the previous behavior of skipping submit entirely on self-review, which under the atomic posting model would have silently dropped every inline comment along with it. The core never submits `APPROVE` on self-review.
-
-## Step 4 — Submit
-
-The review body is lean by design: decision line + byline (+ optional informational notes) only — findings already posted in Step 2 must NOT be restated here. On self-review the decision line is omitted (the run always submits `EVENT=COMMENT`, never the pre-flip `$DECISION`, which could misleadingly read `APPROVE`) but the byline/stats clause still appears — self-review no longer skips submit outright (see Step 3). `$BYLINE` is the caller's identity clause only (e.g. `` _Reviewed by `reviewer`_ ``) — it must NOT embed the swe-workbench remark, and it cannot include `posted`/`deduped` counts, since those are only known after Step 2 runs here in the core. This skill appends both:
-
-```bash
-IS_PRIVATE=$(gh repo view "${OWNER}/${REPO}" --json isPrivate -q '.isPrivate' 2>/dev/null)
-REMARK=""
-[ "$IS_PRIVATE" = "false" ] && REMARK=" ([swe-workbench](https://github.com/lugassawan/swe-workbench))"
-```
-
-`IS_PRIVATE` is gated on a **confirmed** `"false"` (public) result — an empty/errored lookup (permission issue, transient failure) or an explicit `"true"` both leave `REMARK` empty. This is deliberately fail-safe: never advertise the tool on a repo whose visibility couldn't be confirmed public.
-
-The lean body above has no out-of-diff carve-out section — that mechanism belonged to the earlier single-loop design, where in-diff and out-of-diff findings shared one posting path. This refactor's `anchor` partition (Step 2) already gives out-of-diff findings their own dedicated path (the pr-level batch comment), so there is nothing left to defer into the review body.
-
-**Build the pre-submit body from `$N`, not `$posted_inline`.** The atomic POST's own `body=$SUMMARY` field has to describe what it is *about to* post, and `$posted_inline` is not assigned until after that same POST completes — referencing it here would embed an unset/empty count into the review body itself. Atomicity makes the `$N` assumption safe: either all `$N` comments land together with this exact body, or the POST fails outright and the fallback below rebuilds `$SUMMARY` from the real landed count before its own separate submit:
-
-```bash
-BYLINE_FULL="${BYLINE}${REMARK}. Posted ${N} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
-if [ "$IS_SELF_REVIEW" = true ]; then SUMMARY=$(printf '%s\n' "$BYLINE_FULL")
-else SUMMARY=$(printf '**Review Decision: %s**\n\n%s\n' "$DECISION" "$BYLINE_FULL"); fi
-```
-
-**Submit — atomic path first, when `N > 0`:**
-
-```bash
-if [ "$N" -gt 0 ]; then
-  PAYLOAD=$(jq -n --arg commit_id "$HEAD_SHA" --arg event "$EVENT" --arg body "$SUMMARY" --argjson comments "$COMMENTS_JSON" \
-    '{commit_id: $commit_id, event: $event, body: $body, comments: $comments}')
-  RESP=$(gh api --method POST "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" --input - <<<"$PAYLOAD" 2>&1)
-  if [ $? -eq 0 ]; then
-    posted_inline=$N; SUBMITTED=true
-  elif printf '%s\n' "$RESP" | grep -q '422'; then
-    # Stale commit_id, or a line pre-validate missed — re-fetch HEAD and
-    # GENUINELY re-validate/reassemble (do NOT resubmit $COMMENTS_JSON
-    # unchanged); demote anything newly out-of-diff to a pr-level comment.
-    HEAD_SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
-    COMMENTS_JSON="[]"; STILL_IN_DIFF=(); DEMOTED_BODY=""; DEMOTED_N=0
-    for row in "${INLINE_SURVIVORS[@]}"; do   # each row resolves REPO_PATH, LINE, BODY
-      if line_is_in_diff "$REPO_PATH" "$LINE" "$HEAD_SHA"; then   # same predicate as Step 2's pre-validate pass
-        COMMENTS_JSON=$(jq --arg path "$REPO_PATH" --argjson line "$LINE" --arg body "$BODY" \
-          '. + [{path: $path, line: $line, side: "RIGHT", body: $body}]' <<<"$COMMENTS_JSON")
-        STILL_IN_DIFF+=("$row")
-      else
-        DEMOTED_BODY="${DEMOTED_BODY}${BODY}"$'\n\n---\n\n'; DEMOTED_N=$((DEMOTED_N + 1))
-      fi
-    done
-    # Batch every newly-demoted row into ONE pr-level comment — mirrors Step 2's own batching.
-    [ "$DEMOTED_N" -gt 0 ] && gh pr comment "$PR" --body "$DEMOTED_BODY" \
-      && posted_pr_level=$((posted_pr_level + DEMOTED_N))
-    INLINE_SURVIVORS=("${STILL_IN_DIFF[@]}"); N=$(jq 'length' <<<"$COMMENTS_JSON")
-    BYLINE_FULL="${BYLINE}${REMARK}. Posted ${N} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
-    if [ "$IS_SELF_REVIEW" = true ]; then SUMMARY=$(printf '%s\n' "$BYLINE_FULL")
-    else SUMMARY=$(printf '**Review Decision: %s**\n\n%s\n' "$DECISION" "$BYLINE_FULL"); fi
-
-    PAYLOAD=$(jq -n --arg commit_id "$HEAD_SHA" --arg event "$EVENT" --arg body "$SUMMARY" --argjson comments "$COMMENTS_JSON" \
-      '{commit_id: $commit_id, event: $event, body: $body, comments: $comments}')
-    RESP2=$(gh api --method POST "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" --input - <<<"$PAYLOAD" 2>&1); RESP2_OK=$?
-    # Retry failure is the same ambiguous class one level deeper — reuse the read-your-write check.
-    [ "$RESP2_OK" -ne 0 ] && LANDED=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" \
-      -q "[.[] | select(.user.login==\"$CURRENT_USER\" and .commit_id==\"$HEAD_SHA\")] | length")
-    { [ "$RESP2_OK" -eq 0 ] || [ "${LANDED:-0}" -gt 0 ]; } && { posted_inline=$N; SUBMITTED=true; }
-  else
-    # Network/5xx — ambiguous: the POST may have landed server-side even though the
-    # client saw a failure. Never blind-retry (no idempotency key); instead confirm
-    # via a cheap read-your-write check before conceding to the model-A fallback.
-    LANDED=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}/reviews" \
-      -q "[.[] | select(.user.login==\"$CURRENT_USER\" and .commit_id==\"$HEAD_SHA\")] | length")
-    [ "${LANDED:-0}" -gt 0 ] && { posted_inline=$N; SUBMITTED=true; }
-  fi
-fi
-
-if [ "${SUBMITTED:-false}" != true ]; then
-  # Reached when N=0 (nothing to batch — today's plain submit) OR the atomic
-  # POST 422'd twice OR failed on network/5xx — model-A per-comment fallback.
-  posted_inline=0; DEMOTED_BODY=""; DEMOTED_N=0
-  for row in "${INLINE_SURVIVORS[@]}"; do   # empty loop when N=0; each row resolves REPO_PATH, LINE, BODY
-    if gh api "repos/${OWNER}/${REPO}/pulls/${PR}/comments" \
-         -f body="$BODY" \
-         -F path="$REPO_PATH" \
-         -F line="$LINE" \
-         -F side=RIGHT \
-         -F commit_id="$HEAD_SHA"; then
-      posted_inline=$((posted_inline + 1))
-    else
-      # Never drop a finding silently on a fallback POST failure — batch into ONE
-      # follow-up pr-level comment after the loop, not one gh pr comment per row.
-      DEMOTED_BODY="${DEMOTED_BODY}${BODY}"$'\n\n---\n\n'; DEMOTED_N=$((DEMOTED_N + 1))
-    fi
-  done
-  [ "$DEMOTED_N" -gt 0 ] && gh pr comment "$PR" --body "$DEMOTED_BODY" \
-    && posted_pr_level=$((posted_pr_level + DEMOTED_N))
-  BYLINE_FULL="${BYLINE}${REMARK}. Posted ${posted_inline} inline comment(s) and ${posted_pr_level} PR-level note(s), deduped ${deduped}."
-  if [ "$IS_SELF_REVIEW" = true ]; then SUMMARY=$(printf '%s\n' "$BYLINE_FULL")
-  else SUMMARY=$(printf '**Review Decision: %s**\n\n%s\n' "$DECISION" "$BYLINE_FULL"); fi
-  if [ "$IS_SELF_REVIEW" = false ] && [ "$EVENT" = "APPROVE" ]; then gh pr review "$PR" --approve --body "$SUMMARY"
-  else gh pr review "$PR" --comment --body "$SUMMARY"; fi
-fi
-```
-
-In the fallback block, `$posted_inline` is read *after* the loop assigns it — no ordering hazard, since `$SUMMARY` here feeds the fallback's own `gh pr review` submit, never the already-sent atomic POST. When `N=0` the loop body never executes and `posted_inline` stays `0`, degenerating exactly to the previous plain submit — the empty-`comments[]` case is a fall-through, not a special case.
-
-**Never** use `--request-changes`. **Never** blind-retry the atomic POST on a network/5xx failure — there is no idempotency key for this endpoint, so a retried call that actually landed the first time double-posts every comment; the single retry above is scoped to a confirmed 422 only. Findings already posted inline/PR-level in Step 2 must NOT be restated in `$SUMMARY`. **Never** `echo "$PAYLOAD"` to inspect it before submitting — use `printf '%s' "$PAYLOAD"` instead (see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md)).
+`eval` sets `POSTED_INLINE`, `POSTED_PR_LEVEL`, `DEDUPED`, `SUBMITTED`, `EVENT`, `DECISION`,
+`REVIEW_URL` — every value `printf %q`-quoted. Finding bodies are never echoed (mirrors the
+eval-injection invariant `tests/test_preflight_pr_script.py::test_preflight_does_not_echo_body`
+enforces repo-wide).
 
 ## Step 5 — Address-feedback CTA (conditional)
 
-Call `AskUserQuestion` when the review produced something actionable — `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0`:
+Call `AskUserQuestion` when the review produced something actionable — `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (`posted = POSTED_INLINE + POSTED_PR_LEVEL`):
 
 ```json
 {
@@ -267,34 +99,20 @@ Call `AskUserQuestion` when the review produced something actionable — `DECISI
 
 Substitute the real PR number for `<N>`. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or anything else) → no further action. Suppress silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` (post-flip evaluation — a clean approval with nothing posted/deduped has nothing to address). Identity does NOT gate the CTA.
 
-## Step 6 — State reap
-
-Foreground — failures surface (no `2>/dev/null` or `|| true`). This skill is invoked as its own skill boundary, not a `source`d fragment of the caller's shell:
-
-```bash
-command -v swe-workbench-clean-state-files >/dev/null 2>&1 || { echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2; exit 1; }
-swe-workbench-clean-state-files "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
-[ -e "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" ] \
-  && echo "⚠ state file NOT reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" >&2 \
-  || echo "✓ state file reaped: /tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json"
-```
-
-This skill never touches the caller's own worktree, preflight state files (e.g. `${PR}.json`, `${PR}-followup.json`), or `$RUN_DIR` — those stay the caller's responsibility, cleaned up (worktree + `swe-workbench-reap-run-dir "$RUN_DIR"`) alongside its own worktree teardown after this skill returns. (Dedup contract: see the fuzzy-match rule in Step 2 — same `path`, `|line delta| ≤ 5`, Jaccard ≥ 0.4, unresolved, any author.)
-
 ## Failure modes
 
 | Failure | Signal | Action |
 |---|---|---|
-| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | Line-in-diff check fails during assembly, or `gh api` non-zero exit with `422` | Demote to the pr-level batch (never drop silently); for a 422, re-fetch `HEAD_SHA`, re-validate/reassemble, retry **once** — still failing falls back to model-A (rebuild `$SUMMARY` from the actual landed count). |
-| Atomic POST (first attempt or retry) fails on network/5xx | Non-422 failure | **Never** blind-retry (no idempotency key). Confirm via a read-your-write check (list reviews, filter by `$CURRENT_USER` + `$HEAD_SHA`) before conceding to the model-A fallback — applies symmetrically to both the first attempt and the retry. |
-| Self-review (`IS_SELF_REVIEW=true`), or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review: submit `EVENT=COMMENT` regardless of `$DECISION` (never `APPROVE`). Empty: fall through to `gh pr review --approve\|--comment` directly, no atomic POST attempted. |
-| All findings dedup-matched, or `gh pr comment` fails for a pr-level batch | `posted == 0`, or non-zero exit | Submit with body noting "no new findings — all previously raised" (decision unaffected). On a failed batch, log and continue — inline findings must still post/submit. |
+| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | `SUBMITTED=false` after a `422`-bearing response | Demoted to the pr-level batch (never dropped); retried once against a re-fetched HEAD, then falls back to the per-comment path |
+| Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
+| Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `EVENT=COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
+| All findings dedup-matched, or the pr-level batch post fails | `POSTED_INLINE=0` and `POSTED_PR_LEVEL=0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
-| Dedup pr-level findings against `reviewThreads` | `reviewThreads` only covers inline comment threads; a pr-level finding has no `path`/`line` to match against. Batch and post once; re-running the same specialist mode on an unchanged PR will re-post the batch (known v1 limitation — no pr-level dedup yet). |
-| Assemble `comments[]` via `gh api` bracket-indexed field flags, string-concatenate `$BODY` into a JSON literal, post inline comments individually, use `-F body=` on the fallback POST, concatenate `$BYLINE`/`$BYLINE_FULL`/`$REMARK` into a `comments[]` body, or `echo` a JSON payload (`$COMMENTS_JSON`/`$PAYLOAD`) to persist or inspect it | Bracket indices build a stringified-key *object*, not an array — GitHub rejects it. Build `comments[]` as real JSON via `jq --arg`/`--argjson`, submit atomically via `gh api --input -` (per-comment is the model-A fallback only). Use `-f body="$BODY"` (raw) for the fallback POST — see [`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md). Inline bodies are `finding.body` verbatim; the byline/remark is Step 4-only. Use `printf '%s'` instead of `echo` for any payload — see [`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md). |
-| Set `posted_pr_level` before checking whether `gh pr comment` succeeded, report a dependency-mode (pr-level-only) run as "posted N inline comments", or restate posted findings in `$SUMMARY` | Gate the assignment on exit status. The byline reports `posted_inline`/`posted_pr_level` separately. Findings live in inline/pr-level comments; the summary is decision + byline only. |
-| Block on this skill's own cleanup | Step 6 reap is foreground (fast) — unlike worktree teardown, backgrounded separately. This skill is its own skill boundary — the `command -v swe-workbench-clean-state-files` preflight at the top of Step 6 has no cross-caller state to inherit. |
+| Re-deriving the fetch/dedup/pre-validate/submit mechanism inline instead of calling `swe-workbench-pr-review-submit` | The script is the single source of truth for posting mechanics (#550) — every caller invokes it the same way |
+| Passing a byline that embeds the swe-workbench remark or `posted`/`deduped` counts | The script appends both once it knows the real counts and confirmed repo visibility — an embedded byline fails input-contract validation |
+| Assuming pr-level findings dedup across runs | They don't (known v1 limitation) — re-running the same specialist mode on an unchanged PR re-posts the batch |
+| Reading `$POSTED_INLINE`/etc. before checking `$SUBMITTED` | A `false` `SUBMITTED` means the fallback exhausted its options; treat the counts as best-effort in that case |
