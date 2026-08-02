@@ -83,4 +83,59 @@ else
     "${MISSING}" "${dep_word}" "${them_word}"
 fi
 
+# ── Repo hygiene: warn if .claude/cache/ (workflow-state + skill-usage sidecars)
+#    is committable in this repo. Outside a git repo, print nothing and skip.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || true
+
+if [[ -n "${root}" ]]; then
+  WARN=0
+
+  # Check A — is the pattern present? One check-ignore call per representative
+  # path (never batched — `-q` only accepts a single pathname). The two nested
+  # probes catch asymmetric coverage — e.g. a rule that only ignores one sidecar
+  # subdirectory (skill-usage/) but not the other (workflow-state/).
+  not_ignored=0
+  for probe_path in \
+    ".claude/cache/" \
+    ".claude/cache/workflow-state/probe.json" \
+    ".claude/cache/skill-usage/probe.txt"; do
+    if ! git -C "${root}" check-ignore -q --no-index "${probe_path}" 2>/dev/null; then
+      not_ignored=1
+    fi
+  done
+
+  # Check B — is anything already tracked under the path? Independent of Check A:
+  # `check-ignore` (without --no-index) false-negatives on tracked-but-ignored paths.
+  tracked_count=$(git -C "${root}" ls-files -- .claude/cache/ 2>/dev/null | wc -l | tr -d ' ') || true
+  tracked_count=${tracked_count:-0}
+
+  printf "\n"
+  printf "Repo hygiene\n"
+  printf "%s\n" "─────────────────────────────────────"
+
+  if [[ ${not_ignored} -eq 1 ]]; then
+    WARN=$((WARN + 1))
+    printf "✗  .claude/cache/ is not gitignored — the plugin's workflow-state\n"
+    printf "   and skill-usage sidecars are committable.\n"
+    printf "   Add to .gitignore:  .claude/cache/\n"
+  else
+    printf "✓  .claude/cache/ is gitignored\n"
+  fi
+
+  if [[ ${tracked_count} -gt 0 ]]; then
+    WARN=$((WARN + 1))
+    if [[ ${tracked_count} -eq 1 ]]; then file_word="file"; else file_word="files"; fi
+    printf "✗  %d %s already tracked under .claude/cache/.\n" "${tracked_count}" "${file_word}"
+    printf "   Untrack them:  git rm -r --cached .claude/cache/\n"
+  fi
+
+  printf "%s\n" "─────────────────────────────────────"
+  if [[ ${WARN} -eq 0 ]]; then
+    printf "No hygiene issues.\n"
+  else
+    if [[ ${WARN} -eq 1 ]]; then warn_word="warning"; else warn_word="warnings"; fi
+    printf "%d %s.\n" "${WARN}" "${warn_word}"
+  fi
+fi
+
 exit 0

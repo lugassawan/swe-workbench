@@ -55,6 +55,10 @@ worktree re-anchor when the session's cwd has drifted from a linked worktree. Se
 [docs/workflow-state.md](docs/workflow-state.md) for the schema, lifecycle table, and a
 manual smoke test.
 
+`.claude/cache/` is this repo's ephemeral-state directory — add it to your own repo's
+`.gitignore` when installing swe-workbench, or these sidecars become committable.
+`/swe-workbench:doctor` checks for this and warns if it's missing.
+
 ## Skill-usage telemetry
 
 When the orchestrator dispatches a subagent, the skills that subagent invokes are surfaced in the transcript:
