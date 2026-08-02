@@ -196,21 +196,8 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each **ADDRESSED** or **CLARIFIED** review thread, post a reply via REST then conditionally resolve (DEFERRED threads skip this call entirely). Use `comments.nodes[0].databaseId` (the thread root comment) as `$COMMENT_DATABASEID` — replies must target the first comment in the thread, not a subsequent reply.
+For each **ADDRESSED** or **CLARIFIED** review thread or PR comment, post a reply via REST, then — for review threads only — conditionally resolve via GraphQL `resolveReviewThread` (ADDRESSED resolves, CLARIFIED replies only with no resolve, DEFERRED does neither and skips the call entirely) by calling `swe-workbench-reply-and-resolve` with the triage-mapped args; PR comments have no thread, so resolve is always suppressed and `KIND=issue` is passed explicitly, with a hidden `swe-workbench:handled:{id}` marker embedded in the reply body for Phase 1's re-run dedup. Reply targets the thread root comment (`comments.nodes[0].databaseId`), never a subsequent reply. Full reply-body templates, exact invocation args, and the PR-comment quoting/escaping caveat live in `reference/resolve-review-threads.md`.
 
-Reply body templates by triage classification:
-- **ADDRESSED**: `"Addressed in ${FIX_SHA}: <one-line summary of fix>."` — pass both `$REPLY_BODY` and `$THREAD_ID`.
-- **CLARIFIED**: free-text owner-authored reply (asked interactively) — pass `$REPLY_BODY` with empty `$THREAD_ID` (reply only, no resolve).
-- **DEFERRED**: pass empty `$REPLY_BODY` and empty `$THREAD_ID` (neither reply nor resolve).
-```bash
-swe-workbench-reply-and-resolve \
-  "$OWNER" "$REPO" "$PR" "$COMMENT_DATABASEID" "$THREAD_ID" "$REPLY_BODY"
-```
-For each **ADDRESSED** or **CLARIFIED** PR comment (`triage["prcomment:<id>"]`), post a reply on the PR's top-level conversation instead of a thread reply — PR comments have no thread, so resolve is always suppressed and `KIND=issue` is passed explicitly. Compose `$REPLY_BODY` as `@{comment author} re:` + a single-line blockquote of the original (first ~100 chars, newlines collapsed) + the addressed/clarified body (same wording as the review-thread templates above) + a hidden marker on its own line — `<!-- swe-workbench:handled:{comment.id} -->` — which Phase 1's dedup filter matches on re-runs (omitting it makes the comment look unhandled forever). The original comment body is attacker-controlled: extract the blockquote via `jq -r` into a shell variable (e.g. `QUOTE=$(jq -r '.[] | select(.id==ID) | .body' ... | head -c 100 | tr '\n' ' ')`) and reference `"$QUOTE"` when building `$REPLY_BODY` — never retype the raw comment text into a double-quoted bash literal, since `$(...)`/backticks in the source text would execute at assignment time. DEFERRED PR comments skip the call entirely, same as DEFERRED threads:
-```bash
-swe-workbench-reply-and-resolve \
-  "$OWNER" "$REPO" "$PR" "" "" "$REPLY_BODY" "issue"
-```
 After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/swe-workbench:review --check-followup <N>`."
@@ -233,25 +220,7 @@ Then run **Phase 6 — Sync PR metadata**.
 
 ### Phase 6 — Sync PR metadata (when fixes were committed)
 
-Skip this phase entirely if `$FIX_SHA` is unset (no fixes were committed in Phase 4).
-
-Fetch: `gh pr view "$PR" --json title,body`; commit subjects via `git -C "$WT" log "$BASE"..HEAD --format='%s'`; diff stat via `git -C "$WT" diff "$BASE"..HEAD --stat`. No new state file — the reap already ran in Phase 5 (covers `${PR}-pr-comments.json` too).
-
-**Judge drift** by comparing the live title and `## Summary` section of the PR body against the commit subjects and diff stat. If aligned, emit "PR metadata is up to date — no changes needed." and fall through to Phase 7 — Cleanup.
-
-**If drift is detected,** draft a revised `$NEW_TITLE` and `$NEW_SUMMARY`. Rewrite only the `## Summary` section of the body; preserve `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other collaborator sections. Preview old→new for title and summary, then:
-
-> Reply `yes` to apply these changes to PR #N.
-
-On `yes`:
-```bash
-NEW_BODY_FILE=$(mktemp)
-trap 'rm -f "$NEW_BODY_FILE"' EXIT
-printf '%s' "$NEW_BODY" > "$NEW_BODY_FILE"
-swe-workbench-sync-pr-metadata "$PR" "$NEW_TITLE" "$NEW_BODY_FILE" \
-  || echo "Warning: PR metadata update failed — continuing to cleanup." >&2
-```
-Then run **Phase 7 — Cleanup**.
+Skipped when `$FIX_SHA` is unset (no fixes committed in Phase 4). Otherwise fetches the live PR title/body, commit subjects, and diff stat, judges drift against the title and `## Summary` section, and — on detected drift, after a `Reply \`yes\`` preview gate — applies a revised title/summary via `swe-workbench-sync-pr-metadata` while preserving `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other sections. Full fetch commands, drift-judging criteria, and apply mechanics live in `reference/sync-pr-metadata.md`. Then run **Phase 7 — Cleanup**.
 
 ### Phase 7 — Cleanup (always)
 
