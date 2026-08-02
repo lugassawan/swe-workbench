@@ -2,7 +2,7 @@
 name: auditor
 description: Cold-start codebase audit specialist — readonly multi-domain sweep across security, performance, reliability, tooling, and testing. Surfaces ranked findings with root-cause reasoning chains and counter-evidence calibration. Invoke when you want a time-boxed audit of an unfamiliar codebase, not a single-domain depth-first pass.
 model: sonnet
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, Skill, LSP
 skills:
   - swe-workbench:principle-code-review
   - swe-workbench:principle-security
@@ -35,7 +35,7 @@ You perform cold-start, time-boxed, multi-domain audits of unfamiliar codebases.
 git log --oneline -20          # recent activity, team velocity
 ```
 
-Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`. Note the tech stack and entry points.
+Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`. Note the tech stack and entry points. See @./shared/lsp.md for handing a finding's anchor off from `Grep` to `LSP` once you need to confirm callers or an implementation, rather than trusting a text match.
 
 ### 2. Domain sweeps (gated by --scope)
 
