@@ -601,11 +601,14 @@ def check_bare_actionable_refs(cache=None):
     e.g. an example list of literal identifier strings).
 
     Rule 2 (skills/*/SKILL.md): only lines the action-cued activation
-    classifier (_ACTION_RE / _POINTER_RE / _SLASH_CMD_RE, shared with
-    check_no_cycles's _build_dep_graph) would treat as a dispatch edge. A
-    skill naming its own id is exempt (self-reference), and the same
-    exemption marker opts out a line the classifier over-flags as a
-    dispatch cue when it is really prose.
+    classifier (_ACTION_RE / _POINTER_RE / _SLASH_CMD_RE — the same regexes
+    check_no_cycles's _build_dep_graph uses) would treat as a dispatch edge.
+    Note this scans a narrower line set than _build_dep_graph: Rule 2 also
+    strips fenced code blocks first (_strip_fenced_code_blocks), so a
+    dispatch-cued line inside a fenced example is a cycle-graph edge but not
+    a Rule 2 candidate. A skill naming its own id is exempt (self-reference),
+    and the same exemption marker opts out a line the classifier over-flags
+    as a dispatch cue when it is really prose.
     """
     if cache is None:
         cache = _build_cache()
