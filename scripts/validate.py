@@ -39,6 +39,14 @@ _BROWSER_INSTALL_HINTS = re.compile(
     r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
 )
 
+# LSP tool gate (#559). Any agent granting LSP in its tools: frontmatter must
+# preload the shared LSP doc, which in turn must carry the fallback sentence.
+# Deliberately NOT a body-text regex: agents/shared/principles.md:27 uses "LSP"
+# for the Liskov Substitution Principle, so a substring/body match would
+# false-positive on every agent preloading principle-solid.
+_LSP_FALLBACK = "LSP unavailable — falling back to Grep"   # em dash, U+2014
+_LSP_SHARED_INCLUDE = "@./shared/lsp.md"
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -1280,6 +1288,79 @@ def check_browser_tool_gate(cache=None):
                 )
 
 
+def check_lsp_tool_gate(cache=None):
+    """Any agent granting LSP in its tools: frontmatter must preload
+    agents/shared/lsp.md, and that shared file must carry the LSP-unavailable
+    fallback sentence (#559).
+
+    Only ever inspects the tools: frontmatter scalar (parsed via
+    parse_frontmatter, split on ',' with exact-token membership) — never a
+    body-text regex. agents/shared/principles.md uses "LSP" for the Liskov
+    Substitution Principle, so a body-text match would false-positive on every
+    agent preloading principle-solid.
+
+    If no agent grants LSP, this returns without requiring the shared file to
+    exist — that keeps the check from ossifying a future removal of LSP.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    agents_dir = ROOT / "agents"
+    if not agents_dir.is_dir():
+        return
+
+    granting = []
+    for md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and md in agents_cache:
+            text = agents_cache[md]
+            if text is None:
+                fail(md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = md.read_text(encoding="utf-8")
+            except OSError:
+                fail(md.relative_to(ROOT), "could not read file")
+                continue
+        fm = parse_frontmatter(md, text=text)
+        if not fm:
+            continue
+        tools = fm.get("tools")
+        if not isinstance(tools, str):
+            continue
+        tokens = {t.strip() for t in tools.split(",")}
+        if "LSP" not in tokens:
+            continue
+        granting.append((md, text))
+
+    if not granting:
+        return
+
+    shared_path = agents_dir / "shared" / "lsp.md"
+    try:
+        shared_text = shared_path.read_text(encoding="utf-8")
+    except OSError:
+        shared_text = None
+
+    if shared_text is None:
+        fail(
+            shared_path.relative_to(ROOT),
+            "one or more agents grant LSP in tools: but agents/shared/lsp.md "
+            "is missing — add the shared LSP doc with the fallback sentence (#559)",
+        )
+    elif _LSP_FALLBACK not in shared_text:
+        fail(
+            shared_path.relative_to(ROOT),
+            f"missing the fallback sentence {_LSP_FALLBACK!r} (#559)",
+        )
+
+    for md, text in granting:
+        if _LSP_SHARED_INCLUDE not in text:
+            fail(
+                md.relative_to(ROOT),
+                f"grants LSP in tools: but body is missing the "
+                f"{_LSP_SHARED_INCLUDE!r} include (#559)",
+            )
+
+
 # ──────────────────────────────────────────────
 # echo/printf shell footgun (#549)
 # ──────────────────────────────────────────────
@@ -1629,6 +1710,7 @@ def main():
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
+    check_lsp_tool_gate(cache=cache)
     check_no_echo_var_hazard(cache=cache)
     check_no_printf_var_format(cache=cache)
     check_no_unenumerated_tmp_write(cache=cache)
