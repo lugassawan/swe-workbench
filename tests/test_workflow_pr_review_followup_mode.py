@@ -2,7 +2,7 @@
 
 """Tests for workflow-pr-review's followup mode (closes #218).
 
-workflow-pr-review-followup was folded into workflow-pr-review as a mode
+The standalone followup skill was folded into workflow-pr-review as a mode
 (chore #565): first-pass and followup are now selected via `$MODE` and the
 mode-resolution table in skills/workflow-pr-review/SKILL.md, rather than
 being two separate skills. These tests retarget the original #218
