@@ -418,13 +418,11 @@ def test_reviewer_agent_references_helper():
     )
 
 
-def test_workflow_pr_review_post_references_helper():
-    text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
+def test_pr_review_submit_script_calls_helper():
+    """Since #550, the pre-validate check moved from workflow-pr-review-post/SKILL.md prose
+    into bin/swe-workbench-pr-review-submit, which shells out to this helper as a sibling."""
+    text = (ROOT / "bin" / "swe-workbench-pr-review-submit").read_text()
     assert "swe-workbench-diff-line-lookup" in text, (
-        "workflow-pr-review-post/SKILL.md Step 2 must use swe-workbench-diff-line-lookup "
+        "bin/swe-workbench-pr-review-submit must call swe-workbench-diff-line-lookup "
         "for the +-line pre-validate check"
-    )
-    assert "command -v swe-workbench-diff-line-lookup >/dev/null 2>&1" in text, (
-        "workflow-pr-review-post/SKILL.md must add the command -v preflight for "
-        "swe-workbench-diff-line-lookup at Step 2 (it runs before Step 6's existing preflight)"
     )
