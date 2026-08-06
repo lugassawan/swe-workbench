@@ -13,3 +13,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: "[chore]"
+    # pip is pinned below 26.2 for a permanent reason, not a temporary one —
+    # see tests/build-requirements.txt. A widening PR here can't be merged
+    # (it breaks pip-compile immediately) and only churns an un-mergeable
+    # red PR. This also suppresses pip security advisories; accepted
+    # because pip lives only in an ephemeral, hashed build venv that never
+    # processes untrusted input, and its version is pinned by us regardless.
+    ignore:
+      - dependency-name: "pip"

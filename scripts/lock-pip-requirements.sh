@@ -30,6 +30,11 @@ done
 
 # ── Preflight ──────────────────────────────────────────────────
 
+# Silence pip's "new release available" notice (WARNING level — a bare -q
+# only drops INFO, so --quiet on the install below doesn't catch it) and
+# skip its PyPI version-check network call in this otherwise-hermetic step.
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Prefer python3.12; fall back to python3 if it is already 3.12.x.

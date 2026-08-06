@@ -176,6 +176,17 @@ class TestBuildRequirementsSource:
             "tests/build-requirements.txt must pin pip-tools to an exact version"
         )
 
+    def test_build_requirements_txt_caps_pip(self):
+        content = BUILD_REQ_TXT.read_text()
+        assert re.search(r"^pip<26\.2\s*$", content, re.M), (
+            "tests/build-requirements.txt must cap pip below 26.2 — that "
+            "release permanently removed pip._internal.utils.compat."
+            "stdlib_pkgs (pip#14214, closed not_planned), which pip-tools "
+            "still imports. Removing or widening this cap (e.g. to "
+            "pip<26.5) breaks pip-compile the moment pip actually reaches "
+            "that version."
+        )
+
 
 class TestBuildRequirementsLock:
     def test_build_requirements_lock_exists(self):
