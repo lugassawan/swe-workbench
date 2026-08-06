@@ -70,16 +70,25 @@ gh auth status >/dev/null 2>&1 || {
   exit 1
 }
 CURRENT_USER=$(gh api /user -q .login)
-PR_VIEW_OUT=$(gh pr view --json author,number 2>&1)
+PR_VIEW_ERRFILE=$(mktemp)
+PR_VIEW_OUT=$(gh pr view --json author,number 2>"$PR_VIEW_ERRFILE")
 PR_VIEW_EXIT=$?
+PR_VIEW_ERR=$(cat "$PR_VIEW_ERRFILE")
+rm -f "$PR_VIEW_ERRFILE"
 if [ "$PR_VIEW_EXIT" -eq 0 ]; then
-  PR_AUTHOR=$(printf '%s' "$PR_VIEW_OUT" | jq -r '.author.login')
+  # stdout and stderr were captured separately above — PR_VIEW_OUT is JSON-only here, so a
+  # gh version-notice or deprecation warning on stderr can never corrupt this parse the way a
+  # merged 2>&1 capture would (that was the fix commit's own regression — see review history).
+  PR_AUTHOR=$(printf '%s' "$PR_VIEW_OUT" | jq -r '.author.login') || {
+    echo "converge: could not verify PR ownership — gh pr view succeeded but its output did not parse as JSON: $PR_VIEW_OUT" >&2
+    exit 1
+  }
   PR_NUM=$(printf '%s' "$PR_VIEW_OUT" | jq -r '.number')
-elif printf '%s' "$PR_VIEW_OUT" | grep -q "no pull requests found"; then
+elif printf '%s' "$PR_VIEW_ERR" | grep -q "no pull requests found"; then
   PR_AUTHOR=""
   PR_NUM=""
 else
-  echo "converge: could not verify PR ownership — gh pr view failed: $PR_VIEW_OUT" >&2
+  echo "converge: could not verify PR ownership — gh pr view failed: $PR_VIEW_ERR" >&2
   exit 1
 fi
 if [ -n "$PR_AUTHOR" ] && [ "$PR_AUTHOR" != "$CURRENT_USER" ]; then
@@ -199,16 +208,23 @@ jq -c '.[] | select(.anchor == "inline")' "$RUN_DIR/round-${N}-findings.json" | 
     :  # anchor-valid
   elif [ "$LOOKUP_EXIT" -eq 2 ]; then
     # Ambiguous (exit 2): the line's content recurs elsewhere in this file's diff (a bare "}",
-    # "pass", a blank line) — content-uniqueness failed, not the anchor. Fall back to hunk-range
-    # membership instead of declaring UNFOUNDED on an artifact of the content match, not the claim.
+    # "pass", a blank line) — content-uniqueness failed, not the anchor. Fall back to checking
+    # whether ROW_LINE is itself an added ("+") line — tracking new-file line numbers the same way
+    # `diff-line-lookup` does internally — rather than merely falling inside a hunk's numeric
+    # range, which would also match unchanged context lines and defeat the "exact line, not just
+    # some added line in the hunk" guarantee stated above.
     IN_HUNK=$(git diff "origin/$BASE"...HEAD -- "$ROW_PATH" | awk -v line="$ROW_LINE" '
       /^@@/ {
-        if (match($0, /\+[0-9]+(,[0-9]+)?/)) {
-          s = substr($0, RSTART + 1, RLENGTH - 1)
-          split(s, a, ",")
-          start = a[1]
-          len = (a[2] == "" ? 1 : a[2])
-          if (line >= start && line < start + len) print "yes"
+        if (match($0, /\+[0-9]+/)) new_line = substr($0, RSTART + 1, RLENGTH - 1) + 0
+        next
+      }
+      {
+        first = substr($0, 1, 1)
+        if (first == "+") {
+          if (new_line == line) { print "yes"; exit }
+          new_line++
+        } else if (first == " ") {
+          new_line++
         }
       }')
     [ "$IN_HUNK" = "yes" ] || echo "UNFOUNDED (anchor not in diff): $ROW_PATH:$ROW_LINE"
@@ -283,10 +299,17 @@ Brief `swe-workbench:code-impl` with:
    the reason. No new features, no drive-by refactors.
 5. **Return format:** one line per finding —
    `<fingerprint> | FIXED <what changed> | UNFOUNDED <what is actually there> | REJECTED <reason> | DEFERRED <reason> | UNVERIFIABLE <what was investigated, and the specific question the codebase cannot answer>`.
-   **`fingerprint` is the same normalized-path + Jaccard-bucket identity "Cross-round dedup" below
-   uses for `retired[]`/`rejected[]`/`unfounded[]`** — deliberately *not* line-sensitive, for the
-   identical reason that section gives: a fix shifts line numbers within the same round, so a
-   line-anchored fingerprint would break precisely when a disposition needs to be looked up again.
+   **`fingerprint` has no separate static algorithm — it *is* the repo-relative `path` from the
+   findings row, used only as a coarse pre-filter.** "Cross-round dedup" below defines a pairwise
+   *match predicate* (same normalized path AND Jaccard ≥ 0.4 over body tokens between a candidate
+   finding and a ledger entry), not a value one finding can compute in isolation — Jaccard
+   similarity isn't transitive, so there is no well-defined "bucket" to assign ahead of time.
+   Concretely: emit `<fingerprint>` as the finding's `path`; every lookup against `retired[]`,
+   `rejected[]`, `unfounded[]`, or `adjudicated[]` re-runs the same path+Jaccard≥0.4 comparison
+   against the stored body text, never a fingerprint-equality check alone. This is deliberately
+   *not* line-sensitive, for the same reason "Cross-round dedup" gives: a fix shifts line numbers
+   within the same round, so any line-anchored identity would break precisely when a lookup needs
+   it most.
    **This explicitly overrides `swe-workbench:code-impl`'s standard `status:`/`files_changed:`/
    `concerns:`/`blockers:` output contract for this invocation** — state that override plainly in
    the brief. The per-finding disposition line above is what the orchestrator's ledger parses;
@@ -327,10 +350,10 @@ question in its returned line rather than asking. This command body — running 
 - **More than 4 `UNVERIFIABLE` findings in one round → stop the loop** and jump to Phase 6
   (too-many-unverifiable). At that density the review needs a human reading, not an
   interrogation.
-- **Answers are cached in the ledger's `adjudicated[]`, keyed by the same path+Jaccard `fingerprint`
-  defined above, and replayed into later rounds' suppression block — the same question is never
-  asked twice.** Without this, an unattended 4-round loop would re-ask the same unanswerable thing
-  every round.
+- **Answers are cached in the ledger's `adjudicated[]`, keyed by `fingerprint` (the finding's
+  `path`) and looked up via the same path+Jaccard≥0.4 comparison defined above, then replayed into
+  later rounds' suppression block — the same question is never asked twice.** Without this, an
+  unattended 4-round loop would re-ask the same unanswerable thing every round.
 - Answers map to normal dispositions: *Real* → dispatch a scoped follow-up `swe-workbench:code-impl`
   fix for just that one finding, and record `FIXED` in the ledger only once that follow-up lands —
   never mark a finding `fixed` on the strength of the answer alone, or a human-confirmed real bug

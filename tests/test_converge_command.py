@@ -270,11 +270,12 @@ def test_converge_ownership_gate_fails_closed_on_gh_error():
 
 def test_converge_fingerprint_is_path_jaccard_not_line_sensitive():
     """Regression guard: the per-finding 'fingerprint' used by the Phase 3 return format and
-    adjudicated[] must be defined as the same normalized-path + Jaccard identity the dedup
-    section uses — not line-sensitive, since a fix shifts line numbers within a round."""
+    adjudicated[] must be a concretely computable value (the finding's path) whose lookups
+    always re-run the same path+Jaccard match predicate — not a separate "bucket" algorithm,
+    and not line-sensitive, since a fix shifts line numbers within a round."""
     text = _text()
-    assert "fingerprint` is the same normalized-path + Jaccard-bucket identity" in _normalized()
-    assert "deliberately *not* line-sensitive" in _normalized()
+    assert "`fingerprint` has no separate static algorithm — it *is* the repo-relative `path`" in _normalized()
+    assert "deliberately\n   *not* line-sensitive" in text or "deliberately *not* line-sensitive" in _normalized()
 
 
 def test_converge_ambiguous_anchor_falls_back_to_hunk_range():
@@ -285,6 +286,27 @@ def test_converge_ambiguous_anchor_falls_back_to_hunk_range():
     text = _text()
     assert 'LOOKUP_EXIT" -eq 2' in text
     assert "IN_HUNK" in text
+
+
+def test_converge_ambiguous_fallback_checks_plus_lines_not_just_hunk_range():
+    """Regression guard: the ambiguous-anchor fallback must confirm the claimed line is
+    itself an added ('+') line, not merely that it falls within a touched hunk's numeric
+    range — a range-only check would wrongly validate an unchanged context line inside that
+    hunk, contradicting the 'exact line, not just some added line' guarantee stated above it."""
+    text = _text()
+    assert 'first == "+"' in text
+    assert "new_line == line" in text
+
+
+def test_converge_ownership_gate_captures_stdout_and_stderr_separately():
+    """Regression guard: gh pr view's stdout and stderr must be captured separately (via a
+    dedicated error file, not 2>&1) so stderr noise on a successful call can never corrupt
+    the JSON parse and be misread as 'no PR yet' — a real regression a followup review
+    caught in an earlier fix for this same gate."""
+    text = _text()
+    assert "PR_VIEW_ERRFILE=$(mktemp)" in text
+    assert 'gh pr view --json author,number 2>"$PR_VIEW_ERRFILE"' in text
+    assert "gh pr view succeeded but its output did not parse as JSON" in _normalized()
 
 
 def test_converge_real_answer_dispatches_scoped_fix_not_bare_status_flip():
