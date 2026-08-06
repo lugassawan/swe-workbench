@@ -24,6 +24,7 @@
 | `/swe-workbench:cleanup-merged [PR number]` | Remove the worktree, local branch, and remote branch for a merged PR. Defaults to the current branch. Squash-merge safe. |
 | `/swe-workbench:sync [--rebase] [--check-redundancy]` | Bring the current branch up to date with the default branch — delegates the mechanical merge/rebase to rimba (or git), then walks through any conflicts file-by-file with a `conflict-resolver` recommendation and rationale before applying. Never auto-pushes; push is a separate, prompted step. Default strategy is merge; pass `--rebase` to rebase instead. `--check-redundancy` runs an opt-in `redundancy-assessor` pass surfacing functional duplication the default branch already provides. |
 | `/swe-workbench:doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude, python3) plus gh auth status and `.claude/cache/` repo hygiene. Prints a green/red table; never modifies state. Exit 0 regardless of findings; exits 1 only if the swe-workbench-doctor command is not on PATH. |
+| `/swe-workbench:converge [--cap <2-6>]` | Run an unattended review→fix→re-review loop on the current branch until the reviewer has no findings at or above Medium, then push once. Findings stay local under `$RUN_DIR` and are never posted to GitHub. Ownership-gated (refuses on someone else's PR); stops early on oscillation, a red test suite, a zero-edit fix pass, or a 4-review cap. |
 
 ## Subagents
 
