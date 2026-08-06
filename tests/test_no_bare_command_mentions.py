@@ -21,6 +21,7 @@ COMMANDS = [
     "capture",
     "cleanup-merged",
     "codebase-knowledge",
+    "converge",
     "debug",
     "design",
     "doctor",
