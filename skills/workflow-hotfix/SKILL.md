@@ -1,6 +1,6 @@
 ---
 name: workflow-hotfix
-description: Branch-based P0 hotfix lifecycle — skips the worktree provider, ships a PR immediately after a minimal fix (ahead of verification and review, deferred by design), stamps a deferred-verification marker on the PR body, then reconciles it once a regression test lands and the suite is green again. Activated by /swe-workbench:hotfix.
+description: Branch-based P0 incident hotfix lifecycle — skips the worktree provider, opens a ready-for-review PR immediately after a minimal hotfix, ahead of verification and review (deferred by design), stamps a deferred-verification marker in the PR body, then reconciles once a regression test lands and the suite goes green. Activated by /swe-workbench:hotfix.
 orchestrator: true
 ---
 
@@ -93,7 +93,7 @@ swe-workbench-clean-state-files /tmp/hotfix-pr-body-<N>.txt
 
 ## Phase 4 — Verify + Review (after the PR is open)
 
-Run exactly the same two gates `workflow-development` runs, just against the now-open PR:
+Run exactly the same two gates `workflow-development` runs, just against the now-open PR: <!-- validate: prose-ref -->
 
 - **Verify:** `superpowers:verification-before-completion` (imports/format/quality/lint/test).
 - **Review — BOTH in parallel, neither optional:**

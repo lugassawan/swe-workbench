@@ -3,3 +3,6 @@ review pull request #123 on GitHub and post inline comments without re-raising w
 fetch this PR, run the reviewer agent in an isolated worktree, and submit APPROVE or COMMENT
 review the open PR on this branch — dedup against existing threads and post only new findings
 do a peer review of PR 456 — post deduped suggestions and submit the review with the right decision
+re-check PR after feedback was addressed
+check if my review comments were addressed on PR 123
+reviewer followup recheck PR no new comments

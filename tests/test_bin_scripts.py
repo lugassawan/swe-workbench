@@ -1,14 +1,16 @@
-"""Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571).
+"""Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is now the sole home for these twelve scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these fourteen scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
-and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" — never a bare PATH lookup.
+and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
+Path(__file__).parent (python3) — never a bare PATH lookup.
 """
 
 import os
 import py_compile
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -28,8 +30,10 @@ SCRIPTS = {
     "swe-workbench-gh-timeout": "bash",
     "swe-workbench-new-run-dir": "bash",
     "swe-workbench-preflight-pr": "bash",
+    "swe-workbench-pr-review-submit": "python3",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-skill-script": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }
 
@@ -38,6 +42,7 @@ SIBLING_CALLERS = {
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
     "swe-workbench-preflight-pr": ["swe-workbench-gh-timeout", "swe-workbench-fetch-pr"],
+    "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }
@@ -91,7 +96,10 @@ def test_bash_scripts_pass_syntax_check():
 
 
 def test_python_script_compiles():
-    py_compile.compile(str(BIN / "swe-workbench-comment-scan"), doraise=True)
+    for name, interp in SCRIPTS.items():
+        if interp != "python3":
+            continue
+        py_compile.compile(str(BIN / name), doraise=True)
 
 
 def test_no_claude_plugin_root_reference():
@@ -103,15 +111,18 @@ def test_no_claude_plugin_root_reference():
 
 
 _SCRIPT_DIR_RE = re.compile(r'\$\(dirname "(\$0|\$\{BASH_SOURCE\[0\]\})"\)')
+_PY_SCRIPT_DIR_RE = re.compile(r"Path\(__file__\)(\.resolve\(\))?\.parent")
 
 
 def test_sibling_calls_resolve_via_script_dir():
-    """Sibling-calling scripts must resolve via dirname "$0"/"${BASH_SOURCE[0]}", never bare PATH."""
+    """Sibling-calling scripts must resolve via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
+    Path(__file__).parent (python3) — never bare PATH."""
     for name, siblings in SIBLING_CALLERS.items():
         text = (BIN / name).read_text()
-        assert _SCRIPT_DIR_RE.search(text), (
-            f"bin/{name} calls a sibling script but does not resolve SCRIPT_DIR via "
-            'dirname "$0" or dirname "${BASH_SOURCE[0]}"'
+        script_dir_re = _PY_SCRIPT_DIR_RE if SCRIPTS[name] == "python3" else _SCRIPT_DIR_RE
+        assert script_dir_re.search(text), (
+            f"bin/{name} calls a sibling script but does not resolve its own script dir via "
+            f"{'Path(__file__).parent' if SCRIPTS[name] == 'python3' else 'dirname \"$0\"/dirname \"${BASH_SOURCE[0]}\"'}"
         )
         for sibling in siblings:
             assert sibling in text, (
@@ -137,3 +148,104 @@ def test_e2e_comment_scan_reads_stdin():
         env=dict(_CLEAN_ENV),
     )
     assert result.returncode == 0, f"bin/swe-workbench-comment-scan failed:\n{result.stderr}"
+
+
+# ──────────────────────────────────────────────
+# swe-workbench-skill-script dispatcher (issue #569): runtime behavior
+# ──────────────────────────────────────────────
+#
+# These tests build an isolated <tmp>/bin + <tmp>/skills tree (copying only the dispatcher
+# itself) rather than exercising it against the real skills/ directory, so the dispatcher's
+# own traversal-rejection and passthrough behavior is verified independently of any real
+# skill script's content or future changes.
+
+
+def _isolated_dispatcher(tmp_path):
+    """Copy the dispatcher into <tmp_path>/bin/ so its self-located ROOT is <tmp_path>."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dispatcher = bin_dir / "swe-workbench-skill-script"
+    shutil.copy2(BIN / "swe-workbench-skill-script", dispatcher)
+    dispatcher.chmod(0o755)
+    return dispatcher
+
+
+def _write_scratch_script(tmp_path, skill, script, body):
+    scripts_dir = tmp_path / "skills" / skill / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    path = scripts_dir / script
+    path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_e2e_skill_script_dispatches_and_passes_stdout_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "greet.sh", 'echo "hello $1"')
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "greet.sh", "world"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0
+    assert result.stdout == "hello world\n"
+
+
+def test_e2e_skill_script_passes_exit_code_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "fail.sh", "exit 3")
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "fail.sh"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 3
+
+
+def test_e2e_skill_script_passes_args_with_spaces_through(tmp_path):
+    dispatcher = _isolated_dispatcher(tmp_path)
+    _write_scratch_script(tmp_path, "fake-skill", "echo-arg.sh", 'printf "%s" "$1"')
+    result = subprocess.run(
+        [str(dispatcher), "fake-skill", "echo-arg.sh", "a file with spaces.txt"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0
+    assert result.stdout == "a file with spaces.txt"
+
+
+def test_e2e_skill_script_rejects_missing_target():
+    result = subprocess.run(
+        [str(BIN / "swe-workbench-skill-script"), "bogus-skill", "nope.sh"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "not found" in result.stderr
+
+
+def test_e2e_skill_script_rejects_traversal():
+    dispatcher = BIN / "swe-workbench-skill-script"
+    cases = [
+        ("../etc", "passwd"),
+        ("workflow-cleanup-merged", "../../../etc/passwd"),
+        ("a/b", "script.sh"),
+        ("skill", "a/b.sh"),
+        ("..", "script.sh"),
+        ("foo..bar", "script.sh"),
+    ]
+    for skill, script in cases:
+        result = subprocess.run(
+            [str(dispatcher), skill, script],
+            capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode == 1, f"expected rejection for skill={skill!r} script={script!r}"
+        assert result.stdout == ""
+        assert result.stderr.strip(), f"expected a stderr message for skill={skill!r} script={script!r}"
+
+
+def test_e2e_skill_script_requires_both_args():
+    dispatcher = BIN / "swe-workbench-skill-script"
+    for args in ([], ["only-skill"]):
+        result = subprocess.run(
+            [str(dispatcher), *args],
+            capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        )
+        assert result.returncode != 0, f"expected non-zero exit for args={args!r}"

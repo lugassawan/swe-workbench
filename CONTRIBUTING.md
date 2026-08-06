@@ -71,13 +71,14 @@ It checks:
 - `.claude-plugin/plugin.json` — JSON well-formedness, required fields (`name`, `version`, `description`).
 - `.claude-plugin/marketplace.json` — JSON well-formedness, `plugins[0].name` and `plugins[0].version` match `plugin.json`.
 - `hooks/hooks.json` — JSON well-formedness and structural shape.
-- `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`).
+- `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`). A skill at or under 150 lines that declares `orchestrator: true` must reference at least one other skill or agent — the flag must be earned by composition or by size, not added opportunistically. See `docs/extending.md` (`## Philosophy`).
 - `agents/*.md` — required frontmatter (`name`, `description`).
 - `commands/*.md` — required frontmatter (`description`).
 - `skills/*/templates/*.md` — every `[[detect:KEY]]` marker is documented in the adjacent `SKILL.md`'s `## Project Detection` section.
 - `skills/*/triggers.txt` — every skill must have a sibling `triggers.txt` with ≥2 non-empty non-comment lines (each ≤200 chars).
 - `skills/*/examples/**/*.md` — companion example files must be ≤120 lines each. See `docs/extending.md` for the full `examples/` convention (multi-fence `// file:` header rule, visibility ordering).
 - Dependency-flow graph (`check_no_cycles`) — action-cued `` `swe-workbench:<id>` `` activations must not form cycles across commands, skills, and agents. See `docs/extending.md` (`## Dependency flow`) for the allowed layering rules that this check enforces.
+- Bare actionable references (`check_bare_actionable_refs`) — machine-actionable dispatch references must use the namespaced `` `swe-workbench:<id>` `` form: every skill/agent id in `commands/*.md` (outside fenced code), and every skill/agent id on a dispatch-cued line in `skills/*/SKILL.md` (same action-cue classifier as `check_no_cycles`). Bare is fine for prose, catalog tables, README enumerations, and a skill naming itself. A genuinely non-dispatch line can opt out with `<!-- validate: prose-ref -->`.
 
 The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
 

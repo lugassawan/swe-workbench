@@ -26,7 +26,6 @@ VERSION_CONTROL_SKILL = ROOT / "skills" / "principle-version-control" / "SKILL.m
 CLEANUP_MERGED_SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 SYNC_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sync-and-verify.sh"
 PR_REVIEW_SKILL = ROOT / "skills" / "workflow-pr-review" / "SKILL.md"
-PR_REVIEW_FOLLOWUP_SKILL = ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md"
 POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
 # Regex matching literal "main" used as a branch name in checkout/pull commands
@@ -256,7 +255,7 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
     buggy_url = "https://github.com/${OWNER}/${REPO}"
     bare_paren = re.compile(r'^(BYLINE|SUMMARY|REMARK)=.*\(swe-workbench\)', re.MULTILINE)
 
-    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL, POST_CORE_SKILL):
+    for skill_path in (PR_REVIEW_SKILL, POST_CORE_SKILL):
         body = skill_path.read_text()
         skill_name = skill_path.parent.name
 
@@ -282,7 +281,7 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
         f"{POST_CORE_SKILL.parent.name}/SKILL.md does not contain the canonical link '{canonical}'.\n"
         f"The core owns the swe-workbench remark and must hardcode the tool URL there."
     )
-    for skill_path in (PR_REVIEW_SKILL, PR_REVIEW_FOLLOWUP_SKILL):
+    for skill_path in (PR_REVIEW_SKILL,):
         body = skill_path.read_text()
         assert canonical not in body, (
             f"{skill_path.parent.name}/SKILL.md must NOT contain the canonical link '{canonical}' "
@@ -290,15 +289,25 @@ def test_pr_review_byline_and_summary_link_to_tool_repo():
             f"the remark itself, conditionally on public repos."
         )
 
-    # 4. The core's SUMMARY construction must reference $BYLINE via $BYLINE_FULL
-    # (not duplicate the URL string)
-    assert re.search(r'BYLINE_FULL="\$\{BYLINE\}', core_body), (
-        f"{POST_CORE_SKILL.parent.name}/SKILL.md must derive BYLINE_FULL from \"${{BYLINE}}\" "
-        f"so the caller-supplied byline flows through unchanged, with the remark appended "
-        f"(not embedded) conditionally."
+    # 4. Since #550 this moved from bash ("$BYLINE_FULL") into build_byline() —
+    # verify the same unchanged-byline / conditional-remark property behaviorally.
+    import importlib.util
+    import sys
+    from importlib.machinery import SourceFileLoader
+
+    script_path = ROOT / "bin" / "swe-workbench-pr-review-submit"
+    loader = SourceFileLoader("pr_review_submit_ambiguity_check", str(script_path))
+    spec = importlib.util.spec_from_file_location("pr_review_submit_ambiguity_check", script_path, loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pr_review_submit_ambiguity_check"] = module
+    spec.loader.exec_module(module)
+
+    byline = "_Reviewed by `bot`_"
+    public = module.build_byline(byline, False, 0, 0, 0)
+    private = module.build_byline(byline, True, 0, 0, 0)
+    assert public.startswith(byline), (
+        "build_byline must derive its result from the caller-supplied byline unchanged, "
+        "not duplicate/re-template the URL"
     )
-    assert re.search(r'SUMMARY=\$\(printf .+"\$BYLINE_FULL"', core_body, re.DOTALL), (
-        f"{POST_CORE_SKILL.parent.name}/SKILL.md SUMMARY construction does not reference "
-        f"\"$BYLINE_FULL\" in a printf call.\n"
-        f"Expected: SUMMARY=$(printf '...' ... \"$BYLINE_FULL\" ...) so the URL lives in one place."
-    )
+    assert canonical in public, "build_byline must append the canonical remark link on a confirmed-public repo"
+    assert canonical not in private, "build_byline must omit the remark on a private repo"

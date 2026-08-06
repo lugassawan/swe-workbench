@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Invoke a skill-local scripts/ helper without any skill-prose path construction.
+# Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]
+set -euo pipefail
+SKILL="${1:?Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]}"
+SCRIPT="${2:?Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]}"
+shift 2
+
+case "$SKILL" in
+  */*|*..*) echo "swe-workbench-skill-script: invalid skill name: $SKILL" >&2; exit 1 ;;
+esac
+case "$SCRIPT" in
+  */*|*..*) echo "swe-workbench-skill-script: invalid script name: $SCRIPT" >&2; exit 1 ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TARGET="$ROOT/skills/$SKILL/scripts/$SCRIPT"
+
+[ -f "$TARGET" ] || {
+  echo "swe-workbench-skill-script: not found: skills/$SKILL/scripts/$SCRIPT" >&2
+  exit 1
+}
+
+exec bash "$TARGET" "$@"

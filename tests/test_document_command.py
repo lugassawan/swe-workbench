@@ -19,7 +19,7 @@ def test_document_command_file_exists():
     fm = validate.parse_frontmatter(DOCUMENT_CMD, text=text)
     assert fm is not None, "document.md must have valid frontmatter"
     assert "description" in fm, "document.md frontmatter must have a description field"
-    assert "`tech-writer`" in text, "document.md must reference the `tech-writer` subagent"
+    assert "`swe-workbench:tech-writer`" in text, "document.md must reference the `swe-workbench:tech-writer` subagent"
 
 
 def test_document_command_invokes_ticket_context():

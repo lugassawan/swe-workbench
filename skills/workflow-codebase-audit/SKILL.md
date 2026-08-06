@@ -46,7 +46,9 @@ Build a plain-prose prompt from the parsed flags:
 > "Time-box: `<time-box>`. Scope: `<scope>`. Depth: `<depth>`. Top-N: `<top-n>`.
 > Run a cold-start multi-domain audit of this codebase. Return findings in the full 11-field schema."
 
-Pass this to the `auditor` subagent. The agent is read-only and self-paces to the time-box.
+Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box.
+
+Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `LSP` expands from it — one attempt only; on no servers or error, state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
 
 ### Phase 3 — Schema validation
 
@@ -64,8 +66,8 @@ Skip this phase entirely for `--depth=quick` and `--depth=standard`.
 
 For `--depth=deep`:
 
-1. Take the top-N security findings → invoke `security-auditor` subagent for depth-first CVE + threat analysis.
-2. Take the top-N reliability findings by rank → invoke `debugger` subagent for root-cause + fix recommendation.
+1. Take the top-N security findings → invoke `swe-workbench:security-auditor` subagent for depth-first CVE + threat analysis.
+2. Take the top-N reliability findings by rank → invoke `swe-workbench:debugger` subagent for root-cause + fix recommendation.
 
 Wait for both agents to complete before proceeding to Phase 5.
 
@@ -121,4 +123,4 @@ Wait for both agents to complete before proceeding to Phase 5.
 - **Soft time-box.** The auditor self-paces. There is no hard kill; findings reported at natural completion.
 - **Schema enforcement is non-negotiable.** Drop findings that lack `root_cause`, `reasoning_chain`, or `counter_evidence_considered`. Never invent or infer these fields from partial evidence.
 - **Never invent findings.** If evidence is absent, omit the finding. Silence is correct; false positives erode trust faster than missed findings.
-- **Fan-out only on deep.** Quick and standard modes stay single-pass. Do not invoke `security-auditor` or `debugger` unless `--depth=deep`.
+- **Fan-out only on deep.** Quick and standard modes stay single-pass. Do not invoke `swe-workbench:security-auditor` or `swe-workbench:debugger` unless `--depth=deep`.

@@ -8,8 +8,9 @@ Bug: IS_SELF_REVIEW caused the CTA to be silently dropped when the user ran
 removes the identity axis from the CTA gate -- only the outcome axis gates it.
 
 Since #499, the CTA lives in workflow-pr-review-post/SKILL.md (Step 5) --
-it used to be duplicated verbatim in workflow-pr-review/SKILL.md and
-workflow-pr-review-followup/SKILL.md; both now delegate to the shared core
+it used to be duplicated verbatim across workflow-pr-review's first-pass and
+followup modes (the latter was its own standalone skill until #565 folded it
+into workflow-pr-review as a mode); both now delegate to the shared core
 instead, so this contract is pinned once against the single source of truth.
 """
 
@@ -94,9 +95,9 @@ def test_cta_uses_ask_user_question():
 
 
 def test_consumers_delegate_cta_not_duplicate_it():
-    """workflow-pr-review and workflow-pr-review-followup must NOT re-duplicate
-    the CTA mechanism — they delegate to the core instead (issue #499)."""
-    for skill_name in ("workflow-pr-review", "workflow-pr-review-followup"):
+    """workflow-pr-review (both first-pass and followup modes) must NOT re-duplicate
+    the CTA mechanism — it delegates to the core instead (issue #499)."""
+    for skill_name in ("workflow-pr-review",):
         text = (ROOT / "skills" / skill_name / "SKILL.md").read_text()
         assert "swe-workbench:workflow-pr-review-post" in text, (
             f"{skill_name}/SKILL.md must invoke swe-workbench:workflow-pr-review-post "

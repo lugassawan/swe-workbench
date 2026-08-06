@@ -26,7 +26,7 @@ def test_doctor_mentions_probe_targets():
     assert DOCTOR_CMD.exists(), "commands/doctor.md must exist"
     text = DOCTOR_CMD.read_text()
     assert "swe-workbench-doctor" in text, "doctor.md must reference swe-workbench-doctor"
-    for tool in ("gh", "git", "jq", "rimba", "claude"):
+    for tool in ("gh", "git", "jq", "rimba", "claude", "python3"):
         assert tool in text, f"doctor.md must mention probe target '{tool}'"
 
 
@@ -86,4 +86,15 @@ def test_doctor_invokes_script_portably():
     )
     assert "bash scripts/doctor.sh" not in text, (
         "doctor.md must not invoke the script via a non-portable bare relative path"
+    )
+
+
+def test_doctor_mentions_repo_hygiene_check():
+    """doctor.md must document the Repo hygiene section (issue #577)."""
+    text = DOCTOR_CMD.read_text()
+    assert "hygiene" in text.lower(), (
+        "doctor.md must mention the Repo hygiene check"
+    )
+    assert ".claude/cache/" in text, (
+        "doctor.md must name .claude/cache/ as the path the hygiene check covers"
     )

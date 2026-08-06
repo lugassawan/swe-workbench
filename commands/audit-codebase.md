@@ -34,14 +34,14 @@ The skill handles phase orchestration, schema enforcement, fan-out (deep mode), 
 
 ## Output
 
-The `workflow-codebase-audit` skill (via the `auditor` subagent) produces a ranked findings document. Expect:
+The `swe-workbench:workflow-codebase-audit` skill (via the `swe-workbench:auditor` subagent) produces a ranked findings document. Expect:
 
 - **Summary header** — scope, depth, and time-box used; total finding count by domain.
 - **Ranked findings** — ordered by severity (Critical → High → Medium → Low), each with: domain tag, `File:Line` anchor, concise issue title, root-cause reasoning chain, and counter-evidence note (what was checked that did NOT confirm the finding).
 - **Domain sections** — `security`, `perf`, `reliability`, `tooling`, `testing` (only domains in `--scope` are rendered; `all` renders all five).
 - **Next-action recommendations** — top-N actionable fixes the team should address first, keyed to finding IDs.
 
-In `--depth deep`, the `security-auditor` additionally deep-dives the top-N security findings and the `debugger` attempts to reproduce the top-N reliability findings; their outputs are appended as sub-sections.
+In `--depth deep`, the `swe-workbench:security-auditor` additionally deep-dives the top-N security findings and the `swe-workbench:debugger` attempts to reproduce the top-N reliability findings; their outputs are appended as sub-sections.
 
 ## Step 4 — Offer to emit findings as GitHub issues
 

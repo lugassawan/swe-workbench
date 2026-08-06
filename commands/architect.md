@@ -16,7 +16,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
-Delegate to the `architect` subagent. Its output must include:
+Delegate to the `swe-workbench:architect` subagent. Its output must include:
 
 1. **Decision** — one paragraph stating what was chosen and why.
 2. **Context & forcing function** — why this decision is needed now.

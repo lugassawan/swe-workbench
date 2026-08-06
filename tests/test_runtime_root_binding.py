@@ -9,6 +9,15 @@ inline gh/jq silently.
 #560 replaced $CLAUDE_PLUGIN_ROOT-based path construction with bare `swe-workbench-<name>`
 commands (bin/ is on PATH while the plugin is enabled). The guard now checks the command is
 reachable via `command -v`, once, before worktree entry, rather than checking a resolved path.
+
+Root cause #3 (#569, fixed by #578 + this change): skills with their own `scripts/` helpers
+(workflow-cleanup-merged, workflow-branch-sync) still needed *some* way to resolve a skill-local
+path. #578 replaced the retired `$CLAUDE_PLUGIN_ROOT` preamble with a doctor-anchor derivation
+(`_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"`) repeated at every call
+site — itself a 10-occurrence duplication, and still path construction in skill prose. This was
+replaced with `bin/swe-workbench-skill-script <skill> <script> [args...]`, a single dispatcher
+that owns root resolution; skill prose now invokes it as a bare command with no `_RT`/`_SCRIPTS`
+variables anywhere.
 """
 
 import re
@@ -19,7 +28,6 @@ DOCTOR_CMD = ROOT / "commands" / "doctor.md"
 
 SKILLS_WITH_PREFLIGHT = [
     "workflow-pr-review",
-    "workflow-pr-review-followup",
     "workflow-address-feedback",
     "workflow-audit-emit-issues",
     "workflow-cleanup-merged",
@@ -30,7 +38,6 @@ SKILLS_WITH_PREFLIGHT = [
 
 _PREFLIGHT_RE = re.compile(r'command -v swe-workbench-[\w-]+ >/dev/null 2>&1')
 _GUARD_STR = "not on PATH — reinstall or update the swe-workbench plugin"
-_RT_DERIVATION = '_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"'
 
 
 def _skill_text(skill_name: str) -> str:
@@ -65,9 +72,10 @@ def test_no_inline_root_resolution_at_script_call_sites():
 
     All runtime-script invocations must use bare `swe-workbench-<name>` commands so PATH
     resolution happens once, at plugin-load time, with no per-call path construction. Skills
-    that need their own skill-local root (to resolve their skills/<name>/scripts/ helpers)
-    now derive it from the resolved `swe-workbench-doctor` command instead — see
-    test_rt_derived_from_doctor_command. There is no remaining exemption for this pattern.
+    that need to invoke their own skill-local scripts/ helpers do so via
+    `swe-workbench-skill-script <skill> <script>` — see test_no_path_resolution_in_skill_prose
+    and test_skill_local_scripts_invoked_via_dispatcher. There is no remaining exemption for
+    this pattern.
     """
     for skill in SKILLS_WITH_PREFLIGHT:
         text = _skill_text(skill)
@@ -78,58 +86,65 @@ def test_no_inline_root_resolution_at_script_call_sites():
         ]
         assert not raw_occurrences, (
             f"skills/{skill}/SKILL.md has inline ${{CLAUDE_PLUGIN_ROOT:-$(git rev-parse ...)}} "
-            f"— this pattern is retired; derive _RT from `command -v swe-workbench-doctor` instead:\n"
+            f"— this pattern is retired; use `swe-workbench-skill-script` instead:\n"
             + "\n".join(f"  line {no}: {ln}" for no, ln in raw_occurrences)
         )
 
 
-def test_rt_derived_from_doctor_command():
-    """Every _RT= assignment must derive the skill root from the resolved doctor command.
+_PATH_RESOLUTION_RE = re.compile(r'_RT\s*=|\$\(dirname "\$\(command -v')
 
-    Not every skill in SKILLS_WITH_PREFLIGHT binds _RT — only those with skill-local
-    scripts/ helpers (e.g. workflow-branch-sync, workflow-cleanup-merged) do. For those that
-    do, the RHS must be exactly the pinned form so every skill resolves its root identically.
+_SKILL_DIRS = sorted(p.name for p in (ROOT / "skills").iterdir() if p.is_dir())
+
+_SKILLS_WITH_LOCAL_SCRIPTS = sorted(
+    p.name for p in (ROOT / "skills").iterdir() if (p / "scripts").is_dir()
+)
+
+
+def test_no_path_resolution_in_skill_prose():
+    """No SKILL.md may construct a path to a skill-local script itself.
+
+    #578 replaced the retired $CLAUDE_PLUGIN_ROOT preamble with a doctor-anchor _RT=
+    derivation repeated at every call site — still path construction in skill prose, just a
+    different RHS. `bin/swe-workbench-skill-script` now owns all of that resolution; no
+    SKILL.md should ever assign `_RT=` or derive a root via `dirname "$(command -v ...)"`.
     """
-    for skill in SKILLS_WITH_PREFLIGHT:
+    assert _SKILL_DIRS, "no skills found under skills/ — fixture list must not be empty"
+    for skill in _SKILL_DIRS:
         text = _skill_text(skill)
-        assign_lines = [ln.strip() for ln in text.splitlines() if re.match(r'\s*_RT\s*=', ln)]
-        for ln in assign_lines:
-            assert ln == _RT_DERIVATION, (
-                f"skills/{skill}/SKILL.md defines _RT via an unexpected form: {ln!r} — "
-                f"expected {_RT_DERIVATION!r}"
-            )
+        offenders = [
+            (i, ln.strip())
+            for i, ln in enumerate(text.splitlines(), 1)
+            if _PATH_RESOLUTION_RE.search(ln)
+        ]
+        assert not offenders, (
+            f"skills/{skill}/SKILL.md constructs a path instead of using "
+            "swe-workbench-skill-script:\n" + "\n".join(f"  line {no}: {ln}" for no, ln in offenders)
+        )
 
 
-def _bash_blocks(text: str) -> list[list[str]]:
-    """Extract fenced ```bash ... ``` blocks, allowing leading indentation on the fence."""
-    lines = text.splitlines()
-    blocks = []
-    i = 0
-    while i < len(lines):
-        if re.match(r'^\s*```bash\s*$', lines[i]):
-            start = i + 1
-            j = start
-            while j < len(lines) and lines[j].strip() != "```":
-                j += 1
-            blocks.append(lines[start:j])
-            i = j + 1
-        else:
-            i += 1
-    return blocks
+def test_skill_local_scripts_invoked_via_dispatcher():
+    """Every skill-local scripts/*.sh helper must be invoked via the dispatcher, by name.
 
-
-def test_rt_defined_in_every_block_that_uses_it():
-    """Each Bash tool call is a fresh shell — a block referencing $_RT/$_SCRIPTS must define
-    _RT itself, not rely on a prior block's assignment having "stuck"."""
-    for skill in SKILLS_WITH_PREFLIGHT:
+    Skills with their own scripts/ dir (workflow-cleanup-merged, workflow-branch-sync) must
+    reference each helper as `swe-workbench-skill-script <skill> <script>`, never a
+    constructed path — this is the replacement for the retired _RT/_SCRIPTS pattern. A skill
+    may satisfy this from a companion `reference/*.md` file instead of SKILL.md itself when
+    the invocation lives in content extracted there (e.g. workflow-cleanup-merged's Worktree
+    Removal Strategies), so this check searches SKILL.md plus any reference/ markdown.
+    """
+    assert _SKILLS_WITH_LOCAL_SCRIPTS, "no skills with a scripts/ dir found — fixture list must not be empty"
+    for skill in _SKILLS_WITH_LOCAL_SCRIPTS:
         text = _skill_text(skill)
-        for block in _bash_blocks(text):
-            block_text = "\n".join(block)
-            if not re.search(r'\$_RT\b|\$_SCRIPTS\b', block_text):
-                continue
-            assert re.search(r'^\s*_RT\s*=', block_text, re.MULTILINE), (
-                f"skills/{skill}/SKILL.md has a bash block referencing $_RT/$_SCRIPTS "
-                f"without defining _RT in the same block:\n{block_text}"
+        reference_dir = ROOT / "skills" / skill / "reference"
+        if reference_dir.is_dir():
+            text += "\n".join(p.read_text() for p in sorted(reference_dir.glob("*.md")))
+        script_names = sorted(p.name for p in (ROOT / "skills" / skill / "scripts").glob("*.sh"))
+        assert script_names, f"skills/{skill}/scripts/ has no .sh files"
+        for name in script_names:
+            pattern = re.compile(rf'swe-workbench-skill-script {re.escape(skill)} {re.escape(name)}\b')
+            assert pattern.search(text), (
+                f"skills/{skill}/SKILL.md (or a skills/{skill}/reference/*.md companion) must "
+                f"invoke skills/{skill}/scripts/{name} via 'swe-workbench-skill-script {skill} {name}'"
             )
 
 
@@ -167,14 +182,15 @@ def test_preflight_pr_referenced_in_pr_review_skill():
     )
 
 
-def test_preflight_pr_referenced_in_pr_review_followup_skill():
-    """workflow-pr-review-followup SKILL.md Step 1 must use swe-workbench-preflight-pr."""
-    text = (ROOT / "skills" / "workflow-pr-review-followup" / "SKILL.md").read_text()
+def test_preflight_pr_referenced_in_pr_review_followup_mode():
+    """The standalone followup skill was folded into workflow-pr-review as a mode (#565);
+    its Step 1 (shared by both first-pass and followup) must use swe-workbench-preflight-pr."""
+    text = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text()
     assert "swe-workbench-preflight-pr" in text, (
-        "workflow-pr-review-followup SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
+        "workflow-pr-review SKILL.md Step 1 must invoke swe-workbench-preflight-pr"
     )
     assert 'eval "$(' in text, (
-        "workflow-pr-review-followup SKILL.md must use eval \"$(...)\" to source preflight output"
+        "workflow-pr-review SKILL.md must use eval \"$(...)\" to source preflight output"
     )
 
 

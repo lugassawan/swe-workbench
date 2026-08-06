@@ -26,13 +26,11 @@ orchestrator: true
 ### Step 1 — Preflight Guard
 
 ```bash
-command -v swe-workbench-doctor >/dev/null 2>&1 || {
+command -v swe-workbench-skill-script >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
-_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-_SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-eval "$("$_SCRIPTS/preflight-guard.sh")"
+eval "$(swe-workbench-skill-script workflow-branch-sync preflight-guard.sh)"
 ```
 
 Emits `CURRENT_BRANCH`, `DEFAULT_BRANCH` (detected — never hardcode `main`), `IS_DEFAULT`, `DETACHED`, `DIRTY`.
@@ -97,9 +95,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 ### Step 4 — Detect Result
 
 ```bash
-_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-_SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-_DETECT_OUT="$("$_SCRIPTS/detect-conflicts.sh")"
+_DETECT_OUT="$(swe-workbench-skill-script workflow-branch-sync detect-conflicts.sh)"
 eval "$(head -1 <<<"$_DETECT_OUT")"
 UNMERGED=$(tail -n +2 <<<"$_DETECT_OUT")
 ```
@@ -115,14 +111,12 @@ Capture the script's output **once** into `_DETECT_OUT`, then split it — do no
 
 For **each** file in `UNMERGED`:
 
-1. Dispatch the `conflict-resolver` subagent with the file path, `OPERATION`, and the conflicted content (both sides, retrievable via `git show :2:<file>` / `git show :3:<file>` for a merge, or the equivalent staged blobs during a rebase — the subagent may also use `git log`/`git blame` on both sides for judgement).
+1. Dispatch the `swe-workbench:conflict-resolver` subagent with the file path, `OPERATION`, and the conflicted content (both sides, retrievable via `git show :2:<file>` / `git show :3:<file>` for a merge, or the equivalent staged blobs during a rebase — the subagent may also use `git log`/`git blame` on both sides for judgement).
 2. Present the subagent's per-hunk rationale and its file-level recommendation to the user, alongside both sides' content.
 3. Prompt for one of: **keep-mine**, **keep-main**, **manual**.
    - **keep-mine / keep-main**: apply via
      ```bash
-     _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-     _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-     "$_SCRIPTS/apply-resolution.sh" "<file>" "<mine|main>" "<merge|rebase>"
+     swe-workbench-skill-script workflow-branch-sync apply-resolution.sh "<file>" "<mine|main>" "<merge|rebase>"
      ```
      This script does the ours/theirs translation (see Common Mistakes) and stages the file — do not call `git checkout --ours/--theirs` directly from this skill.
    - **manual**: open the file in place for the user to edit, wait for confirmation. Before staging, verify no conflict markers remain: `grep -qE '^(<{7}|={7}|>{7})' "<file>"` must find **nothing**. If a marker is still present, do not stage — warn the user and re-prompt for confirmation instead of silently committing broken content. Once clean, `git add "<file>"`.
@@ -141,9 +135,7 @@ Surfaces *functional* duplication a textual diff structurally cannot see — the
    - `CHECK_REDUNDANCY=on` but `MERGE_BASE` came back empty from Step 3 (unrelated histories) → report "redundancy check skipped: unrelated histories" and proceed to Step 7.
 2. **Gather** (deterministic):
    ```bash
-   _RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"
-   _SCRIPTS="$_RT/skills/workflow-branch-sync/scripts"
-   _REDUND_OUT="$("$_SCRIPTS/redundancy-scope.sh" "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
+   _REDUND_OUT="$(swe-workbench-skill-script workflow-branch-sync redundancy-scope.sh "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
    eval "$(grep -E '^(MERGE_BASE|CANDIDATES)=' <<<"$_REDUND_OUT")"
    ```
    Only the plain `MERGE_BASE=`/`CANDIDATES=` scalar lines are eval-safe and get eval'd here — the `CANDIDATE`/`MAIN_ADD` records are structured, not simple `KEY=VALUE`, and are parsed as data below, never eval'd. If `CANDIDATES=0`, report "no redundancy candidates found" and proceed to Step 7 — never dispatch the subagent for zero candidates.
@@ -188,7 +180,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 7 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 | `--check-redundancy` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 6 with a one-line reason ("unrelated histories") — never crash, never treat this as a sync failure. |
 | `redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
-| `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. |
+| `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. <!-- validate: prose-ref --> |
 | `redundancy-scope.sh` enumerated a candidate but `redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
 | A branch and main both add the identical path (add/add conflict) | The path already appeared in Step 5's resolved `UNMERGED` list, yet also surfaces as a Step 6 `CANDIDATE` | Narrow overlap: the two steps can disagree since Step 6 reasons independently. Prefer the Step 5 resolution — Step 5's keep-mine/keep-main choice for a path already-resolved there takes precedence over a same-path Step 6 finding. |
 

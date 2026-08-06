@@ -18,10 +18,10 @@ Invoke `swe-workbench:workflow-branch-sync`, passing the resolved strategy (`mer
 
 ## Output
 
-The `workflow-branch-sync` skill produces a per-file resolution summary followed by a push prompt:
+The `swe-workbench:workflow-branch-sync` skill produces a per-file resolution summary followed by a push prompt:
 
 1. **Sync result** — clean (fast-forward/no-conflict) or resolved-with-conflicts, and the strategy used (merge/rebase).
-2. **Per-file resolution** — one line per conflicting file: which side was kept (mine/main/manual) and the one-line rationale surfaced by the `conflict-resolver` subagent.
+2. **Per-file resolution** — one line per conflicting file: which side was kept (mine/main/manual) and the one-line rationale surfaced by the `swe-workbench:conflict-resolver` subagent.
 3. **Redundancy assessment** (only when `--check-redundancy` was passed — opt-in) — any whole-file candidates the branch added that the default branch already grew independently elsewhere, auto-applied (whole-file, zero references) or escalated to you per candidate.
 4. **Push prompt** — the result is left local; the skill asks before pushing. Merge pushes with `git push`; rebase pushes with `git push --force-with-lease` — never a plain force push.
 

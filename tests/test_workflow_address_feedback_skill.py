@@ -17,6 +17,24 @@ ROOT = Path(__file__).parent.parent
 SKILL_DIR = ROOT / "skills" / "workflow-address-feedback"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 TRIGGERS_TXT = SKILL_DIR / "triggers.txt"
+REFERENCE_DIR = SKILL_DIR / "reference"
+REFERENCE_SYNC_PR_METADATA = REFERENCE_DIR / "sync-pr-metadata.md"
+REFERENCE_RESOLVE_REVIEW_THREADS = REFERENCE_DIR / "resolve-review-threads.md"
+
+
+def _skill_text_with_references() -> str:
+    """SKILL.md text plus all reference/*.md content.
+
+    Task 5 (#567) extracted Phase 6 and the Phase 5 resolve/reply mechanics out of
+    SKILL.md into reference/ files; assertions on that content now check the combined
+    text so they verify the skill package as a whole regardless of which file the
+    content currently lives in.
+    """
+    text = SKILL_MD.read_text()
+    if REFERENCE_DIR.is_dir():
+        for ref in sorted(REFERENCE_DIR.glob("*.md")):
+            text += "\n" + ref.read_text()
+    return text
 
 
 def test_address_feedback_skill_file_exists():
@@ -124,7 +142,7 @@ def test_address_feedback_skill_captures_fix_sha():
 
 def test_address_feedback_skill_binds_comment_databaseid():
     """Phase 5 must specify that COMMENT_DATABASEID comes from comments.nodes[0] (thread root)."""
-    text = SKILL_MD.read_text()
+    text = _skill_text_with_references()
     assert "nodes[0]" in text or "thread root" in text or "first comment" in text, (
         "SKILL.md Phase 5 must specify that $COMMENT_DATABASEID is populated from "
         "comments.nodes[0].databaseId (the thread root), not a subsequent reply"
@@ -143,12 +161,19 @@ def test_address_feedback_skill_clarified_no_resolve():
 # --- Phase 6 — Sync PR metadata (issue #454) ---
 
 
-def _phase6_sync_text(text: str) -> str:
-    """Extract the Phase 6 Sync PR metadata section (between ### Phase 6 and ### Phase 7)."""
-    start = text.find("### Phase 6")
-    assert start != -1, "### Phase 6 section must exist"
-    end = text.find("### Phase 7", start)
-    return text[start:end] if end != -1 else text[start:]
+def _phase6_sync_text(text: str = "") -> str:
+    """Full Phase 6 mechanics text.
+
+    Task 5 (#567) extracted the Phase 6 body into reference/sync-pr-metadata.md,
+    leaving only a heading + summary + pointer in SKILL.md; the detailed assertions
+    below check the reference file, which is now the canonical source (unused `text`
+    param kept so existing call sites `_phase6_sync_text(text)` still work).
+    """
+    assert REFERENCE_SYNC_PR_METADATA.exists(), (
+        "skills/workflow-address-feedback/reference/sync-pr-metadata.md must exist "
+        "(Phase 6 detail was extracted here — Task 5, #567)"
+    )
+    return REFERENCE_SYNC_PR_METADATA.read_text()
 
 
 def test_address_feedback_skill_has_phase6_sync_section():
@@ -541,7 +566,7 @@ def test_address_feedback_skill_keys_pr_comments_namespaced():
 
 def test_address_feedback_skill_phase5_dispatches_issue_kind():
     """Phase 5 must dispatch swe-workbench-reply-and-resolve with KIND=issue and empty comment-id/thread-id for PR comments."""
-    text = SKILL_MD.read_text()
+    text = _skill_text_with_references()
     assert re.search(r'swe-workbench-reply-and-resolve.*\n.*"\$OWNER" "\$REPO" "\$PR" "" "" "\$REPLY_BODY" "issue"', text), (
         'SKILL.md Phase 5 must call swe-workbench-reply-and-resolve with '
         '"$OWNER" "$REPO" "$PR" "" "" "$REPLY_BODY" "issue" for PR comments — '
@@ -551,7 +576,7 @@ def test_address_feedback_skill_phase5_dispatches_issue_kind():
 
 def test_address_feedback_skill_reply_body_embeds_handled_marker():
     """Phase 5 PR-comment reply body must embed the swe-workbench:handled:{id} marker used for re-run dedup."""
-    text = SKILL_MD.read_text()
+    text = _skill_text_with_references()
     assert "swe-workbench:handled:" in text, (
         "SKILL.md Phase 5 must compose the PR-comment reply body with a hidden "
         "<!-- swe-workbench:handled:{comment.id} --> marker — Phase 1's dedup filter "

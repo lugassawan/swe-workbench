@@ -7,7 +7,7 @@ Target: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
-Delegate to the `tech-writer` subagent. Its output must include:
+Delegate to the `swe-workbench:tech-writer` subagent. Its output must include:
 
 1. **Artifact type** — which category (README section, ADR, ARCHITECTURE/OVERVIEW, inline comment).
 2. **Target path** — the exact file path the artifact will live at.

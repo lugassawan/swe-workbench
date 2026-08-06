@@ -14,7 +14,7 @@ The user wants to capture: $ARGUMENTS
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
-Delegate to the `product-manager` subagent. Its response must deliver all of the following before any issue is filed:
+Delegate to the `swe-workbench:product-manager` subagent. Its response must deliver all of the following before any issue is filed:
 
 1. **Auth + repo detection.** Run `gh auth status`, then `gh repo view --json nameWithOwner -q '.nameWithOwner'`. Surface the detected repo in the preview as `Filing into: <owner>/<repo>`. If either command fails, bail with a clear single-line message ("Repo detection failed: <reason>. Run `gh repo view` to diagnose.") and stop.
 

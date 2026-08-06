@@ -521,6 +521,198 @@ class TestCheckSkills:
 
 
 # ──────────────────────────────────────────────
+# check_skill_cap_headroom (#567)
+# ──────────────────────────────────────────────
+
+class TestCheckSkillCapHeadroom:
+    def _valid_skill(self, name="my-skill", extra_lines=0, orchestrator=False):
+        body = f"---\nname: {name}\ndescription: A skill\n"
+        if orchestrator:
+            body += "orchestrator: true\n"
+        body += "---\n"
+        body += "x\n" * extra_lines
+        return body
+
+    def test_below_threshold_no_warning(self, reset_validate):
+        root = reset_validate
+        # 150-line base cap; 90% threshold is 135 lines — stay comfortably under.
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=50)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+        assert len(validate.FAILURES) == 0
+
+    def test_above_90_percent_base_cap_warns(self, reset_validate):
+        root = reset_validate
+        # 4 frontmatter lines + 140 filler = 144 lines, > 135 (90% of 150).
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=140)})
+        validate.check_skill_cap_headroom()
+        assert any("my-skill" in w and "150-line cap" in w for w in validate.WARNINGS)
+
+    def test_above_90_percent_never_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._valid_skill(extra_lines=140)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.FAILURES) == 0
+
+    def test_orchestrator_cap_used_when_flagged(self, reset_validate):
+        root = reset_validate
+        # 145 lines total: over 90% of BASE_SKILL_CAP (135) but well under 90%
+        # of ORCHESTRATOR_SKILL_CAP (270) — must NOT warn once flagged.
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(extra_lines=140, orchestrator=True)},
+        )
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+
+    def test_orchestrator_above_90_percent_of_300_warns(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(extra_lines=268, orchestrator=True)},
+        )
+        validate.check_skill_cap_headroom()
+        assert any("300-line cap" in w for w in validate.WARNINGS)
+
+    def test_malformed_frontmatter_skipped_not_warned(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": "No frontmatter\n" + ("x\n" * 200)})
+        validate.check_skill_cap_headroom()
+        assert len(validate.WARNINGS) == 0
+
+
+# ──────────────────────────────────────────────
+# check_orchestrator_flag_earned (#568)
+# ──────────────────────────────────────────────
+
+class TestCheckOrchestratorFlagEarned:
+    def _skill_body(self, extra_lines=95, orchestrator=True, extra_text=""):
+        fm = "---\nname: my-skill\ndescription: A skill\n"
+        if orchestrator:
+            fm += "orchestrator: true\n"
+        fm += "---\n"
+        body = fm + extra_text + "\n" + ("x\n" * extra_lines)
+        return body
+
+    def test_flag_short_no_refs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body()})
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_short_bare_agent_ref_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="Delegates to `some-agent`.\n")},
+            agents=[{"name": "some-agent", "description": "d"}],
+        )
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_short_namespaced_skill_ref_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": self._skill_body(
+                    extra_text="Composes `swe-workbench:other-skill`.\n"
+                ),
+                "other-skill": "---\nname: other-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_over_base_cap_no_refs_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body(extra_lines=196)})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_no_flag_short_no_refs_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body(orchestrator=False)})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_flag_short_self_reference_only_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="See `my-skill` for details.\n")},
+        )
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_short_nonexistent_ref_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._skill_body(extra_text="See `nonexistent-thing` for details.\n")},
+        )
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_exactly_at_base_cap_no_refs_fails(self, reset_validate):
+        """line_count == BASE_SKILL_CAP (150) is still 'at or under' and must fail —
+        pins the boundary so a future '>' vs '>=' swap would be caught."""
+        root = reset_validate
+        fm = "---\nname: my-skill\ndescription: A skill\norchestrator: true\n---\n"
+        body = fm + "x\n" * (validate.BASE_SKILL_CAP - fm.count("\n"))
+        assert len(body.splitlines()) == validate.BASE_SKILL_CAP
+        make_plugin_tree(root, skills={"my-skill": body})
+        validate.check_orchestrator_flag_earned()
+        assert any("orchestrator" in f for f in validate.FAILURES)
+
+    def test_flag_one_over_base_cap_no_refs_passes(self, reset_validate):
+        """line_count == BASE_SKILL_CAP + 1 already has the headroom and must pass."""
+        root = reset_validate
+        fm = "---\nname: my-skill\ndescription: A skill\norchestrator: true\n---\n"
+        body = fm + "x\n" * (validate.BASE_SKILL_CAP + 1 - fm.count("\n"))
+        assert len(body.splitlines()) == validate.BASE_SKILL_CAP + 1
+        make_plugin_tree(root, skills={"my-skill": body})
+        validate.check_orchestrator_flag_earned()
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_is_skipped_without_double_reporting(self, reset_validate):
+        """A None cache entry (unreadable file) is check_skills's failure to report,
+        not this check's — it must not raise and must not add its own failure."""
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": self._skill_body()})
+        skill_md = root / "skills" / "my-skill" / "SKILL.md"
+        cache = ({}, {skill_md: None})
+        validate.check_orchestrator_flag_earned(cache=cache)
+        assert len(validate.FAILURES) == 0
+
+    def test_green_baseline_live_repo(self, reset_validate, monkeypatch):
+        """Live repo must have zero unearned orchestrator: true flags (#568) —
+        every current flag is earned by size or by composition."""
+        real_root = Path(__file__).parent.parent
+        monkeypatch.setattr(validate, "ROOT", real_root)
+        cache = validate._build_cache()
+        validate.check_orchestrator_flag_earned(cache=cache)
+        assert validate.FAILURES == []
+
+
+class TestOrchestratorFlagDocs:
+    """Docs must name the literal frontmatter key and cap number where authors
+    read them, not bury the rule in the validator's failure-path hint (#568)."""
+
+    REAL_ROOT = Path(__file__).parent.parent
+
+    def test_extending_md_names_flag_and_cap(self):
+        text = (self.REAL_ROOT / "docs" / "extending.md").read_text(encoding="utf-8")
+        assert "orchestrator: true" in text
+        assert "300" in text
+
+    def test_contributing_md_names_flag_and_cap(self):
+        text = (self.REAL_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        assert "orchestrator: true" in text
+        assert "300" in text
+
+
+# ──────────────────────────────────────────────
 # check_agents
 # ──────────────────────────────────────────────
 
@@ -1325,6 +1517,153 @@ class TestCheckSkillSkillRefs:
         val.FAILURES.clear()
         val.check_skill_skill_refs()
         assert val.FAILURES == [], f"validate.py failures: {val.FAILURES}"
+
+
+# ──────────────────────────────────────────────
+# check_bare_actionable_refs (#586)
+# ──────────────────────────────────────────────
+
+class TestCheckBareActionableRefs:
+    def test_bare_agent_id_in_command_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "reviewer.md").write_text(
+            "---\nname: reviewer\ndescription: d\ntools: Read\n---\n",
+            encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nDelegate to the `reviewer` subagent.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("reviewer" in f and "swe-workbench:reviewer" in f for f in validate.FAILURES)
+
+    def test_bare_skill_id_in_command_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nInvoke `foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("foo" in f for f in validate.FAILURES)
+
+    def test_namespaced_ref_in_command_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nInvoke `swe-workbench:foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_inside_fenced_block_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\n```\nDelegate to the `foo` skill.\n```\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_exemption_marker_suppresses_in_command(self, reset_validate):
+        """Rule 1's marker escape hatch (used for real at report-issue.md's
+        redaction allowlist), isolated from the live-tree test."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNever redact `foo`. <!-- validate: prose-ref -->\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_command_id_in_command_passes(self, reset_validate):
+        """report-issue.md:136 regression — a bare id that resolves only to a
+        command (not a skill or agent) is never in the checked id set."""
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "commands" / "capture.md").write_text(
+            "---\ndescription: d\n---\n\nCommand body.\n", encoding="utf-8",
+        )
+        (root / "commands" / "my-cmd.md").write_text(
+            "---\ndescription: d\n---\n\nNever redact `capture`.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_in_skill_prose_without_action_cue_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nRelated: `target-skill` handles that.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_id_on_skill_dispatch_line_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nInvoke `target-skill` now.\n",
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert any("target-skill" in f for f in validate.FAILURES)
+
+    def test_self_reference_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nActivating `my-skill` now.\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_exemption_marker_suppresses(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={
+                "my-skill": (
+                    "---\nname: my-skill\ndescription: d\n---\n\n"
+                    "Invoke `target-skill` now. <!-- validate: prose-ref -->\n"
+                ),
+                "target-skill": "---\nname: target-skill\ndescription: d\n---\n",
+            },
+        )
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
+    def test_bare_actionable_refs_live_tree_passes(self, reset_validate, monkeypatch):
+        """The real repo must already be fully normalized (#586)."""
+        monkeypatch.setattr(validate, "ROOT", Path(__file__).parent.parent)
+        validate.FAILURES.clear()
+        cache = validate._build_cache()
+        validate.check_bare_actionable_refs(cache=cache)
+        assert validate.FAILURES == [], f"validate.py failures: {validate.FAILURES}"
 
 
 # ──────────────────────────────────────────────
@@ -2839,6 +3178,140 @@ class TestCheckBrowserToolGate:
         )
         validate.check_browser_tool_gate()
         assert any("BLOCKED:" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# LSP tool gate (#559)
+# ──────────────────────────────────────────────
+
+class TestCheckLspToolGate:
+    """check_lsp_tool_gate: any agent granting LSP in its tools: frontmatter must
+    carry @./shared/lsp.md, and the shared file must carry the LSP-unavailable
+    fallback sentence. The gate must key on the tools: frontmatter scalar only —
+    never on body-text "LSP", since agents/shared/principles.md uses "LSP" for the
+    Liskov Substitution Principle and most agents preload principle-solid (#559)."""
+
+    def test_grants_lsp_with_include_and_shared_file_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_grants_lsp_missing_include_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "No shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_list_form_missing_include_fails(self, reset_validate):
+        """List-form tools: (e.g. `tools:\\n  - Read\\n  - LSP`) must be treated
+        as granting LSP just like the scalar comma-separated form — otherwise a
+        contributor could silently bypass the gate by switching YAML encodings (#559)."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP unavailable — falling back to Grep\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools:\n  - Read\n  - LSP\n---\n\n"
+            "No shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_shared_file_reworded_sentence_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        shared_dir = agents_dir / "shared"
+        shared_dir.mkdir(exist_ok=True)
+        (shared_dir / "lsp.md").write_text(
+            "LSP is unavailable, fall back to Grep instead.\n", encoding="utf-8"
+        )
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("fallback sentence" in f for f in validate.FAILURES)
+
+    def test_grants_lsp_shared_file_absent_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
+            "See @./shared/lsp.md for LSP usage guidance.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+
+    def test_liskov_substitution_body_text_does_not_trigger_gate(self, reset_validate):
+        """The Liskov regression guard: body prose mentioning LSP must never be
+        mistaken for a tools: grant — this is the test that matters most."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep\n---\n\n"
+            "LSP is about honoring contracts between base and derived types.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_lspx_token_not_treated_as_granting(self, reset_validate):
+        """Token-boundary guard: a substring test would match a hypothetical LSPX tool."""
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, LSPX\n---\n\n"
+            "Body text without any LSP shared include.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
+
+    def test_no_agent_grants_lsp_no_shared_file_passes(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\ntools: Read, Grep\n---\n\n"
+            "Nothing special here.\n",
+            encoding="utf-8",
+        )
+        validate.check_lsp_tool_gate()
+        assert validate.FAILURES == []
 
 
 # ──────────────────────────────────────────────

@@ -69,7 +69,9 @@ family routes there regardless of the specific skill name).
 
 Skills are intentionally small — each under 150 lines. A sharp, well-triggered skill teaches Claude the right thing at the right moment. A giant skill burns context on material the current task does not need. If a skill grows past 150 lines, split it.
 
-Orchestrator skills that compose many sub-skills (see the `development` workflow) may exceed 150 lines. When they do, extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
+A skill's frontmatter can opt into a higher cap with `orchestrator: true`, which raises the limit to 300 lines (`scripts/validate.py`'s `BASE_SKILL_CAP` / `ORCHESTRATOR_SKILL_CAP`). This is common, not a rare exception — most `workflow-*` skills carry it. Two distinct shapes earn it: skills that compose many sub-skills or subagents (e.g. `workflow-development`), and skills that drive a careful multi-step external-tool procedure without composing anything at all (e.g. `workflow-cleanup-merged`, a 203-line git/gh sequence with zero sub-skill references).
+
+The flag has to be doing work, and that's enforced: `scripts/validate.py`'s `check_orchestrator_flag_earned()` fails any skill that declares `orchestrator: true`, sits at or under the 150-line base cap, *and* references no other skill or agent — that combination means the flag isn't earning anything. Reaching for the flag is still not a substitute for splitting: extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
 
 ## Dependency flow
 

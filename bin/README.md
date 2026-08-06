@@ -25,16 +25,18 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `swe-workbench-fetch-pr` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
 | `swe-workbench-gh-timeout` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |
 | `swe-workbench-new-run-dir` | Allocate a mode-0700 run-scoped scratch dir under `/tmp/swe-workbench-run/` (`mktemp -d`, explicit template); also runs the age-gated (24h) orphan sweep at allocation time |
-| `swe-workbench-preflight-pr` | Consolidated pre-flight for PR-review skills: `gh auth` gate → `swe-workbench-fetch-pr` → emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as `printf %q`-quoted eval-able `KEY=VALUE` lines |
+| `swe-workbench-pr-review-submit` | Posting mechanism for workflow-pr-review-post's `## Post` section: fetch review threads (paginated), Jaccard dedup + 👍 reactions, diff-line pre-validate, pr-level batching, self-review/diff-scoping decision flip, atomic Reviews-API submit with a bounded 422 retry and a per-comment fallback. `--findings-json <path\|->` in; `printf %q`-quoted `KEY=VALUE` lines out |
 | `swe-workbench-reap-run-dir` | Safe `rm -rf` for a single run-scoped scratch dir allocated by `swe-workbench-new-run-dir` (depth-exactly-one, name-shape, ownership, and `.git`-absence checks) |
 | `swe-workbench-reply-and-resolve` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
+| `swe-workbench-skill-script` | Invoke a skill-local `scripts/<name>.sh` helper (`swe-workbench-skill-script <skill> <script> [args...]`) — rejects traversal, resolves the plugin root itself so no skill has to |
 | `swe-workbench-sync-pr-metadata` | Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync) |
 
-`swe-workbench-comment-scan` is the one script in this directory with a `#!/usr/bin/env python3`
-shebang instead of `#!/usr/bin/env bash` — it's a pure diff-in/findings-out function (no git calls
-of its own; see `agents/shared/comment-scan.md` for the canonical diff command), and Python's text
-processing is a better fit for the per-language comment-syntax analysis than bash. Same bare-command
-convention applies; only the interpreter differs.
+`swe-workbench-comment-scan` and `swe-workbench-pr-review-submit` are the two scripts in this
+directory with a `#!/usr/bin/env python3` shebang instead of `#!/usr/bin/env bash`. `comment-scan`
+is a pure diff-in/findings-out function (no git calls of its own; see `agents/shared/comment-scan.md`
+for the canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON
+and multi-call state-machine handling (422 retry, read-your-write confirmation) more than bash's
+process-spawning idioms. Same bare-command convention applies; only the interpreter differs.
 
 ## Reference pattern
 
@@ -60,3 +62,11 @@ script that calls a sibling script (e.g. `swe-workbench-preflight-pr` calling
 `swe-workbench-fetch-pr`) resolves it via `dirname "$0"`/`dirname "${BASH_SOURCE[0]}"`, never a bare
 PATH lookup and never `CLAUDE_PLUGIN_ROOT` — see any script with a sibling call in `bin/` for the
 exact form.
+
+A skill with its own `scripts/` helpers (e.g. `workflow-cleanup-merged`, `workflow-branch-sync`)
+never constructs a path to them either. It invokes `swe-workbench-skill-script <skill> <script>
+[args...]`, which resolves the plugin root itself and execs the target — see
+`docs/plugin-platform-decisions.md` for why this replaced the doctor-anchor `_RT=` derivation that
+briefly stood in for it. The dispatcher always execs the target via `bash` (mirroring
+`swe-workbench-fetch-pr`'s sibling-call form) rather than relying on the target's own shebang, so
+every skill-local `scripts/*.sh` helper is assumed to be bash.

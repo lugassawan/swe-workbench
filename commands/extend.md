@@ -20,7 +20,7 @@ IS_DRAFT=$(printf '%s' "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys
 
 Note: `gh pr view` resolves against `origin`; on fork-based workflows where `origin` is the fork, it may return no PR. If that happens, use `gh pr view --repo <upstream-owner>/<repo>` explicitly.
 
-If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into context. If `IS_DRAFT` is `"true"`, note "Draft PR detected — it will not be auto-marked ready-for-review." Before activating `workflow-extend`, complete the following interrogation step (OPEN branch only):
+If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into context. If `IS_DRAFT` is `"true"`, note "Draft PR detected — it will not be auto-marked ready-for-review." Before activating `swe-workbench:workflow-extend`, complete the following interrogation step (OPEN branch only):
 
 **Interrogation mode.** Before producing anything, resolve the mode:
 
@@ -33,7 +33,7 @@ If `PR_STATE` is `"OPEN"`: capture PR_NUM, HEAD_REF, PR_URL, and IS_DRAFT into c
 
 Then activate `swe-workbench:workflow-extend` with all four values.
 
-The list below is a visible contract of the phases `workflow-extend` runs — it does **not** replace the skill activation above. Execute phases 2–5 in order. **Phase 1 (Branch) is intentionally skipped** — the open PR branch is reused, so no new branch or worktree is created.
+The list below is a visible contract of the phases `swe-workbench:workflow-extend` runs — it does **not** replace the skill activation above. Execute phases 2–5 in order. **Phase 1 (Branch) is intentionally skipped** — the open PR branch is reused, so no new branch or worktree is created.
 
 **Phase 2 — Implement**
 Execute the plan via `superpowers:executing-plans` or `superpowers:subagent-driven-development`. Apply `swe-workbench:principle-tdd` per unit: red → green → refactor.
@@ -51,7 +51,7 @@ Running the Skill inline and skipping the `swe-workbench:reviewer` subagent (or 
 **Phase 5 — Deliver**
 Invoke `swe-workbench:workflow-commit-and-pr` to update the **existing** PR — never `gh pr create`, never a second PR.
 
-If `PR_STATE` is not `"OPEN"` (empty, `"CLOSED"`, `"MERGED"`, or `gh` error): surface the following `AskUserQuestion` and **return** — do **not** activate `workflow-extend`:
+If `PR_STATE` is not `"OPEN"` (empty, `"CLOSED"`, `"MERGED"`, or `gh` error): surface the following `AskUserQuestion` and **return** — do **not** activate `swe-workbench:workflow-extend`:
 
 ```json
 {
@@ -81,5 +81,5 @@ Absolute rules:
 - Never create a new branch or worktree.
 - Never call `gh pr create` when an open PR exists for this branch.
 - Never create a second PR — the only delivery path is updating the existing PR.
-- Escalate to `senior-engineer` only on explicit user opt-in ("consult senior-engineer" / "this is architectural").
+- Escalate to `swe-workbench:senior-engineer` only on explicit user opt-in ("consult senior-engineer" / "this is architectural").
 - Do not skip Phase 3 (Verify) or Phase 4 (Review) under any circumstances.

@@ -92,8 +92,8 @@ basename_is_ephemeral() {
   local path="$1"
   local base="${path##*/}"
   # Allowed prefixes:
-  #   pr-review-<id>          — workflow-pr-review (rimba task)
-  #   pr-followup-<id>        — workflow-pr-review-followup (rimba task)
+  #   pr-review-<id>          — workflow-pr-review first-pass mode (rimba task)
+  #   pr-followup-<id>        — workflow-pr-review followup mode (rimba task)
   #   address-feedback-<id>   — workflow-address-feedback (rimba task)
   echo "$base" | grep -qE '^(pr-review|pr-followup|address-feedback)-[A-Za-z0-9._-]+$'
 }

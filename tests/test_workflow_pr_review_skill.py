@@ -95,28 +95,23 @@ def test_pr_review_skill_no_bare_rm_rf_wt():
 def test_pr_review_skill_cleanup_deletes_pr_json():
     """Step 7 success-path must invoke swe-workbench-clean-state-files with this skill's own
     preflight state file. The threads-cache file moved to workflow-pr-review-post's
-    own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job."""
+    own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job.
+
+    Since #565 folded the standalone followup skill into this skill as a mode, the state-file
+    path is templated via $STATE_SUFFIX (empty for first-pass, "-followup" for followup)
+    rather than a literal ${PR}.json — first-pass mode's own mode-table row must resolve
+    STATE_SUFFIX to empty."""
     text = SKILL_MD.read_text()
     assert "swe-workbench-clean-state-files" in text, (
         "SKILL.md Step 7 must call swe-workbench-clean-state-files to remove its own per-run state file"
     )
-    assert "/tmp/swe-workbench-pr-review/${PR}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}.json to swe-workbench-clean-state-files"
+    assert "/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json" in text, (
+        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json to "
+        "swe-workbench-clean-state-files, so first-pass mode reaps ${PR}.json"
     )
-
-
-def test_post_core_cleanup_deletes_own_threads_json():
-    """workflow-pr-review-post owns its own threads-cache reap, distinct from either
-    consumer's preflight-state file (issue #499). The filename is CALLER_TAG-scoped so
-    concurrent callers (general/followup/specialist) reviewing the same PR never share
-    (and can't clobber) each other's threads cache."""
-    text = (ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md").read_text()
-    assert "swe-workbench-clean-state-files" in text, (
-        "workflow-pr-review-post/SKILL.md must call swe-workbench-clean-state-files to reap its own state"
-    )
-    assert "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json" in text, (
-        "workflow-pr-review-post/SKILL.md must pass its own CALLER_TAG-scoped "
-        "/tmp/swe-workbench-pr-review/${PR}-post-threads-${CALLER_TAG}.json to swe-workbench-clean-state-files"
+    assert re.search(r'first-pass\)[^\n]*STATE_SUFFIX=""', text), (
+        'SKILL.md mode table must set STATE_SUFFIX="" for first-pass mode, so '
+        "${PR}${STATE_SUFFIX}.json resolves to ${PR}.json"
     )
 
 

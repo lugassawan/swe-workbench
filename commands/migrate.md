@@ -7,11 +7,11 @@ Migration: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
-Delegate to the `migrator` subagent. Its output must include:
+Delegate to the `swe-workbench:migrator` subagent. Its output must include:
 
 1. **Class** — DB schema, framework upgrade, runtime, API/contract, or event-schema. Determines the dominant hazard.
 2. **Shapes** — current (A) and target (B) stated precisely, plus the call-site map (readers and writers enumerated).
-3. **Strategy** — chosen approach (online vs. offline, phased vs. big-bang) with rationale; deferred to `senior-engineer` if ambiguous.
+3. **Strategy** — chosen approach (online vs. offline, phased vs. big-bang) with rationale; deferred to `swe-workbench:senior-engineer` if ambiguous.
 4. **Phase plan** — five phases (Expand → Backfill → Dual-write → Switch → Contract), each with what-happens / reversible-by / gate-to-advance slots filled in.
 5. **Risks** — lock duration, backfill cost on a representative replica, sunset window vs. client release cycle.
 

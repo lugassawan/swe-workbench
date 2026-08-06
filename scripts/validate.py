@@ -10,6 +10,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 FAILURES = []
+WARNINGS = []
+
+# SKILL.md line caps (#568). A skill declaring 'orchestrator: true' in its
+# frontmatter gets the higher cap — see check_orchestrator_flag_earned() for
+# the rule that the flag itself must be earned (size or composition).
+BASE_SKILL_CAP = 150
+ORCHESTRATOR_SKILL_CAP = 300
+
+# Headroom warning threshold (#567): fraction of a skill's cap at which
+# check_skill_cap_headroom() starts warning, ahead of check_skills()'s hard
+# failure at 100%.
+CAP_HEADROOM_WARN_FRACTION = 0.90
 
 # Hook events that fire unconditionally and have no tool name to match against.
 # Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
@@ -39,9 +51,24 @@ _BROWSER_INSTALL_HINTS = re.compile(
     r'claude mcp add \S+|npx @playwright/mcp@latest|npx chrome-devtools-mcp@latest'
 )
 
+# LSP tool gate (#559). Any agent granting LSP in its tools: frontmatter must
+# preload the shared LSP doc, which in turn must carry the fallback sentence.
+# Deliberately NOT a body-text regex: agents/shared/principles.md:27 uses "LSP"
+# for the Liskov Substitution Principle, so a substring/body match would
+# false-positive on every agent preloading principle-solid.
+_LSP_FALLBACK = "LSP unavailable — falling back to Grep"   # em dash, U+2014
+_LSP_SHARED_INCLUDE = "@./shared/lsp.md"
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
+
+
+def warn(path, reason):
+    """Non-fatal counterpart to fail(): appends to WARNINGS, never FAILURES.
+    Must never be able to cause a non-zero exit — see main()'s WARNINGS
+    reporting, which prints but does not gate sys.exit(1)."""
+    WARNINGS.append(f"  {path}: {reason}")
 
 
 _FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
@@ -222,6 +249,20 @@ def check_hooks_json():
                     )
 
 
+def _skill_cap_info(fm):
+    """Return (is_orchestrator, cap) for a skill's parsed frontmatter dict.
+
+    Single source of truth for the orchestrator-flag detection rule and cap
+    selection (300 if 'orchestrator: true', else 150) — shared by
+    check_skills() (which also needs is_orchestrator for its failure message)
+    and check_skill_cap_headroom() (#567), so the two checks can never drift
+    on what counts as 'orchestrator' or what cap applies.
+    """
+    is_orchestrator = fm.get("orchestrator", "").lower() == "true"
+    cap = ORCHESTRATOR_SKILL_CAP if is_orchestrator else BASE_SKILL_CAP
+    return is_orchestrator, cap
+
+
 def check_skills(cache=None):
     skills_dir = ROOT / "skills"
     skills_cache = cache[1] if cache is not None else None
@@ -249,13 +290,98 @@ def check_skills(cache=None):
                 skill_md.relative_to(ROOT),
                 f"frontmatter name {fm.get('name')!r} does not match directory name {skill_dir_name!r}",
             )
-        is_orchestrator = fm.get("orchestrator", "").lower() == "true"
-        cap = 300 if is_orchestrator else 150
+        is_orchestrator, cap = _skill_cap_info(fm)
         if line_count > cap:
             fail(
                 skill_md.relative_to(ROOT),
                 f"exceeds {cap}-line cap ({line_count} lines)"
                 + ("" if is_orchestrator else "; add 'orchestrator: true' to frontmatter if intentional"),
+            )
+
+
+def check_skill_cap_headroom(cache=None):
+    """Warn (non-fatally) when a skill's SKILL.md line count crosses 90% of
+    its cap (#567) — early signal that a skill is approaching the hard cap
+    that check_skills() enforces, before it actually trips that failure.
+
+    Cap detection reuses _skill_cap_info() — the same helper check_skills()
+    uses — so this never drifts from that check's orchestrator-flag rule.
+    This check only ever calls warn(), never fail() — it must not affect the
+    build's exit code. Skills with missing/malformed frontmatter or an
+    unreadable file are skipped here; check_skills() already reports those.
+    """
+    skills_dir = ROOT / "skills"
+    skills_cache = cache[1] if cache is not None else None
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # unreadable — already reported by check_skills
+        else:
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        fm = parse_frontmatter(skill_md, text=text)
+        if fm is None:
+            continue  # malformed frontmatter — already reported by check_skills
+        line_count = len(text.splitlines())
+        _, cap = _skill_cap_info(fm)
+        threshold = cap * CAP_HEADROOM_WARN_FRACTION
+        if line_count > threshold:
+            warn(
+                skill_md.relative_to(ROOT),
+                f"{line_count} lines — within {round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% "
+                f"of the {cap}-line cap; consider extracting content before it hits the hard cap",
+            )
+
+
+_ORCHESTRATOR_NAMESPACED_REF_RE = re.compile(r'`swe-workbench:([\w-]+)`')
+_ORCHESTRATOR_BARE_REF_RE = re.compile(r'`([\w-]+)`')
+
+
+def check_orchestrator_flag_earned(cache=None):
+    """A skill declaring 'orchestrator: true' must earn the higher cap (#568):
+    either by needing the extra headroom (line count > BASE_SKILL_CAP) or by
+    coordinating other skills/agents. A skill at or under BASE_SKILL_CAP that
+    references nothing has an inert flag and should have it removed.
+
+    Reference detection is a coarse heuristic: any backtick-quoted token that
+    resolves to a real skill/agent id counts, even a purely contrastive or
+    negative mention (e.g. "unlike `other-skill`, this one does X"). It does
+    not verify the mention is actually a delegation."""
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+    skills_cache = cache[1] if cache is not None else None
+
+    valid_ids = {p.name for p in skills_dir.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()}
+    valid_ids |= {p.stem for p in agents_dir.glob("*.md")}
+
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        skill_dir_name = skill_md.parent.name
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # already reported by check_skills
+        else:
+            text = skill_md.read_text(encoding="utf-8")
+        fm = parse_frontmatter(skill_md, text=text)
+        if fm is None or fm.get("orchestrator", "").lower() != "true":
+            continue
+        line_count = len(text.splitlines())
+        if line_count > BASE_SKILL_CAP:
+            continue  # headroom earns the flag outright
+        own_valid_ids = valid_ids - {skill_dir_name}
+        referenced = (
+            set(_ORCHESTRATOR_NAMESPACED_REF_RE.findall(text))
+            | set(_ORCHESTRATOR_BARE_REF_RE.findall(text))
+        ) & own_valid_ids
+        if not referenced:
+            fail(
+                skill_md.relative_to(ROOT),
+                f"declares 'orchestrator: true' but is {line_count} lines (at or under the "
+                f"{BASE_SKILL_CAP}-line base cap) and references no other skill or agent; "
+                "remove the flag, or reference the skills/agents it coordinates",
             )
 
 
@@ -436,6 +562,110 @@ def check_skill_skill_refs(cache=None):
                     skill_md.relative_to(ROOT),
                     f"references 'swe-workbench:{artifact_id}' but skills/{artifact_id}/ does not exist "
                     f"and neither does agents/{artifact_id}.md or commands/{artifact_id}.md",
+                )
+
+
+_BARE_ID_RE = re.compile(r'`([\w-]+)`')
+_PROSE_REF_EXEMPTION_MARKER = '<!-- validate: prose-ref -->'
+
+
+def _bare_actionable_id_set():
+    """Return the set of every resolvable skill and agent id, mirroring the
+    resolution index _build_dep_graph builds for the cycle checker."""
+    ids = set()
+    for p in (ROOT / "skills").glob("*/SKILL.md"):
+        ids.add(p.parent.name)
+    for p in (ROOT / "agents").glob("*.md"):
+        if p.parent.name == "shared":
+            continue
+        ids.add(p.stem)
+    return ids
+
+
+def check_bare_actionable_refs(cache=None):
+    """Machine-actionable dispatch references must use the namespaced
+    `swe-workbench:<id>` form (#586).
+
+    check_command_skill_refs / check_skill_skill_refs only resolution-check
+    the already-namespaced `` `swe-workbench:<id>` `` pattern, so a bare
+    dispatch id (e.g. "Delegate to the `senior-engineer` subagent") is never
+    validated and can silently drift from the namespaced form used for the
+    identical construct elsewhere. Two rules, both scoped to
+    machine-actionable dispatch — prose, catalog tables, and README
+    enumerations are untouched:
+
+    Rule 1 (commands/*.md): every bare skill/agent id outside a fenced code
+    block must be namespaced — command bodies are dispatch scripts, so no
+    action-cue heuristic is applied. A line may opt out with the
+    '<!-- validate: prose-ref -->' marker (a genuinely non-dispatch mention,
+    e.g. an example list of literal identifier strings).
+
+    Rule 2 (skills/*/SKILL.md): only lines the action-cued activation
+    classifier (_ACTION_RE / _POINTER_RE / _SLASH_CMD_RE — the same regexes
+    check_no_cycles's _build_dep_graph uses) would treat as a dispatch edge.
+    Note this scans a narrower line set than _build_dep_graph: Rule 2 also
+    strips fenced code blocks first (_strip_fenced_code_blocks), so a
+    dispatch-cued line inside a fenced example is a cycle-graph edge but not
+    a Rule 2 candidate. A skill naming its own id is exempt (self-reference),
+    and the same exemption marker opts out a line the classifier over-flags
+    as a dispatch cue when it is really prose.
+    """
+    if cache is None:
+        cache = _build_cache()
+    skills_cache = cache[1]
+
+    ids = _bare_actionable_id_set()
+    commands_dir = ROOT / "commands"
+    skills_dir = ROOT / "skills"
+
+    # Rule 1 — commands/*.md
+    for cmd_md in sorted(commands_dir.glob("*.md")):
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        stripped = _strip_fenced_code_blocks(text)
+        for i, line in enumerate(stripped.split('\n'), start=1):
+            if line.lstrip().startswith('@'):
+                continue
+            if _PROSE_REF_EXEMPTION_MARKER in line:
+                continue
+            for bare_id in _BARE_ID_RE.findall(line):
+                if bare_id in ids:
+                    fail(
+                        cmd_md.relative_to(ROOT),
+                        f"line {i}: bare reference `{bare_id}` must be namespaced as "
+                        f"`swe-workbench:{bare_id}` — machine-actionable references in "
+                        f"commands/ are dispatch instructions, not prose (mark a genuinely "
+                        f"non-dispatch line with '{_PROSE_REF_EXEMPTION_MARKER}' to exempt it)",
+                    )
+
+    # Rule 2 — skills/*/SKILL.md dispatch-cued lines
+    for skill_md, text in skills_cache.items():
+        if skill_md.parent.parent != skills_dir:
+            continue
+        if text is None:
+            continue
+        own_id = skill_md.parent.name
+        stripped = _strip_fenced_code_blocks(text)
+        for i, line in enumerate(stripped.split('\n'), start=1):
+            if line.lstrip().startswith('@'):
+                continue
+            if _PROSE_REF_EXEMPTION_MARKER in line:
+                continue
+            clean = _SLASH_CMD_RE.sub('', line)
+            if not _ACTION_RE.search(clean):
+                continue
+            if _POINTER_RE.search(clean):
+                continue
+            for bare_id in _BARE_ID_RE.findall(line):
+                if bare_id not in ids or bare_id == own_id:
+                    continue
+                fail(
+                    skill_md.relative_to(ROOT),
+                    f"line {i}: bare reference `{bare_id}` on a dispatch-cued line must be "
+                    f"namespaced as `swe-workbench:{bare_id}` (mark the line "
+                    f"'{_PROSE_REF_EXEMPTION_MARKER}' if it is genuinely not a dispatch)",
                 )
 
 
@@ -1280,6 +1510,83 @@ def check_browser_tool_gate(cache=None):
                 )
 
 
+def check_lsp_tool_gate(cache=None):
+    """Any agent granting LSP in its tools: frontmatter must preload
+    agents/shared/lsp.md, and that shared file must carry the LSP-unavailable
+    fallback sentence (#559).
+
+    Only ever inspects the tools: frontmatter value (parsed via
+    parse_frontmatter, either the scalar split on ',' or the YAML sequence
+    form, with exact-token membership) — never a body-text regex.
+    agents/shared/principles.md uses "LSP" for the Liskov Substitution
+    Principle, so a body-text match would false-positive on every agent
+    preloading principle-solid.
+
+    If no agent grants LSP, this returns without requiring the shared file to
+    exist — that keeps the check from ossifying a future removal of LSP.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    agents_dir = ROOT / "agents"
+    if not agents_dir.is_dir():
+        return
+
+    granting = []
+    for md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and md in agents_cache:
+            text = agents_cache[md]
+            if text is None:
+                fail(md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = md.read_text(encoding="utf-8")
+            except OSError:
+                fail(md.relative_to(ROOT), "could not read file")
+                continue
+        fm = parse_frontmatter(md, text=text)
+        if not fm:
+            continue
+        tools = fm.get("tools")
+        if isinstance(tools, str):
+            tokens = {t.strip() for t in tools.split(",")}
+        elif isinstance(tools, list):
+            tokens = {str(t).strip() for t in tools}
+        else:
+            continue
+        if "LSP" not in tokens:
+            continue
+        granting.append((md, text))
+
+    if not granting:
+        return
+
+    shared_path = agents_dir / "shared" / "lsp.md"
+    try:
+        shared_text = shared_path.read_text(encoding="utf-8")
+    except OSError:
+        shared_text = None
+
+    if shared_text is None:
+        fail(
+            shared_path.relative_to(ROOT),
+            "one or more agents grant LSP in tools: but agents/shared/lsp.md "
+            "is missing — add the shared LSP doc with the fallback sentence (#559)",
+        )
+    elif _LSP_FALLBACK not in shared_text:
+        fail(
+            shared_path.relative_to(ROOT),
+            f"missing the fallback sentence {_LSP_FALLBACK!r} (#559)",
+        )
+
+    for md, text in granting:
+        if _LSP_SHARED_INCLUDE not in text:
+            fail(
+                md.relative_to(ROOT),
+                f"grants LSP in tools: but body is missing the "
+                f"{_LSP_SHARED_INCLUDE!r} include (#559)",
+            )
+
+
 # ──────────────────────────────────────────────
 # echo/printf shell footgun (#549)
 # ──────────────────────────────────────────────
@@ -1607,6 +1914,8 @@ def main():
     check_marketplace_json(plugin_data)
     check_hooks_json()
     check_skills(cache=cache)
+    check_skill_cap_headroom(cache=cache)
+    check_orchestrator_flag_earned(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)
     check_commands()
@@ -1614,6 +1923,7 @@ def main():
     check_preloaded_skills(cache=cache)
     check_command_skill_refs()
     check_skill_skill_refs(cache=cache)
+    check_bare_actionable_refs(cache=cache)
     check_workflow_development_activation_contract()
     check_plan_mode_workflow_embedding()
     check_workflow_full_fidelity_mandate()
@@ -1629,9 +1939,16 @@ def main():
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
+    check_lsp_tool_gate(cache=cache)
     check_no_echo_var_hazard(cache=cache)
     check_no_printf_var_format(cache=cache)
     check_no_unenumerated_tmp_write(cache=cache)
+
+    if WARNINGS:
+        print(f"WARNING — {len(WARNINGS)} skill(s) near their line cap:")
+        for w in WARNINGS:
+            print(w)
+        print()
 
     if FAILURES:
         print(f"FAILED — {len(FAILURES)} issue(s) found:", file=sys.stderr)
