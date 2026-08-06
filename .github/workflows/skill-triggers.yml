@@ -5,6 +5,9 @@ on:
     - cron: '0 7 * * *'  # 07:00 UTC daily
   workflow_dispatch: {}   # manual re-run after a fix
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
   smoke:
     name: BM25 trigger smoke
