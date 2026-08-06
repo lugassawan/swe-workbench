@@ -94,8 +94,12 @@ def test_converge_ownership_gate_refuses():
     """The ownership gate compares gh api /user against the PR author and refuses — not warns."""
     text = _text()
     assert "gh api /user -q .login" in text, "converge.md must derive CURRENT_USER via gh api /user"
-    assert 'gh pr view --json author -q .author.login' in text, (
-        "converge.md must derive PR_AUTHOR via gh pr view --json author"
+    assert 'gh pr view --json author,number' in text, (
+        "converge.md must derive PR_AUTHOR via gh pr view --json author,number"
+    )
+    assert 'grep -q "no pull requests found"' in text, (
+        "converge.md must distinguish a genuine 'no PR yet' from any other gh pr view failure — "
+        "collapsing them lets a transient gh error silently bypass the ownership refuse-gate"
     )
     assert (
         "only runs on your own PRs" in text
@@ -147,7 +151,7 @@ def test_converge_adjudicated_answers_cached_and_replayed():
     the same question must never be asked twice across rounds."""
     text = _text()
     assert "adjudicated[]" in text
-    assert "the same question is never asked twice" in text, (
+    assert "the same question is never asked twice" in _normalized(), (
         "converge.md must state the never-ask-twice guarantee explicitly — a regression here "
         "turns an unattended loop into a prompt loop"
     )
@@ -252,3 +256,42 @@ def test_converge_fixer_brief_overrides_code_impl_default_contract():
     since the per-finding disposition format the ledger parses is not code-impl's default."""
     text = _text()
     assert "explicitly overrides `swe-workbench:code-impl`'s standard" in _normalized()
+
+
+def test_converge_ownership_gate_fails_closed_on_gh_error():
+    """Regression guard: a gh pr view failure that is NOT the specific 'no pull requests
+    found' case must fail closed (non-zero exit), not silently fall through to the
+    empty-PR_AUTHOR 'proceed' branch — collapsing the two lets a transient gh/network error
+    bypass the ownership refuse-gate."""
+    text = _text()
+    assert 'could not verify PR ownership' in _normalized()
+    assert "only reached when" in _normalized() and "no pull requests found" in text
+
+
+def test_converge_fingerprint_is_path_jaccard_not_line_sensitive():
+    """Regression guard: the per-finding 'fingerprint' used by the Phase 3 return format and
+    adjudicated[] must be defined as the same normalized-path + Jaccard identity the dedup
+    section uses — not line-sensitive, since a fix shifts line numbers within a round."""
+    text = _text()
+    assert "fingerprint` is the same normalized-path + Jaccard-bucket identity" in _normalized()
+    assert "deliberately *not* line-sensitive" in _normalized()
+
+
+def test_converge_ambiguous_anchor_falls_back_to_hunk_range():
+    """Regression guard: an ambiguous diff-line-lookup match (exit 2, content not unique in
+    the file's diff) must fall back to hunk-range membership rather than being declared
+    UNFOUNDED outright — a false UNFOUNDED on a real, correctly-anchored finding is the
+    inverted failure mode of the check Phase 1b exists to run."""
+    text = _text()
+    assert 'LOOKUP_EXIT" -eq 2' in text
+    assert "IN_HUNK" in text
+
+
+def test_converge_real_answer_dispatches_scoped_fix_not_bare_status_flip():
+    """Regression guard: an UNVERIFIABLE finding adjudicated 'Real' must trigger an actual
+    scoped code-impl fix dispatch before being recorded FIXED — not merely a ledger status
+    flip, which would let a human-confirmed real bug satisfy the termination predicate with
+    no code ever changed."""
+    text = _text()
+    assert "dispatch a scoped follow-up `swe-workbench:code-impl` fix" in _normalized()
+    assert "never mark a finding `fixed` on the strength of the answer alone" in _normalized()

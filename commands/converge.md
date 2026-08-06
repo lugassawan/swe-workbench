@@ -70,8 +70,18 @@ gh auth status >/dev/null 2>&1 || {
   exit 1
 }
 CURRENT_USER=$(gh api /user -q .login)
-PR_AUTHOR=$(gh pr view --json author -q .author.login 2>/dev/null || true)
-PR_NUM=$(gh pr view --json number -q .number 2>/dev/null || true)
+PR_VIEW_OUT=$(gh pr view --json author,number 2>&1)
+PR_VIEW_EXIT=$?
+if [ "$PR_VIEW_EXIT" -eq 0 ]; then
+  PR_AUTHOR=$(printf '%s' "$PR_VIEW_OUT" | jq -r '.author.login')
+  PR_NUM=$(printf '%s' "$PR_VIEW_OUT" | jq -r '.number')
+elif printf '%s' "$PR_VIEW_OUT" | grep -q "no pull requests found"; then
+  PR_AUTHOR=""
+  PR_NUM=""
+else
+  echo "converge: could not verify PR ownership — gh pr view failed: $PR_VIEW_OUT" >&2
+  exit 1
+fi
 if [ -n "$PR_AUTHOR" ] && [ "$PR_AUTHOR" != "$CURRENT_USER" ]; then
   echo "PR #$PR_NUM is authored by @$PR_AUTHOR; /swe-workbench:converge only runs on your own PRs. Use /swe-workbench:review $PR_NUM to review someone else's work." >&2
   exit 1
@@ -80,8 +90,14 @@ fi
 
 - `PR_AUTHOR` non-empty and `!= CURRENT_USER` → refuse, non-zero exit, **before any `$RUN_DIR` is
   allocated** — nothing to reap because nothing was allocated.
-- No PR yet (`PR_AUTHOR` empty) → proceed. The branch is local and unpushed; you own it by
-  construction, and the first push happens under your identity at Phase 5.
+- No PR yet (`PR_AUTHOR` empty, only reached when `gh pr view` fails with its specific "no pull
+  requests found" message) → proceed. The branch is local and unpushed; you own it by construction,
+  and the first push happens under your identity at Phase 5.
+- **Any other `gh pr view` failure — network blip, rate limit, API hiccup — fails closed, not
+  open.** Silently treating an unrelated `gh` error the same as "no PR exists" would let the loop
+  proceed against a branch that in fact has an open PR authored by someone else, whenever the
+  ownership check itself happens to fail transiently — defeating the one gate this section exists
+  to enforce.
 - `gh` unauthenticated → stop with the standard `gh auth login` remediation, never assume ownership.
 
 Only after the gate passes, allocate the run dir once:
@@ -178,8 +194,27 @@ jq -c '.[] | select(.anchor == "inline")' "$RUN_DIR/round-${N}-findings.json" | 
   [ "$ROW_LINE" -le "$TOTAL_LINES" ] || { echo "UNFOUNDED (line out of range): $ROW_PATH:$ROW_LINE"; continue; }
   CONTENT=$(sed -n "${ROW_LINE}p" "$ROW_PATH")
   RESOLVED=$(swe-workbench-diff-line-lookup "$ROW_PATH" "$CONTENT" --range="origin/$BASE...HEAD" 2>/dev/null)
-  [ "$RESOLVED" = "${ROW_PATH}:${ROW_LINE}" ] \
-    || echo "UNFOUNDED (anchor not in diff): $ROW_PATH:$ROW_LINE"
+  LOOKUP_EXIT=$?
+  if [ "$RESOLVED" = "${ROW_PATH}:${ROW_LINE}" ]; then
+    :  # anchor-valid
+  elif [ "$LOOKUP_EXIT" -eq 2 ]; then
+    # Ambiguous (exit 2): the line's content recurs elsewhere in this file's diff (a bare "}",
+    # "pass", a blank line) — content-uniqueness failed, not the anchor. Fall back to hunk-range
+    # membership instead of declaring UNFOUNDED on an artifact of the content match, not the claim.
+    IN_HUNK=$(git diff "origin/$BASE"...HEAD -- "$ROW_PATH" | awk -v line="$ROW_LINE" '
+      /^@@/ {
+        if (match($0, /\+[0-9]+(,[0-9]+)?/)) {
+          s = substr($0, RSTART + 1, RLENGTH - 1)
+          split(s, a, ",")
+          start = a[1]
+          len = (a[2] == "" ? 1 : a[2])
+          if (line >= start && line < start + len) print "yes"
+        }
+      }')
+    [ "$IN_HUNK" = "yes" ] || echo "UNFOUNDED (anchor not in diff): $ROW_PATH:$ROW_LINE"
+  else
+    echo "UNFOUNDED (anchor not in diff): $ROW_PATH:$ROW_LINE"
+  fi
 done
 ```
 
@@ -248,6 +283,10 @@ Brief `swe-workbench:code-impl` with:
    the reason. No new features, no drive-by refactors.
 5. **Return format:** one line per finding —
    `<fingerprint> | FIXED <what changed> | UNFOUNDED <what is actually there> | REJECTED <reason> | DEFERRED <reason> | UNVERIFIABLE <what was investigated, and the specific question the codebase cannot answer>`.
+   **`fingerprint` is the same normalized-path + Jaccard-bucket identity "Cross-round dedup" below
+   uses for `retired[]`/`rejected[]`/`unfounded[]`** — deliberately *not* line-sensitive, for the
+   identical reason that section gives: a fix shifts line numbers within the same round, so a
+   line-anchored fingerprint would break precisely when a disposition needs to be looked up again.
    **This explicitly overrides `swe-workbench:code-impl`'s standard `status:`/`files_changed:`/
    `concerns:`/`blockers:` output contract for this invocation** — state that override plainly in
    the brief. The per-finding disposition line above is what the orchestrator's ledger parses;
@@ -288,11 +327,16 @@ question in its returned line rather than asking. This command body — running 
 - **More than 4 `UNVERIFIABLE` findings in one round → stop the loop** and jump to Phase 6
   (too-many-unverifiable). At that density the review needs a human reading, not an
   interrogation.
-- **Answers are cached in the ledger's `adjudicated[]`, keyed by fingerprint, and replayed into
-  later rounds' suppression block — the same question is never asked twice.** Without this, an
-  unattended 4-round loop would re-ask the same unanswerable thing every round.
-- Answers map to normal dispositions: *Real* → fixed this round; *Not real* → `unfounded[]` with
-  reason `adjudicated by user`; *Don't fix now* → `rejected[]`. All three are reported.
+- **Answers are cached in the ledger's `adjudicated[]`, keyed by the same path+Jaccard `fingerprint`
+  defined above, and replayed into later rounds' suppression block — the same question is never
+  asked twice.** Without this, an unattended 4-round loop would re-ask the same unanswerable thing
+  every round.
+- Answers map to normal dispositions: *Real* → dispatch a scoped follow-up `swe-workbench:code-impl`
+  fix for just that one finding, and record `FIXED` in the ledger only once that follow-up lands —
+  never mark a finding `fixed` on the strength of the answer alone, or a human-confirmed real bug
+  could satisfy Phase 2's termination predicate with no code ever changed; *Not real* →
+  `unfounded[]` with reason `adjudicated by user`; *Don't fix now* → `rejected[]`. All three are
+  reported.
 
 This is the only main-thread-only tool in the loop, and deliberately the *rarest* path — reachable
 only after a mechanical check and a full codebase investigation have both failed to settle the
