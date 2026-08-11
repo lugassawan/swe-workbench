@@ -12,16 +12,27 @@
 # get ONLY their worktree removed — their branch may be the PR's real head
 # branch, so it is never touched here.
 #
+# Also sweeps two artifact classes that are NOT keyed to any PR name string but are
+# still safe to reap once #<number> is known to be MERGED:
+#   Block C — orphaned /tmp/swe-workbench-run/ run dirs allocated by swe-workbench-new-run-dir
+#             for this PR (e.g. a flow killed before its own swe-workbench-reap-run-dir call).
+#             These ARE <N>-keyed, by the run-dir naming convention itself.
+#   Block D — the current harness session's own scratchpad contents (temp files an agent
+#             improvised during review/implementation work). This one is deliberately NOT
+#             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
+#
 # Usage: sweep-residuals.sh <PR number>
 # Stdout contract (always emitted, even on a non-integer arg or nothing found):
-#   SWEPT_WORKTREES=<n>    — count of ephemeral worktrees removed (0-3)
-#   SWEPT_STATE_FILES=<n>  — count of /tmp state files removed
-#   RESIDUAL_NONE=0|1      — 1 iff both counts above are 0
+#   SWEPT_WORKTREES=<n>      — count of ephemeral worktrees removed (0-3)
+#   SWEPT_STATE_FILES=<n>    — count of /tmp state files removed
+#   SWEPT_RUN_DIRS=<n>       — count of orphaned run dirs removed (Block C)
+#   SWEPT_SESSION_FILES=<n>  — count of session scratchpad entries removed (Block D)
+#   RESIDUAL_NONE=0|1        — 1 iff all four counts above are 0
 # Always exits 0 — the caller's `eval "$(...)"` must never abort mid-cleanup.
 set -euo pipefail
 
 emit_clean_contract() {
-  printf 'SWEPT_WORKTREES=0\nSWEPT_STATE_FILES=0\nRESIDUAL_NONE=1\n'
+  printf 'SWEPT_WORKTREES=0\nSWEPT_STATE_FILES=0\nSWEPT_RUN_DIRS=0\nSWEPT_SESSION_FILES=0\nRESIDUAL_NONE=1\n'
 }
 
 N="${1:-}"
@@ -161,10 +172,40 @@ if [ -n "${MAIN_REPO:-}" ]; then
   reap_one_worktree "$ADDR_FEEDBACK_LABEL" "$ADDR_FEEDBACK_WT" 0
 fi
 
+# ── Block C: run-dir orphans (swe-workbench-new-run-dir / swe-workbench-reap-run-dir) ──
+# <N>-keyed by the run-dir naming convention itself (<prefix>-<N>-<6-char suffix>) — the
+# same safety argument Blocks A and B already rely on: Step 2 already proved #N is MERGED.
+
+SWEPT_RUN_DIRS=0
+
+CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
+RUN_ROOT="${CANON_TMP}/swe-workbench-run"
+
+shopt -s nullglob
+for run_dir in "$RUN_ROOT"/*-"$N"-??????; do
+  [ -e "$run_dir" ] || continue
+  "$BIN_DIR/swe-workbench-reap-run-dir" "$run_dir" >/dev/null 2>&1 || true
+  [ -e "$run_dir" ] || SWEPT_RUN_DIRS=$((SWEPT_RUN_DIRS + 1))
+done
+shopt -u nullglob
+
+# ── Block D: session scratchpad (NOT <N>-keyed — see SKILL.md Step 5 / AC4) ─────────────
+# The scratchpad files an agent improvises during review/implementation work never carry
+# a "#<N>" token, so they cannot be reached by Blocks A-C's name matching. Scoped by
+# session id instead, entirely independent of which PR (if any) triggered this sweep.
+
+SWEPT_SESSION_FILES=0
+
+SESSION_SCRATCH_OUT=$("$BIN_DIR/swe-workbench-reap-session-scratch" 2>/dev/null) || SESSION_SCRATCH_OUT=""
+case "$SESSION_SCRATCH_OUT" in
+  SWEPT_SESSION_FILES=*) SWEPT_SESSION_FILES="${SESSION_SCRATCH_OUT#SWEPT_SESSION_FILES=}" ;;
+esac
+
 RESIDUAL_NONE=1
-if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ]; then
+if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ] \
+  || [ "$SWEPT_RUN_DIRS" -gt 0 ] || [ "$SWEPT_SESSION_FILES" -gt 0 ]; then
   RESIDUAL_NONE=0
 fi
 
-printf 'SWEPT_WORKTREES=%s\nSWEPT_STATE_FILES=%s\nRESIDUAL_NONE=%s\n' \
-  "$SWEPT_WORKTREES" "$SWEPT_STATE_FILES" "$RESIDUAL_NONE"
+printf 'SWEPT_WORKTREES=%s\nSWEPT_STATE_FILES=%s\nSWEPT_RUN_DIRS=%s\nSWEPT_SESSION_FILES=%s\nRESIDUAL_NONE=%s\n' \
+  "$SWEPT_WORKTREES" "$SWEPT_STATE_FILES" "$SWEPT_RUN_DIRS" "$SWEPT_SESSION_FILES" "$RESIDUAL_NONE"

@@ -113,7 +113,16 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 ```bash
 eval "$(swe-workbench-skill-script workflow-cleanup-merged sweep-residuals.sh "<number>")"
 ```
-This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `swe-workbench:workflow-pr-review` (either mode) and `swe-workbench:workflow-address-feedback` when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, and `#<number>`'s orphaned `/tmp` state JSON (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, so an interrupted session's local-only work is never silently discarded. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed by `eval` unless this sweep clears it first. The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0. After it runs, also delete any scratchpad files **you** (the agent executing this skill) created for this PR's review/feedback/cleanup work — scoped to `#<number>` only, never a blanket wipe of the scratchpad directory; the harness scratchpad path layout is undocumented and version-fragile, so this step stays prose guidance rather than shipped shell code.
+This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `swe-workbench:workflow-pr-review` (either mode) and `swe-workbench:workflow-address-feedback` when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, and `#<number>`'s orphaned `/tmp` state JSON (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, so an interrupted session's local-only work is never silently discarded. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed by `eval` unless this sweep clears it first.
+
+The same script also sweeps two additional artifact classes (labeled Block C and Block D in
+`sweep-residuals.sh`'s own comments — unrelated to Step 3's "Block D" hook-interruption checks in
+`sync-and-verify.sh`, a different script entirely):
+
+- **The run-dir sweep.** Any `/tmp/swe-workbench-run/*-<number>-??????` directory allocated by `swe-workbench-new-run-dir` for this PR (e.g. left behind by a flow killed before its own `swe-workbench-reap-run-dir` call) is reaped via `swe-workbench-reap-run-dir`. This is `#<number>`-keyed by the run-dir naming convention itself, so the same "Step 2 already proved MERGED" safety argument applies.
+- **The session-scratchpad sweep.** The current harness session's own scratchpad contents — temp files an agent improvised during review/implementation work (e.g. a diff or PR-body draft written to the session's `scratchpad/` dir, never committed) — are cleared via `swe-workbench-reap-session-scratch`. This is deliberately **not** scoped to `#<number>`: those files never carry a `#<number>` token, so name-based matching can never reach them (this is why the instruction used to be prose telling the agent to hunt them down manually). Instead it is scoped **structurally**, by session id (`$CLAUDE_CODE_SESSION_ID`) resolving to exactly one on-disk scratchpad directory — deleting that directory's contents while preserving the directory itself, since a later Mode C merge round in the same session may still write to it. Any guard failure (missing/malformed session id, zero or multiple glob matches, ownership or `.git` mismatch) degrades to a silent no-op rather than aborting the sweep.
+
+The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `SWEPT_RUN_DIRS=<n>`, `SWEPT_SESSION_FILES=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0.
 
 ### Step 6 — Delete Branches
 ```bash
@@ -127,13 +136,14 @@ The script always attempts the remote delete regardless of whether the local bra
 
 ### Step 7 — Report
 
-Print this 4-line block immediately — cleanup Steps 3–6 are already done at this point, and this
+Print this 5-line block immediately — cleanup Steps 3–6 are already done at this point, and this
 confirmation must not wait on Step 8, which runs (and may pause on `AskUserQuestion`) afterward.
 
 ```
 Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
   ✓ Residual sweep: <SWEPT_WORKTREES> worktree(s) + <SWEPT_STATE_FILES> state file(s) removed (or: none)
+  ✓ Session residuals: <SWEPT_SESSION_FILES> scratch file(s) + <SWEPT_RUN_DIRS> run dir(s) removed (or: none)
   ✓ Branches deleted: local <branch> / remote <branch> (or: already gone — LOCAL_DELETED=0 / REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
@@ -152,7 +162,7 @@ test for hotfix PR #<number>", `--label` included when a matching repo label exi
 `reference/deferred-verification-followup.md`.
 
 Once Step 8 resolves (filed, branched, or skipped), append one trailing line to the already-printed
-Step 7 report — do not reprint the 4-line block:
+Step 7 report — do not reprint the 5-line block:
 
 ```
   ✓ Follow-up: <filed as issue #N | test/<slug> branch created | skipped>
@@ -174,6 +184,7 @@ Step 4 falls through three mutually exclusive strategies — rimba + post-merge 
 | No matching worktree found | `WORKTREE` empty | Skip Batch B. Proceed directly to Step 6 (delete branches). |
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
+| Session scratchpad path unresolvable (missing/malformed `$CLAUDE_CODE_SESSION_ID`, zero or multiple glob matches) | `swe-workbench-reap-session-scratch` reports `SWEPT_SESSION_FILES=0` with a stderr note | Silent no-op — the session-scratchpad sweep is skipped, the rest of the sweep and cleanup proceeds unaffected. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
 | cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` (or the `cd`-to-main-root fallback for `cd`-entered worktrees) prevents this when followed. If observed, re-run from the main repo root. |
