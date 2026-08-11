@@ -63,7 +63,7 @@ Every retry policy needs a budget, a backoff, and idempotency.
 Every I/O operation must have a deadline. Unbounded waits become reliability incidents.
 - Propagate the caller's deadline down through every sub-call — never create a longer deadline than the one you received.
 - Distinguish timeout (local clock) from deadline (absolute wall time). Deadlines compose across service hops; timeouts do not.
-- For cancellation propagation under structured concurrency, see `principle-concurrency`.
+- For cancellation propagation under structured concurrency, see `swe-workbench:principle-concurrency`.
 - Return a distinct error type for deadline exceeded vs connection refused — callers need to distinguish them.
 
 ## Circuit Breakers

@@ -159,14 +159,14 @@ Always preview-gate-then-confirm (mirrors `commands/capture.md`). The skill MUST
 
 ## Boundary vs `/swe-workbench:debug`
 
-| Aspect | `/swe-workbench:debug` | `workflow-bug-triage` |
+| Aspect | `/swe-workbench:debug` | `swe-workbench:workflow-bug-triage` |
 |--------|------------------------|------------------------|
 | Terminal artifact | Code change + regression test (in-session) | GitHub issue (filed, not fixed) |
 | Has `Edit` tool | Yes (debugger agent) | No (skill orchestrates investigation only) |
 | Use when | Bug is yours, fix-now is the goal | Bug needs documentation, fix-planning is separate |
 | Composes | `superpowers:systematic-debugging` | `superpowers:systematic-debugging` |
 
-If you start in `/swe-workbench:debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `workflow-bug-triage`?"
+If you start in `/swe-workbench:debug` and realize the fix is bigger than the session allows, finish the investigation, surface the recommendation, and tell the user: "This bug deserves a separate issue and PR — want me to file it via `swe-workbench:workflow-bug-triage`?"
 
 ## Common mistakes
 

@@ -4,11 +4,11 @@
 
 | Plugin | Source | Used for | Required? |
 |---|---|---|---|
-| `superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | Skills invoked via Skill tool (from `skills/workflow-development/`, `commands/implement.md`, `agents/debugger.md`): `using-git-worktrees` (fallback when rimba is absent), `executing-plans`, `subagent-driven-development`, `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `finishing-a-development-branch`, `dispatching-parallel-agents`, `systematic-debugging`, `writing-plans`. | Required for the `workflow-development` skill to function end-to-end. |
-| `rimba` | [lugassawan/rimba](https://github.com/lugassawan/rimba) | Optional worktree-lifecycle provider. When available (on PATH or at `~/.local/bin/rimba`, `~/go/bin/rimba`), `workflow-development` Phase 1 uses `rimba add <task>` instead of `superpowers:using-git-worktrees`, and `workflow-cleanup-merged` uses `rimba remove <task>` instead of raw `git worktree` shell commands. Ships a built-in MCP server (`rimba mcp`) for AI-tool integration. Install: `go install github.com/lugassawan/rimba@latest` or download from the releases page. | Optional. Falls back to `superpowers:using-git-worktrees` / `git worktree` when absent. |
+| `superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | Skills invoked via Skill tool (from `skills/workflow-development/`, `commands/implement.md`, `agents/debugger.md`): `using-git-worktrees` (fallback when rimba is absent), `executing-plans`, `subagent-driven-development`, `test-driven-development`, `verification-before-completion`, `requesting-code-review`, `finishing-a-development-branch`, `dispatching-parallel-agents`, `systematic-debugging`, `writing-plans`. | Required for the `swe-workbench:workflow-development` skill to function end-to-end. |
+| `rimba` | [lugassawan/rimba](https://github.com/lugassawan/rimba) | Optional worktree-lifecycle provider. When available (on PATH or at `~/.local/bin/rimba`, `~/go/bin/rimba`), `swe-workbench:workflow-development` Phase 1 uses `rimba add <task>` instead of `superpowers:using-git-worktrees`, and `swe-workbench:workflow-cleanup-merged` uses `rimba remove <task>` instead of raw `git worktree` shell commands. Ships a built-in MCP server (`rimba mcp`) for AI-tool integration. Install: `go install github.com/lugassawan/rimba@latest` or download from the releases page. | Optional. Falls back to `superpowers:using-git-worktrees` / `git worktree` when absent. |
 | `claude-plugins-official` | [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Official Anthropic plugin collection — install if you need any of its bundled tools. | Optional. |
 
-Install them via `/plugin marketplace add …` + `/plugin install …` before using the `workflow-development` skill.
+Install them via `/plugin marketplace add …` + `/plugin install …` before using the `swe-workbench:workflow-development` skill.
 
 ## Browser automation (optional, feature-gated)
 
@@ -16,7 +16,7 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 | Server | Source | Used by | Install | Required? |
 |---|---|---|---|---|
-| Playwright MCP | [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp) | `/swe-workbench:test --mode e2e` — browser snapshot → interact → assert spec authoring via `e2e-test-writer`; also an either-or backend for `/swe-workbench:test --mode e2e-live`'s ephemeral browser walkthrough | `claude mcp add playwright npx @playwright/mcp@latest` | Required **only** for `/swe-workbench:test --mode e2e` (hard-gated: absent → `BLOCKED:`). For `/swe-workbench:test --mode e2e-live`, optional — either this or Claude-in-Chrome satisfies its gate. |
+| Playwright MCP | [`microsoft/playwright-mcp`](https://github.com/microsoft/playwright-mcp) | `/swe-workbench:test --mode e2e` — browser snapshot → interact → assert spec authoring via `swe-workbench:e2e-test-writer`; also an either-or backend for `/swe-workbench:test --mode e2e-live`'s ephemeral browser walkthrough | `claude mcp add playwright npx @playwright/mcp@latest` | Required **only** for `/swe-workbench:test --mode e2e` (hard-gated: absent → `BLOCKED:`). For `/swe-workbench:test --mode e2e-live`, optional — either this or Claude-in-Chrome satisfies its gate. |
 | Chrome DevTools MCP | [`ChromeDevTools/chrome-devtools-mcp`](https://github.com/ChromeDevTools/chrome-devtools-mcp) | `/swe-workbench:debug` console/network/perf diagnostics for web-UI symptoms via `read_console_messages` + `read_network_requests` | `claude mcp add chrome-devtools-mcp npx chrome-devtools-mcp@latest` | Optional; one Chrome backend required for `/swe-workbench:debug` browser diagnostics (hard-gated) |
 | Claude-in-Chrome | In-harness (`mcp__claude-in-chrome__*`) | `/swe-workbench:debug` console/network capture when the Claude browser extension is connected — alternative to chrome-devtools-mcp; also an either-or backend for `/swe-workbench:test --mode e2e-live`'s ephemeral browser walkthrough (adds GIF recording via `gif_creator`) | None (provided by the Claude Code harness) | Optional alternative to chrome-devtools-mcp for `/swe-workbench:debug` browser diagnostics. For `/swe-workbench:test --mode e2e-live`, optional — either this or Playwright MCP satisfies its gate. |
 
@@ -26,7 +26,7 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 | Server | Used by | Install | Required? |
 |---|---|---|---|
-| Any LSP server configured in Claude Code (`gopls`, `tsserver`, `pyright`, `rust-analyzer`, …) | `reviewer`, `auditor`, `debugger`, `refactorer` — symbol expansion via the `LSP` tool | Configured in Claude Code itself; this plugin declares and installs none | Optional |
+| Any LSP server configured in Claude Code (`gopls`, `tsserver`, `pyright`, `rust-analyzer`, …) | `swe-workbench:reviewer`, `swe-workbench:auditor`, `swe-workbench:debugger`, `swe-workbench:refactorer` — symbol expansion via the `LSP` tool | Configured in Claude Code itself; this plugin declares and installs none | Optional |
 
 **Fallback behaviour:** unlike the browser servers above, LSP absence never blocks. Agents attempt one call, state `LSP unavailable — falling back to Grep` once, and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries.
 
@@ -37,7 +37,7 @@ The following tools are built into Claude Code itself — no plugin install requ
 | Tool | Used for | Notes |
 |---|---|---|
 | `EnterWorktree(name=…)` | Creates a new worktree (if the name doesn't already exist) and enters it — moves the session CWD without restart. Use `superpowers:using-git-worktrees` as the safe wrapper: it handles consent, `.gitignore` checks, and baseline tests before calling this. | Built into Claude Code; no install needed. Verify with `claude --version`. |
-| `EnterWorktree(path=…)` | Enters an existing worktree by absolute path (path must appear in `git worktree list`). Used directly by `workflow-worktree-session` for mid-session switches. | same |
+| `EnterWorktree(path=…)` | Enters an existing worktree by absolute path (path must appear in `git worktree list`). Used directly by `swe-workbench:workflow-worktree-session` for mid-session switches. | same |
 | `ExitWorktree(action: "keep"\|"remove")` | Returns the session to the main worktree. `"remove"` deletes the linked worktree dir; `"keep"` leaves it on disk. | same |
 
-These are the tools `workflow-worktree-session` routes to. If a tool is not found, your Claude Code version may predate its introduction — run `claude --version` and update if needed.
+These are the tools `swe-workbench:workflow-worktree-session` routes to. If a tool is not found, your Claude Code version may predate its introduction — run `claude --version` and update if needed.

@@ -63,7 +63,7 @@ script that calls a sibling script (e.g. `swe-workbench-preflight-pr` calling
 PATH lookup and never `CLAUDE_PLUGIN_ROOT` — see any script with a sibling call in `bin/` for the
 exact form.
 
-A skill with its own `scripts/` helpers (e.g. `workflow-cleanup-merged`, `workflow-branch-sync`)
+A skill with its own `scripts/` helpers (e.g. `swe-workbench:workflow-cleanup-merged`, `swe-workbench:workflow-branch-sync`)
 never constructs a path to them either. It invokes `swe-workbench-skill-script <skill> <script>
 [args...]`, which resolves the plugin root itself and execs the target — see
 `docs/plugin-platform-decisions.md` for why this replaced the doctor-anchor `_RT=` derivation that

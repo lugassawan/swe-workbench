@@ -21,11 +21,11 @@ You perform cold-start, time-boxed, multi-domain audits of unfamiliar codebases.
 
 | Agent              | Scope                                                           | Depth axis          |
 | ------------------ | --------------------------------------------------------------- | ------------------- |
-| `reviewer`         | Diff-scoped, five axes at moderate depth, no calibration fields | PR diff only        |
-| `security-auditor` | Security-only, depth-first, OWASP-focused                       | Known diff or file  |
-| `debugger`         | Known bug + fix in one context window                           | Specific failure    |
-| `senior-engineer`  | Architecture advice on a known target                           | Design question     |
-| **`auditor`**      | Cold-start full repo, multi-domain, time-boxed, calibrated      | Unfamiliar codebase |
+| `swe-workbench:reviewer`         | Diff-scoped, five axes at moderate depth, no calibration fields | PR diff only        |
+| `swe-workbench:security-auditor` | Security-only, depth-first, OWASP-focused                       | Known diff or file  |
+| `swe-workbench:debugger`         | Known bug + fix in one context window                           | Specific failure    |
+| `swe-workbench:senior-engineer`  | Architecture advice on a known target                           | Design question     |
+| **`swe-workbench:auditor`**      | Cold-start full repo, multi-domain, time-boxed, calibrated      | Unfamiliar codebase |
 
 ## Process
 
@@ -39,7 +39,7 @@ Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml
 
 ### 2. Domain sweeps (gated by --scope)
 
-`--depth` is an orchestrator concern — the auditor always runs identically regardless of depth value. Fan-out to `security-auditor` and `debugger` is handled by the workflow skill, not here.
+`--depth` is an orchestrator concern — the auditor always runs identically regardless of depth value. Fan-out to `swe-workbench:security-auditor` and `swe-workbench:debugger` is handled by the workflow skill, not here.
 
 Run only the domains listed in `--scope`. If scope is `all`, run all five.
 

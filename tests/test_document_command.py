@@ -13,7 +13,7 @@ README = ROOT / "README.md"
 
 
 def test_document_command_file_exists():
-    """commands/document.md must exist, have valid frontmatter, and reference `tech-writer`."""
+    """commands/document.md must exist, have valid frontmatter, and reference `swe-workbench:tech-writer`."""
     assert DOCUMENT_CMD.exists(), "commands/document.md must exist"
     text = DOCUMENT_CMD.read_text()
     fm = validate.parse_frontmatter(DOCUMENT_CMD, text=text)

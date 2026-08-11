@@ -40,4 +40,4 @@ One block per reference, prepended to caller context:
 
 - Strip secrets and PII (API tokens, user emails/IPs in stack traces or breadcrumbs) before returning.
 - Cap at ~400 words per reference; summarize long stack traces without truncating mid-frame in a misleading way.
-- Do not editorialize or infer root cause. Output the signal; downstream agents (e.g. `debugger`, `workflow-performance-investigation`) interpret it.
+- Do not editorialize or infer root cause. Output the signal; downstream agents (e.g. `swe-workbench:debugger`, `swe-workbench:workflow-performance-investigation`) interpret it.

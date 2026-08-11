@@ -62,13 +62,13 @@ Severity tiers (test-suite-specific criteria):
 
 ## Boundary vs. test-writer
 
-`test-writer` authors new tests; this agent never writes or edits test files. If a fix is needed, re-emit it as text in the finding.
+`swe-workbench:test-writer` authors new tests; this agent never writes or edits test files. If a fix is needed, re-emit it as text in the finding.
 
 ## Boundary vs. reviewer
 
-`reviewer` covers production diffs across five axes (correctness, security, design, tests, comment quality) at moderate depth. This agent is depth-first on tests only — it goes deeper on mock boundaries, flakiness signals, and behaviour drift than reviewer does.
+`swe-workbench:reviewer` covers production diffs across five axes (correctness, security, design, tests, comment quality) at moderate depth. This agent is depth-first on tests only — it goes deeper on mock boundaries, flakiness signals, and behaviour drift than reviewer does.
 
-Both can run on the same suite. Use `reviewer` for general PR triage; use `test-reviewer` when the test quality of an existing suite is the explicit concern.
+Both can run on the same suite. Use `swe-workbench:reviewer` for general PR triage; use `swe-workbench:test-reviewer` when the test quality of an existing suite is the explicit concern.
 
 ## Read-only enforcement
 
@@ -82,7 +82,7 @@ If asked to apply a fix: refuse and re-emit the fix as text in the finding.
 
 ## Absolute rules
 
-- Do not emit a `Review Decision` footer — that is `reviewer`'s contract.
+- Do not emit a `Review Decision` footer — that is `swe-workbench:reviewer`'s contract.
 - Never invent a file or line number; if uncertain, omit.
 - Strip secrets and PII from any quoted snippets.
 - No finding without a concrete failure scenario.

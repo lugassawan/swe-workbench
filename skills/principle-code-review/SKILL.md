@@ -6,7 +6,7 @@ description: Code review heuristics — five-axis review lens (correctness, secu
 
 # Code Review
 
-Principles for high-signal code review. For tool-specific mechanics (diff-size routing, suggestion-block format, GitHub workflow), see the `reviewer` agent.
+Principles for high-signal code review. For tool-specific mechanics (diff-size routing, suggestion-block format, GitHub workflow), see the `swe-workbench:reviewer` agent.
 
 ## Five-Axis Review Lens
 
@@ -15,9 +15,9 @@ Every review covers five axes:
 - **Correctness** — off-by-ones, null paths, concurrency races, lost errors, unhandled edge cases, paired-guard predicate gaps (a check enforced by one sibling but missing in its pair).
 - **Security** — injection, auth/authz gaps, secrets in code, unsafe deserialization, SSRF, missing input validation at trust boundaries.
 - **Design integrity** — SOLID violations, leaky abstractions, tight coupling, circular deps, domain logic bleeding into infrastructure.
-  *For complexity / duplication / length, prefer Quality-stage output over subjective comments — see `workflow-development`.*
+  *For complexity / duplication / length, prefer Quality-stage output over subjective comments — see `swe-workbench:workflow-development`.*
 - **Tests** — missing coverage on new branches, brittle tests, tests that mirror implementation rather than behavior.
-- **Comment quality** — unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay), doc-comments over the per-language cap, and stale comments (unchanged text, now wrong because the diff changed the code it describes — not merely code near it); hygiene-tier, in-diff `+` lines for the four categories, plus a stale comment's own context line when its described code changed, suggested-fix drop-simplify-or-rephrase, never an auto-rewrite. Caps live in `principle-clean-code`.
+- **Comment quality** — unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay), doc-comments over the per-language cap, and stale comments (unchanged text, now wrong because the diff changed the code it describes — not merely code near it); hygiene-tier, in-diff `+` lines for the four categories, plus a stale comment's own context line when its described code changed, suggested-fix drop-simplify-or-rephrase, never an auto-rewrite. Caps live in `swe-workbench:principle-clean-code`.
 
 ## What's Not a Finding
 

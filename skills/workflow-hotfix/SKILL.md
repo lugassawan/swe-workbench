@@ -21,11 +21,11 @@ orchestrator: true
 
 ## Why the lifecycle is reordered
 
-`workflow-development`'s Mode B hard-enforces verify → review → deliver so a broken change never
+`swe-workbench:workflow-development`'s Mode B hard-enforces verify → review → deliver so a broken change never
 reaches a reviewer. A hotfix inverts the trade: the PR must exist *now* so reviewers, CI, and
 stakeholders see it immediately; verification and review still happen, just after, against the
 open PR. The deferred-verification marker on the PR body is what keeps that trade-off visible
-instead of silently becoming permanent debt — `workflow-cleanup-merged` reads it at merge time and
+instead of silently becoming permanent debt — `swe-workbench:workflow-cleanup-merged` reads it at merge time and
 offers a backfill follow-up.
 
 ## Phase 1 — Branch (forced, no worktree)
@@ -50,8 +50,8 @@ merge commit on a stale local default branch).
 
 Apply the minimal fix via `superpowers:executing-plans` or direct edits for a single-file change.
 TDD is intentionally **relaxed** here — no test-first; the regression test is the deferred work
-this command's marker tracks. Escalate a genuine design fork to `senior-engineer` rather than
-guessing (unchanged rule from `workflow-development`).
+this command's marker tracks. Escalate a genuine design fork to `swe-workbench:senior-engineer` rather than
+guessing (unchanged rule from `swe-workbench:workflow-development`).
 
 ## Phase 3 — Deliver the PR first (reordered)
 
@@ -71,9 +71,9 @@ interactive gates automatically, without surfacing either to the user:
   yet, so the "already pushed" suggest-only bypass doesn't apply): always **Keep as-is** —
   `hotfix/<slug>` is this command's canonical, non-negotiable prefix.
 
-**Stamp the marker after creation.** `workflow-commit-and-pr` has no input hook for injecting extra
+**Stamp the marker after creation.** `swe-workbench:workflow-commit-and-pr` has no input hook for injecting extra
 body content at creation time, so do this as a separate step immediately after `gh pr create`
-succeeds — the same fetch/append/edit pattern `workflow-extend` Phase D already uses for its
+succeeds — the same fetch/append/edit pattern `swe-workbench:workflow-extend` Phase D already uses for its
 optional follow-on section:
 
 ```bash
@@ -83,7 +83,7 @@ gh pr edit <N> --body-file /tmp/hotfix-pr-body-<N>.txt
 ```
 
 Confirm the marker landed (`gh pr view <N> --json body -q .body` contains the exact line) before
-moving to Phase 4 — this is the single line Phase 5 and `workflow-cleanup-merged` Step 8 both gate
+moving to Phase 4 — this is the single line Phase 5 and `swe-workbench:workflow-cleanup-merged` Step 8 both gate
 on, so a silent failure here silently breaks the whole deferred-verification contract. Then reap
 the temp file (foreground, no suppression — a failed reap must surface):
 
@@ -115,7 +115,7 @@ Phase 2–4, not from intent.
   `/tmp/hotfix-pr-body-<N>.txt` (same path Phase 3 used and already reaped — safe to reuse),
   `gh pr edit <N> --body-file /tmp/hotfix-pr-body-<N>.txt`, then reap it the same way:
   `swe-workbench-clean-state-files /tmp/hotfix-pr-body-<N>.txt`.
-- **Not paid:** leave the marker untouched — `workflow-cleanup-merged` reads it at merge time and
+- **Not paid:** leave the marker untouched — `swe-workbench:workflow-cleanup-merged` reads it at merge time and
   offers the backfill follow-up there. Do not strip it preemptively "because verification passed"
   if no regression test was added; a green test suite that never exercises the fix is not paid debt.
 
@@ -125,8 +125,8 @@ Report the final state: PR URL, ready-for-review confirmed, marker present or st
 
 - `commit-tag` — `.githooks/commit-msg` regex, or `git log --oneline -20` type tally; resolves per
   the `hotfix → bugfix → fix` preference in Phase 3.
-- `pr-template-path` — same detection as `workflow-commit-and-pr`.
-- Imports/format/quality/lint/test commands — same detection as `workflow-development`.
+- `pr-template-path` — same detection as `swe-workbench:workflow-commit-and-pr`.
+- Imports/format/quality/lint/test commands — same detection as `swe-workbench:workflow-development`.
 
 ## Failure modes
 
@@ -134,11 +134,11 @@ Report the final state: PR URL, ready-for-review confirmed, marker present or st
 |---|---|---|
 | Uncommitted changes at invocation | `git status --porcelain` non-empty | Stop, ask to commit/stash before branching. |
 | Ticket has no acceptance criteria | Command-level check | Stop and ask — never invent scope, even under time pressure. |
-| `gh pr create` fails | Non-zero exit | Diagnose per `workflow-commit-and-pr`'s failure table; PR is not open yet, so no marker exists to reconcile. |
+| `gh pr create` fails | Non-zero exit | Diagnose per `swe-workbench:workflow-commit-and-pr`'s failure table; PR is not open yet, so no marker exists to reconcile. |
 | Marker stamp fails or doesn't land | `gh pr edit` non-zero, or a re-fetch of the body doesn't show the marker | Retry the fetch/append/edit once; if it still fails, stop and report loudly rather than proceeding to Phase 4 with an unmarked PR. |
 | Phase 4 review finds Critical/Important issues | Reviewer output | Fix on branch, re-verify, re-review, push — PR updates in place. |
 | Regression test added but Phase 4 fails | Verification evidence missing/red | Marker stays — debt is not paid until both conditions hold. |
-| PR merged before Phase 4 completes | External merge | Stop the in-flight review; the marker (if still present) is `workflow-cleanup-merged`'s signal at cleanup time. |
+| PR merged before Phase 4 completes | External merge | Stop the in-flight review; the marker (if still present) is `swe-workbench:workflow-cleanup-merged`'s signal at cleanup time. |
 
 ## Common mistakes
 

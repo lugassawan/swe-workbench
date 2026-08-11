@@ -6,7 +6,7 @@ description: Security design principles — trust boundaries and input validatio
 
 # Security
 
-Security bugs are design bugs. They are cheapest to fix before the first line of code is written. This skill teaches the principles that prevent security bugs at design time; the `security-auditor` subagent audits the resulting diff against vulnerability categories, secret patterns, and language foot-guns post-implementation.
+Security bugs are design bugs. They are cheapest to fix before the first line of code is written. This skill teaches the principles that prevent security bugs at design time; the `swe-workbench:security-auditor` subagent audits the resulting diff against vulnerability categories, secret patterns, and language foot-guns post-implementation.
 
 ## Trust Boundaries
 

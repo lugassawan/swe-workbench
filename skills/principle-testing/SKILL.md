@@ -6,7 +6,7 @@ description: Testing strategy and architecture — test pyramid (unit / integrat
 
 # Testing Strategy and Architecture
 
-Strategy and architecture, not the red-green-refactor discipline. For that, see `principle-tdd`.
+Strategy and architecture, not the red-green-refactor discipline. For that, see `swe-workbench:principle-tdd`.
 
 ## The pyramid
 

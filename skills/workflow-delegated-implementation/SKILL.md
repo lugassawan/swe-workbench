@@ -6,7 +6,7 @@ orchestrator: true
 
 # Workflow: Delegated Implementation
 
-Phase-2 delegation strategy. When scope or complexity warrants it, the orchestrator groups related file changes, dispatches each cohesive group to a focused `code-impl` sub-agent, and consumes a concise verification summary instead of re-reading changed files. This keeps the orchestrator context lean and enables safe sequential (or opt-in parallel) execution.
+Phase-2 delegation strategy. When scope or complexity warrants it, the orchestrator groups related file changes, dispatches each cohesive group to a focused `swe-workbench:code-impl` sub-agent, and consumes a concise verification summary instead of re-reading changed files. This keeps the orchestrator context lean and enables safe sequential (or opt-in parallel) execution.
 
 **Announce at start:** "I'm using workflow-delegated-implementation to delegate [N] change groups to code-impl."
 
@@ -34,7 +34,7 @@ Implement solo (via `superpowers:executing-plans`) when:
 
 ## Grouping changes
 
-Reuse the commit-taxonomy axes from `workflow-development` to define cohesive groups. A group is cohesive when its files share the **same module boundary AND change together** (Connascence of Execution).
+Reuse the commit-taxonomy axes from `swe-workbench:workflow-development` to define cohesive groups. A group is cohesive when its files share the **same module boundary AND change together** (Connascence of Execution).
 
 | Axis | Contains | Group when… |
 |---|---|---|
@@ -53,7 +53,7 @@ expected: <what "passing" looks like>                      → maps to the expec
 scratch_dir: <worktree_root>/.scratch                      → maps to Scratch dir:
 ```
 
-`scratch_dir` gives `code-impl` a supplied alternative to the harness session scratchpad for any ad-hoc file it needs mid-implementation (a fixture, an intermediate artifact) — a directory under the worktree root, torn down with the worktree itself. This skill dispatches against arbitrary target repos, so the target repo's own `.gitignore` may not cover it — avoid `git add -A`/`git add .` while it's present, and stage explicit paths instead. This is data, not exhortation: a subagent that ignores the field can still write to the scratchpad, a bounded low-consequence leak in a directory someone else cleans.
+`scratch_dir` gives `swe-workbench:code-impl` a supplied alternative to the harness session scratchpad for any ad-hoc file it needs mid-implementation (a fixture, an intermediate artifact) — a directory under the worktree root, torn down with the worktree itself. This skill dispatches against arbitrary target repos, so the target repo's own `.gitignore` may not cover it — avoid `git add -A`/`git add .` while it's present, and stage explicit paths instead. This is data, not exhortation: a subagent that ignores the field can still write to the scratchpad, a bounded low-consequence leak in a directory someone else cleans.
 
 **Worked example — adding a new workflow skill:**
 
@@ -67,7 +67,7 @@ Each group's `file_set` is disjoint — no file appears in two groups.
 
 ## Dispatch contract
 
-Send each group to `code-impl` with this brief structure:
+Send each group to `swe-workbench:code-impl` with this brief structure:
 
 ```
 Goal: <ticket_slice>
@@ -98,7 +98,7 @@ Model the brief on `superpowers:subagent-driven-development`'s implementer-promp
 
 ## Result contract
 
-When `code-impl` returns a summary:
+When `swe-workbench:code-impl` returns a summary:
 
 1. **Consume the summary; do not re-read the changed files.** The summary contains all information needed to continue. Re-reading diffs would defeat the token-saving purpose of delegation.
 2. Map the status to the next orchestrator action:
@@ -110,7 +110,7 @@ When `code-impl` returns a summary:
 | `NEEDS_CONTEXT` | Resolve the missing context; re-dispatch with an augmented brief. After two consecutive `NEEDS_CONTEXT` returns on the same group, stop and surface the ambiguity to the user. |
 | `BLOCKED` | Stop; diagnose the blocker; decide: fix the brief, fix a dependency, or escalate to the user. |
 
-3. After all groups complete, map to `workflow-development`'s existing "completed by sub-skill" phase-state: if `code-impl` ran `verify_cmd` with evidence, mark Phase 3 "completed by sub-skill" and proceed to Phase 4.
+3. After all groups complete, map to `swe-workbench:workflow-development`'s existing "completed by sub-skill" phase-state: if `swe-workbench:code-impl` ran `verify_cmd` with evidence, mark Phase 3 "completed by sub-skill" and proceed to Phase 4.
 
 ## Parallelism
 
@@ -128,7 +128,7 @@ If any condition fails → sequential. Document the reason inline so reviewers u
 
 ## Absolute rules
 
-- `code-impl` never pushes or opens a PR. Delivery (Phase 5) stays single-owner on the orchestrator.
+- `swe-workbench:code-impl` never pushes or opens a PR. Delivery (Phase 5) stays single-owner on the orchestrator.
 - The orchestrator decides next action from summaries — it does not re-read changed files.
 - Each `file_set` must be explicit and disjoint across groups.
 - Phase 5 (`swe-workbench:workflow-commit-and-pr`) is always the orchestrator's responsibility.

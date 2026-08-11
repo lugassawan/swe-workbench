@@ -28,7 +28,7 @@ Child task lifetimes must nest inside the parent's lifetime. No orphan goroutine
 - When the parent exits, all children are cancelled first.
 - Errors propagate up — a child error surfaces to the parent, not to a background log line.
 - Never fire-and-forget unless the lifetime is explicitly managed (e.g., a top-level worker pool with a shutdown hook).
-- For language-specific structured concurrency APIs, see `language-go` (errgroup, context) and your platform's task group primitives.
+- For language-specific structured concurrency APIs, see `swe-workbench:language-go` (errgroup, context) and your platform's task group primitives.
 
 ## Cancellation
 
@@ -69,7 +69,7 @@ Unbounded queues hide a broken producer/consumer balance until memory is exhaust
 **Use when:** limit concurrent access to a resource to N callers.
 **Costs:** starvation possible without fair queueing.
 
-> For Go-specific idioms (goroutine lifecycles, channel patterns, `sync` package): see `language-go`.
+> For Go-specific idioms (goroutine lifecycles, channel patterns, `sync` package): see `swe-workbench:language-go`.
 > See `examples/` for a worked bounded fan-out (bounded concurrency + ordered collection) implementation in C#, Go, Java, Kotlin, Python, Ruby, Rust, Swift, and TypeScript (read on demand — not auto-loaded).
 
 ## When Concurrency is Overkill

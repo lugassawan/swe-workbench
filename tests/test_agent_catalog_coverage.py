@@ -34,7 +34,7 @@ def _readme_subagents_bullet() -> str:
 def test_agent_in_catalog(agent_name):
     """Every top-level agent must have a row marker in docs/catalog.md."""
     catalog_text = CATALOG_MD.read_text(encoding="utf-8")
-    row_marker = f"| `{agent_name}` |"
+    row_marker = f"| `swe-workbench:{agent_name}` |"
     assert row_marker in catalog_text, (
         f"docs/catalog.md is missing a row for '{agent_name}'. "
         "Add the agent to the Subagents table."
@@ -45,7 +45,7 @@ def test_agent_in_catalog(agent_name):
 def test_agent_in_readme(agent_name):
     """Every top-level agent must be backtick-wrapped in README.md's Subagents bullet."""
     bullet = _readme_subagents_bullet()
-    marker = f"`{agent_name}`"
+    marker = f"`swe-workbench:{agent_name}`"
     assert marker in bullet, (
         f"README.md's Subagents bullet is missing '{agent_name}'. "
         "Add it to the roster."

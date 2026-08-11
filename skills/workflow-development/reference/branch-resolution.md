@@ -22,7 +22,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 - **Promote work already started** — if you began editing on the current branch in the main checkout (not the default branch), `$RIMBA add branch:<current-branch>` moves that work into its own worktree, transferring dirty changes via `git stash`. `--source` is not valid in this mode. Distinct from the resume case above: that re-enters a worktree left over from a *prior* run; this promotes uncommitted work on the *current* branch in the main checkout into a new worktree.
 - **rimba absent:** before invoking `superpowers:using-git-worktrees`, run `git worktree list --porcelain` and match the target branch the same way as the pre-check above; if a match exists, `EnterWorktree` it (same one-line notice + dirty flag via `git -C <path> status --porcelain`) instead of creating. Otherwise invoke `superpowers:using-git-worktrees` exactly as today.
 
-**Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `workflow-commit-and-pr` for the full taxonomy):
+**Picking the branch-prefix flag** — derive from the commit-tag the change will carry (see `swe-workbench:workflow-commit-and-pr` for the full taxonomy):
 
 | Work type | rimba flag | Branch prefix | Commit-tag |
 |---|---|---|---|

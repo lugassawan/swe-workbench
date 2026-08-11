@@ -13,7 +13,7 @@ README = ROOT / "README.md"
 
 
 def test_migrate_command_file_exists():
-    """commands/migrate.md must exist, have valid frontmatter, and reference `migrator`."""
+    """commands/migrate.md must exist, have valid frontmatter, and reference `swe-workbench:migrator`."""
     assert MIGRATE_CMD.exists(), "commands/migrate.md must exist"
     text = MIGRATE_CMD.read_text()
     fm = validate.parse_frontmatter(MIGRATE_CMD, text=text)

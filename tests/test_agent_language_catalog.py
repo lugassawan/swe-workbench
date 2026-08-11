@@ -135,7 +135,7 @@ def test_language_skill_in_catalog(skill_dir):
     """T5a: every language-* skill must have a row marker in docs/catalog.md."""
     skill_name = skill_dir.name
     catalog_text = CATALOG_MD.read_text(encoding="utf-8")
-    row_marker = f"| `{skill_name}` |"
+    row_marker = f"| `swe-workbench:{skill_name}` |"
     assert row_marker in catalog_text, (
         f"docs/catalog.md is missing a row for '{skill_name}'. "
         "Add the skill to the Languages table."

@@ -18,12 +18,12 @@ in the orchestrator's context.
 
 - Zero findings — the audit ends at the rendered table; no offer is made.
 - Without a preceding audit — this skill consumes in-context finding data only.
-- To re-run the audit itself — see `workflow-codebase-audit` (read-only; no back-edge here).
+- To re-run the audit itself — see `swe-workbench:workflow-codebase-audit` (read-only; no back-edge here).
 
 ## Composition
 
-This skill is the filing counterpart to (not a caller of) `workflow-codebase-audit`.
-Filing logic mirrors `workflow-bug-triage` Phase 4 precedent: `--body-file`, `.cmd`
+This skill is the filing counterpart to (not a caller of) `swe-workbench:workflow-codebase-audit`.
+Filing logic mirrors `swe-workbench:workflow-bug-triage` Phase 4 precedent: `--body-file`, `.cmd`
 sidecar, preview-gate-then-confirm. Template and label discovery follows the same
 chain used by `agents/product-manager.md`.
 
@@ -201,7 +201,7 @@ Omit `--label` when no matching label was found.
 
 1. **Never run `gh issue create` before `confirm`.** Render the preview and wait.
 2. **`--body-file` always.** Never pass `--body` inline; never use the `--template` flag on `gh issue create`.
-3. **`workflow-codebase-audit` is read-only** (see its invariant). This skill does not
+3. **`swe-workbench:workflow-codebase-audit` is read-only** (see its invariant). This skill does not
    re-invoke it — it only consumes findings already in context.
 4. **Single batch gate.** One preview → one `confirm` → all issues filed.
 5. **Zero findings → no offer.** The calling command guards this; this skill assumes ≥1 finding.

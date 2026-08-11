@@ -85,7 +85,7 @@ benefit over what `matcher` already provides or what the script can check for it
 
 **(a) Why the doctor-anchor derivation was replaced.** Once `runtime/` collapsed into `bin/` and
 the `CLAUDE_PLUGIN_ROOT` injector hook was retired, skills with their own `scripts/` helpers
-(`workflow-cleanup-merged`, `workflow-branch-sync`) still needed to resolve a skill-local path, so
+(`swe-workbench:workflow-cleanup-merged`, `swe-workbench:workflow-branch-sync`) still needed to resolve a skill-local path, so
 a stand-in root derivation —
 `_RT="$(cd "$(dirname "$(command -v swe-workbench-doctor)")/.." && pwd)"` — was introduced at every
 call site. That traded one copy-pasted preamble for another: 10 occurrences across 2 files, and

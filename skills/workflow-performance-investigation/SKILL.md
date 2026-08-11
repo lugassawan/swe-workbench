@@ -25,7 +25,7 @@ Profile-first runbook: baseline → profile → ranked hotspots → hypothesize 
 
 - **`swe-workbench:principle-performance`** — design-time discipline (Big-O, allocation, N+1, data locality). Run inline or hand off; never skip the discipline layer.
 - **`swe-workbench:performance-tuner` agent** — ranked hotspot analysis given a captured profile. Hand the profile artifact at Phase 3; do not invoke before a profile exists.
-- **`swe-workbench:observability-context`** — production signal framing at Phase 1 only (a Sentry error rate, regression, or alert that motivated this investigation). Never invoke it at Phase 3 or later, and never let its output substitute for the profile artifact `performance-tuner` requires — see the Evidence-class caveat in Phase 1 below.
+- **`swe-workbench:observability-context`** — production signal framing at Phase 1 only (a Sentry error rate, regression, or alert that motivated this investigation). Never invoke it at Phase 3 or later, and never let its output substitute for the profile artifact `swe-workbench:performance-tuner` requires — see the Evidence-class caveat in Phase 1 below.
 
 ## Phases
 

@@ -64,7 +64,7 @@ Never string-concatenate a free-form value directly into a JSON literal (`"body"
   bodies start with `@{author}`); guarded by
   `tests/test_reply_and_resolve_script.py::test_body_flag_is_lowercase_f_not_uppercase_f`.
 - `bin/swe-workbench-pr-review-submit` — the posting mechanism invoked from
-  `skills/workflow-pr-review-post/SKILL.md`'s `## Post` section (shared by `workflow-pr-review`
+  `skills/workflow-pr-review-post/SKILL.md`'s `## Post` section (shared by `swe-workbench:workflow-pr-review`
   (both first-pass and followup modes) and the `/swe-workbench:review` specialist PR-mode
   sub-flow) — builds the `comments[]` array as a JSON payload via `json.dumps` and posts it
   with `gh api --input -` (see above), and uses `-f body=` in the per-comment ("model-A")

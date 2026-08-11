@@ -16,7 +16,7 @@ orchestrator: true
 ## When NOT to invoke
 
 - Local-diff mode → never invoked; there is no PR to post to.
-- `--mode contributor-trust` → never invoked; `contributor-auditor`'s contract is advisory-only, never posts.
+- `--mode contributor-trust` → never invoked; `swe-workbench:contributor-auditor`'s contract is advisory-only, never posts.
 - Directly by a user prompt with no pre-computed payload — this skill is pure mechanism; something upstream must have already run an auditor and derived a decision.
 
 ## Input contract

@@ -8,10 +8,10 @@ Most agents in this plugin preload some or all of their `## Principle consultati
 
 Preload scope varies per agent, not by a fixed size rule:
 
-- **Single-skill agents** (e.g. `test-writer`) — the one always-fire skill.
-- **Small catalogs** (e.g. `auditor`'s 7) — the whole catalog, for agents whose default behavior touches most or all of it on every dispatch.
-- **Large catalogs** (`senior-engineer`: 14 skills; `architect`: 12; `migrator`: 8) — moved in full or near-full, where the round-trip savings across common cases outweigh the fixed preload cost.
-- **Partial catalogs** — an agent can preload most of its catalog while leaving a few entries conditional. `senior-engineer` preloads 11 of its 14 skills; `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem` stay as on-demand body-only bullets. `reviewer` preloads 14 of its 15 skills; `principle-i18n` stays conditional since not every review is i18n-related. Both agents keep a short framing sentence above their remaining conditional bullets so the agent's own prompt still instructs it to reach for them when relevant.
+- **Single-skill agents** (e.g. `swe-workbench:test-writer`) — the one always-fire skill.
+- **Small catalogs** (e.g. `swe-workbench:auditor`'s 7) — the whole catalog, for agents whose default behavior touches most or all of it on every dispatch.
+- **Large catalogs** (`swe-workbench:senior-engineer`: 14 skills; `swe-workbench:architect`: 12; `swe-workbench:migrator`: 8) — moved in full or near-full, where the round-trip savings across common cases outweigh the fixed preload cost.
+- **Partial catalogs** — an agent can preload most of its catalog while leaving a few entries conditional. `swe-workbench:senior-engineer` preloads 11 of its 14 skills; `swe-workbench:principle-cost-awareness`, `swe-workbench:principle-release-engineering`, and `swe-workbench:principle-postmortem` stay as on-demand body-only bullets. `swe-workbench:reviewer` preloads 14 of its 15 skills; `swe-workbench:principle-i18n` stays conditional since not every review is i18n-related. Both agents keep a short framing sentence above their remaining conditional bullets so the agent's own prompt still instructs it to reach for them when relevant.
 
 ## Body bullets are optional
 
@@ -21,7 +21,7 @@ An agent can preload a skill via frontmatter with no corresponding body text, an
 
 ## The silent-failure trap
 
-Namespacing is not cosmetic. `swe-workbench:principle-code-review` in `skills:` frontmatter loads the skill's content at dispatch. The bare form, `principle-code-review`, silently no-ops — the agent starts with nothing preloaded and no error.
+Namespacing is not cosmetic. `swe-workbench:principle-code-review` in `skills:` frontmatter loads the skill's content at dispatch. The bare form, `principle-code-review`, silently no-ops — the agent starts with nothing preloaded and no error. <!-- validate: prose-ref -->
 
 The harness's `[Agent: X] Preloaded skill '…'` debug line prints **identically** whether the namespaced or bare form was used. That line is not evidence of successful injection — it fires regardless of whether the skill actually loaded. This is why `check_preloaded_skills` hard-fails any non-namespaced entry rather than warning.
 
@@ -31,7 +31,7 @@ There is no automated dispatch harness in this repo (no `claude -p` / `--debug-f
 
 1. Dispatch the agent (e.g. `swe-workbench:reviewer` via the `Agent` tool).
 2. Ask it to report any `preload-canary` HTML comment token present in its context, verbatim.
-3. Compare the reported token against the target skill's canary — e.g. `SWB-PRELOAD-PRINCIPLE-CODE-REVIEW` for `principle-code-review`.
+3. Compare the reported token against the target skill's canary — e.g. `SWB-PRELOAD-PRINCIPLE-CODE-REVIEW` for `swe-workbench:principle-code-review`.
 
 Seeing the exact token back confirms real injection. Silence, a different token, or a refusal to find one means the preload did not take — recheck the frontmatter's namespacing before trusting the debug log.
 
@@ -51,6 +51,6 @@ The rule is mechanical: `SWB-PRELOAD-` followed by the skill id, uppercased.
 
 ## Not preloaded
 
-- **`language-*` skills, in general** — which language applies is unknown until the diff is read; there's nothing to preload before that. One exception: `accessibility-auditor` preloads `swe-workbench:language-typescript`, since that agent is scoped specifically to frontend/TSX review — unlike general-purpose agents, the applicable language isn't actually in doubt for it.
-- **Individual catalog entries a given agent leaves conditional** — e.g. `senior-engineer`'s `principle-cost-awareness`, `principle-release-engineering`, and `principle-postmortem`, and `reviewer`'s `principle-i18n` (see above).
+- **`language-*` skills, in general** — which language applies is unknown until the diff is read; there's nothing to preload before that. One exception: `swe-workbench:accessibility-auditor` preloads `swe-workbench:language-typescript`, since that agent is scoped specifically to frontend/TSX review — unlike general-purpose agents, the applicable language isn't actually in doubt for it.
+- **Individual catalog entries a given agent leaves conditional** — e.g. `swe-workbench:senior-engineer`'s `swe-workbench:principle-cost-awareness`, `swe-workbench:principle-release-engineering`, and `swe-workbench:principle-postmortem`, and `swe-workbench:reviewer`'s `swe-workbench:principle-i18n` (see above).
 - **Live-dispatch CI verification** — no agent-dispatch harness exists in this repo, and building one would cost more than the frontmatter changes it would guard. The manual runbook above is the substitute.

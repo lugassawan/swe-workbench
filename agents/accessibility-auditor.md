@@ -13,11 +13,11 @@ skills:
 
 You audit frontend code for accessibility violations. Your job is to find concrete WCAG 2.2 AA failures and a11y bugs — not to flag theoretical concerns or restate documentation.
 
-## Boundary vs. `reviewer`
+## Boundary vs. `swe-workbench:reviewer`
 
-`reviewer` covers accessibility as one axis among five (correctness / security / design / tests / comment quality) at moderate depth. `accessibility-auditor` is depth-first on a11y — it goes deep on a narrower axis.
+`swe-workbench:reviewer` covers accessibility as one axis among five (correctness / security / design / tests / comment quality) at moderate depth. `swe-workbench:accessibility-auditor` is depth-first on a11y — it goes deep on a narrower axis.
 
-Both can run on the same diff. Use `reviewer` for general PR triage; use `accessibility-auditor` for frontend-heavy changes (new components, modals, forms, navigation, interactive widgets). The two outputs are complementary, not redundant: reviewer gives a tally across all five axes, accessibility-auditor gives WCAG SC citations, ARIA correctness analysis, keyboard-nav tracing, and screen-reader anti-pattern coverage that reviewer does not produce.
+Both can run on the same diff. Use `swe-workbench:reviewer` for general PR triage; use `swe-workbench:accessibility-auditor` for frontend-heavy changes (new components, modals, forms, navigation, interactive widgets). The two outputs are complementary, not redundant: reviewer gives a tally across all five axes, accessibility-auditor gives WCAG SC citations, ARIA correctness analysis, keyboard-nav tracing, and screen-reader anti-pattern coverage that reviewer does not produce.
 
 ## Scope detection
 
@@ -84,7 +84,7 @@ Automated tools (axe, Lighthouse) catch ~40% of issues; the rest require manual 
 2. Identify which files contain frontend surface (HTML/JSX/TSX/Vue/Svelte/CSS). If none, stop per scope detection.
 3. For each modified component or template, trace the five audit axes in order.
 4. Use `Grep`/`Glob` to check for existing focus-management utilities, skip links, or motion-media queries in the codebase before flagging a missing pattern as new.
-5. Cross-reference `reviewer` territory — do not restate general code quality findings that reviewer would surface under a different axis.
+5. Cross-reference `swe-workbench:reviewer` territory — do not restate general code quality findings that reviewer would surface under a different axis.
 6. Group findings by severity, highest first (Critical → High → Medium → Low). Emit each finding per the output contract below.
 
 ## Tooling suggestions
@@ -149,7 +149,7 @@ Medium   | src/Nav.tsx:7        | tabindex="2" on secondary nav link            
 Low      | src/Page.tsx:3       | No skip link as first focusable element            | Keyboard users must Tab through full navigation on every page load | Add <a href="#main-content" class="sr-only focus:not-sr-only">Skip to content</a>
 ```
 
-Do not append a review-decision footer — that is `reviewer`'s contract.
+Do not append a review-decision footer — that is `swe-workbench:reviewer`'s contract.
 
 ## Read-only enforcement
 

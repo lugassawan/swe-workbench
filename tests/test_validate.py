@@ -858,12 +858,12 @@ class TestPerformanceTunerAgent:
         )
         section_text = section_match.group(1)
         expected_agents = [
-            "`reviewer`",
-            "`auditor`",
-            "`architect`",
-            "`debugger`",
-            "`dependency-auditor`",
-            "`refactorer`",
+            "`swe-workbench:reviewer`",
+            "`swe-workbench:auditor`",
+            "`swe-workbench:architect`",
+            "`swe-workbench:debugger`",
+            "`swe-workbench:dependency-auditor`",
+            "`swe-workbench:refactorer`",
         ]
         missing = [agent for agent in expected_agents if agent not in section_text]
         assert not missing, (
@@ -1607,7 +1607,8 @@ class TestCheckBareActionableRefs:
         validate.check_bare_actionable_refs()
         assert validate.FAILURES == []
 
-    def test_bare_id_in_skill_prose_without_action_cue_passes(self, reset_validate):
+    def test_bare_id_in_skill_prose_without_action_cue_fails(self, reset_validate):
+        """The flat rule has no action-cue heuristic — any bare id fails, cued or not."""
         root = reset_validate
         make_plugin_tree(
             root,
@@ -1617,7 +1618,7 @@ class TestCheckBareActionableRefs:
             },
         )
         validate.check_bare_actionable_refs()
-        assert validate.FAILURES == []
+        assert any("target-skill" in f for f in validate.FAILURES)
 
     def test_bare_id_on_skill_dispatch_line_fails(self, reset_validate):
         root = reset_validate
@@ -1631,13 +1632,67 @@ class TestCheckBareActionableRefs:
         validate.check_bare_actionable_refs()
         assert any("target-skill" in f for f in validate.FAILURES)
 
-    def test_self_reference_passes(self, reset_validate):
+    def test_self_reference_fails(self, reset_validate):
+        """#586's own-id exemption is dropped by #589 — self-refs must be namespaced too."""
         root = reset_validate
         make_plugin_tree(
             root,
             skills={
                 "my-skill": "---\nname: my-skill\ndescription: d\n---\n\nActivating `my-skill` now.\n",
             },
+        )
+        validate.check_bare_actionable_refs()
+        assert any("my-skill" in f for f in validate.FAILURES)
+
+    def test_bare_id_in_docs_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "docs").mkdir(exist_ok=True)
+        (root / "docs" / "notes.md").write_text(
+            "See the `foo` skill for details.\n", encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("foo" in f for f in validate.FAILURES)
+
+    def test_bare_id_in_readme_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "README.md").write_text(
+            "- `foo` — does the foo thing\n", encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("foo" in f for f in validate.FAILURES)
+
+    def test_bare_id_in_agent_md_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+            agents=[{"name": "my-agent", "description": "d", "tools": "Read"}],
+        )
+        (root / "agents" / "my-agent.md").write_text(
+            (root / "agents" / "my-agent.md").read_text(encoding="utf-8")
+            + "\nSee the `foo` skill.\n",
+            encoding="utf-8",
+        )
+        validate.check_bare_actionable_refs()
+        assert any("foo" in f for f in validate.FAILURES)
+
+    def test_tests_dir_excluded_from_scan(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        (root / "tests").mkdir(exist_ok=True)
+        (root / "tests" / "notes.md").write_text(
+            "References the `foo` skill.\n", encoding="utf-8",
         )
         validate.check_bare_actionable_refs()
         assert validate.FAILURES == []
@@ -3422,7 +3477,7 @@ class TestE2eTestVerifierAgent:
 
     def test_boundary_section_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "Boundary vs. `test-reviewer`" in text, (
+        assert "Boundary vs. `swe-workbench:test-reviewer`" in text, (
             "agent must have a Boundary vs. test-reviewer section"
         )
 

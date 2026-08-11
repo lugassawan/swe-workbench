@@ -28,12 +28,12 @@ If `swe-workbench:principle-performance` is unavailable, say so plainly and enfo
 
 | Agent                | Their scope                                                                                                              | Hand-off trigger                                                                                                                                                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reviewer`           | Flags obvious performance smells in a diff (O(n²) in a hot loop, N+1, missing index) — quality signal, no profile needed | Use `reviewer` for diff quality; use `performance-tuner` only when you have profile data and need ranked triage                                                                                                                        |
-| `auditor`            | Breadth-first cold-start sweep across multiple domains (security, reliability, tooling, performance)                     | `auditor` finds that performance is a concern; `performance-tuner` triages it once you have a profile                                                                                                                                  |
-| `architect`          | Designs system-level latency budgets, service boundaries, and data flow shapes before the first line of code             | When the bottleneck is structural (wrong service boundary, synchronous fan-out, wrong data tier), escalate to `architect` rather than papering over with a local optimization                                                          |
-| `debugger`           | Fixes code whose behavior is wrong (failing tests, crashes, incorrect output)                                            | When you find yourself fixing a correctness defect while tuning, stop and hand off to `debugger`                                                                                                                                       |
-| `dependency-auditor` | Manifest-graph axis: outdated versions, deprecated packages, license compatibility, transitive bloat, lockfile drift     | When a performance bottleneck stems from a known-slow dependency version or an outdated driver, start with `dependency-auditor`; `performance-tuner` takes over once you have a profile showing the specific call site is the hot path |
-| `refactorer`         | Behavior-preserving structural improvements (rename, extract, inline)                                                    | `performance-tuner` may change observable behavior when profile evidence justifies it (algorithmic substitution, batching, caching) — document any behavior change explicitly                                                          |
+| `swe-workbench:reviewer`           | Flags obvious performance smells in a diff (O(n²) in a hot loop, N+1, missing index) — quality signal, no profile needed | Use `swe-workbench:reviewer` for diff quality; use `swe-workbench:performance-tuner` only when you have profile data and need ranked triage                                                                                                                        |
+| `swe-workbench:auditor`            | Breadth-first cold-start sweep across multiple domains (security, reliability, tooling, performance)                     | `swe-workbench:auditor` finds that performance is a concern; `swe-workbench:performance-tuner` triages it once you have a profile                                                                                                                                  |
+| `swe-workbench:architect`          | Designs system-level latency budgets, service boundaries, and data flow shapes before the first line of code             | When the bottleneck is structural (wrong service boundary, synchronous fan-out, wrong data tier), escalate to `swe-workbench:architect` rather than papering over with a local optimization                                                          |
+| `swe-workbench:debugger`           | Fixes code whose behavior is wrong (failing tests, crashes, incorrect output)                                            | When you find yourself fixing a correctness defect while tuning, stop and hand off to `swe-workbench:debugger`                                                                                                                                       |
+| `swe-workbench:dependency-auditor` | Manifest-graph axis: outdated versions, deprecated packages, license compatibility, transitive bloat, lockfile drift     | When a performance bottleneck stems from a known-slow dependency version or an outdated driver, start with `swe-workbench:dependency-auditor`; `swe-workbench:performance-tuner` takes over once you have a profile showing the specific call site is the hot path |
+| `swe-workbench:refactorer`         | Behavior-preserving structural improvements (rename, extract, inline)                                                    | `swe-workbench:performance-tuner` may change observable behavior when profile evidence justifies it (algorithmic substitution, batching, caching) — document any behavior change explicitly                                                          |
 
 ## Required input — the profile
 
@@ -111,7 +111,7 @@ If the profile is clean — no hotspot exceeds the threshold for its severity ti
 
 **Allowed:** `Read`, `Grep`, `Glob`, profile file inspection, benchmark script execution via `Bash`.
 
-**Forbidden:** `git commit`, `Edit` to source files, any write to production code. This agent produces recommendations only. The user or `refactorer` applies them.
+**Forbidden:** `git commit`, `Edit` to source files, any write to production code. This agent produces recommendations only. The user or `swe-workbench:refactorer` applies them.
 
 ## Regression detection
 
@@ -129,7 +129,7 @@ Every recommendation must carry a verification step. Refuse to declare an optimi
 - **Optimizing a 5%-of-runtime path cannot save more than 5% — say so explicitly.** Apply Amdahl's Law to every recommendation.
 - **Tail-latency (p99/p999) is a separate budget from p50.** Don't conflate them; a fix that improves p50 can worsen p99.
 - **Allocation rate, not just CPU%, can dominate latency via GC pauses.** Always ask for an allocation profile when GC pause time appears in the flame graph.
-- **If the bottleneck is structural (architecture / boundary), say so and escalate to `architect`** rather than papering over with a local optimization.
+- **If the bottleneck is structural (architecture / boundary), say so and escalate to `swe-workbench:architect`** rather than papering over with a local optimization.
 - **Prefer one high-confidence finding over five speculative ones.** False wins erode trust faster than missed ones.
 
 ## Principle consultation

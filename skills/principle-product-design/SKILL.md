@@ -112,7 +112,7 @@ Apply when building layouts that must work across screen sizes.
 
 ## Red Flags — STOP and Reassess
 
-- Interactive element using `<div>` or `<span>` instead of semantic HTML (see `principle-accessibility` for the correct elements)
+- Interactive element using `<div>` or `<span>` instead of semantic HTML (see `swe-workbench:principle-accessibility` for the correct elements)
 - Color as the only way to communicate state (red/green without icons or text)
 - No loading indicator for any async operation
 - Form with no validation feedback until submission

@@ -8,7 +8,7 @@ description: Postmortem principles — blameless culture, root cause analysis (5
 
 Incidents are inevitable. A postmortem converts failure into systemic learning — the goal is not to assign blame but to close the gap between what the system can do and what the environment demands. The prevent → detect → learn triad is incomplete without this phase.
 
-Cross-references: `principle-resiliency` (prevent), `principle-observability#SLI / SLO / Error Budget` (detect / MTTD-MTTR framing), `principle-release-engineering#Rollback` (remediation action items).
+Cross-references: `swe-workbench:principle-resiliency` (prevent), `principle-observability#SLI / SLO / Error Budget` (detect / MTTD-MTTR framing), `principle-release-engineering#Rollback` (remediation action items).
 
 ## Blameless Culture
 
@@ -89,8 +89,8 @@ Track in the same system as engineering work (sprint backlog, issue tracker). Po
 
 Track over rolling quarters to surface trends, not just individual incidents:
 
-- **MTTD (Mean Time To Detect)** — gap between incident start and first alert. Feeds `principle-observability` SLO work; high MTTD signals missing or miscalibrated alerts.
-- **MTTR (Mean Time To Recover)** — gap between detection and full mitigation. Feeds `principle-resiliency` rollback and degradation work; high MTTR signals slow deploy pipelines or inadequate runbooks.
+- **MTTD (Mean Time To Detect)** — gap between incident start and first alert. Feeds `swe-workbench:principle-observability` SLO work; high MTTD signals missing or miscalibrated alerts.
+- **MTTR (Mean Time To Recover)** — gap between detection and full mitigation. Feeds `swe-workbench:principle-resiliency` rollback and degradation work; high MTTR signals slow deploy pipelines or inadequate runbooks.
 - **Repeat-incident rate** — same root cause recurring within a quarter. The single strongest signal that action items are not being completed or are not addressing the right layer.
 
 Review trends in retros, not just in individual postmortems. A rising MTTD means the observability investment is not keeping pace with system complexity.

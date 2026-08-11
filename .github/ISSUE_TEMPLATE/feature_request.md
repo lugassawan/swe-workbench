@@ -19,7 +19,7 @@ assignees: ''
 <!-- Check all surfaces this proposal touches. -->
 - [ ] Skill — `principle-*`
 - [ ] Skill — `language-*`
-- [ ] Skill — integration (`ticket-context`)
+- [ ] Skill — integration (`swe-workbench:ticket-context`)
 - [ ] Skill — `workflow-*`
 - [ ] Subagent
 - [ ] Slash command
