@@ -377,6 +377,28 @@ def test_cleanup_merged_step7_report_includes_sweep_line():
     )
 
 
+def test_cleanup_merged_step7_report_includes_session_residuals_line():
+    """Step 7's report block must also document the session-residual sweep result
+    (SWEPT_SESSION_FILES/SWEPT_RUN_DIRS) — issue #595, PR #597 review feedback.
+
+    A prior version of this file only had test_cleanup_merged_step7_report_includes_sweep_line,
+    whose assertion is already satisfied by pre-existing text (SWEPT_WORKTREES/'Residual sweep'),
+    so it silently passed regardless of whether this newer line was present, garbled, or dropped.
+    """
+    body = SKILL.read_text()
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
+
+    assert "Session residuals" in step7_slice, (
+        "Step 7's report block must include a 'Session residuals' line"
+    )
+    assert "SWEPT_SESSION_FILES" in step7_slice, (
+        "Step 7's report block must reference SWEPT_SESSION_FILES"
+    )
+    assert "SWEPT_RUN_DIRS" in step7_slice, (
+        "Step 7's report block must reference SWEPT_RUN_DIRS"
+    )
+
+
 def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
     """Step 5's session-scratchpad sweep must be documented as scoped by session id,
     deliberately NOT scoped to #<number> — issue #595 / AC4: scratchpad residuals
