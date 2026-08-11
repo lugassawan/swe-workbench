@@ -583,47 +583,51 @@ def _bare_actionable_id_set():
 
 
 def check_bare_actionable_refs(cache=None):
-    """Machine-actionable dispatch references must use the namespaced
-    `swe-workbench:<id>` form (#586).
+    """Every skill/agent id in any *.md outside tests/ must be namespaced as
+    `swe-workbench:<id>` (#586, generalized repo-wide by #589).
 
     check_command_skill_refs / check_skill_skill_refs only resolution-check
     the already-namespaced `` `swe-workbench:<id>` `` pattern, so a bare
     dispatch id (e.g. "Delegate to the `senior-engineer` subagent") is never
     validated and can silently drift from the namespaced form used for the
-    identical construct elsewhere. Two rules, both scoped to
-    machine-actionable dispatch — prose, catalog tables, and README
-    enumerations are untouched:
+    identical construct elsewhere. This is a single flat rule with no
+    heuristic: every markdown file in the repo (outside tests/, .git/, and
+    __pycache__/) is scanned, fenced code blocks are stripped first
+    (_strip_fenced_code_blocks — preserves line numbers so messages stay
+    accurate), and any bare id that resolves to a real skill or agent fails —
+    including a file naming its own id, and including prose, catalog tables,
+    and README enumerations, which #586 originally left bare. A line may opt
+    out with the '<!-- validate: prose-ref -->' marker (a genuinely
+    non-dispatch mention, e.g. a redaction allowlist of literal identifier
+    strings).
 
-    Rule 1 (commands/*.md): every bare skill/agent id outside a fenced code
-    block must be namespaced — command bodies are dispatch scripts, so no
-    action-cue heuristic is applied. A line may opt out with the
-    '<!-- validate: prose-ref -->' marker (a genuinely non-dispatch mention,
-    e.g. an example list of literal identifier strings).
-
-    Rule 2 (skills/*/SKILL.md): only lines the action-cued activation
-    classifier (_ACTION_RE / _POINTER_RE / _SLASH_CMD_RE — the same regexes
-    check_no_cycles's _build_dep_graph uses) would treat as a dispatch edge.
-    Note this scans a narrower line set than _build_dep_graph: Rule 2 also
-    strips fenced code blocks first (_strip_fenced_code_blocks), so a
-    dispatch-cued line inside a fenced example is a cycle-graph edge but not
-    a Rule 2 candidate. A skill naming its own id is exempt (self-reference),
-    and the same exemption marker opts out a line the classifier over-flags
-    as a dispatch cue when it is really prose.
+    Reuses _build_cache's agent/skill text (and its None-unreadable sentinel)
+    instead of re-reading those files — TestFileReadCaching asserts every
+    agent .md and SKILL.md is read at most once across all of main()'s
+    checks. Files outside that cache (commands/*.md, docs/**, README.md,
+    skills/*/templates|reference/*.md, ...) are read directly.
     """
     if cache is None:
         cache = _build_cache()
-    skills_cache = cache[1]
+    text_cache = {}
+    text_cache.update(cache[0])
+    text_cache.update(cache[1])
 
     ids = _bare_actionable_id_set()
-    commands_dir = ROOT / "commands"
-    skills_dir = ROOT / "skills"
 
-    # Rule 1 — commands/*.md
-    for cmd_md in sorted(commands_dir.glob("*.md")):
-        try:
-            text = cmd_md.read_text(encoding="utf-8")
-        except OSError:
+    for md in sorted(ROOT.rglob("*.md")):
+        rel = md.relative_to(ROOT)
+        if rel.parts[0] in ("tests", ".git", "__pycache__"):
             continue
+        if md in text_cache:
+            text = text_cache[md]
+            if text is None:
+                continue
+        else:
+            try:
+                text = md.read_text(encoding="utf-8")
+            except OSError:
+                continue
         stripped = _strip_fenced_code_blocks(text)
         for i, line in enumerate(stripped.split('\n'), start=1):
             if line.lstrip().startswith('@'):
@@ -633,40 +637,11 @@ def check_bare_actionable_refs(cache=None):
             for bare_id in _BARE_ID_RE.findall(line):
                 if bare_id in ids:
                     fail(
-                        cmd_md.relative_to(ROOT),
+                        rel,
                         f"line {i}: bare reference `{bare_id}` must be namespaced as "
-                        f"`swe-workbench:{bare_id}` — machine-actionable references in "
-                        f"commands/ are dispatch instructions, not prose (mark a genuinely "
-                        f"non-dispatch line with '{_PROSE_REF_EXEMPTION_MARKER}' to exempt it)",
+                        f"`swe-workbench:{bare_id}` (mark a genuinely non-dispatch line "
+                        f"with '{_PROSE_REF_EXEMPTION_MARKER}' to exempt it)",
                     )
-
-    # Rule 2 — skills/*/SKILL.md dispatch-cued lines
-    for skill_md, text in skills_cache.items():
-        if skill_md.parent.parent != skills_dir:
-            continue
-        if text is None:
-            continue
-        own_id = skill_md.parent.name
-        stripped = _strip_fenced_code_blocks(text)
-        for i, line in enumerate(stripped.split('\n'), start=1):
-            if line.lstrip().startswith('@'):
-                continue
-            if _PROSE_REF_EXEMPTION_MARKER in line:
-                continue
-            clean = _SLASH_CMD_RE.sub('', line)
-            if not _ACTION_RE.search(clean):
-                continue
-            if _POINTER_RE.search(clean):
-                continue
-            for bare_id in _BARE_ID_RE.findall(line):
-                if bare_id not in ids or bare_id == own_id:
-                    continue
-                fail(
-                    skill_md.relative_to(ROOT),
-                    f"line {i}: bare reference `{bare_id}` on a dispatch-cued line must be "
-                    f"namespaced as `swe-workbench:{bare_id}` (mark the line "
-                    f"'{_PROSE_REF_EXEMPTION_MARKER}' if it is genuinely not a dispatch)",
-                )
 
 
 def check_workflow_development_activation_contract():

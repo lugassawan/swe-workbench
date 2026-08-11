@@ -13,7 +13,7 @@ To add a new language skill (say, Ruby or another language not already shipped):
 
 ## Adding a context adapter
 
-The `*-context` skills (`ticket-context`, `observability-context`, `comms-context`) are
+The `*-context` skills (`swe-workbench:ticket-context`, `swe-workbench:observability-context`, `swe-workbench:comms-context`) are
 ports in a ports-and-adapters pattern applied to prose: each skill detects a reference,
 fetches via a provider-specific recipe, and emits a shared output block. Adding support
 for a new provider — a new tracker, a new observability backend, a new comms tool — is
@@ -69,7 +69,7 @@ family routes there regardless of the specific skill name).
 
 Skills are intentionally small — each under 150 lines. A sharp, well-triggered skill teaches Claude the right thing at the right moment. A giant skill burns context on material the current task does not need. If a skill grows past 150 lines, split it.
 
-A skill's frontmatter can opt into a higher cap with `orchestrator: true`, which raises the limit to 300 lines (`scripts/validate.py`'s `BASE_SKILL_CAP` / `ORCHESTRATOR_SKILL_CAP`). This is common, not a rare exception — most `workflow-*` skills carry it. Two distinct shapes earn it: skills that compose many sub-skills or subagents (e.g. `workflow-development`), and skills that drive a careful multi-step external-tool procedure without composing anything at all (e.g. `workflow-cleanup-merged`, a 203-line git/gh sequence with zero sub-skill references).
+A skill's frontmatter can opt into a higher cap with `orchestrator: true`, which raises the limit to 300 lines (`scripts/validate.py`'s `BASE_SKILL_CAP` / `ORCHESTRATOR_SKILL_CAP`). This is common, not a rare exception — most `workflow-*` skills carry it. Two distinct shapes earn it: skills that compose many sub-skills or subagents (e.g. `swe-workbench:workflow-development`), and skills that drive a careful multi-step external-tool procedure without composing anything at all (e.g. `swe-workbench:workflow-cleanup-merged`, a 203-line git/gh sequence with zero sub-skill references).
 
 The flag has to be doing work, and that's enforced: `scripts/validate.py`'s `check_orchestrator_flag_earned()` fails any skill that declares `orchestrator: true`, sits at or under the 150-line base cap, *and* references no other skill or agent — that combination means the flag isn't earning anything. Reaching for the flag is still not a substitute for splitting: extract conditional content (mode templates, rarely-loaded sub-flows) into companion files inside the skill's directory rather than padding the always-loaded `SKILL.md`.
 
@@ -122,9 +122,9 @@ Interactive commands (those that delegate to a subagent to produce an artifact) 
 1. Copy the content of `commands/shared/interrogation-prelude.md` verbatim into the new command file, positioned **after** any ticket-context prelude and **before** the subagent delegation or skill activation instruction.
 2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py`. The `TestInterrogationPreludeUniformity` class enforces byte-identical parity between the shared file and every command in the list.
 3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
-4. Add a `workflow-grill` trigger row note to the command's entry in `docs/catalog.md`.
+4. Add a `swe-workbench:workflow-grill` trigger row note to the command's entry in `docs/catalog.md`.
 
-**Orchestrator-only rule:** the mode gate (`AskUserQuestion`) and the `swe-workbench:workflow-grill` loop run in the command body (orchestrator). Never embed them in a shared subagent — it would bleed the mode prompt into flows that reuse the same agent (e.g. `product-manager` is shared with `/swe-workbench:report-issue`; `senior-engineer` is consulted by `/swe-workbench:implement`).
+**Orchestrator-only rule:** the mode gate (`AskUserQuestion`) and the `swe-workbench:workflow-grill` loop run in the command body (orchestrator). Never embed them in a shared subagent — it would bleed the mode prompt into flows that reuse the same agent (e.g. `swe-workbench:product-manager` is shared with `/swe-workbench:report-issue`; `swe-workbench:senior-engineer` is consulted by `/swe-workbench:implement`).
 
 **Member visibility ordering: `public > protected > private`.** Public API surface reads first so consumers can scan the contract without scrolling past implementation details. Per-language translation:
 

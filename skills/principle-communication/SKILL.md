@@ -64,7 +64,7 @@ Temporarily drop caveman and render full prose for:
 - Cases where compression itself creates technical ambiguity (e.g. omitting a step from an ordered procedure)
 - User asks to clarify or repeats a question
 
-Extend this to swe-workbench destructive workflows: `swe-workbench:migrate`, `workflow-cleanup-merged`, `workflow-address-feedback` — render confirmation steps in full prose.
+Extend this to swe-workbench destructive workflows: `swe-workbench:migrate`, `swe-workbench:workflow-cleanup-merged`, `swe-workbench:workflow-address-feedback` — render confirmation steps in full prose.
 
 Resume the chosen caveman level immediately after the clear part is done.
 

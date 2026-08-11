@@ -8,7 +8,7 @@ orchestrator: true
 
 ## What this mode is
 
-`workflow-grill` runs in the **orchestrator** (main conversation thread), inside a command's clarify
+`swe-workbench:workflow-grill` runs in the **orchestrator** (main conversation thread), inside a command's clarify
 step, **before** any subagent is delegated to. It is not a standalone workflow — it is a mode
 gate activated by the interrogation prelude in the seven interactive commands.
 
@@ -17,7 +17,7 @@ artifact/delegation step (the same way a ticket-context summary is prepended).
 
 Because `AskUserQuestion` is a main-thread tool, this entire loop must stay in the orchestrator.
 Never embed it in a shared subagent — it would leak the mode gate into flows that don't use it
-(e.g. `product-manager` is shared with `/swe-workbench:report-issue`; `senior-engineer` is consulted by
+(e.g. `swe-workbench:product-manager` is shared with `/swe-workbench:report-issue`; `swe-workbench:senior-engineer` is consulted by
 `/swe-workbench:implement`).
 
 ## Procedure
@@ -94,7 +94,7 @@ Cite evidence precisely: `path/to/file:42`, not "I found it in the codebase."
 
 ## Boundary — workflow-grill vs superpowers:brainstorming
 
-| Dimension | `workflow-grill` | `superpowers:brainstorming` |
+| Dimension | `swe-workbench:workflow-grill` | `superpowers:brainstorming` |
 |-----------|------------------|-----------------------------|
 | Entry point | Inside a scoped command's clarify step | From-scratch idea → design-doc flow |
 | Trigger | `--grill` flag or "grill me" in a command invocation | Before entering plan mode on a new idea |

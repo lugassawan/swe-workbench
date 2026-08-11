@@ -6,7 +6,7 @@ description: Refactoring discipline — Fowler's catalog of behavior-preserving 
 
 # Refactoring Discipline
 
-Structural change without behavior change. For the GoF pattern catalog, see `principle-design-patterns`. For naming and function-length aesthetics, see `principle-clean-code`.
+Structural change without behavior change. For the GoF pattern catalog, see `swe-workbench:principle-design-patterns`. For naming and function-length aesthetics, see `swe-workbench:principle-clean-code`.
 
 ## The discipline
 
@@ -21,8 +21,8 @@ Four non-negotiable rules:
 
 | Smell | Triggering move(s) |
 |---|---|
-| Long Method | Extract Function, Decompose Conditional, Replace Temp with Query — *Quality stage (`workflow-development`) gives the objective trigger via cyclomatic / cognitive complexity thresholds* |
-| Large Class | Extract Class, Extract Interface, Move Function — *Quality stage (`workflow-development`) gives the objective trigger via file / class length* |
+| Long Method | Extract Function, Decompose Conditional, Replace Temp with Query — *Quality stage (`swe-workbench:workflow-development`) gives the objective trigger via cyclomatic / cognitive complexity thresholds* |
+| Large Class | Extract Class, Extract Interface, Move Function — *Quality stage (`swe-workbench:workflow-development`) gives the objective trigger via file / class length* |
 | Feature Envy | Move Function, Move Field |
 | Data Clumps | Introduce Parameter Object, Extract Class |
 | Primitive Obsession | Replace Primitive with Object, Introduce Parameter Object |
@@ -46,11 +46,11 @@ Four non-negotiable rules:
 
 ## Rule of three
 
-Two similar instances tolerate duplication; a third triggers extraction — see `principle-clean-code` for the full DRY rationale. Guard against premature abstraction: one caller does not justify a shared helper.
+Two similar instances tolerate duplication; a third triggers extraction — see `swe-workbench:principle-clean-code` for the full DRY rationale. Guard against premature abstraction: one caller does not justify a shared helper.
 
 ## Characterization tests first
 
-Before touching legacy code with no test coverage, write characterization tests that lock in current behavior — even if the behavior is wrong. These tests become your safety net; they should pass before and after every refactoring step. For the technique in full, see `principle-testing`.
+Before touching legacy code with no test coverage, write characterization tests that lock in current behavior — even if the behavior is wrong. These tests become your safety net; they should pass before and after every refactoring step. For the technique in full, see `swe-workbench:principle-testing`.
 
 ## When refactoring is overkill
 

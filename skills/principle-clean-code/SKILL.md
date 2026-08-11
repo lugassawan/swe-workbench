@@ -64,7 +64,7 @@ An **unnecessary comment** is any of:
 
 Don't abstract on first duplication. Extract on the third occurrence. Two is coincidence; three is pattern.
 
-*Duplication detectors (`jscpd`, `dupl`, `mvn pmd:cpd-check`) give an objective signal — see the Quality stage in `workflow-development`.*
+*Duplication detectors (`jscpd`, `dupl`, `mvn pmd:cpd-check`) give an objective signal — see the Quality stage in `swe-workbench:workflow-development`.*
 
 ## KISS
 

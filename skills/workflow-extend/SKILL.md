@@ -47,7 +47,7 @@ Obtain a Unix timestamp: `TS=$(date +%s)`. Write spec to `/tmp/extend-${TS}.md` 
 |---|---|
 | "consult senior-engineer" / "this is architectural" | Invoke `swe-workbench:senior-engineer` subagent for a boundary read; fold its AC output into the spec before confirming. |
 | "frame as a bug" / "this is a regression" | Route entirely to `swe-workbench:debugger` subagent; skip Phases B–D (debugger has its own verify+review loop). Commit per debugger output on the existing branch. |
-| "also file an issue" / "track this in github" | After Phase D delivery, chain `product-manager` agent (its confirm gate handles filing). |
+| "also file an issue" / "track this in github" | After Phase D delivery, chain `swe-workbench:product-manager` agent (its confirm gate handles filing). |
 
 ## Phase B — Plan (extend section)
 
@@ -108,7 +108,7 @@ The `Ref: extend-${TS}` commit traceability string remains in git history; only 
 
 ## Project Detection
 
-Inherits detections from `workflow-development` for shared markers; adds extend-specific PR markers.
+Inherits detections from `swe-workbench:workflow-development` for shared markers; adds extend-specific PR markers.
 
 **Detection markers** used by `templates/plan-extend-section.md`:
 
@@ -140,5 +140,5 @@ Inherits detections from `workflow-development` for shared markers; adds extend-
 | Auto-creating a new PR | Never call `gh pr create` when an open PR exists. Use `Update existing PR` path. |
 | Skipping Verify because "small change" | Always run Phase 3. Small changes have bugs too. |
 | Forgetting `Ref: extend-<ts>` in commit body | The commit body traceability line is required — include it every time. |
-| Invoking `senior-engineer` heuristically | Only on explicit user opt-in. Never auto-route to escalation agents. |
-| Calling `workflow-development` Phase 1 | Phase 1 is intentionally skipped. Cite `skip-phase-1` rationale explicitly. |
+| Invoking `swe-workbench:senior-engineer` heuristically | Only on explicit user opt-in. Never auto-route to escalation agents. |
+| Calling `swe-workbench:workflow-development` Phase 1 | Phase 1 is intentionally skipped. Cite `skip-phase-1` rationale explicitly. |

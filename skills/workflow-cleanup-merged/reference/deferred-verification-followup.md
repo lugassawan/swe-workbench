@@ -61,7 +61,7 @@ lines.
    <path> [--label <label>]` line. Print the preview; **wait for the literal `confirm` reply** —
    never file before it.
 5. On `confirm`: run the sidecar command, return the issue URL, then reap both temp files via
-   `swe-workbench-clean-state-files` (same pattern as `workflow-audit-emit-issues` Phase 4).
+   `swe-workbench-clean-state-files` (same pattern as `swe-workbench:workflow-audit-emit-issues` Phase 4).
 
 ## Create a test branch
 
@@ -81,6 +81,6 @@ No action. Note "skipped" in the Step 7 report's 5th line.
 | Mistake | Fix |
 |---|---|
 | Running Step 8 before Steps 3–6 finish | Never — the marker check and offer always come last. |
-| Filing the issue without the `confirm` gate | Preview first, always. Same discipline as `workflow-audit-emit-issues`. |
+| Filing the issue without the `confirm` gate | Preview first, always. Same discipline as `swe-workbench:workflow-audit-emit-issues`. |
 | Treating marker-absent as an error | It's the common case — most merges never had deferred verification. Silent no-op. |
 | Re-syncing the default branch for the test-branch option | Step 3 already synced it this run — reuse, don't re-fetch. |

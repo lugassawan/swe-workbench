@@ -13,7 +13,7 @@ README = ROOT / "README.md"
 
 
 def test_architect_command_file_exists():
-    """commands/architect.md must exist, have valid frontmatter, and reference `architect`."""
+    """commands/architect.md must exist, have valid frontmatter, and reference `swe-workbench:architect`."""
     assert ARCHITECT_CMD.exists(), "commands/architect.md must exist"
     text = ARCHITECT_CMD.read_text()
     fm = validate.parse_frontmatter(ARCHITECT_CMD, text=text)

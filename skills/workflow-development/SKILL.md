@@ -114,7 +114,7 @@ Choose execution strategy:
 - **No plan / ad-hoc** → implement directly with `swe-workbench:principle-tdd` per unit
 - **Scope/complexity warrants isolation** → invoke `swe-workbench:workflow-delegated-implementation` to group changes and dispatch each cohesive group to a focused `swe-workbench:code-impl` sub-agent; consume the summary (not the diff) to stay lean
 
-If a delegated `code-impl` run returns with verification evidence, mark Phase 3 "completed by sub-skill" per the deduplication rule above.
+If a delegated `swe-workbench:code-impl` run returns with verification evidence, mark Phase 3 "completed by sub-skill" per the deduplication rule above.
 
 Commit logically grouped changes as you go. Never bundle unrelated changes.
 
@@ -201,7 +201,7 @@ Reproduce the template's `## Workflow` body **in full and verbatim** — copy ev
 
 | Phase | Failure | Skip condition |
 |-------|---------|----------------|
-| 1 | Tests fail on baseline → report, ask to proceed | When caller passes `skip-phase-1: <rationale>` — branch already exists (e.g. invoked by `workflow-extend`) |
+| 1 | Tests fail on baseline → report, ask to proceed | When caller passes `skip-phase-1: <rationale>` — branch already exists (e.g. invoked by `swe-workbench:workflow-extend`) |
 | 2 | Implementation blocked → stop, ask for clarification | Never |
 | 3 | Verification fails → fix, re-run from imports | Sub-skill verified with evidence |
 | 4 | Critical review issues → fix, re-verify, re-review | Sub-skill reviewed with evidence |

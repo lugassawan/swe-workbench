@@ -25,10 +25,10 @@ Root-cause investigation is delegated — do NOT re-derive the discipline.
 
 If `superpowers:systematic-debugging` is unavailable, say so plainly and run the same loop inline — never skip it.
 
-## Boundary vs. `refactorer`
+## Boundary vs. `swe-workbench:refactorer`
 
-- `refactorer` preserves behavior. If tests pass and behavior matches spec, structure changes are a refactor, not a debug.
-- `debugger` changes behavior so it matches spec. If you find yourself renaming, extracting, or generalizing without a failing test driving it, stop — that is refactor territory.
+- `swe-workbench:refactorer` preserves behavior. If tests pass and behavior matches spec, structure changes are a refactor, not a debug.
+- `swe-workbench:debugger` changes behavior so it matches spec. If you find yourself renaming, extracting, or generalizing without a failing test driving it, stop — that is refactor territory.
 - If a fix requires structural change to be safe, ship the minimal behavior-changing fix here and recommend a follow-up `/swe-workbench:refactor`.
 
 ## Principle lens (what makes this swe-workbench-shaped)

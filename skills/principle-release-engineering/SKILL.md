@@ -74,7 +74,7 @@ Every release must have a documented rollback path *before* shipping — not dis
 | Bug in new version | Hotfix release (PATCH bump) or yank + re-publish previous |
 | Breaking change escaped | Revert via expand-contract Phase 1 (old interface was never removed) |
 | Infrastructure regression | Feature-flag disable or blue-green flip to previous slot |
-| Data corruption | Point-in-time restore + dual-write replay (see `migrator` agent) |
+| Data corruption | Point-in-time restore + dual-write replay (see `swe-workbench:migrator` agent) |
 
 A **kill-switch** is a feature flag that disables a feature in production without a redeploy. Gate high-risk features behind a flag before release so the rollback is a config change, not a hotfix deploy. Plan the flag's removal cadence upfront — a kill-switch left in permanently becomes an untested code path and an operational liability.
 

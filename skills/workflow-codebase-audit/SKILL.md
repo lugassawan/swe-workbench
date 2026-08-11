@@ -6,7 +6,7 @@ orchestrator: true
 
 # Workflow: Codebase Audit (cold-start multi-domain sweep)
 
-**Announce at start:** "Activating `workflow-codebase-audit` to run the cold-start audit sweep."
+**Announce at start:** "Activating `swe-workbench:workflow-codebase-audit` to run the cold-start audit sweep."
 
 ## When to invoke
 
@@ -17,9 +17,9 @@ orchestrator: true
 
 ## When NOT to invoke
 
-- Single-domain security audit → use `security-auditor` directly (depth-first, OWASP-focused).
+- Single-domain security audit → use `swe-workbench:security-auditor` directly (depth-first, OWASP-focused).
 - Known bug with a repro → use `/swe-workbench:debug` (root-cause + fix lifecycle).
-- PR diff review → use `/swe-workbench:review` or `workflow-pr-review`.
+- PR diff review → use `/swe-workbench:review` or `swe-workbench:workflow-pr-review`.
 - Code already familiar; you know what to look for → run targeted tools directly.
 
 ## Composition

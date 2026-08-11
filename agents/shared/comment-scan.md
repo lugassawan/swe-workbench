@@ -1,6 +1,6 @@
 # Comment-scan invocation
 
-Advisory scan for unnecessary or over-cap comments, backing `principle-clean-code`'s
+Advisory scan for unnecessary or over-cap comments, backing `swe-workbench:principle-clean-code`'s
 Comment discipline caps with a deterministic, checkable artifact instead of prose recall alone.
 **Advisory-with-accounting, not a hard gate** — the scan never fails your verify step; it produces
 findings that verdict accounting (below) requires you to account for before calling verify done.
@@ -30,7 +30,7 @@ preflight — don't drop the check when copying the snippet.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work
 in one pass without picking up main's own post-branch-point changes as if they were yours. If
 `MERGE_BASE` comes back empty (unrelated-history repo), the fallback diffs straight against the
-branch tip — same defensive posture as `workflow-branch-sync`'s redundancy-check capture.
+branch tip — same defensive posture as `swe-workbench:workflow-branch-sync`'s redundancy-check capture.
 
 ## Verdict accounting
 

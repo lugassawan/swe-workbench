@@ -11,7 +11,7 @@ assignees: ''
 <!-- Check all that apply. -->
 - [ ] Skill — `principle-*`
 - [ ] Skill — `language-*`
-- [ ] Skill — integration (`ticket-context`)
+- [ ] Skill — integration (`swe-workbench:ticket-context`)
 - [ ] Skill — `workflow-*`
 - [ ] Subagent
 - [ ] Slash command
@@ -19,7 +19,7 @@ assignees: ''
 - [ ] Documentation
 - [ ] Build / CI / release
 
-**Specific surface** (e.g., `principle-tdd`, `/swe-workbench:review`, `debugger`):
+**Specific surface** (e.g., `swe-workbench:principle-tdd`, `/swe-workbench:review`, `swe-workbench:debugger`):
 
 ## Claude Code version
 

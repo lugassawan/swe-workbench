@@ -1,7 +1,7 @@
 """Structural tests: authoring flow wires comment-quality caps (closes #509).
 
 Acceptance criteria: the primary enforcement path (authoring, not just review)
-must reference `principle-clean-code`'s Comment discipline caps *as a stated
+must reference `swe-workbench:principle-clean-code`'s Comment discipline caps *as a stated
 rule*, not merely as an incidental co-occurring string, so new comments comply
 on the first pass rather than relying solely on the review backstop.
 """

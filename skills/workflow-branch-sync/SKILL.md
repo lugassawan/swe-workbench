@@ -16,7 +16,7 @@ orchestrator: true
 
 ## What This Skill Does NOT Do
 
-- Does not open, merge, or comment on a PR — that is `workflow-commit-and-pr` / the user's action.
+- Does not open, merge, or comment on a PR — that is `swe-workbench:workflow-commit-and-pr` / the user's action.
 - Does not resolve any conflict without first showing both sides and a recommendation with rationale.
 - Does not auto-push — ever. The push is a separate, explicitly prompted step at the end.
 - Does not rewrite history beyond the single merge or rebase the user asked for.
@@ -159,7 +159,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 
 - **Yes, and `SYNC_STRATEGY` was `merge`** → `git push`.
 - **Yes, and `SYNC_STRATEGY` was `rebase`** → `git push --force-with-lease`. Force-push surfaces **only** here, under `--rebase` — never anywhere else in this skill. This branches on `SYNC_STRATEGY`, not `OPERATION` — `OPERATION` is `none` for the common clean-sync case and would otherwise leave a `--rebase` sync with no push path at all.
-- **No** → stop. The result stays local; the user pushes later at their own discretion (follow `workflow-commit-and-pr` push conventions if they ask for help with that later — this is an async handoff, not this skill's job to chase).
+- **No** → stop. The result stays local; the user pushes later at their own discretion (follow `swe-workbench:workflow-commit-and-pr` push conventions if they ask for help with that later — this is an async handoff, not this skill's job to chase).
 
 ## Failure Mode Table
 
@@ -169,7 +169,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Detached HEAD | `DETACHED=1` | Refuse. Ask the user to checkout a branch first. |
 | Dirty working tree | `DIRTY>0` | Offer stash-or-abort before touching history. Never proceed dirty. |
 | Mechanical sync itself fails (not a conflict — e.g. network) | Non-zero exit from `rimba sync` / `git fetch` / `git merge` / `git rebase` with no `MERGE_HEAD`/`rebase-merge` present | Report the error verbatim. Do not enter the resolve loop. |
-| `conflict-resolver` subagent cannot form a confident recommendation | Subagent emits `**Resolution: MANUAL**` | Route to the manual path — never force a keep-mine/keep-main guess. |
+| `swe-workbench:conflict-resolver` subagent cannot form a confident recommendation | Subagent emits `**Resolution: MANUAL**` | Route to the manual path — never force a keep-mine/keep-main guess. |
 | Rebase pauses again after `git rebase --continue` | Fresh `OPERATION=rebase` with non-empty `UNMERGED` from Step 4 | Loop back into Step 5. Do not treat the first `--continue` as completion. |
 | User declines to stash a dirty tree | User says no at Step 1 | Abort. Do not force-stash. |
 | rimba worktree but binary/MCP both unavailable mid-session | `$RIMBA` empty and MCP not active | Fall through to the shell fallback — never block on rimba's absence. |
@@ -179,9 +179,9 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Clean sync with `SYNC_STRATEGY=rebase` has no push path | N/A — this skill branches Step 7 on `SYNC_STRATEGY`, not `OPERATION` (which is `none` on a clean sync) | N/A — documented so a future edit doesn't regress to reading `OPERATION` for push branching. |
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 7 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 | `--check-redundancy` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 6 with a one-line reason ("unrelated histories") — never crash, never treat this as a sync failure. |
-| `redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
+| `swe-workbench:redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
 | `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. <!-- validate: prose-ref --> |
-| `redundancy-scope.sh` enumerated a candidate but `redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
+| `redundancy-scope.sh` enumerated a candidate but `swe-workbench:redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
 | A branch and main both add the identical path (add/add conflict) | The path already appeared in Step 5's resolved `UNMERGED` list, yet also surfaces as a Step 6 `CANDIDATE` | Narrow overlap: the two steps can disagree since Step 6 reasons independently. Prefer the Step 5 resolution — Step 5's keep-mine/keep-main choice for a path already-resolved there takes precedence over a same-path Step 6 finding. |
 
 ## Common Mistakes
@@ -192,7 +192,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Assume `mcp__rimba__sync` defaults match this skill's defaults | They don't. rimba's `sync` **rebases by default** (pass `merge: true` for merge) and **pushes by default** (pass `no_push: true` to suppress it). This skill defaults to **merge** and **never** auto-pushes. Always pass `no_push: true` / `--no-push` regardless of strategy. |
 | Hardcode `main` as the default branch | Never. `preflight-guard.sh` detects `DEFAULT_BRANCH` via `gh repo view` with a `git symbolic-ref` fallback — the plugin runs against arbitrary repos. |
 | Treat the first `git rebase --continue` as "done" | A rebase replays one commit at a time and can pause again on the very next one. Re-run `detect-conflicts.sh` after every `--continue` and loop back into Step 5 until `OPERATION=none`. |
-| Resolve a file without showing both sides | Always present both sides plus the `conflict-resolver` subagent's per-hunk rationale before prompting keep-mine/keep-main/manual — resolving is review-and-confirm, not a guess. |
+| Resolve a file without showing both sides | Always present both sides plus the `swe-workbench:conflict-resolver` subagent's per-hunk rationale before prompting keep-mine/keep-main/manual — resolving is review-and-confirm, not a guess. |
 | Push automatically once conflicts are resolved | Never. Step 7 always stops and prompts — the result is left local until the user explicitly opts in. |
 | Use plain `git push --force` after a rebase | Always `--force-with-lease` — it aborts if the remote moved since the last fetch, instead of silently clobbering someone else's push. |
 | Stage a manually-edited file on confirmation alone | Grep for `<<<<<<<`/`=======`/`>>>>>>>` markers first — a premature confirmation or a missed hunk can leave literal conflict-marker text in the file, which stages and commits broken content. |
@@ -200,6 +200,6 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Branch Step 7's push logic on `OPERATION` | Don't — `OPERATION` is `none` on a clean sync (the common case), so an `OPERATION`-keyed branch has no path for a clean `--rebase` sync's required `--force-with-lease` push. Capture the resolved strategy into `SYNC_STRATEGY` in Step 3 and branch Step 7 on that instead. |
 | Leave a pre-sync stash unpopped after a successful sync | Always attempt `git stash pop` at the start of Step 7 when `STASHED=1` — a forgotten stash silently parks the user's uncommitted work indefinitely across repeated syncs. |
 | Run the Step 6 redundancy assessment on every sync | Don't — it's opt-in via `--check-redundancy`; default `CHECK_REDUNDANCY=off` means plain `sync` never reaches Step 6 and stays byte-for-byte unchanged. |
-| Trust the `redundancy-assessor` subagent's id or path text directly | Don't — always resolve the actionable path from `redundancy-scope.sh`'s own `CANDIDATE` record for that id, and reject any id the script didn't enumerate. The skill never evals or trusts agent free-text for an actionable path. |
+| Trust the `swe-workbench:redundancy-assessor` subagent's id or path text directly | Don't — always resolve the actionable path from `redundancy-scope.sh`'s own `CANDIDATE` record for that id, and reject any id the script didn't enumerate. The skill never evals or trusts agent free-text for an actionable path. |
 | Trust an `AUTO-APPLY` sentinel's tier label at face value | Don't — the tier label is still the subagent's free text. Re-derive that id's own `refs=<count>` from the script's `CANDIDATE` line and downgrade to `ESCALATE` if nonzero, before the tiered gate acts. |
 | Auto-apply a symbol-level or referenced (`refs>0`) redundancy finding | Don't — Step 6's tiered gate permits `AUTO-APPLY` only for whole-file, `refs=0` candidates; anything else escalates to the user regardless of the subagent's confidence. |

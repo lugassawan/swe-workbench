@@ -35,7 +35,7 @@ The resolution itself happens at the top of Step 1 (the `case "$MODE"` block), w
 ## When NOT to invoke
 
 - Local-diff review (working tree / staged / branch diff) → use `commands/review.md` no-arg directly. The command stays the entrypoint for local-diff mode.
-- `workflow-development` Phase 4 → keeps using local-diff review (no remote PR exists yet during implementation).
+- `swe-workbench:workflow-development` Phase 4 → keeps using local-diff review (no remote PR exists yet during implementation).
 - The user wants to post a single comment without running a full review → out of scope.
 - The PR is closed/merged → out of scope for first-pass too, but followup mode additionally hard-gates on this (see Step 1).
 
@@ -133,11 +133,11 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 ### Step 6 — Invoke the posting core
 
-Parse Step 4's `reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `line`, `body`); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
+Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `line`, `body`); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
 
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
-- `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `reviewer`_ `` for first-pass, `` _Re-reviewed by `reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
+- `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `swe-workbench:reviewer`_ `` for first-pass, `` _Re-reviewed by `swe-workbench:reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `CALLER_TAG` — `$CALLER_TAG` from the mode table above (`general` / `followup`; scopes the core's own threads-cache filename so it never collides with a concurrent run of the other mode or a specialist run on the same PR).
 - `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `FINDINGS[]` — as parsed above.

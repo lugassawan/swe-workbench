@@ -5,7 +5,7 @@ description: Use to understand an unfamiliar codebase — presents architecture 
 
 # Workflow: Codebase Knowledge
 
-**Announce at start:** "Activating `workflow-codebase-knowledge` to present a structured knowledge document."
+**Announce at start:** "Activating `swe-workbench:workflow-codebase-knowledge` to present a structured knowledge document."
 
 ## When to invoke
 
@@ -17,7 +17,7 @@ description: Use to understand an unfamiliar codebase — presents architecture 
 ## When NOT to invoke
 
 - **Defect detection or ranked findings** → use `swe-workbench:workflow-codebase-audit` (cold-start multi-axis sweep with reasoning chains and severity ranking).
-- **Generating new prose documentation** (READMEs, ADRs, ARCHITECTURE files) → use `/swe-workbench:document` which delegates to the `tech-writer` subagent.
+- **Generating new prose documentation** (READMEs, ADRs, ARCHITECTURE files) → use `/swe-workbench:document` which delegates to the `swe-workbench:tech-writer` subagent.
 - **Known bug with a repro** → use `/swe-workbench:debug`.
 - **PR diff review** → use `/swe-workbench:review`.
 
@@ -134,4 +134,4 @@ Preferred formats: `flowchart LR`, `sequenceDiagram`, `graph TD`.
 - **Never invent structure.** Every module, API, and pattern listed must be traceable to actual code. If a module's purpose is unclear, say so — do not guess.
 - **Cap diagrams.** At most 1 diagram per output section; omit when the signal-to-noise rule says Skip.
 - **Omit empty sections.** If Phase 3 yields no public API surface, omit the Public API surfaces section entirely. Silence is correct; padding misleads.
-- **No defect reporting.** This skill presents structure; it does not rank findings, assign severity, or suggest fixes. Route those needs to `workflow-codebase-audit`.
+- **No defect reporting.** This skill presents structure; it does not rank findings, assign severity, or suggest fixes. Route those needs to `swe-workbench:workflow-codebase-audit`.

@@ -20,7 +20,7 @@ orchestrator: true
 - The PR is already merged → use `swe-workbench:workflow-cleanup-merged` for post-merge cleanup.
 - The user wants to amend or rebase an existing commit → out of scope; do not amend or force-push.
 - The user is staging files only (`git add`) with no commit intent → no skill needed.
-- `workflow-development` Phase 5 is currently driving the flow → that path invokes `swe-workbench:workflow-commit-and-pr` directly (do not interpose).
+- `swe-workbench:workflow-development` Phase 5 is currently driving the flow → that path invokes `swe-workbench:workflow-commit-and-pr` directly (do not interpose).
 
 ## Trigger-phrase discipline
 
