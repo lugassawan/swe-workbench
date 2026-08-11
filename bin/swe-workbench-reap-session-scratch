@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# swe-workbench-reap-session-scratch
+#
+# Clear the CURRENT harness session's scratchpad contents, but only after proving the
+# target is a sanctioned artifact — same earn-the-unattended-rm-rf discipline as
+# swe-workbench-reap-run-dir, adapted to a self-derived (not caller-supplied) target.
+#
+# Unlike swe-workbench-reap-run-dir, this script takes no path argument: it derives its own
+# target from $CLAUDE_CODE_SESSION_ID plus a filesystem glob, and any guard failure is a
+# silent no-op (stderr note, always exit 0) rather than exit 1 — a version-fragile,
+# undocumented harness path layout should degrade to "did nothing" on drift, never abort
+# a cleanup flow whose other steps have already run.
+#
+# Resolution (structural, not derived from cwd — a session may have started inside a
+# worktree, so any project slug guessed from cwd would be wrong; the session id alone is
+# unique across projects, so the wildcard project segment cannot over-match):
+#   $CLAUDE_CODE_SESSION_ID must be set and match ^[0-9a-fA-F-]{36}$
+#   glob: /tmp/claude-$(id -u)/*/${CLAUDE_CODE_SESSION_ID}/scratchpad
+#   Exactly one match is required — zero or multiple hits is a no-op.
+#
+# Guards (ALL must pass; mirrors swe-workbench-reap-run-dir):
+#   1. Basename is exactly "scratchpad".
+#   2. Canonicalized parent directory's basename equals $CLAUDE_CODE_SESSION_ID — this
+#      also catches a session-id path segment that is itself a symlink resolving
+#      somewhere with a different final name.
+#   3. That canonicalized parent's grandparent is /tmp/claude-<uid> (canonical or raw
+#      /tmp spelling) — catches a symlink escaping the uid root entirely.
+#   4. Target is a directory, not a symlink, owned by the current user ([ -O ]).
+#   5. No .git entry at depth 1 inside the target — keeps scratch and worktree domains
+#      disjoint by construction.
+#
+# Behaviour: deletes the directory's CONTENTS, never the directory itself — cleanup-merged
+# can run mid-session (Mode C orchestration, once per merge round), so later writes in the
+# same session must still land in a directory that still exists. Prints
+# SWEPT_SESSION_FILES=<n>, a top-level entry count (not a recursive file count). Always
+# exits 0.
+#
+# Call form:
+#   eval "$(swe-workbench-reap-session-scratch)"
+
+set -euo pipefail
+
+note() {
+  printf 'reap-session-scratch: %s\n' "$*" >&2
+}
+
+SWEPT=0
+
+emit() {
+  printf 'SWEPT_SESSION_FILES=%s\n' "$SWEPT"
+  exit 0
+}
+
+reject() {
+  note "$*"
+  emit
+}
+
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+
+[ -n "$SESSION_ID" ] || reject "CLAUDE_CODE_SESSION_ID is not set — skipping"
+
+if ! printf '%s' "$SESSION_ID" | grep -qE '^[0-9a-fA-F-]{36}$'; then
+  reject "CLAUDE_CODE_SESSION_ID does not look like a session UUID — skipping"
+fi
+
+UID_N="$(id -u)"
+RAW_UID_ROOT="/tmp/claude-${UID_N}"
+CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
+UID_ROOT="${CANON_TMP}/claude-${UID_N}"
+
+is_uid_root() {
+  [ "$1" = "$UID_ROOT" ] || [ "$1" = "$RAW_UID_ROOT" ]
+}
+
+shopt -s nullglob
+MATCHES=("$RAW_UID_ROOT"/*/"$SESSION_ID"/scratchpad)
+shopt -u nullglob
+
+[ "${#MATCHES[@]}" -gt 0 ] || reject "no scratchpad directory found for this session — skipping"
+[ "${#MATCHES[@]}" -eq 1 ] || reject "multiple scratchpad directories matched for this session — skipping"
+
+TARGET="${MATCHES[0]}"
+base="$(basename "$TARGET")"
+# Defensive, not load-bearing: the glob's trailing segment is the literal "scratchpad",
+# so this can never actually fail — kept for symmetry with swe-workbench-reap-run-dir.
+[ "$base" = "scratchpad" ] || reject "unexpected basename: $base"
+
+parent="$(dirname "$TARGET")"
+canon_parent=$(cd "$parent" 2>/dev/null && pwd -P) || canon_parent="$parent"
+canon_target="${canon_parent}/${base}"
+
+parent_base="$(basename "$canon_parent")"
+[ "$parent_base" = "$SESSION_ID" ] || reject "scratchpad parent does not resolve to the session id: $parent_base"
+
+canon_grandparent="$(dirname "$canon_parent")"
+canon_ggparent="$(dirname "$canon_grandparent")"
+is_uid_root "$canon_ggparent" || reject "scratchpad does not resolve under $RAW_UID_ROOT: $canon_ggparent"
+
+if [ ! -e "$canon_target" ] && [ ! -L "$canon_target" ]; then
+  reject "scratchpad directory vanished before removal — skipping"
+fi
+
+[ ! -L "$canon_target" ] || reject "scratchpad path is a symlink: $canon_target"
+[ -d "$canon_target" ] || reject "scratchpad path is not a directory: $canon_target"
+[ -O "$canon_target" ] || reject "scratchpad is not owned by the current user: $canon_target"
+[ ! -e "$canon_target/.git" ] || reject "refusing to touch a scratchpad containing .git: $canon_target"
+
+shopt -s nullglob dotglob
+for entry in "$canon_target"/*; do
+  if rm -rf -- "$entry" 2>/dev/null; then
+    SWEPT=$((SWEPT + 1))
+  else
+    note "failed to remove $entry — leaving it in place"
+  fi
+done
+shopt -u nullglob dotglob
+
+emit

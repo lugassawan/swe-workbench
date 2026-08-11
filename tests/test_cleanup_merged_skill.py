@@ -377,20 +377,53 @@ def test_cleanup_merged_step7_report_includes_sweep_line():
     )
 
 
-def test_cleanup_merged_step5_scratchpad_prose_is_scoped():
-    """Step 5's scratchpad-cleanup instruction must be explicitly scoped to the PR.
+def test_cleanup_merged_step7_report_includes_session_residuals_line():
+    """Step 7's report block must also document the session-residual sweep result
+    (SWEPT_SESSION_FILES/SWEPT_RUN_DIRS) — issue #595, PR #597 review feedback.
 
-    The plan requires prose (not shipped shell code) telling the agent to delete
-    only scratchpad files it itself created for this PR's work, scoped to #N,
-    and never a blanket wipe of the scratchpad directory.
+    A prior version of this file only had test_cleanup_merged_step7_report_includes_sweep_line,
+    whose assertion is already satisfied by pre-existing text (SWEPT_WORKTREES/'Residual sweep'),
+    so it silently passed regardless of whether this newer line was present, garbled, or dropped.
+    """
+    body = SKILL.read_text()
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
+
+    assert "Session residuals" in step7_slice, (
+        "Step 7's report block must include a 'Session residuals' line"
+    )
+    assert "SWEPT_SESSION_FILES" in step7_slice, (
+        "Step 7's report block must reference SWEPT_SESSION_FILES"
+    )
+    assert "SWEPT_RUN_DIRS" in step7_slice, (
+        "Step 7's report block must reference SWEPT_RUN_DIRS"
+    )
+
+
+def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
+    """Step 5's session-scratchpad sweep must be documented as scoped by session id,
+    deliberately NOT scoped to #<number> — issue #595 / AC4: scratchpad residuals
+    never carry a #<number> token, so PR-keyed name matching can never reach them.
+    This replaced the old prose instruction telling the agent to hunt them down
+    manually; the sweep is now shipped shell code.
+
+    Prose intentionally avoids the "Block C"/"Block D" labels used in
+    sweep-residuals.sh's own comments — Step 3 already uses "Block D" for an
+    unrelated sync-and-verify.sh concept (hook-interruption detection), and
+    reusing the letter in Step 5's prose would be ambiguous within the same file.
     """
     body = SKILL.read_text()
     step5_slice = body.split("### Step 5 — Residual Sweep")[1].split("### Step 6 — Delete Branches")[0]
 
-    assert "scoped to" in step5_slice, (
-        "Step 5 must contain 'scoped to' language for the scratchpad-cleanup instruction"
+    assert "run-dir sweep" in step5_slice, "Step 5 must document the run-dir sweep"
+    assert "session-scratchpad sweep" in step5_slice, (
+        "Step 5 must document the session-scratchpad sweep"
     )
-    assert "never a blanket" in step5_slice, (
-        "Step 5 must contain 'never a blanket' language ruling out a blanket "
-        "scratchpad-directory wipe"
+    assert "not" in step5_slice and "#<number>" in step5_slice, (
+        "Step 5 must explicitly note the session-scratchpad sweep is NOT scoped to #<number>"
+    )
+    assert "session id" in step5_slice or "CLAUDE_CODE_SESSION_ID" in step5_slice, (
+        "Step 5 must explain the scratchpad sweep is scoped structurally by session id"
+    )
+    assert "silent no-op" in step5_slice, (
+        "Step 5 must note that a guard failure degrades to a silent no-op rather than aborting"
     )

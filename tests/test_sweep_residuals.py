@@ -88,7 +88,14 @@ def _run_script(repo: Path, n: str, env: dict) -> subprocess.CompletedProcess:
     )
 
 
-def _assert_contract(result: subprocess.CompletedProcess, swept_wt: str, swept_sf: str, residual_none: str) -> None:
+def _assert_contract(
+    result: subprocess.CompletedProcess,
+    swept_wt: str,
+    swept_sf: str,
+    residual_none: str,
+    swept_rd: str = "0",
+    swept_ssf: str = "0",
+) -> None:
     assert result.returncode == 0, (
         f"Script must always exit 0 (rc={result.returncode})\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
@@ -97,6 +104,8 @@ def _assert_contract(result: subprocess.CompletedProcess, swept_wt: str, swept_s
     expected = [
         f"SWEPT_WORKTREES={swept_wt}",
         f"SWEPT_STATE_FILES={swept_sf}",
+        f"SWEPT_RUN_DIRS={swept_rd}",
+        f"SWEPT_SESSION_FILES={swept_ssf}",
         f"RESIDUAL_NONE={residual_none}",
     ]
     assert lines == expected, (
@@ -358,6 +367,115 @@ class TestStateFileReap:
             assert other_file.exists(), "an unrelated PR's state file must survive"
         finally:
             other_file.unlink(missing_ok=True)
+
+
+# ── Block C: run-dir orphans ─────────────────────────────────────────────
+
+
+RUN_ROOT = TMP / "swe-workbench-run"
+
+
+class TestRunDirOrphanReap:
+    """<N>-keyed by the run-dir naming convention itself — same safety argument
+    as Blocks A/B: Step 2 already proved #N is MERGED before this script runs."""
+
+    def test_orphaned_run_dir_reaped(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        run_dir = RUN_ROOT / f"pr-review-{n}-a1b2c3"
+        run_dir.mkdir()
+        (run_dir / "leftover.json").write_text("{}")
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not run_dir.exists(), "orphaned run dir must be reaped"
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_multiple_run_dirs_for_same_pr_all_reaped(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        d1 = RUN_ROOT / f"pr-review-{n}-a1b2c3"
+        d2 = RUN_ROOT / f"review-security-{n}-d4e5f6"
+        d1.mkdir()
+        d2.mkdir()
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "0", swept_rd="2")
+            assert not d1.exists()
+            assert not d2.exists()
+        finally:
+            shutil.rmtree(d1, ignore_errors=True)
+            shutil.rmtree(d2, ignore_errors=True)
+
+    def test_unrelated_n_run_dir_untouched(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        other_n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        other_dir = RUN_ROOT / f"pr-review-{other_n}-d4e5f6"
+        other_dir.mkdir()
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "1")
+            assert other_dir.exists(), "an unrelated PR's run dir must survive"
+        finally:
+            shutil.rmtree(other_dir, ignore_errors=True)
+
+
+# ── Block D: session scratchpad (NOT <N>-keyed — that is the point, AC4) ────
+
+
+UID_ROOT = TMP / f"claude-{os.getuid()}"
+FAKE_SS_PROJECT = "pytest-sweep-residuals-scratch-fixture"
+FAKE_SS_SESSION_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+
+
+class TestSessionScratchpadReap:
+    def test_session_scratchpad_contents_reaped_directory_preserved(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        scratch = UID_ROOT / FAKE_SS_PROJECT / FAKE_SS_SESSION_ID / "scratchpad"
+        scratch.mkdir(parents=True, exist_ok=True)
+        (scratch / "existing_commit.diff").write_text("x")
+        (scratch / "pr_body.md").write_text("x")
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            env["CLAUDE_CODE_SESSION_ID"] = FAKE_SS_SESSION_ID
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "0", swept_ssf="2")
+            assert scratch.exists(), "the scratchpad directory itself must survive"
+            assert list(scratch.iterdir()) == []
+        finally:
+            shutil.rmtree(UID_ROOT / FAKE_SS_PROJECT, ignore_errors=True)
+
+    def test_no_session_id_env_is_noop(self, tmp_path):
+        """CLAUDE_CODE_SESSION_ID is stripped from _CLEAN_ENV — this is the default
+        environment every other test in this file already runs under."""
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        (tmp_path / "fake_home").mkdir(exist_ok=True)
+
+        result = _run_script(repo, n, env)
+        _assert_contract(result, "0", "0", "1")
 
 
 # ── eval safety (script feeds `eval "$(...)"` per the SKILL.md wiring) ──────
