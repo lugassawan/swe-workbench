@@ -9,10 +9,15 @@ description: Kotlin idioms — null safety, coroutines, sealed interfaces, scope
 - `?` makes nullability explicit in the type — `String?` vs `String`.
 - Safe-call `?.` returns null instead of throwing. Elvis `?:` provides a default.
 - **Never use `!!` in production code** — it is a promise you will never break that can't be verified.
+- Jackson does not null-check collection *elements* even with `jackson-module-kotlin` — a declared
+  `List<Content>` can hold nulls from `{"content":[null]}`. Use `filterNotNull()` (not
+  `filter { it != null }`, which leaves the type as `List<Content?>`), or
+  `@JsonSetter(contentNulls = Nulls.SKIP)` at the boundary.
 
 ```kotlin
 val length = name?.trim()?.length ?: 0
 user?.email?.let { send(it) }   // null-guard + scoping
+val ids = payload.content.filterNotNull().map { it.id }
 ```
 
 ## Data classes and sealed interfaces
@@ -120,3 +125,4 @@ fun `fetch returns cached value`() = runTest {
 - Nesting scope functions more than one level deep.
 - `lateinit var` outside dependency injection — prefer `by lazy` or constructor injection.
 - `GlobalScope` — ties coroutines to the process lifetime instead of a logical scope.
+- Trusting a declared non-null element type on a Jackson-deserialized collection.

@@ -31,10 +31,18 @@ double area = switch (shape) {
 - Return `Optional<T>` from methods that may have no result; never use it as a field or parameter type.
 - `Optional` is not a null check replacement — it signals "absence is a valid outcome."
 - Annotate parameters and fields with `@NonNull` / `@Nullable` for static analysis.
+- Jackson populates `List<T>` with literal nulls from valid JSON (`{"content":[null]}`) regardless
+  of declared nullability — filter before mapping over an externally-deserialized collection, or
+  drop them at the boundary with `@JsonSetter(contentNulls = Nulls.SKIP)`.
 
 ```java
 Optional<User> find(String id) { ... }
 find(id).map(User::email).orElseThrow(() -> new NotFoundException(id));
+
+List<String> ids = payload.content().stream()
+    .filter(Objects::nonNull)
+    .map(Content::id)
+    .toList();
 ```
 
 ## Concurrency — virtual threads (JDK 21+)
@@ -71,6 +79,7 @@ try (var conn = dataSource.getConnection()) {
 - `Stream` for transformations; avoid imperative loops when a pipeline is clearer.
 - `.toList()` (JDK 16+) over `Collectors.toList()` — returns an unmodifiable list.
 - Use `List.of`, `Map.of`, `Set.of` for small immutable collections; `Map.copyOf` to defensively copy.
+- Externally-deserialized sources may hold null elements — see Optional and null discipline.
 
 ```java
 List<String> emails = users.stream()
