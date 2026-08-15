@@ -12,6 +12,9 @@ Acceptance criteria:
   *elements*, as opposed to `nulls`, which only handles an explicit null on the property itself)
   and neither contains the bare string "nulls = Nulls.SKIP" (a ratchet against the wrong attribute).
 - AC6: both skill files stay within the 150-line cap enforced by scripts/validate.py.
+- AC7: skills/language-java/SKILL.md's '## Avoid' section also carries the anti-pattern line,
+  matching Kotlin's symmetry — a reviewer fast-scanning only the Avoid checklist must see it
+  flagged for Java too, not just Kotlin (PR #600 owner feedback).
 """
 
 from pathlib import Path
@@ -68,6 +71,20 @@ def test_java_optional_and_null_discipline_names_jackson_foot_gun():
     )
     assert "filter" in section.lower(), (
         "'## Optional and null discipline' must name a null filter as the consumer-side remedy"
+    )
+
+
+def test_java_avoid_carries_jackson_anti_pattern():
+    body = JAVA_SKILL.read_text()
+    section = _section(body, "Avoid")
+    assert section.strip(), "skills/language-java/SKILL.md must contain a non-empty '## Avoid' section"
+    assert "Jackson" in section, (
+        "'## Avoid' must carry an anti-pattern line naming Jackson-deserialized collections — "
+        "a reviewer fast-scanning only the Avoid checklist should still see this flagged, "
+        "matching the symmetry Kotlin's '## Avoid' already has"
+    )
+    assert "non-null" in section.lower() or "non null" in section.lower(), (
+        "'## Avoid' must call out trusting a declared non-null element type"
     )
 
 

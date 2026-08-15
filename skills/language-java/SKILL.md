@@ -126,3 +126,4 @@ void computesTax(double income, double expectedTax) {
 - Mutable `static` state outside of intentional singletons.
 - `equals` without a matching `hashCode` override.
 - Blocking inside a reactive pipeline or `CompletableFuture` chain.
+- Trusting a declared non-null element type on a Jackson-deserialized collection.
