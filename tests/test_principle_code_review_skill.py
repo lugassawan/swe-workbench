@@ -64,6 +64,23 @@ def test_correctness_bullet_mentions_paired_guard_predicate_gaps():
     )
 
 
+def test_correctness_bullet_mentions_deserialized_collection_null_elements():
+    """The Correctness axis bullet must name null elements inside deserialized collections (#599)."""
+    body = _read()
+    section = _section(body, "Five-Axis Review Lens")
+    bullets = _axis_bullet_lines(section)
+    correctness_line = next(
+        (line for line in bullets if line.strip().startswith("- **Correctness**")),
+        "",
+    )
+    assert correctness_line, "Five-Axis Review Lens must have a '- **Correctness**' bullet"
+    lowered = correctness_line.lower()
+    assert "deserialized collection" in lowered, (
+        "the Correctness bullet must mention null elements inside externally-deserialized "
+        "collections — a valid payload can populate a typed collection with null elements"
+    )
+
+
 def test_five_axis_framing_has_exactly_five_axes():
     """The 'five axes' framing must remain accurate after the Comment quality addition."""
     body = _read()

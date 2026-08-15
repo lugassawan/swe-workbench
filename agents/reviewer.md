@@ -103,7 +103,7 @@ this mirrors the footer's opt-in contract.
 
 See @./shared/principles.md and @./shared/languages.md for the skill catalog.
 
-**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+**Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope. Derive the language set from the extensions of the diff's changed paths, not from which files you happened to open — a grep-only pass over a small diff still requires loading the matching skill.
 
 Everything else in this catalog is preloaded via frontmatter; the one skill below stays conditional — invoke it via the `Skill` tool only when the review surfaces a concern in its domain:
 
