@@ -73,6 +73,35 @@ For each invocation, emit:
 
 ## Principle consultation
 
-See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
+<!-- BEGIN shared/agents/skill-catalog-pointer.md -->
+# Skill catalog
+
+Every `swe-workbench:*` skill in this plugin already appears in your available-skills listing,
+injected by the harness at the start of this session, each with its own one-line description. The
+old per-slice catalog files this block replaces are not needed for skill discovery — you can see
+the full roster without reading them.
+
+Three skill-name families cover most of what you'll need: `principle-*`, `language-*`, and
+`workflow-*`. Invoke any of them with the `Skill` tool.
+<!-- END shared/agents/skill-catalog-pointer.md -->
+<!-- BEGIN shared/agents/language-skill-required.md -->
+# Language skill requirement
+
+A code-touching agent must invoke the `language-*` skill matching the language of the code it is
+reading or writing, when one exists for that language. Invoke it via the `Skill` tool.
+
+- `swe-workbench:language-bash`
+- `swe-workbench:language-csharp`
+- `swe-workbench:language-dart`
+- `swe-workbench:language-go`
+- `swe-workbench:language-java`
+- `swe-workbench:language-kotlin`
+- `swe-workbench:language-python`
+- `swe-workbench:language-ruby`
+- `swe-workbench:language-rust`
+- `swe-workbench:language-sql`
+- `swe-workbench:language-swift`
+- `swe-workbench:language-typescript`
+<!-- END shared/agents/language-skill-required.md -->
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
