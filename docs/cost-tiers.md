@@ -8,9 +8,12 @@ Forward-looking convention for model assignment in swe-workbench agents. For the
 |---|---|---|---|
 | S (small) | `haiku` | Single-purpose fetch, format, or extract. Deterministic output from well-specified input. No cross-file reasoning or correctness judgment. | product-manager, tech-writer, test-writer, dependency-auditor |
 | M (medium) | `sonnet` | Mechanical but judgment-bearing. Must weigh trade-offs, apply a pattern catalog, or preserve an invariant across steps. | debugger, refactorer, performance-tuner, accessibility-auditor, product-designer |
-| L (large) | `sonnet` (default) or `opus` (with evidence) | High-stakes reasoning. Security exploitability, multi-system architecture, or correctness in concurrent / distributed settings. Opus only when measurable improvement is demonstrated. | reviewer, security-auditor, architect, senior-engineer |
+| L (large) | `sonnet` (default) or `opus` (promoted) | High-stakes reasoning. Security exploitability, multi-system architecture, or correctness in concurrent / distributed settings. | reviewer, security-auditor, architect, senior-engineer, migrator |
 
-**Default:** when in doubt, start at Tier M (`sonnet`). Downgrade to haiku only after confirming the task is mechanical. Promote to opus only with a measured A/B result.
+**Default:** when in doubt, start at Tier M (`sonnet`). Downgrade to haiku only after confirming the task is mechanical. Promote to opus via either gate below — this repo has no A/B harness or telemetry, so **reasoned promotion is the primary path**, not a fallback:
+
+- **Measured** — an A/B result showing opus measurably outperforms sonnet on the agent's actual task.
+- **Reasoned** — the agent matches a forcing function below, argued explicitly against the frequency×delta veto (a high-frequency agent needs a materially stronger case than an occasional one) and recorded as a one-line keep/bump rationale alongside the change.
 
 ## Where the field lives
 
@@ -33,8 +36,8 @@ Does the agent require multi-step reasoning, cross-file synthesis,
 or security/correctness judgment?
    │
    ├── Yes ──► Tier M or L (sonnet). For high-stakes correctness
-   │           (security, architecture): Tier L, consider opus only
-   │           with measured evidence.
+   │           (security, architecture): Tier L, promote to opus
+   │           when a forcing function applies (measured or reasoned).
    │
    └── No ──► Is the output deterministic given well-specified input?
                  │
@@ -48,10 +51,18 @@ or security/correctness judgment?
 - Output is idiomatic code generated from a behavioral spec (test-writer)
 - Output is a tabular report extracted from manifest files (dependency-auditor)
 
-**Keep on sonnet even if it looks simple:**
-- Involves security exploitability assessment (security-auditor)
-- Must preserve behavioral invariants across steps (refactorer, migrator)
-- Output influences architecture or published contracts (architect, senior-engineer)
+**Keep on sonnet even if it looks high-stakes:**
+- Behavior-preservation is enforced by a hard test gate, not judgment alone (refactorer — green between every step or revert)
+- Root cause is confirmed by a failing-then-passing regression test, not self-authored reasoning alone (debugger)
+- Output flows through Phase 3 Verify + Phase 4 Review before it can land (code-impl)
+
+**Forcing functions for opus:**
+- Output is a durable published artifact (ADR/RFC) with no automatic downstream gate — a wrong constraint or unnamed risk becomes precedent (architect)
+- A phase is explicitly not reversible, and the agent authors its own advance-gate metrics — a blind spot in its call-site mapping propagates into the very check meant to catch it (migrator)
+- A wrong judgment is a security clearance that ships a real, unnoticed vulnerability (security-auditor)
+- The agent is the explicit escalation target for an unresolved architectural fork another worker couldn't judge itself, and the escalation exists precisely because no other worker or reviewer in the pipeline can independently validate the trade-off analysis — criterion 3 (absence-detection), not 1+2 (senior-engineer)
+
+None of these apply on every PR — each is invoked occasionally by design, which is what keeps the frequency×delta veto from blocking the promotion.
 
 ## When to revisit
 
@@ -62,6 +73,11 @@ Downgrade a Tier M agent to haiku when:
 Revert a haiku agent to sonnet when:
 - A user-visible regression is traced to reasoning depth (not tool availability) within 14 days.
 - PR description must note the reversion and the failing case.
+
+Revert an opus agent to sonnet when:
+- 14 days pass with no case where the extra reasoning depth visibly changed the outcome versus a comparable sonnet run.
+- The forcing function that justified the promotion no longer applies (e.g. a downstream gate was added that now catches what previously shipped silently).
+- PR description must note the reversion and cite which of the two conditions triggered it.
 
 Flag concentration in telemetry: if any single agent exceeds 15% of session token spend for more than 3 days, open a cost-audit follow-up issue.
 

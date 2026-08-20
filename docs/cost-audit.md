@@ -89,3 +89,48 @@ Skills have no `model:` field — they are prose instructions injected into the 
 | 3 | All other swe-workbench surfaces | ~22% | No change; monitor. If any single surface exceeds 15% for 3 consecutive days, open a cost-audit follow-up. |
 
 **Post-merge:** compare against this baseline after one representative day of use. Log delta as a comment on issue #160.
+
+---
+
+## Re-tier pass — 2026-08-21 (#612)
+
+Deliberate per-agent pass over all 22 shipped agents (17 `sonnet`, 5 `haiku`, 0 `opus` at
+start), applying the reasoned-promotion path added to `cost-tiers.md` in this same PR.
+Explicitly not a blanket bump — most agents keep their existing tier. See `cost-tiers.md`
+for the decision rubric (silent failure / one-way door / adversarial reasoning /
+frequency×delta veto) applied below. This section is additive; the 2026-05-10 snapshot
+above is left untouched as a historical record.
+
+**Bumped to opus (4):**
+
+| Agent | Rationale |
+|---|---|
+| architect | Output is a durable published artifact (ADR/RFC) with no automatic downstream gate; must surface unstated constraints/risks; invoked only for major design decisions, not per-PR |
+| migrator | Phase 5 (Contract) is explicitly not reversible; the agent authors its own advance-gate metrics, so a blind spot in its call-site mapping propagates into the very check meant to catch it; migrations are occasional, not per-PR |
+| security-auditor | A missed exploitability judgment ships a real vulnerability unnoticed; its output is a de facto security clearance once merged; targeted at security-sensitive diffs only, not every PR |
+| senior-engineer | Criterion 3 (absence-detection): explicit escalation target for an unresolved architectural fork another worker couldn't judge itself, precisely because nothing downstream can independently validate the trade-off analysis; consult-only, not per-PR |
+
+**Kept on sonnet (13):**
+
+| Agent | Rationale |
+|---|---|
+| accessibility-auditor | Applies a fixed WCAG catalog to what's present in a diff, not absence-hunting; advisory, human-reviewed; dispatched on most frontend PRs |
+| auditor | Breadth sweep against a known checklist, not novel adversarial reasoning; advisory report only, never merged/published |
+| code-impl | Every change passes through Phase 3 Verify + Phase 4 Review before landing; highest-frequency agent in the delegated-implementation path |
+| conflict-resolver | Bounded to one file's hunks; recommendation still goes through the normal Verify/Review pipeline before merge |
+| contributor-auditor | Checklist-driven evidence gathering against a fixed rubric; explicitly advisory only — never posts to the PR |
+| debugger | Self-verifying by construction — regression test must fail before the fix and pass after; high frequency |
+| e2e-test-writer | Output is spec files only (no production-code edit rights); e2e-test-verifier runs and validates every spec immediately after |
+| performance-tuner | Matches a profiled root cause to a fixed optimization-pattern library; no Edit tool, advisory only |
+| product-designer | Nielsen's 10 heuristics plus explicit checklist axes — catalog application; advisory, diff-scoped |
+| redundancy-assessor | Built-in tier guardrail already contains the risk: AUTO-APPLY restricted to whole-file + zero-refs matches, anything ambiguous forced to ESCALATE |
+| refactorer | Hard test-gate discipline (green between steps, revert on red) makes silent failure structurally unlikely; high frequency |
+| reviewer | Dispatched on effectively every PR; five-axis review is explicitly moderate-depth breadth, not adversarial depth, by its own boundary docs |
+| test-reviewer | Advisory-only, never edits test files itself; categories are enumerable and pattern-matchable |
+
+**Unchanged (haiku, out of scope for this pass):** dependency-auditor, e2e-test-verifier,
+product-manager, tech-writer, test-writer.
+
+**Enforcement:** `tests/test_agent_model_tiers.py` pins every agent's `model:` to the table
+above and asserts every `opus` agent is named in this section — the tier cannot drift
+silently.
