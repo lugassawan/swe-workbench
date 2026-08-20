@@ -1,0 +1,13 @@
+{
+  "name": "swe-workbench-pi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi Coding Agent adapter for the swe-workbench plugin",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
