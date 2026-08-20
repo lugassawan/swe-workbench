@@ -108,7 +108,7 @@ above is left untouched as a historical record.
 | architect | Output is a durable published artifact (ADR/RFC) with no automatic downstream gate; must surface unstated constraints/risks; invoked only for major design decisions, not per-PR |
 | migrator | Phase 5 (Contract) is explicitly not reversible; the agent authors its own advance-gate metrics, so a blind spot in its call-site mapping propagates into the very check meant to catch it; migrations are occasional, not per-PR |
 | security-auditor | A missed exploitability judgment ships a real vulnerability unnoticed; its output is a de facto security clearance once merged; targeted at security-sensitive diffs only, not every PR |
-| senior-engineer | Explicit escalation target for an unresolved architectural fork another worker couldn't judge itself; consult-only, not per-PR |
+| senior-engineer | Criterion 3 (absence-detection): explicit escalation target for an unresolved architectural fork another worker couldn't judge itself, precisely because nothing downstream can independently validate the trade-off analysis; consult-only, not per-PR |
 
 **Kept on sonnet (13):**
 

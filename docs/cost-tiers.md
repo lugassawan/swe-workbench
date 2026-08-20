@@ -60,7 +60,7 @@ or security/correctness judgment?
 - Output is a durable published artifact (ADR/RFC) with no automatic downstream gate — a wrong constraint or unnamed risk becomes precedent (architect)
 - A phase is explicitly not reversible, and the agent authors its own advance-gate metrics — a blind spot in its call-site mapping propagates into the very check meant to catch it (migrator)
 - A wrong judgment is a security clearance that ships a real, unnoticed vulnerability (security-auditor)
-- The agent is the explicit escalation target for an unresolved architectural fork another worker couldn't judge itself (senior-engineer)
+- The agent is the explicit escalation target for an unresolved architectural fork another worker couldn't judge itself, and the escalation exists precisely because no other worker or reviewer in the pipeline can independently validate the trade-off analysis — criterion 3 (absence-detection), not 1+2 (senior-engineer)
 
 None of these apply on every PR — each is invoked occasionally by design, which is what keeps the frequency×delta veto from blocking the promotion.
 
