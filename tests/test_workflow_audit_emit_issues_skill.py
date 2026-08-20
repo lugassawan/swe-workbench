@@ -7,7 +7,7 @@ ROOT = Path(__file__).parent.parent
 SKILL_DIR = ROOT / "skills" / "workflow-audit-emit-issues"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 TRIGGERS = SKILL_DIR / "triggers.txt"
-WORKFLOWS_MD = ROOT / "agents" / "shared" / "workflows.md"
+WORKFLOWS_MD = ROOT / "shared" / "agents" / "workflows.md"
 CATALOG_MD = ROOT / "docs" / "catalog.md"
 
 
@@ -240,7 +240,7 @@ def test_all_swe_workbench_refs_resolve():
 def test_workflows_md_contains_name():
     text = WORKFLOWS_MD.read_text()
     assert "workflow-audit-emit-issues" in text, (
-        "agents/shared/workflows.md must contain 'workflow-audit-emit-issues'"
+        "shared/agents/workflows.md must contain 'workflow-audit-emit-issues'"
     )
 
 

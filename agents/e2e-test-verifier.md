@@ -69,4 +69,4 @@ For each spec that passes: explicitly state whether it is **meaningful** (genuin
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.

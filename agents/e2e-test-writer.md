@@ -38,7 +38,7 @@ Auto-detect the project's existing E2E suite before writing a single line:
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope (TypeScript/JavaScript for Playwright, Python for pytest-playwright, etc.) and invoke the matching `language-*` skill. State which language skill(s) you loaded, or note "N/A".
 

@@ -17,7 +17,7 @@ CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
 
 CAPS_TOKENS = ("comment discipline", "comment cap", "comment quality")
 
-# Agents wired to the comment-scan gate via @./shared/comment-scan.md.
+# Agents wired to the comment-scan gate via @../shared/agents/comment-scan.md.
 SCAN_WIRED_AGENTS = {
     "code-impl": CODE_IMPL_AGENT,
     "debugger": ROOT / "agents" / "debugger.md",
@@ -82,8 +82,8 @@ def test_code_impl_absolute_rules_reference_comment_caps():
 
 
 def test_comment_scan_shared_include_exists():
-    path = ROOT / "agents" / "shared" / "comment-scan.md"
-    assert path.exists(), "agents/shared/comment-scan.md must exist"
+    path = ROOT / "shared" / "agents" / "comment-scan.md"
+    assert path.exists(), "shared/agents/comment-scan.md must exist"
 
 
 @pytest.mark.parametrize("name", sorted(SCAN_WIRED_AGENTS))
@@ -91,7 +91,7 @@ def test_agent_references_comment_scan_include(name):
     path = SCAN_WIRED_AGENTS[name]
     assert path.exists(), f"agents/{name}.md must exist"
     body = path.read_text()
-    assert "@./shared/comment-scan.md" in body, (
-        f"agents/{name}.md must reference @./shared/comment-scan.md in its verify step "
+    assert "@../shared/agents/comment-scan.md" in body, (
+        f"agents/{name}.md must reference @../shared/agents/comment-scan.md in its verify step "
         "so the comment-scan gate is invoked on the first pass"
     )

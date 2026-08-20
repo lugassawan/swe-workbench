@@ -122,8 +122,8 @@ def test_input_contract_references_redundancy_scope_records():
 
 def test_includes_both_catalog_slices():
     body = _read()
-    assert "@./shared/principles.md" in body
-    assert "@./shared/languages.md" in body
+    assert "@../shared/agents/principles.md" in body
+    assert "@../shared/agents/languages.md" in body
 
 
 def test_never_mutates_directly():

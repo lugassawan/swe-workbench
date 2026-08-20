@@ -3,7 +3,7 @@
 Acceptance criteria:
 - agents/code-impl.md exists with required frontmatter (name, description).
 - tools: includes Edit and Skill.
-- At least one slice-catalog ref is present (@./shared/principles.md etc.).
+- At least one slice-catalog ref is present (@../shared/agents/principles.md etc.).
 - **Reachable via:** references workflow-delegated-implementation.
 - Output-contract section forbids pushing/opening PRs.
 - Output-contract section declares a summary return — not diffs.
@@ -22,9 +22,9 @@ CATALOG = ROOT / "docs" / "catalog.md"
 README = ROOT / "README.md"
 
 _SLICE_REFS = {
-    "@./shared/principles.md",
-    "@./shared/languages.md",
-    "@./shared/workflows.md",
+    "@../shared/agents/principles.md",
+    "@../shared/agents/languages.md",
+    "@../shared/agents/workflows.md",
 }
 
 
@@ -92,7 +92,7 @@ def test_slice_catalog_ref_present():
     body = _read()
     assert any(ref in body for ref in _SLICE_REFS), (
         "code-impl.md must reference at least one slice catalog "
-        "(@./shared/principles.md, @./shared/languages.md, or @./shared/workflows.md)"
+        "(@../shared/agents/principles.md, @../shared/agents/languages.md, or @../shared/agents/workflows.md)"
     )
 
 

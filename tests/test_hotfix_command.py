@@ -15,7 +15,7 @@ CLEANUP_MERGED_SKILL = SKILLS_DIR / "workflow-cleanup-merged" / "SKILL.md"
 DEFERRED_FOLLOWUP_REF = (
     SKILLS_DIR / "workflow-cleanup-merged" / "reference" / "deferred-verification-followup.md"
 )
-AGENTS_SKILLS = ROOT / "agents" / "shared" / "workflows.md"
+AGENTS_SKILLS = ROOT / "shared" / "agents" / "workflows.md"
 DOCS_CATALOG = ROOT / "docs" / "catalog.md"
 README = ROOT / "README.md"
 
@@ -89,11 +89,11 @@ def test_hotfix_skill_under_orchestrator_cap():
 
 
 def test_hotfix_skill_in_catalog():
-    """agents/shared/workflows.md must have an em-dash entry for workflow-hotfix (required by
+    """shared/agents/workflows.md must have an em-dash entry for workflow-hotfix (required by
     check_catalog_completeness)."""
     text = AGENTS_SKILLS.read_text()
     assert "`swe-workbench:workflow-hotfix`" in text and "—" in text, (
-        "agents/shared/workflows.md must contain an em-dash (—) entry for "
+        "shared/agents/workflows.md must contain an em-dash (—) entry for "
         "`swe-workbench:workflow-hotfix`"
     )
 

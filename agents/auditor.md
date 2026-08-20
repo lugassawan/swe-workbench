@@ -35,7 +35,7 @@ You perform cold-start, time-boxed, multi-domain audits of unfamiliar codebases.
 git log --oneline -20          # recent activity, team velocity
 ```
 
-Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`. Note the tech stack and entry points. See @./shared/lsp.md for handing a finding's anchor off from `Grep` to `LSP` once you need to confirm callers or an implementation, rather than trusting a text match.
+Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`. Note the tech stack and entry points. See @../shared/agents/lsp.md for handing a finding's anchor off from `Grep` to `LSP` once you need to confirm callers or an implementation, rather than trusting a text match.
 
 ### 2. Domain sweeps (gated by --scope)
 
@@ -91,6 +91,6 @@ Every finding must include all 11 fields. **Omit any finding you cannot fill all
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.

@@ -2,7 +2,7 @@
 
 Pins the real, already-shipped content added across Tasks 1-4 of this
 feature: the four agents that grant LSP in their tools: frontmatter and
-reference the shared LSP doc, agents/shared/lsp.md's nine named operations,
+reference the shared LSP doc, shared/agents/lsp.md's nine named operations,
 the three orchestrator skills' LSP-unavailable fallback sentence, and
 docs/dependencies.md's Language servers section.
 
@@ -20,11 +20,12 @@ import pytest
 ROOT = Path(__file__).parent.parent
 AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
+SHARED_DIR = ROOT / "shared"
 
 # The four agents this feature grants LSP to.
 LSP_AGENTS = ["reviewer", "auditor", "debugger", "refactorer"]
 
-# The nine LSP operations named in agents/shared/lsp.md.
+# The nine LSP operations named in shared/agents/lsp.md.
 LSP_OPERATIONS = [
     "goToDefinition",
     "findReferences",
@@ -62,7 +63,7 @@ def _agent_frontmatter(name: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# Agent tools: grants LSP + references @./shared/lsp.md
+# Agent tools: grants LSP + references @../shared/agents/lsp.md
 # ──────────────────────────────────────────────────────────────
 
 
@@ -83,10 +84,10 @@ def test_agent_grants_lsp_tool(agent_name):
 
 @pytest.mark.parametrize("agent_name", LSP_AGENTS)
 def test_agent_references_shared_lsp_doc(agent_name):
-    """Each LSP agent's body references @./shared/lsp.md."""
+    """Each LSP agent's body references @../shared/agents/lsp.md."""
     text = _agent_text(agent_name)
-    assert "@./shared/lsp.md" in text, (
-        f"agents/{agent_name}.md is missing a reference to '@./shared/lsp.md'."
+    assert "@../shared/agents/lsp.md" in text, (
+        f"agents/{agent_name}.md is missing a reference to '@../shared/agents/lsp.md'."
     )
 
 
@@ -114,18 +115,18 @@ def test_agent_has_no_background_key(agent_name):
 
 
 # ──────────────────────────────────────────────────────────────
-# agents/shared/lsp.md names all nine operations
+# shared/agents/lsp.md names all nine operations
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("operation", LSP_OPERATIONS)
 def test_shared_lsp_doc_names_operation(operation):
-    """agents/shared/lsp.md names every one of the nine LSP operations."""
-    path = AGENTS_DIR / "shared" / "lsp.md"
-    assert path.exists(), "agents/shared/lsp.md does not exist"
+    """shared/agents/lsp.md names every one of the nine LSP operations."""
+    path = SHARED_DIR / "agents" / "lsp.md"
+    assert path.exists(), "shared/agents/lsp.md does not exist"
     text = path.read_text(encoding="utf-8")
     assert operation in text, (
-        f"agents/shared/lsp.md is missing the operation name '{operation}'."
+        f"shared/agents/lsp.md is missing the operation name '{operation}'."
     )
 
 

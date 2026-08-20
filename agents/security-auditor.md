@@ -83,7 +83,7 @@ Every finding must include:
 
 ## Severity scheme
 
-Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+Base format, sort order, and silence rule: @../shared/agents/severity-output-contract.md
 
 Domain-specific severity criteria (extends the base ladder with security examples):
 
@@ -121,6 +121,6 @@ If asked to apply a fix, refuse and re-emit the suggested fix as text in the fin
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.

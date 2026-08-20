@@ -732,7 +732,7 @@ class TestCheckAgents:
         agents_dir = root / "agents"
         agents_dir.mkdir(parents=True, exist_ok=True)
         (agents_dir / "bad-agent.md").write_text(
-            "---\nname: bad-agent\n---\n\n> See @./shared/principles.md\n", encoding="utf-8"
+            "---\nname: bad-agent\n---\n\n> See @../shared/agents/principles.md\n", encoding="utf-8"
         )
         validate.check_agents()
         assert any("description" in f for f in validate.FAILURES)
@@ -745,7 +745,7 @@ class TestCheckAgents:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: An agent\ntools: Read, Write\n---\n"
             "\nUse `swe-workbench:foo` to do things.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agents()
@@ -758,7 +758,7 @@ class TestCheckAgents:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: An agent\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:foo` to do things.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agents()
@@ -772,7 +772,7 @@ class TestCheckAgents:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: An agent\n---\n"
             "\nUse `swe-workbench:foo` to do things.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agents()
@@ -812,8 +812,8 @@ class TestPerformanceTunerAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/principles.md" in text, (
-            "agent must include @./shared/principles.md catalog reference (O3)"
+        assert "@../shared/agents/principles.md" in text, (
+            "agent must include @../shared/agents/principles.md catalog reference (O3)"
         )
 
     # O7 — boundary matrix dedup (issue #235)
@@ -1085,7 +1085,7 @@ class TestCheckAgentSkillRefs:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:foo` skill.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
@@ -1099,7 +1099,7 @@ class TestCheckAgentSkillRefs:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:nonexistent` skill.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
@@ -1117,7 +1117,7 @@ class TestCheckAgentSkillRefs:
         (root / "agents" / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
             "\nUse `swe-workbench:bar` subagent.\n"
-            "\n> See @./shared/principles.md\n",
+            "\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_agent_skill_refs()
@@ -1136,7 +1136,7 @@ class TestCheckPreloadedSkills:
     def _agent(self, root, name, skills_block, body_extra):
         (root / "agents" / f"{name}.md").write_text(
             f"---\nname: {name}\ndescription: d\ntools: Read, Skill\n{skills_block}---\n"
-            f"\n{body_extra}\n> See @./shared/principles.md\n",
+            f"\n{body_extra}\n> See @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
 
@@ -1345,8 +1345,8 @@ class TestTestReviewerAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/principles.md" in text, (
-            "agent must include @./shared/principles.md catalog reference (O3)"
+        assert "@../shared/agents/principles.md" in text, (
+            "agent must include @../shared/agents/principles.md catalog reference (O3)"
         )
 
     def test_boundary_sections_present(self):
@@ -1390,7 +1390,7 @@ class TestCheckCatalogCompleteness:
         # Code-touching agents must reference both catalogs (new invariant).
         return (
             f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n"
+            "\nSee @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -1443,7 +1443,7 @@ class TestCheckCatalogCompleteness:
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
         # Remove the principles slice — validator must report it missing
-        catalog_path = root / "agents" / "shared" / "principles.md"
+        catalog_path = root / "shared" / "agents" / "principles.md"
         catalog_path.unlink()
         validate.check_catalog_completeness()
         assert any("missing" in f for f in validate.FAILURES)
@@ -1796,25 +1796,25 @@ class TestCheckWorkflowDevelopmentActivationContract:
         agents_dir = root / "agents"
         (agents_dir / "product-manager.md").write_text(
             "---\nname: product-manager\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md for the skill catalog.\n",
+            "\nSee @../shared/agents/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         assert len(validate.FAILURES) == 0
 
     def test_code_touching_agent_with_principles_only_fails(self, reset_validate):
-        # Code-touching agents must reference @./shared/languages.md alongside principles.md.
+        # Code-touching agents must reference @../shared/agents/languages.md alongside principles.md.
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md for the skill catalog.\n",
+            "\nSee @../shared/agents/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         assert any("languages.md" in f for f in validate.FAILURES), (
-            "Expected a failure about missing @./shared/languages.md "
+            "Expected a failure about missing @../shared/agents/languages.md "
             "for a code-touching agent that only includes principles.md"
         )
 
@@ -1830,7 +1830,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            "\nSee @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -1857,12 +1857,12 @@ class TestCheckWorkflowDevelopmentActivationContract:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/workflows.md for the skill catalog.\n",
+            "\nSee @../shared/agents/workflows.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         assert len(validate.FAILURES) == 0
-        principles_text = (root / "agents" / "shared" / "principles.md").read_text()
+        principles_text = (root / "shared" / "agents" / "principles.md").read_text()
         assert "ticket-context" not in principles_text, (
             "ticket-context must not appear in principles.md (belongs in workflows.md)"
         )
@@ -1882,12 +1882,12 @@ class TestCheckWorkflowDevelopmentActivationContract:
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md and @./shared/languages.md for the skill catalog.\n",
+            "\nSee @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         assert any(
-            "agents/shared/workflows.md" in f and "swe-workbench:fixture-context" in f
+            "shared/agents/workflows.md" in f and "swe-workbench:fixture-context" in f
             for f in validate.FAILURES
         ), f"expected a workflows.md 'missing entry' failure for fixture-context, got: {validate.FAILURES}"
         assert not any(
@@ -1902,7 +1902,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
             skills={"language-python": "---\nname: language-python\ndescription: d\n---\n"},
         )
         agents_dir = root / "agents"
-        shared_dir = agents_dir / "shared"
+        shared_dir = root / "shared" / "agents"
         # Manually override: put language-python in principles.md instead of languages.md
         (shared_dir / "principles.md").write_text(
             "- `swe-workbench:language-python` — python skill\n", encoding="utf-8"
@@ -1910,12 +1910,47 @@ class TestCheckWorkflowDevelopmentActivationContract:
         (shared_dir / "languages.md").write_text("\n", encoding="utf-8")
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @./shared/principles.md\n",
+            "\nSee @../shared/agents/principles.md\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         # principles.md has language-python (wrong slice) → "belongs in languages.md"
         assert any("belongs in" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# check_agent_includes_resolve (issue #603)
+# ──────────────────────────────────────────────
+
+class TestCheckAgentIncludesResolve:
+    """Standing guard for the @../shared/agents/*.md parent-relative include
+    path introduced by the shared/ relocation (issue #603)."""
+
+    def test_resolving_include_passes(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        validate.check_agent_includes_resolve()
+        assert validate.FAILURES == []
+
+    def test_missing_target_fails(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
+        (root / "shared" / "agents" / "principles.md").unlink()
+        validate.check_agent_includes_resolve()
+        assert any(
+            "my-agent.md" in f and "principles.md" in f and "does not exist" in f
+            for f in validate.FAILURES
+        )
+
+    def test_no_include_at_all_passes_vacuously(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root)
+        (root / "agents" / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: d\n---\n\nNo shared include here.\n",
+            encoding="utf-8",
+        )
+        validate.check_agent_includes_resolve()
+        assert validate.FAILURES == []
 
 
 # ──────────────────────────────────────────────
@@ -1928,7 +1963,7 @@ class TestCheckSharedIncludesNotBlockquoted:
         make_plugin_tree(root)
         (root / "agents" / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @./shared/principles.md for the skill catalog.\n",
+            "\n> See @../shared/agents/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_shared_includes_not_blockquoted()
@@ -1939,7 +1974,7 @@ class TestCheckSharedIncludesNotBlockquoted:
         make_plugin_tree(root)
         (root / "agents" / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> Base format, sort order, and silence rule: @./shared/severity-output-contract.md\n",
+            "\n> Base format, sort order, and silence rule: @../shared/agents/severity-output-contract.md\n",
             encoding="utf-8",
         )
         validate.check_shared_includes_not_blockquoted()
@@ -1952,14 +1987,16 @@ class TestCheckSharedIncludesNotBlockquoted:
         assert len(validate.FAILURES) == 0
 
     def test_shared_catalog_files_not_scanned(self, reset_validate):
-        """agents/shared/*.md catalog slices use glob("*.md") — not rglob — so they are excluded."""
+        """check_shared_includes_not_blockquoted only walks agents_dir.glob("*.md") —
+        it never descends into shared/agents/, which lives outside agents/ entirely
+        (issue #603) — so a blockquoted line in a catalog slice is never flagged."""
         root = reset_validate
         # An agent with a plain include ensures the check actually runs (non-vacuous).
         make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
         # Overwrite principles.md with a hypothetical blockquoted line; check must not flag it.
-        (root / "agents" / "shared" / "principles.md").write_text(
+        (root / "shared" / "agents" / "principles.md").write_text(
             "- `swe-workbench:foo` — foo skill\n"
-            "> Hypothetical blockquoted @./shared/principles.md reference\n",
+            "> Hypothetical blockquoted @../shared/agents/principles.md reference\n",
             encoding="utf-8",
         )
         validate.check_shared_includes_not_blockquoted()
@@ -2310,7 +2347,7 @@ class TestCheckUnwiredPrincipleSkills:
     def _agent_body(self, extra=""):
         return (
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n---\n"
-            "\nSee @./shared/principles.md for the skill catalog.\n"
+            "\nSee @../shared/agents/principles.md for the skill catalog.\n"
             + extra
         )
 
@@ -2341,7 +2378,7 @@ class TestCheckUnwiredPrincipleSkills:
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Skill\n"
             "skills:\n  - swe-workbench:principle-foo\n---\n"
-            "\nSee @./shared/principles.md for the skill catalog.\n",
+            "\nSee @../shared/agents/principles.md for the skill catalog.\n",
             encoding="utf-8",
         )
         validate.check_unwired_principle_skills()
@@ -2506,11 +2543,17 @@ class TestFileReadCaching:
 
     @pytest.mark.parametrize("slice_name", ["principles.md", "languages.md", "workflows.md"])
     def test_unreadable_catalog_cached_as_failure(self, reset_validate, monkeypatch, slice_name):
+        """shared/agents/ lives outside agents_dir (issue #603) but is still
+        walked into _build_cache()'s agents dict via its own rglob pass, so
+        the read-once-per-run guarantee holds for these files too — every
+        consumer (check_catalog_completeness, the hazard scanners,
+        check_bare_actionable_refs) must hit the None sentinel from the
+        cache build rather than re-reading and re-failing to read."""
         root = reset_validate
         _make_full_valid_tree(root)
 
         # O3: skills.md replaced by 3 slice files — test all three slices
-        catalog = root / "agents" / "shared" / slice_name
+        catalog = root / "shared" / "agents" / slice_name
 
         original = Path.read_text
         read_count = {"n": 0}
@@ -2529,7 +2572,7 @@ class TestFileReadCaching:
 
         assert read_count["n"] == 1, (
             f"Catalog slice '{slice_name}' should be attempted exactly once (cache build only), "
-            f"got {read_count['n']} — check_catalog_completeness may bypass the None sentinel"
+            f"got {read_count['n']} — a consumer may bypass the None sentinel"
         )
         rel = str(catalog.relative_to(root))
         assert any(rel in entry for entry in validate.FAILURES), (
@@ -2590,6 +2633,7 @@ class TestWorkflowCommitAndPrTrim:
 # ──────────────────────────────────────────────
 
 _AGENTS_DIR = Path(__file__).parent.parent / "agents"
+_SHARED_DIR = Path(__file__).parent.parent / "shared"
 
 _O2_AGENTS = [
     "reviewer",
@@ -2605,16 +2649,16 @@ class TestSeverityOutputContract:
     severity-output-contract.md (O2 dedup — issue #235)."""
 
     def test_shared_contract_file_exists(self):
-        shared = _AGENTS_DIR / "shared" / "severity-output-contract.md"
-        assert shared.exists(), "agents/shared/severity-output-contract.md must exist (O2 canonical source)"
+        shared = _SHARED_DIR / "agents" / "severity-output-contract.md"
+        assert shared.exists(), "shared/agents/severity-output-contract.md must exist (O2 canonical source)"
 
     @pytest.mark.parametrize("agent", _O2_AGENTS)
     def test_agent_references_severity_contract(self, agent):
         path = _AGENTS_DIR / f"{agent}.md"
         assert path.exists(), f"agents/{agent}.md not found"
         text = path.read_text(encoding="utf-8")
-        assert "@./shared/severity-output-contract.md" in text, (
-            f"agents/{agent}.md does not reference @./shared/severity-output-contract.md — "
+        assert "@../shared/agents/severity-output-contract.md" in text, (
+            f"agents/{agent}.md does not reference @../shared/agents/severity-output-contract.md — "
             "add a reference in the severity/output-contract section (O2, issue #235)"
         )
 
@@ -2643,14 +2687,14 @@ class TestTicketContextPreludeUniformity:
     ticket-context prelude paragraph (E3 dedup — issue #235, Path B)."""
 
     def test_shared_prelude_file_exists(self):
-        shared = _COMMANDS_DIR / "shared" / "ticket-context-prelude.md"
-        assert shared.exists(), "commands/shared/ticket-context-prelude.md must exist (E3 canonical source)"
+        shared = _SHARED_DIR / "commands" / "ticket-context-prelude.md"
+        assert shared.exists(), "shared/commands/ticket-context-prelude.md must exist (E3 canonical source)"
 
     def test_shared_prelude_file_contains_canonical_text(self):
-        shared = _COMMANDS_DIR / "shared" / "ticket-context-prelude.md"
+        shared = _SHARED_DIR / "commands" / "ticket-context-prelude.md"
         assert shared.exists(), "canonical source file missing"
         assert _CANONICAL_PRELUDE in shared.read_text(encoding="utf-8"), (
-            "commands/shared/ticket-context-prelude.md content does not match canonical prelude"
+            "shared/commands/ticket-context-prelude.md content does not match canonical prelude"
         )
 
     @pytest.mark.parametrize("cmd", _E3_COMMANDS)
@@ -2660,7 +2704,7 @@ class TestTicketContextPreludeUniformity:
         text = path.read_text(encoding="utf-8")
         assert _CANONICAL_PRELUDE in text, (
             f"commands/{cmd}.md does not contain the canonical ticket-context prelude — "
-            "sync from commands/shared/ticket-context-prelude.md (E3, issue #235)"
+            "sync from shared/commands/ticket-context-prelude.md (E3, issue #235)"
         )
 
 
@@ -2698,16 +2742,16 @@ class TestInterrogationPreludeUniformity:
     interrogation prelude block (E312 — issue #312)."""
 
     def test_shared_prelude_file_exists(self):
-        shared = _COMMANDS_DIR / "shared" / "interrogation-prelude.md"
+        shared = _SHARED_DIR / "commands" / "interrogation-prelude.md"
         assert shared.exists(), (
-            "commands/shared/interrogation-prelude.md must exist (E312 canonical source)"
+            "shared/commands/interrogation-prelude.md must exist (E312 canonical source)"
         )
 
     def test_shared_prelude_file_contains_canonical_text(self):
-        shared = _COMMANDS_DIR / "shared" / "interrogation-prelude.md"
+        shared = _SHARED_DIR / "commands" / "interrogation-prelude.md"
         assert shared.exists(), "canonical source file missing"
         assert _CANONICAL_INTERROGATION_PRELUDE in shared.read_text(encoding="utf-8"), (
-            "commands/shared/interrogation-prelude.md content does not match canonical prelude"
+            "shared/commands/interrogation-prelude.md content does not match canonical prelude"
         )
 
     @pytest.mark.parametrize("cmd", _E312_COMMANDS)
@@ -2717,7 +2761,7 @@ class TestInterrogationPreludeUniformity:
         text = path.read_text(encoding="utf-8")
         assert _CANONICAL_INTERROGATION_PRELUDE in text, (
             f"commands/{cmd}.md does not contain the canonical interrogation prelude — "
-            "sync from commands/shared/interrogation-prelude.md (E312, issue #312)"
+            "sync from shared/commands/interrogation-prelude.md (E312, issue #312)"
         )
 
 
@@ -2991,7 +3035,7 @@ class TestNoPhantomSkillsCatalogRef:
         failures = []
         for rel in self.ONBOARDING_DOCS:
             text = (self.REAL_ROOT / rel).read_text(encoding="utf-8")
-            if not any(f"shared/{s}" in text for s in self.SLICE_FILES):
+            if not any(f"shared/agents/{s}" in text for s in self.SLICE_FILES):
                 failures.append(rel)
         assert not failures, (
             f"Missing real catalog slice reference in: {', '.join(failures)}. "
@@ -3241,23 +3285,23 @@ class TestCheckBrowserToolGate:
 
 class TestCheckLspToolGate:
     """check_lsp_tool_gate: any agent granting LSP in its tools: frontmatter must
-    carry @./shared/lsp.md, and the shared file must carry the LSP-unavailable
+    carry @../shared/agents/lsp.md, and the shared file must carry the LSP-unavailable
     fallback sentence. The gate must key on the tools: frontmatter scalar only —
-    never on body-text "LSP", since agents/shared/principles.md uses "LSP" for the
+    never on body-text "LSP", since shared/agents/principles.md uses "LSP" for the
     Liskov Substitution Principle and most agents preload principle-solid (#559)."""
 
     def test_grants_lsp_with_include_and_shared_file_passes(self, reset_validate):
         root = reset_validate
         agents_dir = root / "agents"
         agents_dir.mkdir(exist_ok=True)
-        shared_dir = agents_dir / "shared"
-        shared_dir.mkdir(exist_ok=True)
+        shared_dir = root / "shared" / "agents"
+        shared_dir.mkdir(parents=True, exist_ok=True)
         (shared_dir / "lsp.md").write_text(
             "LSP unavailable — falling back to Grep\n", encoding="utf-8"
         )
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
-            "See @./shared/lsp.md for LSP usage guidance.\n",
+            "See @../shared/agents/lsp.md for LSP usage guidance.\n",
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
@@ -3267,8 +3311,8 @@ class TestCheckLspToolGate:
         root = reset_validate
         agents_dir = root / "agents"
         agents_dir.mkdir(exist_ok=True)
-        shared_dir = agents_dir / "shared"
-        shared_dir.mkdir(exist_ok=True)
+        shared_dir = root / "shared" / "agents"
+        shared_dir.mkdir(parents=True, exist_ok=True)
         (shared_dir / "lsp.md").write_text(
             "LSP unavailable — falling back to Grep\n", encoding="utf-8"
         )
@@ -3278,7 +3322,7 @@ class TestCheckLspToolGate:
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
-        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+        assert any("shared/agents/lsp.md" in f for f in validate.FAILURES)
 
     def test_grants_lsp_list_form_missing_include_fails(self, reset_validate):
         """List-form tools: (e.g. `tools:\\n  - Read\\n  - LSP`) must be treated
@@ -3287,8 +3331,8 @@ class TestCheckLspToolGate:
         root = reset_validate
         agents_dir = root / "agents"
         agents_dir.mkdir(exist_ok=True)
-        shared_dir = agents_dir / "shared"
-        shared_dir.mkdir(exist_ok=True)
+        shared_dir = root / "shared" / "agents"
+        shared_dir.mkdir(parents=True, exist_ok=True)
         (shared_dir / "lsp.md").write_text(
             "LSP unavailable — falling back to Grep\n", encoding="utf-8"
         )
@@ -3298,20 +3342,20 @@ class TestCheckLspToolGate:
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
-        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+        assert any("shared/agents/lsp.md" in f for f in validate.FAILURES)
 
     def test_grants_lsp_shared_file_reworded_sentence_fails(self, reset_validate):
         root = reset_validate
         agents_dir = root / "agents"
         agents_dir.mkdir(exist_ok=True)
-        shared_dir = agents_dir / "shared"
-        shared_dir.mkdir(exist_ok=True)
+        shared_dir = root / "shared" / "agents"
+        shared_dir.mkdir(parents=True, exist_ok=True)
         (shared_dir / "lsp.md").write_text(
             "LSP is unavailable, fall back to Grep instead.\n", encoding="utf-8"
         )
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
-            "See @./shared/lsp.md for LSP usage guidance.\n",
+            "See @../shared/agents/lsp.md for LSP usage guidance.\n",
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
@@ -3323,11 +3367,11 @@ class TestCheckLspToolGate:
         agents_dir.mkdir(exist_ok=True)
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
-            "See @./shared/lsp.md for LSP usage guidance.\n",
+            "See @../shared/agents/lsp.md for LSP usage guidance.\n",
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
-        assert any("shared/lsp.md" in f for f in validate.FAILURES)
+        assert any("shared/agents/lsp.md" in f for f in validate.FAILURES)
 
     def test_liskov_substitution_body_text_does_not_trigger_gate(self, reset_validate):
         """The Liskov regression guard: body prose mentioning LSP must never be
@@ -3413,11 +3457,11 @@ class TestE2eTestWriterAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/principles.md" in text, (
-            "agent must include @./shared/principles.md"
+        assert "@../shared/agents/principles.md" in text, (
+            "agent must include @../shared/agents/principles.md"
         )
-        assert "@./shared/languages.md" in text, (
-            "agent must include @./shared/languages.md"
+        assert "@../shared/agents/languages.md" in text, (
+            "agent must include @../shared/agents/languages.md"
         )
 
     def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
@@ -3492,11 +3536,11 @@ class TestE2eTestVerifierAgent:
 
     def test_shared_skills_include(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@./shared/principles.md" in text, (
-            "agent must include @./shared/principles.md"
+        assert "@../shared/agents/principles.md" in text, (
+            "agent must include @../shared/agents/principles.md"
         )
-        assert "@./shared/languages.md" in text, (
-            "agent must include @./shared/languages.md"
+        assert "@../shared/agents/languages.md" in text, (
+            "agent must include @../shared/agents/languages.md"
         )
 
     def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
