@@ -57,7 +57,7 @@ _BROWSER_INSTALL_HINTS = re.compile(
 # for the Liskov Substitution Principle, so a substring/body match would
 # false-positive on every agent preloading principle-solid.
 _LSP_FALLBACK = "LSP unavailable — falling back to Grep"   # em dash, U+2014
-_LSP_SHARED_INCLUDE = "@../shared/agents/lsp.md"
+_LSP_SHARED_INCLUDE = "<!-- BEGIN shared/agents/lsp.md -->"
 
 
 def fail(path, reason):
@@ -907,11 +907,6 @@ def check_catalog_completeness(cache=None):
         "languages.md": ("language-",),
         "workflows.md": ("workflow-",),
     }
-    _SLICE_REFS = frozenset({
-        "@../shared/agents/principles.md",
-        "@../shared/agents/languages.md",
-        "@../shared/agents/workflows.md",
-    })
     # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
     entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
 
@@ -967,9 +962,13 @@ def check_catalog_completeness(cache=None):
                 fail(slice_path.relative_to(ROOT),
                      f"entry 'swe-workbench:{sid}' belongs in {_expected_slice(sid)}, not {slice_file}")
 
-    # Every agent must reference at least one slice catalog, and every
-    # code-touching agent (one that includes principles.md) must ALSO include
-    # languages.md so language-specific skills are always in scope.
+    # Every agent must carry the catalog-pointer sentinel block, and every
+    # code-touching agent (i.e. not listed in _NON_CODE_AGENTS) must ALSO
+    # carry the language-skill-required sentinel block so language-* skills
+    # stay in scope (#619 — the sentinel-inlined blocks that replaced the
+    # dead '@../shared/agents/*.md' includes this check used to look for).
+    _POINTER_MARKER = "<!-- BEGIN shared/agents/skill-catalog-pointer.md -->"
+    _LANGUAGE_MARKER = "<!-- BEGIN shared/agents/language-skill-required.md -->"
     for agent_md in sorted(agents_dir.glob("*.md")):
         if agents_cache is not None and agent_md in agents_cache:
             agent_text = agents_cache[agent_md]
@@ -982,67 +981,52 @@ def check_catalog_completeness(cache=None):
             except OSError as e:
                 fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
                 continue
-        if not any(ref in agent_text for ref in _SLICE_REFS):
+        if _POINTER_MARKER not in agent_text:
             fail(agent_md.relative_to(ROOT),
-                 "missing required slice catalog reference"
-                 " — add at least one of: '@../shared/agents/principles.md',"
-                 " '@../shared/agents/languages.md', '@../shared/agents/workflows.md'")
-            continue
-        # Code-touching agents must include both catalogs.
-        if (agent_md.stem not in _NON_CODE_AGENTS
-                and "@../shared/agents/principles.md" in agent_text
-                and "@../shared/agents/languages.md" not in agent_text):
+                 "missing the skill-catalog-pointer sentinel block — add "
+                 f"{_POINTER_MARKER!r} (with its matching END marker and inlined content)"
+                 " so the agent knows principle-*/language-*/workflow-* skills are available")
+        if agent_md.stem not in _NON_CODE_AGENTS and _LANGUAGE_MARKER not in agent_text:
             fail(agent_md.relative_to(ROOT),
-                 "code-touching agent includes '@../shared/agents/principles.md' but is missing"
-                 " '@../shared/agents/languages.md' — add it so language-* skills are in scope."
-                 " If this agent never touches source code, add its stem to"
-                 " _NON_CODE_AGENTS at the top of validate.py.")
+                 "code-touching agent is missing the language-skill-required sentinel block"
+                 f" — add {_LANGUAGE_MARKER!r} (with its matching END marker and inlined"
+                 " content) so language-* skills are in scope. If this agent never touches"
+                 " source code, add its stem to _NON_CODE_AGENTS at the top of validate.py.")
 
 
-_SHARED_INCLUDE_RE = re.compile(r'@\.\./shared/agents/([\w-]+\.md)')
+_SENTINEL_BEGIN_RE = re.compile(r'<!-- BEGIN (shared/agents/[\w-]+\.md) -->\n')
 
 
-def check_agent_includes_resolve(cache=None):
-    """Every `@../shared/agents/X.md` reference in agents/*.md must resolve to
-    a file that actually exists under shared/agents/ (issue #603).
+def _iter_sentinel_pairs(text):
+    """Yield (name, inner_text, inner_start, inner_stop) for each BEGIN
+    marker in *text*, in order of appearance (#619).
 
-    The move to shared/agents/ introduced the repo's first parent-relative
-    (`@../`) include path — every other `@` reference in the tree is `@./`.
-    This is the standing guard for that risk: it fails on every future edit
-    that breaks a shared include, not just at move time.
+    `name` is the shared/agents/<file>.md path named in the marker.
+    `inner_text` is the text between the BEGIN and END markers, or None if
+    no matching END marker follows the BEGIN (a malformed pair) — in that
+    case inner_start/inner_stop mark (BEGIN-line-end, None).
+    Mirrors scripts/sync-shared-blocks.py's private helper of the same name;
+    kept as two small copies rather than one shared module for two call sites.
     """
-    agents_dir = ROOT / "agents"
-    shared_agents_dir = ROOT / "shared" / "agents"
-    agents_cache = cache[0] if cache is not None else None
-    for agent_md in sorted(agents_dir.glob("*.md")):
-        if agents_cache is not None and agent_md in agents_cache:
-            text = agents_cache[agent_md]
-            if text is None:
-                continue  # unreadable — already reported by another check
-        else:
-            try:
-                text = agent_md.read_text(encoding="utf-8")
-            except OSError:
-                continue
-        for match in _SHARED_INCLUDE_RE.finditer(text):
-            target = shared_agents_dir / match.group(1)
-            if not target.is_file():
-                fail(
-                    agent_md.relative_to(ROOT),
-                    f"references {match.group(0)!r} but "
-                    f"{target.relative_to(ROOT)} does not exist",
-                )
+    for m in _SENTINEL_BEGIN_RE.finditer(text):
+        name = m.group(1)
+        end_marker = f'<!-- END {name} -->'
+        end_idx = text.find(end_marker, m.end())
+        if end_idx == -1:
+            yield name, None, m.end(), None
+            continue
+        yield name, text[m.end():end_idx], m.end(), end_idx
 
 
-_BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\.\./shared/agents/')
+def check_shared_blocks_in_sync(cache=None):
+    """Every sentinel-delimited shared block in agents/*.md must match its
+    shared/agents/<name>.md source byte-for-byte (#619).
 
-
-def check_shared_includes_not_blockquoted(cache=None):
-    """`@../shared/agents/*.md` includes must be plain paragraphs, not blockquotes.
-
-    A leading '> ' suppresses include resolution so the shared catalog/contract
-    is never injected into the agent (issue #309). Convergent plain form:
-    `See @../shared/agents/principles.md for the skill catalog.`
+    Validator-side counterpart of `scripts/sync-shared-blocks.py --check` —
+    catches drift between an inlined block and its source at review time
+    (e.g. someone hand-edits an inlined block, or edits the source and
+    forgets to re-run the sync script), not just when the sync script itself
+    is run.
     """
     agents_dir = ROOT / "agents"
     agents_cache = cache[0] if cache is not None else None
@@ -1058,13 +1042,137 @@ def check_shared_includes_not_blockquoted(cache=None):
             except OSError as e:
                 fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
                 continue
-        for i, line in enumerate(text.splitlines(), 1):
-            if _BLOCKQUOTED_SHARED_RE.match(line):
-                fail(
-                    agent_md.relative_to(ROOT),
-                    f"line {i}: '@../shared/agents/' include is blockquoted — drop the leading "
-                    f"'> ' so the include resolves (issue #309): {line.strip()[:60]!r}",
-                )
+        for name, inner, _, _ in _iter_sentinel_pairs(text):
+            if inner is None:
+                fail(agent_md.relative_to(ROOT),
+                     f"BEGIN {name} sentinel has no matching END marker")
+                continue
+            source_path = ROOT / name
+            source_text = None
+            if agents_cache is not None and source_path in agents_cache:
+                source_text = agents_cache[source_path]
+            if source_text is None:
+                if not source_path.is_file():
+                    fail(agent_md.relative_to(ROOT),
+                         f"sentinel block for {name} but that source file does not exist")
+                    continue
+                try:
+                    source_text = source_path.read_text(encoding="utf-8")
+                except OSError as e:
+                    fail(agent_md.relative_to(ROOT), f"could not read {name}: {e}")
+                    continue
+            if inner != source_text:
+                fail(agent_md.relative_to(ROOT),
+                     f"sentinel block for {name} has drifted from source — run "
+                     "scripts/sync-shared-blocks.py --write")
+
+
+_INERT_AT_INCLUDE_RE = re.compile(r'@\.\./shared/|@\./shared/')
+
+
+def check_no_inert_at_includes(cache=None):
+    """No `@../shared/` or `@./shared/` include may appear in agents/*.md,
+    commands/*.md, or any file under skills/ (#619).
+
+    Claude Code only expands `@path` references in CLAUDE.md memory imports
+    and interactive prompts — never inside agent, skill, or command bodies.
+    A dispatched subagent that "includes" shared content this way silently
+    receives the literal `@path` text, not the shared file's content. The
+    fix is the sentinel-delimited inline block mechanism (see
+    scripts/sync-shared-blocks.py) — this check permanently bans the dead
+    pattern so a future contributor doesn't reintroduce it believing it
+    works.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    skills_cache = cache[1] if cache is not None else None
+
+    def _scan(path, text):
+        rel = path.relative_to(ROOT)
+        for m in _INERT_AT_INCLUDE_RE.finditer(text):
+            line_no = text.count("\n", 0, m.start()) + 1
+            line = text.splitlines()[line_no - 1]
+            fail(
+                rel,
+                f"line {line_no}: '@../shared/' / '@./shared/' includes are never expanded in"
+                " agent/skill/command bodies (only in CLAUDE.md imports and interactive"
+                f" prompts, #619) — inline the content instead: {line.strip()[:60]!r}",
+            )
+
+    for agent_md in sorted((ROOT / "agents").glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # unreadable — already reported by another check
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        _scan(agent_md, text)
+
+    for cmd_md in sorted((ROOT / "commands").glob("*.md")):
+        try:
+            text = cmd_md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _scan(cmd_md, text)
+
+    for skill_file in sorted((ROOT / "skills").rglob("*.md")):
+        if skills_cache is not None and skill_file in skills_cache:
+            text = skills_cache[skill_file]
+            if text is None:
+                continue
+        else:
+            try:
+                text = skill_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        _scan(skill_file, text)
+
+
+_LANGUAGE_SKILL_ID_RE = re.compile(r'`swe-workbench:(language-[\w-]+)`')
+
+
+def check_language_pointer_matches_disk(cache=None):
+    """shared/agents/language-skill-required.md's language-* id list must
+    exactly match skills/language-*/ on disk (#619).
+
+    Keeps the pointer file (which every code-touching agent inlines) from
+    silently drifting out of sync with the real skill catalog — a new
+    language skill added under skills/ without updating the pointer would
+    otherwise go unenforced for every agent carrying this block.
+    """
+    pointer_path = ROOT / "shared" / "agents" / "language-skill-required.md"
+    agents_cache = cache[0] if cache is not None else None
+    text = None
+    if agents_cache is not None and pointer_path in agents_cache:
+        text = agents_cache[pointer_path]
+        if text is None:
+            fail(pointer_path.relative_to(ROOT), "could not read file")
+            return
+    if text is None:
+        if not pointer_path.is_file():
+            fail(pointer_path.relative_to(ROOT),
+                 "missing — required shared/agents/language-skill-required.md pointer file")
+            return
+        try:
+            text = pointer_path.read_text(encoding="utf-8")
+        except OSError as e:
+            fail(pointer_path.relative_to(ROOT), f"could not read file: {e}")
+            return
+
+    listed = set(_LANGUAGE_SKILL_ID_RE.findall(text))
+    skills_dir = ROOT / "skills"
+    on_disk = {p.name for p in skills_dir.glob("language-*") if (p / "SKILL.md").is_file()}
+
+    missing = sorted(on_disk - listed)
+    stale = sorted(listed - on_disk)
+    if missing:
+        fail(pointer_path.relative_to(ROOT),
+             f"missing language skill id(s) not listed: {', '.join(missing)}")
+    if stale:
+        fail(pointer_path.relative_to(ROOT),
+             f"stale language skill id(s) with no matching skills/ dir: {', '.join(stale)}")
 
 
 def check_examples():
@@ -1949,9 +2057,10 @@ def main():
     check_plan_mode_workflow_embedding()
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
+    check_shared_blocks_in_sync(cache=cache)
+    check_no_inert_at_includes(cache=cache)
+    check_language_pointer_matches_disk(cache=cache)
     check_adapter_blocks(cache=cache)
-    check_agent_includes_resolve(cache=cache)
-    check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
     check_examples()
