@@ -25,7 +25,7 @@ You receive the `CANDIDATE`/`MAIN_ADD` records emitted by `redundancy-scope.sh`,
 ## Process
 
 1. **Orient**: for each `CANDIDATE`, `Read` its full content and `Grep`/`Glob` for plausible counterparts among the `MAIN_ADD` paths — a rename or relocation means the candidate and its main counterpart will not share a path, so compare by symbol names, exported functions, and behavior, not by filename.
-2. **Reason per candidate.** Read the candidate's main-side counterpart (if any) and judge whether it is functionally equivalent, a superset, a subset, or unrelated. Apply the silence rule from @../shared/agents/severity-output-contract.md: emit `NONE` explicitly when a candidate has no redundancy — never omit a candidate from the output.
+2. **Reason per candidate.** Read the candidate's main-side counterpart (if any) and judge whether it is functionally equivalent, a superset, a subset, or unrelated. Apply the silence rule from the severity-output contract under "Shared references": emit `NONE` explicitly when a candidate has no redundancy — never omit a candidate from the output.
 3. **Tier guardrail (non-negotiable):** `AUTO-APPLY` is permitted **only** when the candidate is a whole-file match (main's counterpart fully supersedes it) **and** `refs=0`. Any candidate where redundancy is only symbol-level (part of the file is redundant, not the whole file), or where `refs` is nonzero (something else in the tree still references it), must be `ESCALATE` — regardless of confidence that the file is dead weight. Confidence never substitutes for the file-only + zero-refs precondition.
 
 ## Output contract
@@ -42,6 +42,70 @@ This departs from a single end-of-file sentinel (contrast `swe-workbench:conflic
 
 ## Principle consultation
 
-See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
+<!-- BEGIN shared/agents/skill-catalog-pointer.md -->
+# Skill catalog
+
+Every `swe-workbench:*` skill in this plugin already appears in your available-skills listing,
+injected by the harness at the start of this session, each with its own one-line description. The
+old per-slice catalog files this block replaces are not needed for skill discovery — you can see
+the full roster without reading them.
+
+Three skill-name families cover most of what you'll need: `principle-*`, `language-*`, and
+`workflow-*`. Invoke any of them with the `Skill` tool.
+<!-- END shared/agents/skill-catalog-pointer.md -->
+<!-- BEGIN shared/agents/language-skill-required.md -->
+# Language skill requirement
+
+A code-touching agent must invoke the `language-*` skill matching the language of the code it is
+reading or writing, when one exists for that language. Invoke it via the `Skill` tool.
+
+- `swe-workbench:language-bash`
+- `swe-workbench:language-csharp`
+- `swe-workbench:language-dart`
+- `swe-workbench:language-go`
+- `swe-workbench:language-java`
+- `swe-workbench:language-kotlin`
+- `swe-workbench:language-python`
+- `swe-workbench:language-ruby`
+- `swe-workbench:language-rust`
+- `swe-workbench:language-sql`
+- `swe-workbench:language-swift`
+- `swe-workbench:language-typescript`
+<!-- END shared/agents/language-skill-required.md -->
 
 **Language skill (required):** Identify the language(s) of each candidate file and invoke the matching `language-*` skill (e.g., `swe-workbench:language-go` for a `.go` file). State which language skill(s) you loaded, or note "N/A" if a candidate has no language-specific idiom (e.g. plain text, lockfiles).
+
+## Shared references
+
+<!-- BEGIN shared/agents/severity-output-contract.md -->
+# Severity-output contract
+
+Standard output format used by all auditor agents. Each agent extends the severity ladder with domain-specific criteria inline.
+
+## Finding format
+
+Each finding follows this pipe-delimited line format:
+
+```
+Severity | File:Line | Issue | Why it matters | Suggested fix
+```
+
+## Severity ladder
+
+| Tier | Role-agnostic criteria |
+|---|---|
+| **Critical** | Exploitable or guaranteed-failure now, no preconditions needed |
+| **High** | Exploitable or likely-failure with realistic preconditions |
+| **Medium** | Defense-in-depth gap — failure is recoverable without production incident |
+| **Low** | Hygiene: no realistic failure path, but worth noting |
+
+Domain agents extend these tiers with domain-specific examples in their own severity table.
+
+## Sort order
+
+Group findings by severity, highest first: Critical → High → Medium → Low. Within each tier, sort by file then line number.
+
+## Silence rule
+
+If no findings, say so explicitly: "No \<domain\> issues found in this diff." Silence is not a passing grade.
+<!-- END shared/agents/severity-output-contract.md -->
