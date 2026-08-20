@@ -8,7 +8,7 @@ To add a new language skill (say, Ruby or another language not already shipped):
 2. Rewrite `SKILL.md` frontmatter: `name: language-<your-language>`, and a keyword-rich `description` listing the language's file types and ecosystem terms.
 3. Replace the body with the idioms that matter: error handling, typing, packaging, async, testing.
 4. Keep it under 150 lines.
-5. Add an entry to `agents/shared/languages.md` (the language slice of the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
+5. Add an entry to `shared/agents/languages.md` (the language slice of the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
 6. Commit; users who reinstall the plugin will pick it up.
 
 ## Adding a context adapter
@@ -55,13 +55,13 @@ context (its output doesn't fit any existing skill's envelope).
 4. Run `bash scripts/validate.sh` — `check_adapter_blocks()` enforces the four-field
    shape (present, in order) on every `skills/*-context/SKILL.md`; `check_catalog_completeness()`
    requires every `*-context` skill (matched by `sid.endswith("-context")`) to have an
-   entry in `agents/shared/workflows.md`.
+   entry in `shared/agents/workflows.md`.
 5. Commit; users who reinstall the plugin will pick it up.
 
 **To add a new `*-context` skill (new kind, not a new provider):** copy
 `skills/observability-context/` as a template (single-adapter starting point) or
 `skills/comms-context/` (multi-adapter starting point), rename to `<kind>-context`, write
-its own output envelope, and add its catalog entry to `agents/shared/workflows.md` in the
+its own output envelope, and add its catalog entry to `shared/agents/workflows.md` in the
 format `` - `swe-workbench:<kind>-context` — <one-line description> `` (the `*-context`
 family routes there regardless of the specific skill name).
 
@@ -119,7 +119,7 @@ skills/principle-clean-architecture/
 
 Interactive commands (those that delegate to a subagent to produce an artifact) support `standard` vs `grill-me` interrogation mode via a shared prelude convention. When adding such a command:
 
-1. Copy the content of `commands/shared/interrogation-prelude.md` verbatim into the new command file, positioned **after** any ticket-context prelude and **before** the subagent delegation or skill activation instruction.
+1. Copy the content of `shared/commands/interrogation-prelude.md` verbatim into the new command file, positioned **after** any ticket-context prelude and **before** the subagent delegation or skill activation instruction.
 2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py`. The `TestInterrogationPreludeUniformity` class enforces byte-identical parity between the shared file and every command in the list.
 3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
 4. Add a `swe-workbench:workflow-grill` trigger row note to the command's entry in `docs/catalog.md`.

@@ -86,7 +86,7 @@ When the user requests optimization without a profile, respond:
 
 ## Severity scheme
 
-Sort order and silence rule: @./shared/severity-output-contract.md
+Sort order and silence rule: @../shared/agents/severity-output-contract.md
 **Deliberate divergence:** quantitative thresholds and 8-column output table below override the base format for performance triage.
 
 | Severity     | Definition                                                              |
@@ -134,6 +134,6 @@ Every recommendation must carry a verification step. Refuse to declare an optimi
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.

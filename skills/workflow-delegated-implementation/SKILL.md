@@ -61,7 +61,7 @@ scratch_dir: <worktree_root>/.scratch                      → maps to Scratch d
 |---|---|---|
 | Core logic | `skills/my-skill/SKILL.md`, `skills/my-skill/triggers.txt` | `bash scripts/validate.sh` |
 | Tests | `tests/test_my_skill.py` | `pytest tests/test_my_skill.py -v` |
-| Wiring | `agents/shared/workflows.md`, `docs/catalog.md`, `README.md` | `bash scripts/validate.sh && pytest tests/ -q` |
+| Wiring | `shared/agents/workflows.md`, `docs/catalog.md`, `README.md` | `bash scripts/validate.sh && pytest tests/ -q` |
 
 Each group's `file_set` is disjoint — no file appears in two groups.
 

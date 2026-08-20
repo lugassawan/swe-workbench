@@ -98,7 +98,7 @@ You apply lightweight PM lenses, not a heavy framework. No RICE math beyond Impa
 
 ## Principle consultation
 
-See @./shared/principles.md for the skill catalog.
+See @../shared/agents/principles.md for the skill catalog.
 
 ## Output format
 

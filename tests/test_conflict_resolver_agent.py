@@ -63,8 +63,8 @@ def test_cites_silence_rule():
 
 def test_includes_both_catalog_slices():
     body = _read()
-    assert "@./shared/principles.md" in body
-    assert "@./shared/languages.md" in body
+    assert "@../shared/agents/principles.md" in body
+    assert "@../shared/agents/languages.md" in body
 
 
 def test_requires_language_skill_statement():

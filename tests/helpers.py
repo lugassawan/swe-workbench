@@ -66,8 +66,8 @@ def make_plugin_tree(
     # agents/
     agents_dir = root / "agents"
     agents_dir.mkdir(exist_ok=True)
-    shared_dir = agents_dir / "shared"
-    shared_dir.mkdir(exist_ok=True)
+    shared_dir = root / "shared" / "agents"
+    shared_dir.mkdir(parents=True, exist_ok=True)
 
     # Build catalog slices listing every skill in skills_dir
     def _lines(ids):
@@ -102,7 +102,7 @@ def make_plugin_tree(
         for agent in agents:
             name = agent["name"]
             fm_lines = "\n".join(f"{k}: {v}" for k, v in agent.items())
-            body = f"---\n{fm_lines}\n---\n\nSee @./shared/principles.md for the skill catalog.\n"
+            body = f"---\n{fm_lines}\n---\n\nSee @../shared/agents/principles.md for the skill catalog.\n"
             (agents_dir / f"{name}.md").write_text(body, encoding="utf-8")
 
     # commands/

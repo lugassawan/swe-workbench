@@ -28,7 +28,7 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # must carry a "matcher" field. Only true lifecycle events belong in this set.
 _LIFECYCLE_HOOK_EVENTS = frozenset({"SubagentStop", "PreCompact", "Stop", "Notification"})
 
-# Agents that reference @./shared/principles.md but are NOT code-touching and
+# Agents that reference @../shared/agents/principles.md but are NOT code-touching and
 # are therefore exempt from the languages.md co-requirement enforced by
 # check_catalog_completeness(). Add an agent's stem here when it genuinely
 # never reads or writes source code (e.g. it only files GitHub issues).
@@ -53,11 +53,11 @@ _BROWSER_INSTALL_HINTS = re.compile(
 
 # LSP tool gate (#559). Any agent granting LSP in its tools: frontmatter must
 # preload the shared LSP doc, which in turn must carry the fallback sentence.
-# Deliberately NOT a body-text regex: agents/shared/principles.md:27 uses "LSP"
+# Deliberately NOT a body-text regex: shared/agents/principles.md:27 uses "LSP"
 # for the Liskov Substitution Principle, so a substring/body match would
 # false-positive on every agent preloading principle-solid.
 _LSP_FALLBACK = "LSP unavailable — falling back to Grep"   # em dash, U+2014
-_LSP_SHARED_INCLUDE = "@./shared/lsp.md"
+_LSP_SHARED_INCLUDE = "@../shared/agents/lsp.md"
 
 
 def fail(path, reason):
@@ -120,11 +120,18 @@ def parse_frontmatter(path, text=None):
 # ──────────────────────────────────────────────
 
 def _build_cache():
-    """Read every agent .md and every skills/*/SKILL.md exactly once.
+    """Read every agent .md, every shared/ fragment, and every skills/*/SKILL.md
+    exactly once.
 
-    Returns (agents, skills) where each is a dict[Path, str | None].
-    rglob("*.md") is intentional: it covers check_unwired_principle_skills
-    (which uses rglob) in addition to the flat-glob consumers.
+    Returns (agents, skills) where each is a dict[Path, str | None]. The
+    `agents` dict also carries shared/agents/*.md and shared/commands/*.md
+    (issue #603: shared/ moved outside agents_dir, so it needs its own walk
+    to keep the same read-once guarantee for check_catalog_completeness,
+    check_lsp_tool_gate, and the hazard scanners, all of which key their
+    cache lookups by path against this same dict). rglob("*.md") over
+    agents_dir is no longer load-bearing now that agents/ has no
+    subdirectories left (shared/ moved out) — kept for robustness against a
+    future subdirectory rather than for any current consumer.
     Unreadable files are stored as None so consumers that track failures
     (e.g. check_catalog_completeness) can report them without re-reading.
     ROOT is resolved inside this function so test monkeypatching of ROOT works.
@@ -133,14 +140,16 @@ def _build_cache():
     reads each template file directly (one read_text() call per template).
     """
     agents_dir = ROOT / "agents"
+    shared_dir = ROOT / "shared"
     skills_dir = ROOT / "skills"
     agents: dict = {}
     skills: dict = {}
-    for p in agents_dir.rglob("*.md"):
-        try:
-            agents[p] = p.read_text(encoding="utf-8")
-        except OSError:
-            agents[p] = None  # sentinel: present but unreadable
+    for base in (agents_dir, shared_dir):
+        for p in base.rglob("*.md"):
+            try:
+                agents[p] = p.read_text(encoding="utf-8")
+            except OSError:
+                agents[p] = None  # sentinel: present but unreadable
     for p in skills_dir.glob("*/SKILL.md"):
         try:
             skills[p] = p.read_text(encoding="utf-8")
@@ -576,8 +585,6 @@ def _bare_actionable_id_set():
     for p in (ROOT / "skills").glob("*/SKILL.md"):
         ids.add(p.parent.name)
     for p in (ROOT / "agents").glob("*.md"):
-        if p.parent.name == "shared":
-            continue
         ids.add(p.stem)
     return ids
 
@@ -885,7 +892,7 @@ def _check_adapter_block_field_order(skill_md, provider, block):
 
 
 def check_catalog_completeness(cache=None):
-    """Per-slice catalogs under agents/shared/ must list every skill in the right slice,
+    """Per-slice catalogs under shared/agents/ must list every skill in the right slice,
     and every agent must reference at least one slice catalog.
 
     Slice files and their skill-name prefix rules:
@@ -901,15 +908,15 @@ def check_catalog_completeness(cache=None):
         "workflows.md": ("workflow-",),
     }
     _SLICE_REFS = frozenset({
-        "@./shared/principles.md",
-        "@./shared/languages.md",
-        "@./shared/workflows.md",
+        "@../shared/agents/principles.md",
+        "@../shared/agents/languages.md",
+        "@../shared/agents/workflows.md",
     })
     # — = EM DASH; [^\r\n]* avoids capturing CRLF carriage returns in description
     entry_re = re.compile(r'^-\s+`swe-workbench:([\w-]+)`\s+—\s+(\S[^\r\n]*)$', re.MULTILINE)
 
     agents_dir = ROOT / "agents"
-    shared_dir = agents_dir / "shared"
+    shared_dir = ROOT / "shared" / "agents"
     skills_dir = ROOT / "skills"
     agents_cache = cache[0] if cache is not None else None
 
@@ -978,29 +985,64 @@ def check_catalog_completeness(cache=None):
         if not any(ref in agent_text for ref in _SLICE_REFS):
             fail(agent_md.relative_to(ROOT),
                  "missing required slice catalog reference"
-                 " — add at least one of: '@./shared/principles.md',"
-                 " '@./shared/languages.md', '@./shared/workflows.md'")
+                 " — add at least one of: '@../shared/agents/principles.md',"
+                 " '@../shared/agents/languages.md', '@../shared/agents/workflows.md'")
             continue
         # Code-touching agents must include both catalogs.
         if (agent_md.stem not in _NON_CODE_AGENTS
-                and "@./shared/principles.md" in agent_text
-                and "@./shared/languages.md" not in agent_text):
+                and "@../shared/agents/principles.md" in agent_text
+                and "@../shared/agents/languages.md" not in agent_text):
             fail(agent_md.relative_to(ROOT),
-                 "code-touching agent includes '@./shared/principles.md' but is missing"
-                 " '@./shared/languages.md' — add it so language-* skills are in scope."
+                 "code-touching agent includes '@../shared/agents/principles.md' but is missing"
+                 " '@../shared/agents/languages.md' — add it so language-* skills are in scope."
                  " If this agent never touches source code, add its stem to"
                  " _NON_CODE_AGENTS at the top of validate.py.")
 
 
-_BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\./shared/')
+_SHARED_INCLUDE_RE = re.compile(r'@\.\./shared/agents/([\w-]+\.md)')
+
+
+def check_agent_includes_resolve(cache=None):
+    """Every `@../shared/agents/X.md` reference in agents/*.md must resolve to
+    a file that actually exists under shared/agents/ (issue #603).
+
+    The move to shared/agents/ introduced the repo's first parent-relative
+    (`@../`) include path — every other `@` reference in the tree is `@./`.
+    This is the standing guard for that risk: it fails on every future edit
+    that breaks a shared include, not just at move time.
+    """
+    agents_dir = ROOT / "agents"
+    shared_agents_dir = ROOT / "shared" / "agents"
+    agents_cache = cache[0] if cache is not None else None
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # unreadable — already reported by another check
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        for match in _SHARED_INCLUDE_RE.finditer(text):
+            target = shared_agents_dir / match.group(1)
+            if not target.is_file():
+                fail(
+                    agent_md.relative_to(ROOT),
+                    f"references {match.group(0)!r} but "
+                    f"{target.relative_to(ROOT)} does not exist",
+                )
+
+
+_BLOCKQUOTED_SHARED_RE = re.compile(r'^\s*>.*@\.\./shared/agents/')
 
 
 def check_shared_includes_not_blockquoted(cache=None):
-    """`@./shared/*.md` includes must be plain paragraphs, not blockquotes.
+    """`@../shared/agents/*.md` includes must be plain paragraphs, not blockquotes.
 
     A leading '> ' suppresses include resolution so the shared catalog/contract
     is never injected into the agent (issue #309). Convergent plain form:
-    `See @./shared/principles.md for the skill catalog.`
+    `See @../shared/agents/principles.md for the skill catalog.`
     """
     agents_dir = ROOT / "agents"
     agents_cache = cache[0] if cache is not None else None
@@ -1020,7 +1062,7 @@ def check_shared_includes_not_blockquoted(cache=None):
             if _BLOCKQUOTED_SHARED_RE.match(line):
                 fail(
                     agent_md.relative_to(ROOT),
-                    f"line {i}: '@./shared/' include is blockquoted — drop the leading "
+                    f"line {i}: '@../shared/agents/' include is blockquoted — drop the leading "
                     f"'> ' so the include resolves (issue #309): {line.strip()[:60]!r}",
                 )
 
@@ -1049,12 +1091,13 @@ def check_unwired_principle_skills(cache=None):
     frontmatter (unconditional preload wiring counts as wiring in its own
     right; a body mention is no longer required once a skill is preloaded).
 
-    agents/shared/ (the catalog slice files) are explicitly excluded — they list
-    every skill by design and must not count as a wiring reference.
+    shared/agents/ (the catalog slice files) now lives outside agents/ entirely,
+    so a plain (non-recursive) glob over agents/ already excludes them by
+    construction — they list every skill by design and must not count as a
+    wiring reference.
     """
     skills_dir = ROOT / "skills"
     agents_dir = ROOT / "agents"
-    shared_dir = agents_dir / "shared"
     agents_cache = cache[0] if cache is not None else None
 
     principle_skills = sorted(
@@ -1063,9 +1106,8 @@ def check_unwired_principle_skills(cache=None):
     )
 
     agent_files = [
-        f for f in sorted(agents_dir.rglob("*.md"))
-        if f.parent != shared_dir
-        and (agents_cache is None or agents_cache.get(f) is not None)
+        f for f in sorted(agents_dir.glob("*.md"))
+        if agents_cache is None or agents_cache.get(f) is not None
     ]
 
     agent_data = []
@@ -1235,14 +1277,13 @@ def _build_dep_graph(cache):
     skills_dir = root / "skills"
     agents_dir = root / "agents"
     commands_dir = root / "commands"
+    shared_dir = root / "shared"
 
     # Pre-build resolution index: id -> (kind, id)
     resolvable = {}
     for p in skills_dir.glob("*/SKILL.md"):
         resolvable[p.parent.name] = ("skill", p.parent.name)
     for p in agents_dir.glob("*.md"):
-        if p.parent.name == "shared":
-            continue
         if p.stem not in resolvable:
             resolvable[p.stem] = ("agent", p.stem)
 
@@ -1286,9 +1327,10 @@ def _build_dep_graph(cache):
         src = ("skill", skill_md.parent.name)
         _scan(src, text)
 
-    # Agents (non-shared)
+    # Agents (non-shared) — shared/agents/*.md and shared/commands/*.md sit one
+    # level under shared_dir (issue #603) and must never become graph nodes.
     for agent_md, text in agents_cache.items():
-        if agent_md.parent.name == "shared":
+        if agent_md.parent.parent == shared_dir:
             continue
         if text is None:
             continue
@@ -1487,13 +1529,13 @@ def check_browser_tool_gate(cache=None):
 
 def check_lsp_tool_gate(cache=None):
     """Any agent granting LSP in its tools: frontmatter must preload
-    agents/shared/lsp.md, and that shared file must carry the LSP-unavailable
+    shared/agents/lsp.md, and that shared file must carry the LSP-unavailable
     fallback sentence (#559).
 
     Only ever inspects the tools: frontmatter value (parsed via
     parse_frontmatter, either the scalar split on ',' or the YAML sequence
     form, with exact-token membership) — never a body-text regex.
-    agents/shared/principles.md uses "LSP" for the Liskov Substitution
+    shared/agents/principles.md uses "LSP" for the Liskov Substitution
     Principle, so a body-text match would false-positive on every agent
     preloading principle-solid.
 
@@ -1535,16 +1577,19 @@ def check_lsp_tool_gate(cache=None):
     if not granting:
         return
 
-    shared_path = agents_dir / "shared" / "lsp.md"
-    try:
-        shared_text = shared_path.read_text(encoding="utf-8")
-    except OSError:
-        shared_text = None
+    shared_path = ROOT / "shared" / "agents" / "lsp.md"
+    if agents_cache is not None and shared_path in agents_cache:
+        shared_text = agents_cache[shared_path]
+    else:
+        try:
+            shared_text = shared_path.read_text(encoding="utf-8")
+        except OSError:
+            shared_text = None
 
     if shared_text is None:
         fail(
             shared_path.relative_to(ROOT),
-            "one or more agents grant LSP in tools: but agents/shared/lsp.md "
+            "one or more agents grant LSP in tools: but shared/agents/lsp.md "
             "is missing — add the shared LSP doc with the fallback sentence (#559)",
         )
     elif _LSP_FALLBACK not in shared_text:
@@ -1739,10 +1784,10 @@ def _join_bash_continuations(block_lines):
 
 
 def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
-    """Scan fenced ```bash blocks under skills/, commands/, agents/ (including
-    reference/ subdirs) and fail() on any line where `is_hazard_line` returns
-    True. `message` is called with the 1-indexed line number and must return
-    the failure reason string.
+    """Scan fenced ```bash blocks under skills/, commands/, agents/, shared/
+    (including reference/ subdirs) and fail() on any line where
+    `is_hazard_line` returns True. `message` is called with the 1-indexed
+    line number and must return the failure reason string.
 
     docs/ is intentionally excluded from the scanned roots — the sibling doc
     page must show the bad pattern as a worked example without tripping this
@@ -1758,6 +1803,7 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
         (ROOT / "skills", skills_cache),
         (ROOT / "commands", None),
         (ROOT / "agents", agents_cache),
+        (ROOT / "shared", agents_cache),
     )
     for base, sub_cache in roots:
         if not base.is_dir():
@@ -1904,6 +1950,7 @@ def main():
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
     check_adapter_blocks(cache=cache)
+    check_agent_includes_resolve(cache=cache)
     check_shared_includes_not_blockquoted(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)

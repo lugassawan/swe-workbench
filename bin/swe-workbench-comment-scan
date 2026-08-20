@@ -3,7 +3,7 @@
 
 Pure function: unified diff text in on stdin, findings + a footer out on
 stdout. No git access inside this module — callers resolve the diff by
-whatever means their context already established (see agents/shared/
+whatever means their context already established (see shared/agents/
 comment-scan.md for the canonical `git diff -M` invocation). This keeps the
 comment-analysis domain logic testable against fixture diffs, independent
 of worktree / bare-repo / detached-HEAD concerns.

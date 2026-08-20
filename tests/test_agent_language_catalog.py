@@ -1,6 +1,6 @@
 """Structural tests — language-skill under-selection fix.
 
-T1: Every code-touching agent body contains @./shared/languages.md.
+T1: Every code-touching agent body contains @../shared/agents/languages.md.
 T2: Every code-touching agent body directly contains a mandatory language-skill
     gate marker (`language-*`) in its consultation section, signalling required
     (not optional) language-skill loading.
@@ -50,16 +50,16 @@ def _agent_text(name: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# T1 — @./shared/languages.md present in every code-touching agent
+# T1 — @../shared/agents/languages.md present in every code-touching agent
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("agent_name", CODE_TOUCHING_AGENTS)
 def test_agent_has_languages_catalog_include(agent_name):
-    """T1: code-touching agent body must contain @./shared/languages.md."""
+    """T1: code-touching agent body must contain @../shared/agents/languages.md."""
     text = _agent_text(agent_name)
-    assert "@./shared/languages.md" in text, (
-        f"agents/{agent_name}.md is missing '@./shared/languages.md'. "
+    assert "@../shared/agents/languages.md" in text, (
+        f"agents/{agent_name}.md is missing '@../shared/agents/languages.md'. "
         "All code-touching agents must include the language-skill catalog."
     )
 
@@ -75,7 +75,7 @@ def test_agent_has_mandatory_language_gate(agent_name):
     text = _agent_text(agent_name)
     # The mandatory gate paragraph uses `language-*` (with the asterisk) to
     # indicate the required invocation pattern. This is the specific signal
-    # added by the fix; it is NOT present in the @./shared/languages.md include.
+    # added by the fix; it is NOT present in the @../shared/agents/languages.md include.
     assert "language-*" in text, (
         f"agents/{agent_name}.md is missing a mandatory language-skill gate "
         "('language-*'). Add a required consultation paragraph that instructs "

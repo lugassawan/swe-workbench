@@ -34,7 +34,7 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 
 `swe-workbench-comment-scan` and `swe-workbench-pr-review-submit` are the two scripts in this
 directory with a `#!/usr/bin/env python3` shebang instead of `#!/usr/bin/env bash`. `comment-scan`
-is a pure diff-in/findings-out function (no git calls of its own; see `agents/shared/comment-scan.md`
+is a pure diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md`
 for the canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON
 and multi-call state-machine handling (422 retry, read-your-write confirmation) more than bash's
 process-spawning idioms. Same bare-command convention applies; only the interpreter differs.

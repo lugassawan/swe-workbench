@@ -25,7 +25,7 @@ You receive the `CANDIDATE`/`MAIN_ADD` records emitted by `redundancy-scope.sh`,
 ## Process
 
 1. **Orient**: for each `CANDIDATE`, `Read` its full content and `Grep`/`Glob` for plausible counterparts among the `MAIN_ADD` paths — a rename or relocation means the candidate and its main counterpart will not share a path, so compare by symbol names, exported functions, and behavior, not by filename.
-2. **Reason per candidate.** Read the candidate's main-side counterpart (if any) and judge whether it is functionally equivalent, a superset, a subset, or unrelated. Apply the silence rule from @./shared/severity-output-contract.md: emit `NONE` explicitly when a candidate has no redundancy — never omit a candidate from the output.
+2. **Reason per candidate.** Read the candidate's main-side counterpart (if any) and judge whether it is functionally equivalent, a superset, a subset, or unrelated. Apply the silence rule from @../shared/agents/severity-output-contract.md: emit `NONE` explicitly when a candidate has no redundancy — never omit a candidate from the output.
 3. **Tier guardrail (non-negotiable):** `AUTO-APPLY` is permitted **only** when the candidate is a whole-file match (main's counterpart fully supersedes it) **and** `refs=0`. Any candidate where redundancy is only symbol-level (part of the file is redundant, not the whole file), or where `refs` is nonzero (something else in the tree still references it), must be `ESCALATE` — regardless of confidence that the file is dead weight. Confidence never substitutes for the file-only + zero-refs precondition.
 
 ## Output contract
@@ -42,6 +42,6 @@ This departs from a single end-of-file sentinel (contrast `swe-workbench:conflic
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) of each candidate file and invoke the matching `language-*` skill (e.g., `swe-workbench:language-go` for a `.go` file). State which language skill(s) you loaded, or note "N/A" if a candidate has no language-specific idiom (e.g. plain text, lockfiles).

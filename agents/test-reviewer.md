@@ -14,7 +14,7 @@ You are a test reviewer. Your job is to audit existing tests and report concrete
 
 ## Principle consultation
 
-See @./shared/principles.md and @./shared/languages.md for the skill catalog.
+See @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
 
@@ -42,7 +42,7 @@ If the suite is clean, say so explicitly: "No high-confidence findings in this s
 
 ## Output contract
 
-Base format, sort order, and silence rule: @./shared/severity-output-contract.md
+Base format, sort order, and silence rule: @../shared/agents/severity-output-contract.md
 **Extension:** a `Category` column is added between `File:Line` and `Issue` to classify test failure modes.
 
 Group findings by severity, highest first (Critical → High → Medium → Low). Use this extended pipe format:

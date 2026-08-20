@@ -18,7 +18,8 @@ CATALOG_MD = ROOT / "docs" / "catalog.md"
 
 
 def _agent_names():
-    """Top-level agents/*.md files only — excludes agents/shared/ include fragments."""
+    """Top-level agents/*.md files only — shared/agents/ include fragments live
+    outside this directory entirely and are naturally excluded."""
     return sorted(p.stem for p in AGENTS_DIR.glob("*.md"))
 
 

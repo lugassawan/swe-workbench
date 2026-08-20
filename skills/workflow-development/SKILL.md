@@ -137,7 +137,7 @@ Run in order — **Imports → Format → Quality → Lint → Test**. Imports c
 
 Invoke `superpowers:verification-before-completion`.
 
-**Comment scan (advisory-with-accounting, not a hard gate)** — run per `agents/shared/comment-scan.md`
+**Comment scan (advisory-with-accounting, not a hard gate)** — run per `shared/agents/comment-scan.md`
 against the branch diff. It never fails verify on its own, but Phase 3 isn't "passed" until evidence
 carries one `KEEP <id> <reason>` or `FIXED <id>` line per must-triage finding, `FIXED` re-confirmed
 by a re-run.
