@@ -1,5 +1,5 @@
 /**
- * swe-workbench adapter for Pi Coding Agent (ADR-0001 phase 1, issue #604).
+ * swe-workbench adapter for Pi Coding Agent.
  *
  * Mirrors two harness affordances Claude Code already provides for this plugin, pointing at
  * the SAME skills/ and bin/ trees Claude Code uses — nothing under skills/ is duplicated:

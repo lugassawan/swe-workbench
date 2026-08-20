@@ -1,4 +1,4 @@
-"""Contract and behavioural tests for the Pi Coding Agent adapter (issue #604, ADR-0001 phase 1).
+"""Contract and behavioural tests for the Pi Coding Agent adapter.
 
 Two layers:
   - Always-on (static/contract): pi/package.json shape, bin/README.md anchor shape, no
