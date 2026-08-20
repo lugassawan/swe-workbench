@@ -39,7 +39,7 @@ const stubPi = {
 const stubCtx = { hasUI: true, ui: { notify() {} } };
 
 await factory(stubPi);
-await factory(stubPi); // second invocation simulates a session reload
+await factory(stubPi); // second invocation: defends against this file loading as two Extension instances
 
 const discoverResult = await handlers["resources_discover"](
   { type: "resources_discover", cwd: process.cwd(), reason: "startup" },
@@ -117,8 +117,9 @@ def test_package_json_values():
 def test_package_json_has_no_pi_skills_key():
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     assert "skills" not in data["pi"], (
-        "pi.skills must be absent — the extension's resources_discover handler is the sole "
-        "source of skill paths so all 60 skills register exactly once"
+        "pi.skills must be absent — the extension's resources_discover handler must stay the "
+        "sole, single source of truth for skill paths, not one of two independently maintained "
+        "declarations that could drift apart"
     )
 
 
@@ -194,3 +195,38 @@ def test_before_agent_start_does_not_duplicate_on_already_injected_prompt(extens
     # A void handler return serializes as an absent key, not JSON null.
     second = extension_result.get("secondInjection")
     assert second is None or "systemPrompt" not in second
+
+
+@requires_node
+def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
+    """A missing bin/README.md must not take down PATH exposure or skill discovery.
+
+    Regression test: the extension used to read bin/README.md unguarded, so a missing file
+    threw synchronously inside the factory — which fails the whole extension, not just the
+    system-prompt preamble feature (the one failure mode the code already degrades for).
+    """
+    synthetic_root = tmp_path_factory.mktemp("pi-synthetic-root")
+    (synthetic_root / ".claude-plugin").mkdir()
+    (synthetic_root / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+    (synthetic_root / "bin").mkdir()  # deliberately no README.md
+    (synthetic_root / "skills").mkdir()
+    synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
+    synthetic_index.parent.mkdir(parents=True)
+    synthetic_index.write_text(INDEX_TS.read_text(encoding="utf-8"), encoding="utf-8")
+
+    driver = tmp_path_factory.mktemp("pi-extension-driver-missing-readme") / "driver.mjs"
+    driver.write_text(_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(synthetic_index)],
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    parsed = json.loads(result.stdout)
+    assert parsed["discoverResult"] == {"skillPaths": [str(synthetic_root / "skills")]}
+    assert str(synthetic_root / "bin") in parsed["pathEntries"]
+    assert "systemPrompt" not in (parsed.get("firstInjection") or {})

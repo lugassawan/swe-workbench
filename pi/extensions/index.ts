@@ -60,6 +60,22 @@ function extractCurrentScripts(readmeText: string): string | null {
   return body.trim();
 }
 
+/**
+ * Reads bin/README.md and extracts the "## Current scripts" section. Returns null on any
+ * failure (file missing/unreadable, or heading missing) — this is a doc file, not load-bearing
+ * for PATH exposure or skill discovery, so its absence must degrade the preamble feature alone,
+ * never take down the whole extension.
+ */
+function readCurrentScripts(binDir: string): string | null {
+  let readmeText: string;
+  try {
+    readmeText = readFileSync(join(binDir, "README.md"), "utf8");
+  } catch {
+    return null;
+  }
+  return extractCurrentScripts(readmeText);
+}
+
 export default function (pi: ExtensionAPI): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = findPluginRoot(here);
@@ -70,8 +86,7 @@ export default function (pi: ExtensionAPI): void {
     process.env.PATH = [...pathEntries, binDir].join(delimiter);
   }
 
-  const readmeText = readFileSync(join(binDir, "README.md"), "utf8");
-  const currentScripts = extractCurrentScripts(readmeText);
+  const currentScripts = readCurrentScripts(binDir);
   const preamble =
     currentScripts === null
       ? null
@@ -87,7 +102,7 @@ export default function (pi: ExtensionAPI): void {
     if (preamble === null && !warnedMissingAnchor && ctx.hasUI) {
       warnedMissingAnchor = true;
       ctx.ui.notify(
-        "swe-workbench: bin/README.md's '## Current scripts' section was not found — the " +
+        "swe-workbench: bin/README.md's '## Current scripts' section could not be read — the " +
           "bin/ script inventory will not be injected into the system prompt this session.",
         "warning",
       );
