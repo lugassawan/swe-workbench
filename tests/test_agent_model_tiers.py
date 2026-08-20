@@ -12,9 +12,8 @@ COST_AUDIT = ROOT / "docs" / "cost-audit.md"
 
 VALID_TIERS = {"haiku", "sonnet", "opus"}
 
-# One line per shipped agent — encodes the #612 per-agent keep/bump pass.
-# Bumped to opus: architect, migrator, security-auditor, senior-engineer.
-# Rationale for every agent lives in docs/cost-audit.md's re-tier section.
+# Encodes the #612 keep/bump pass; rationale lives in docs/cost-audit.md's
+# re-tier section. Bumped to opus: architect, migrator, security-auditor, senior-engineer.
 EXPECTED_TIERS = {
     "accessibility-auditor": "sonnet",
     "architect": "opus",
