@@ -3,9 +3,11 @@
 from pathlib import Path
 
 import validate
+from helpers import sentinel_block
 
 ROOT = Path(__file__).parent.parent
 AGENT = ROOT / "agents" / "redundancy-assessor.md"
+SHARED_DIR = ROOT / "shared" / "agents"
 
 
 def _read() -> str:
@@ -121,9 +123,22 @@ def test_input_contract_references_redundancy_scope_records():
 
 
 def test_includes_both_catalog_slices():
+    """redundancy-assessor is a normal code-touching agent (not the
+    product-manager exception) — must carry both the skill-catalog-pointer
+    and language-skill-required sentinel blocks, byte-identical to their
+    sources (#619)."""
     body = _read()
-    assert "@../shared/agents/principles.md" in body
-    assert "@../shared/agents/languages.md" in body
+    for fragment in ("skill-catalog-pointer.md", "language-skill-required.md"):
+        block = sentinel_block(body, fragment)
+        assert block is not None, (
+            f"redundancy-assessor.md is missing the "
+            f"'<!-- BEGIN shared/agents/{fragment} -->' sentinel block"
+        )
+        source = (SHARED_DIR / fragment).read_text(encoding="utf-8")
+        assert block == source, (
+            f"redundancy-assessor.md's {fragment} block has drifted from "
+            f"shared/agents/{fragment} — run python3 scripts/sync-shared-blocks.py --write"
+        )
 
 
 def test_never_mutates_directly():

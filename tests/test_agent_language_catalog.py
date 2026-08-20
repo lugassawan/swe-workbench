@@ -16,9 +16,12 @@ from pathlib import Path
 
 import pytest
 
+from helpers import sentinel_block
+
 ROOT = Path(__file__).parent.parent
 AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
+LANGUAGE_SKILL_REQUIRED_SRC = ROOT / "shared" / "agents" / "language-skill-required.md"
 
 # Agents that review, write, or diagnose code — must consult language skills.
 # product-manager is excluded (files GitHub issues; never touches source).
@@ -56,11 +59,22 @@ def _agent_text(name: str) -> str:
 
 @pytest.mark.parametrize("agent_name", CODE_TOUCHING_AGENTS)
 def test_agent_has_languages_catalog_include(agent_name):
-    """T1: code-touching agent body must contain @../shared/agents/languages.md."""
+    """T1: code-touching agent body must carry the language-skill-required
+    sentinel block, byte-identical to shared/agents/language-skill-required.md
+    (#619 — a plain include string proved nothing about whether the include
+    actually resolved to real content; Claude Code never expands @includes)."""
     text = _agent_text(agent_name)
-    assert "@../shared/agents/languages.md" in text, (
-        f"agents/{agent_name}.md is missing '@../shared/agents/languages.md'. "
-        "All code-touching agents must include the language-skill catalog."
+    block = sentinel_block(text, "language-skill-required.md")
+    assert block is not None, (
+        f"agents/{agent_name}.md is missing the "
+        "'<!-- BEGIN shared/agents/language-skill-required.md -->' sentinel block. "
+        "All code-touching agents must inline the language-skill catalog."
+    )
+    source = LANGUAGE_SKILL_REQUIRED_SRC.read_text(encoding="utf-8")
+    assert block == source, (
+        f"agents/{agent_name}.md's language-skill-required block has drifted from "
+        "shared/agents/language-skill-required.md — run "
+        "python3 scripts/sync-shared-blocks.py --write"
     )
 
 

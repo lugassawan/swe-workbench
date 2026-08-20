@@ -10,7 +10,10 @@ from pathlib import Path
 
 import pytest
 
+from helpers import sentinel_block
+
 ROOT = Path(__file__).parent.parent
+COMMENT_SCAN_SRC = ROOT / "shared" / "agents" / "comment-scan.md"
 
 TECH_WRITER_AGENT = ROOT / "agents" / "tech-writer.md"
 CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
@@ -91,7 +94,14 @@ def test_agent_references_comment_scan_include(name):
     path = SCAN_WIRED_AGENTS[name]
     assert path.exists(), f"agents/{name}.md must exist"
     body = path.read_text()
-    assert "@../shared/agents/comment-scan.md" in body, (
-        f"agents/{name}.md must reference @../shared/agents/comment-scan.md in its verify step "
-        "so the comment-scan gate is invoked on the first pass"
+    block = sentinel_block(body, "comment-scan.md")
+    assert block is not None, (
+        f"agents/{name}.md is missing the "
+        "'<!-- BEGIN shared/agents/comment-scan.md -->' sentinel block in its verify "
+        "step so the comment-scan gate is invoked on the first pass"
+    )
+    source = COMMENT_SCAN_SRC.read_text(encoding="utf-8")
+    assert block == source, (
+        f"agents/{name}.md's comment-scan block has drifted from "
+        "shared/agents/comment-scan.md — run python3 scripts/sync-shared-blocks.py --write"
     )

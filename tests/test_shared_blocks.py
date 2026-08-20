@@ -1,17 +1,22 @@
 """Tests for the sentinel-delimited shared-block inlining mechanism (issue #619):
 scripts/sync-shared-blocks.py and the validate.py checks that guard it.
 
-Fixtures are isolated temp trees built from scratch — never the live (not-yet-migrated)
-agents/ tree, which still uses the dead '@../shared/agents/*.md' includes this mechanism
-replaces (see task-1-brief.md).
+Most fixtures below are isolated temp trees built from scratch (Task 1's original
+tests, written before agents/ was migrated). TestLiveTreeIntegration at the bottom
+is the exception: it runs against the real, now-migrated agents/ and shared/agents/
+directories (Task 2 replaced every dead '@../shared/agents/*.md' include with a
+sentinel block) — this is the direct, load-bearing regression guard for #619 itself.
 """
 
 import importlib.util
+import shutil
+import subprocess
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import validate
+from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 
@@ -363,3 +368,119 @@ class TestCheckCatalogCompletenessSentinelMarkers:
         _write_agent(root, "product-manager", body)
         validate.check_catalog_completeness()
         assert not any("language-skill-required" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
+# Live-tree integration (#619) — the assertion that would have caught it
+# ──────────────────────────────────────────────
+#
+# Unlike every class above, these run against the real agents/ and
+# shared/agents/ directories rather than an isolated tmp_path fixture. The
+# original #619 regression was that a test asserted an include *string* was
+# present in an agent body, never that it resolved to real content — that
+# gap only shows up against the live tree, where the migration (Task 2)
+# either did or didn't actually happen.
+
+_POINTER_MARKER = "<!-- BEGIN shared/agents/skill-catalog-pointer.md -->"
+_LANGUAGE_MARKER = "<!-- BEGIN shared/agents/language-skill-required.md -->"
+_AGENTS_DIR = ROOT / "agents"
+_SHARED_AGENTS_DIR = ROOT / "shared" / "agents"
+_SYNC_SCRIPT = ROOT / "scripts" / "sync-shared-blocks.py"
+
+
+class TestLiveTreeIntegration:
+    def test_every_agent_carries_pointer_block(self):
+        agent_files = sorted(_AGENTS_DIR.glob("*.md"))
+        assert agent_files, "expected at least one agents/*.md file"
+        for agent_path in agent_files:
+            text = agent_path.read_text(encoding="utf-8")
+            assert _POINTER_MARKER in text, (
+                f"agents/{agent_path.name} is missing the skill-catalog-pointer sentinel block"
+            )
+
+    def test_every_code_touching_agent_carries_language_block(self):
+        agent_files = sorted(_AGENTS_DIR.glob("*.md"))
+        code_touching = [p for p in agent_files if p.stem not in validate._NON_CODE_AGENTS]
+        assert code_touching, "expected at least one code-touching agent"
+        for agent_path in code_touching:
+            text = agent_path.read_text(encoding="utf-8")
+            assert _LANGUAGE_MARKER in text, (
+                f"agents/{agent_path.name} is missing the language-skill-required sentinel block"
+            )
+
+    def test_every_sentinel_block_is_byte_identical_to_its_source(self):
+        """The direct, load-bearing assertion for #619's regression class: a future
+        edit to a shared fragment without re-running sync-shared-blocks.py must fail
+        here, not silently ship stale content to every agent that inlined it."""
+        agent_files = sorted(_AGENTS_DIR.glob("*.md"))
+        checked_any = False
+        for agent_path in agent_files:
+            text = agent_path.read_text(encoding="utf-8")
+            for name, inner, _, _ in sb._iter_sentinel_pairs(text):
+                checked_any = True
+                assert inner is not None, (
+                    f"agents/{agent_path.name}: BEGIN {name} has no matching END marker"
+                )
+                source_path = ROOT / name
+                assert source_path.is_file(), (
+                    f"agents/{agent_path.name}: block for {name} but that source file does not exist"
+                )
+                source_text = source_path.read_text(encoding="utf-8")
+                assert inner == source_text, (
+                    f"agents/{agent_path.name}'s {name} block has drifted from source — "
+                    "run python3 scripts/sync-shared-blocks.py --write"
+                )
+        assert checked_any, "expected at least one sentinel block across agents/*.md"
+
+    def test_no_inert_at_includes_survive_repo_wide(self, monkeypatch):
+        """No '@../shared/' or '@./shared/' include may remain anywhere under
+        agents/, commands/, or skills/ — Claude Code never expands them (#619)."""
+        monkeypatch.setattr(validate, "ROOT", ROOT)
+        validate.FAILURES.clear()
+        validate.check_no_inert_at_includes()
+        assert validate.FAILURES == [], f"validate.py failures: {validate.FAILURES}"
+
+    def test_sync_script_check_passes_against_real_tree(self):
+        result = subprocess.run(
+            [sys.executable, str(_SYNC_SCRIPT), "--check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, (
+            f"scripts/sync-shared-blocks.py --check failed against the real tree:\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "no drift" in result.stdout.lower()
+
+    def test_sync_script_write_is_idempotent_against_real_tree(self, tmp_path):
+        """--write must report 'Nothing needed changing' against a copy of the real
+        tree, since Task 2's inlined copies are already byte-exact — proving that,
+        never mutates the live working tree; runs against a throwaway tmp copy."""
+        tmp_root = tmp_path / "repo_copy"
+        shutil.copytree(_AGENTS_DIR, tmp_root / "agents")
+        shutil.copytree(_SHARED_AGENTS_DIR, tmp_root / "shared" / "agents")
+        scripts_dir = tmp_root / "scripts"
+        scripts_dir.mkdir(parents=True)
+        shutil.copy2(_SYNC_SCRIPT, scripts_dir / "sync-shared-blocks.py")
+
+        result = subprocess.run(
+            [sys.executable, str(scripts_dir / "sync-shared-blocks.py"), "--write"],
+            cwd=tmp_root,
+            capture_output=True,
+            text=True,
+            env=_CLEAN_ENV,
+        )
+        assert result.returncode == 0, (
+            f"scripts/sync-shared-blocks.py --write failed against the tmp copy:\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "nothing needed changing" in result.stdout.lower(), (
+            f"expected --write to be a no-op against an already-synced copy, got:\n{result.stdout}"
+        )
+        # Confirm the copy itself was left byte-identical to the real tree (no
+        # accidental mutation, i.e. genuine idempotency, not a false-positive no-op).
+        for agent_path in sorted((tmp_root / "agents").glob("*.md")):
+            original = (_AGENTS_DIR / agent_path.name).read_text(encoding="utf-8")
+            assert agent_path.read_text(encoding="utf-8") == original

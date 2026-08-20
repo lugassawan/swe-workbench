@@ -15,17 +15,13 @@ import re
 from pathlib import Path
 
 import validate
+from helpers import sentinel_block
 
 ROOT = Path(__file__).parent.parent
 AGENT = ROOT / "agents" / "code-impl.md"
 CATALOG = ROOT / "docs" / "catalog.md"
 README = ROOT / "README.md"
-
-_SLICE_REFS = {
-    "@../shared/agents/principles.md",
-    "@../shared/agents/languages.md",
-    "@../shared/agents/workflows.md",
-}
+SKILL_CATALOG_POINTER_SRC = ROOT / "shared" / "agents" / "skill-catalog-pointer.md"
 
 
 def _read() -> str:
@@ -89,10 +85,19 @@ def test_tools_includes_edit_and_skill():
 
 
 def test_slice_catalog_ref_present():
+    """code-impl.md must carry the skill-catalog-pointer sentinel block (the
+    thing that replaced the three old principles/languages/workflows.md
+    includes for discovery purposes), byte-identical to its source (#619)."""
     body = _read()
-    assert any(ref in body for ref in _SLICE_REFS), (
-        "code-impl.md must reference at least one slice catalog "
-        "(@../shared/agents/principles.md, @../shared/agents/languages.md, or @../shared/agents/workflows.md)"
+    block = sentinel_block(body, "skill-catalog-pointer.md")
+    assert block is not None, (
+        "code-impl.md must carry the "
+        "'<!-- BEGIN shared/agents/skill-catalog-pointer.md -->' sentinel block"
+    )
+    source = SKILL_CATALOG_POINTER_SRC.read_text(encoding="utf-8")
+    assert block == source, (
+        "code-impl.md's skill-catalog-pointer block has drifted from "
+        "shared/agents/skill-catalog-pointer.md — run python3 scripts/sync-shared-blocks.py --write"
     )
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import validate
-from helpers import make_plugin_tree
+from helpers import make_plugin_tree, sentinel_block
 
 
 # ──────────────────────────────────────────────
@@ -811,10 +811,21 @@ class TestPerformanceTunerAgent:
         )
 
     def test_shared_skills_include(self):
+        """performance-tuner is a normal code-touching agent — must carry both
+        the skill-catalog-pointer and language-skill-required sentinel blocks,
+        byte-identical to their sources (#619, was O3)."""
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@../shared/agents/principles.md" in text, (
-            "agent must include @../shared/agents/principles.md catalog reference (O3)"
-        )
+        shared_dir = self.AGENT_PATH.parent.parent / "shared" / "agents"
+        for fragment in ("skill-catalog-pointer.md", "language-skill-required.md"):
+            block = sentinel_block(text, fragment)
+            assert block is not None, (
+                f"agent must carry the '<!-- BEGIN shared/agents/{fragment} -->' sentinel block (O3)"
+            )
+            source = (shared_dir / fragment).read_text(encoding="utf-8")
+            assert block == source, (
+                f"agent's {fragment} block has drifted from shared/agents/{fragment} — "
+                "run python3 scripts/sync-shared-blocks.py --write"
+            )
 
     # O7 — boundary matrix dedup (issue #235)
     def test_no_individual_boundary_vs_headers(self):
@@ -1344,10 +1355,21 @@ class TestTestReviewerAgent:
         assert wired, "agent must reference swe-workbench:principle-code-review (body or frontmatter)"
 
     def test_shared_skills_include(self):
+        """test-reviewer is a normal code-touching agent — must carry both the
+        skill-catalog-pointer and language-skill-required sentinel blocks,
+        byte-identical to their sources (#619, was O3)."""
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@../shared/agents/principles.md" in text, (
-            "agent must include @../shared/agents/principles.md catalog reference (O3)"
-        )
+        shared_dir = self.AGENT_PATH.parent.parent / "shared" / "agents"
+        for fragment in ("skill-catalog-pointer.md", "language-skill-required.md"):
+            block = sentinel_block(text, fragment)
+            assert block is not None, (
+                f"agent must carry the '<!-- BEGIN shared/agents/{fragment} -->' sentinel block (O3)"
+            )
+            source = (shared_dir / fragment).read_text(encoding="utf-8")
+            assert block == source, (
+                f"agent's {fragment} block has drifted from shared/agents/{fragment} — "
+                "run python3 scripts/sync-shared-blocks.py --write"
+            )
 
     def test_boundary_sections_present(self):
         text = self.AGENT_PATH.read_text(encoding="utf-8")
@@ -1387,10 +1409,20 @@ class TestTestReviewerAgent:
 
 class TestCheckCatalogCompleteness:
     def _agent_body(self, name="my-agent"):
-        # Code-touching agents must reference both catalogs (new invariant).
+        # Code-touching agents must carry both sentinel blocks (#619 — the
+        # reworked check_catalog_completeness only checks marker *presence*,
+        # not content-equality, so this fixture content need not byte-match
+        # the real shared/agents/*.md sources; check_shared_blocks_in_sync
+        # is the (separately-tested, in tests/test_shared_blocks.py) check
+        # that cares about content drift).
         return (
-            f"---\nname: {name}\ndescription: d\ntools: Read\n---\n"
-            "\nSee @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.\n"
+            f"---\nname: {name}\ndescription: d\ntools: Read\n---\n\n"
+            "<!-- BEGIN shared/agents/skill-catalog-pointer.md -->\n"
+            "Skill catalog pointer.\n"
+            "<!-- END shared/agents/skill-catalog-pointer.md -->\n\n"
+            "<!-- BEGIN shared/agents/language-skill-required.md -->\n"
+            "Language skill requirement.\n"
+            "<!-- END shared/agents/language-skill-required.md -->\n"
         )
 
     def test_full_match_passes(self, reset_validate):
@@ -1431,13 +1463,13 @@ class TestCheckCatalogCompleteness:
         root = reset_validate
         make_plugin_tree(root, skills={"foo": "---\nname: foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
-        # Agent without any slice catalog reference
+        # Agent without any sentinel block at all
         (agents_dir / "bad-agent.md").write_text(
             "---\nname: bad-agent\ndescription: d\ntools: Read\n---\n\nNo include here.\n",
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
-        assert any("slice" in f.lower() for f in validate.FAILURES)
+        assert any("skill-catalog-pointer" in f and "sentinel block" in f for f in validate.FAILURES)
 
     def test_catalog_file_absent_fails(self, reset_validate):
         root = reset_validate
@@ -1789,33 +1821,48 @@ class TestCheckWorkflowDevelopmentActivationContract:
 
     # O3 — slice-specific tests (issue #235)
 
+    # #619: fixture bodies below build sentinel blocks directly rather than
+    # via make_plugin_tree(..., agents=...), since each test needs a specific
+    # marker combination (pointer-only, pointer-only for a code-touching
+    # agent, both, or neither) that the helper's "normal agent" default
+    # doesn't parametrize for. check_catalog_completeness only checks marker
+    # *presence*, not content-equality, so the block content here is a stand-in.
+    _POINTER_BLOCK = (
+        "<!-- BEGIN shared/agents/skill-catalog-pointer.md -->\n"
+        "Skill catalog pointer.\n"
+        "<!-- END shared/agents/skill-catalog-pointer.md -->\n"
+    )
+    _LANGUAGE_BLOCK = (
+        "<!-- BEGIN shared/agents/language-skill-required.md -->\n"
+        "Language skill requirement.\n"
+        "<!-- END shared/agents/language-skill-required.md -->\n"
+    )
+
     def test_non_code_agent_with_principles_only_passes(self, reset_validate):
-        # Non-code agents (product-manager) are whitelisted — principles-only is valid.
+        # Non-code agents (product-manager) are whitelisted — pointer-block-only is valid.
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
         (agents_dir / "product-manager.md").write_text(
-            "---\nname: product-manager\ndescription: d\ntools: Read\n---\n"
-            "\nSee @../shared/agents/principles.md for the skill catalog.\n",
+            "---\nname: product-manager\ndescription: d\ntools: Read\n---\n\n" + self._POINTER_BLOCK,
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
         assert len(validate.FAILURES) == 0
 
     def test_code_touching_agent_with_principles_only_fails(self, reset_validate):
-        # Code-touching agents must reference @../shared/agents/languages.md alongside principles.md.
+        # Code-touching agents must also carry the language-skill-required block.
         root = reset_validate
         make_plugin_tree(root, skills={"principle-foo": "---\nname: principle-foo\ndescription: d\n---\n"})
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @../shared/agents/principles.md for the skill catalog.\n",
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n\n" + self._POINTER_BLOCK,
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
-        assert any("languages.md" in f for f in validate.FAILURES), (
-            "Expected a failure about missing @../shared/agents/languages.md "
-            "for a code-touching agent that only includes principles.md"
+        assert any("language-skill-required" in f for f in validate.FAILURES), (
+            "Expected a failure about the missing language-skill-required sentinel block "
+            "for a code-touching agent that only carries the skill-catalog-pointer block"
         )
 
     def test_agent_with_principles_and_languages_passes(self, reset_validate):
@@ -1829,8 +1876,8 @@ class TestCheckWorkflowDevelopmentActivationContract:
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @../shared/agents/principles.md and @../shared/agents/languages.md for the skill catalog.\n",
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n\n"
+            + self._POINTER_BLOCK + "\n" + self._LANGUAGE_BLOCK,
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -1845,7 +1892,7 @@ class TestCheckWorkflowDevelopmentActivationContract:
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
-        assert any("slice" in f.lower() for f in validate.FAILURES)
+        assert any("skill-catalog-pointer" in f and "sentinel block" in f for f in validate.FAILURES)
 
     def test_ticket_context_lands_in_workflows(self, reset_validate):
         """ticket-context is a member of the '*-context' family — must land in workflows.md, not principles.md."""
@@ -1856,8 +1903,8 @@ class TestCheckWorkflowDevelopmentActivationContract:
         )
         agents_dir = root / "agents"
         (agents_dir / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\nSee @../shared/agents/workflows.md for the skill catalog.\n",
+            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n\n"
+            + self._POINTER_BLOCK + "\n" + self._LANGUAGE_BLOCK,
             encoding="utf-8",
         )
         validate.check_catalog_completeness()
@@ -1916,91 +1963,6 @@ class TestCheckWorkflowDevelopmentActivationContract:
         validate.check_catalog_completeness()
         # principles.md has language-python (wrong slice) → "belongs in languages.md"
         assert any("belongs in" in f for f in validate.FAILURES)
-
-
-# ──────────────────────────────────────────────
-# check_agent_includes_resolve (issue #603)
-# ──────────────────────────────────────────────
-
-class TestCheckAgentIncludesResolve:
-    """Standing guard for the @../shared/agents/*.md parent-relative include
-    path introduced by the shared/ relocation (issue #603)."""
-
-    def test_resolving_include_passes(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
-        validate.check_agent_includes_resolve()
-        assert validate.FAILURES == []
-
-    def test_missing_target_fails(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
-        (root / "shared" / "agents" / "principles.md").unlink()
-        validate.check_agent_includes_resolve()
-        assert any(
-            "my-agent.md" in f and "principles.md" in f and "does not exist" in f
-            for f in validate.FAILURES
-        )
-
-    def test_no_include_at_all_passes_vacuously(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root)
-        (root / "agents" / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\n---\n\nNo shared include here.\n",
-            encoding="utf-8",
-        )
-        validate.check_agent_includes_resolve()
-        assert validate.FAILURES == []
-
-
-# ──────────────────────────────────────────────
-# check_shared_includes_not_blockquoted
-# ──────────────────────────────────────────────
-
-class TestCheckSharedIncludesNotBlockquoted:
-    def test_blockquoted_principles_include_fails(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root)
-        (root / "agents" / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> See @../shared/agents/principles.md for the skill catalog.\n",
-            encoding="utf-8",
-        )
-        validate.check_shared_includes_not_blockquoted()
-        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
-
-    def test_blockquoted_severity_contract_include_fails(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root)
-        (root / "agents" / "my-agent.md").write_text(
-            "---\nname: my-agent\ndescription: d\ntools: Read\n---\n"
-            "\n> Base format, sort order, and silence rule: @../shared/agents/severity-output-contract.md\n",
-            encoding="utf-8",
-        )
-        validate.check_shared_includes_not_blockquoted()
-        assert any("my-agent.md" in f and "blockquoted" in f for f in validate.FAILURES)
-
-    def test_plain_include_passes(self, reset_validate):
-        root = reset_validate
-        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
-        validate.check_shared_includes_not_blockquoted()
-        assert len(validate.FAILURES) == 0
-
-    def test_shared_catalog_files_not_scanned(self, reset_validate):
-        """check_shared_includes_not_blockquoted only walks agents_dir.glob("*.md") —
-        it never descends into shared/agents/, which lives outside agents/ entirely
-        (issue #603) — so a blockquoted line in a catalog slice is never flagged."""
-        root = reset_validate
-        # An agent with a plain include ensures the check actually runs (non-vacuous).
-        make_plugin_tree(root, agents=[{"name": "my-agent", "description": "d"}])
-        # Overwrite principles.md with a hypothetical blockquoted line; check must not flag it.
-        (root / "shared" / "agents" / "principles.md").write_text(
-            "- `swe-workbench:foo` — foo skill\n"
-            "> Hypothetical blockquoted @../shared/agents/principles.md reference\n",
-            encoding="utf-8",
-        )
-        validate.check_shared_includes_not_blockquoted()
-        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -2657,9 +2619,16 @@ class TestSeverityOutputContract:
         path = _AGENTS_DIR / f"{agent}.md"
         assert path.exists(), f"agents/{agent}.md not found"
         text = path.read_text(encoding="utf-8")
-        assert "@../shared/agents/severity-output-contract.md" in text, (
-            f"agents/{agent}.md does not reference @../shared/agents/severity-output-contract.md — "
-            "add a reference in the severity/output-contract section (O2, issue #235)"
+        block = sentinel_block(text, "severity-output-contract.md")
+        assert block is not None, (
+            f"agents/{agent}.md is missing the "
+            "'<!-- BEGIN shared/agents/severity-output-contract.md -->' sentinel block — "
+            "add it in the severity/output-contract section (O2, issue #235)"
+        )
+        source = (_SHARED_DIR / "agents" / "severity-output-contract.md").read_text(encoding="utf-8")
+        assert block == source, (
+            f"agents/{agent}.md's severity-output-contract block has drifted from "
+            "shared/agents/severity-output-contract.md — run python3 scripts/sync-shared-blocks.py --write"
         )
 
 
@@ -3299,9 +3268,13 @@ class TestCheckLspToolGate:
         (shared_dir / "lsp.md").write_text(
             "LSP unavailable — falling back to Grep\n", encoding="utf-8"
         )
+        # #619: check_lsp_tool_gate keys on the '<!-- BEGIN shared/agents/lsp.md -->'
+        # sentinel marker, not the dead '@../shared/agents/lsp.md' include text.
         (agents_dir / "my-agent.md").write_text(
             "---\nname: my-agent\ndescription: d\ntools: Read, Grep, LSP\n---\n\n"
-            "See @../shared/agents/lsp.md for LSP usage guidance.\n",
+            "<!-- BEGIN shared/agents/lsp.md -->\n"
+            "LSP unavailable — falling back to Grep\n"
+            "<!-- END shared/agents/lsp.md -->\n",
             encoding="utf-8",
         )
         validate.check_lsp_tool_gate()
@@ -3456,13 +3429,21 @@ class TestE2eTestWriterAgent:
         assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
+        """e2e-test-writer is a normal code-touching agent — must carry both
+        the skill-catalog-pointer and language-skill-required sentinel blocks,
+        byte-identical to their sources (#619)."""
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@../shared/agents/principles.md" in text, (
-            "agent must include @../shared/agents/principles.md"
-        )
-        assert "@../shared/agents/languages.md" in text, (
-            "agent must include @../shared/agents/languages.md"
-        )
+        shared_dir = self.AGENT_PATH.parent.parent / "shared" / "agents"
+        for fragment in ("skill-catalog-pointer.md", "language-skill-required.md"):
+            block = sentinel_block(text, fragment)
+            assert block is not None, (
+                f"agent must carry the '<!-- BEGIN shared/agents/{fragment} -->' sentinel block"
+            )
+            source = (shared_dir / fragment).read_text(encoding="utf-8")
+            assert block == source, (
+                f"agent's {fragment} block has drifted from shared/agents/{fragment} — "
+                "run python3 scripts/sync-shared-blocks.py --write"
+            )
 
     def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
         """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""
@@ -3535,13 +3516,21 @@ class TestE2eTestVerifierAgent:
         assert wired, "agent must reference swe-workbench:principle-testing (body or frontmatter)"
 
     def test_shared_skills_include(self):
+        """e2e-test-verifier is a normal code-touching agent — must carry both
+        the skill-catalog-pointer and language-skill-required sentinel blocks,
+        byte-identical to their sources (#619)."""
         text = self.AGENT_PATH.read_text(encoding="utf-8")
-        assert "@../shared/agents/principles.md" in text, (
-            "agent must include @../shared/agents/principles.md"
-        )
-        assert "@../shared/agents/languages.md" in text, (
-            "agent must include @../shared/agents/languages.md"
-        )
+        shared_dir = self.AGENT_PATH.parent.parent / "shared" / "agents"
+        for fragment in ("skill-catalog-pointer.md", "language-skill-required.md"):
+            block = sentinel_block(text, fragment)
+            assert block is not None, (
+                f"agent must carry the '<!-- BEGIN shared/agents/{fragment} -->' sentinel block"
+            )
+            source = (shared_dir / fragment).read_text(encoding="utf-8")
+            assert block == source, (
+                f"agent's {fragment} block has drifted from shared/agents/{fragment} — "
+                "run python3 scripts/sync-shared-blocks.py --write"
+            )
 
     def test_agent_and_skill_ref_checks_pass(self, reset_validate, monkeypatch):
         """The real file must pass check_agents() and check_agent_skill_refs() against the live tree."""

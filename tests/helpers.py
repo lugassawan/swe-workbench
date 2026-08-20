@@ -1,7 +1,40 @@
 """Shared test helpers — importable from test modules."""
 
 import json
+import re
 from pathlib import Path
+
+# Mirrors scripts/validate.py's and scripts/sync-shared-blocks.py's own
+# _SENTINEL_BEGIN_RE / sentinel-pair parsing (issue #619's sentinel-delimited
+# shared-block mechanism) — kept here so every test module that needs to
+# assert on a live/fixture agent's inlined block content can reuse one
+# parser instead of reinventing the regex.
+_SENTINEL_BEGIN_RE = re.compile(r'<!-- BEGIN (shared/agents/[\w-]+\.md) -->\n')
+
+
+def sentinel_block(text: str, fragment_name: str) -> str | None:
+    """Return the inner content of the sentinel block for *fragment_name*
+    (e.g. "lsp.md" or "shared/agents/lsp.md") in *text*, or None if the BEGIN
+    marker is absent or has no matching END marker.
+
+    Use together with a source-file read to assert content equality — the
+    property that would have caught issue #619 (a plain include *string* was
+    asserted present, never that it resolved to real content).
+    """
+    full_name = (
+        fragment_name if fragment_name.startswith("shared/agents/")
+        else f"shared/agents/{fragment_name}"
+    )
+    begin_marker = f"<!-- BEGIN {full_name} -->\n"
+    idx = text.find(begin_marker)
+    if idx == -1:
+        return None
+    start = idx + len(begin_marker)
+    end_marker = f"<!-- END {full_name} -->"
+    end_idx = text.find(end_marker, start)
+    if end_idx == -1:
+        return None
+    return text[start:end_idx]
 
 
 def make_plugin_tree(
@@ -69,6 +102,17 @@ def make_plugin_tree(
     shared_dir = root / "shared" / "agents"
     shared_dir.mkdir(parents=True, exist_ok=True)
 
+    # The two sentinel-block source fragments (#619) — written unconditionally
+    # so the `agents=` body generator below always has a real source file to
+    # inline from, keeping any synthetic agent's blocks byte-identical to
+    # their "source" within this same synthetic tree.
+    (shared_dir / "skill-catalog-pointer.md").write_text(
+        "Skill catalog pointer.\n", encoding="utf-8"
+    )
+    (shared_dir / "language-skill-required.md").write_text(
+        "Language skill requirement.\n", encoding="utf-8"
+    )
+
     # Build catalog slices listing every skill in skills_dir
     def _lines(ids):
         return "\n".join(f"- `swe-workbench:{sid}` — {sid} skill" for sid in ids)
@@ -99,10 +143,29 @@ def make_plugin_tree(
         (shared_dir / "workflows.md").write_text((_lines(workflows) + "\n") if workflows else "\n", encoding="utf-8")
 
     if agents is not None:
+        # #619: agent bodies must carry the sentinel-delimited blocks that
+        # replaced the dead '@../shared/agents/*.md' includes, not the include
+        # text itself (Claude Code never expands it). Every synthetic agent
+        # gets the skill-catalog-pointer block; check_catalog_completeness's
+        # reworked per-agent marker check also requires language-skill-required
+        # on any agent whose stem isn't in validate._NON_CODE_AGENTS — none of
+        # this helper's current callers build a product-manager-like fixture
+        # via `agents=`, so there is no caller today that needs to opt out of
+        # the language block (kept simple rather than adding an unused kwarg;
+        # if a future test needs that scenario, write that one agent's body
+        # directly instead of through this generator).
+        pointer_content = (shared_dir / "skill-catalog-pointer.md").read_text(encoding="utf-8")
+        language_content = (shared_dir / "language-skill-required.md").read_text(encoding="utf-8")
         for agent in agents:
             name = agent["name"]
             fm_lines = "\n".join(f"{k}: {v}" for k, v in agent.items())
-            body = f"---\n{fm_lines}\n---\n\nSee @../shared/agents/principles.md for the skill catalog.\n"
+            body = (
+                f"---\n{fm_lines}\n---\n\n"
+                f"<!-- BEGIN shared/agents/skill-catalog-pointer.md -->\n{pointer_content}"
+                f"<!-- END shared/agents/skill-catalog-pointer.md -->\n\n"
+                f"<!-- BEGIN shared/agents/language-skill-required.md -->\n{language_content}"
+                f"<!-- END shared/agents/language-skill-required.md -->\n"
+            )
             (agents_dir / f"{name}.md").write_text(body, encoding="utf-8")
 
     # commands/
