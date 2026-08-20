@@ -103,7 +103,9 @@ If a skill does not auto-trigger, refine the `description:` in its `SKILL.md` �
 
 **Skill directory layout**: Skills must live at `skills/<skill-name>/SKILL.md` — exactly one level deep. Claude Code's auto-discovery does not recurse into nested category subdirectories. Use a hyphenated prefix to preserve categorical grouping while meeting this constraint: `principle-*`, `language-*`, `workflow-*`. The `name:` field in the `SKILL.md` frontmatter must match the directory name exactly.
 
-**Skill catalog**: The catalog is split across three slice files under `shared/agents/`: `principles.md`, `languages.md`, and `workflows.md`. When you add a new skill, add a corresponding entry in the appropriate slice (format: `- \`swe-workbench:<name>\` — <one-line description>`). The slice is determined by the skill-name prefix: `principle-*` → `principles.md`; `language-*` → `languages.md`; `workflow-*` and the `*-context` family (matched by `sid.endswith("-context")`, e.g. `ticket-context`) → `workflows.md`; any other prefix defaults to `principles.md`. <!-- validate: prose-ref --> The validator's `check_catalog_completeness()` enforces that each slice exactly matches the on-disk skills in its prefix group, and that every agent file includes at least one slice via `@../shared/agents/principles.md`, `@../shared/agents/languages.md`, or `@../shared/agents/workflows.md`. Code-touching agents that include `@../shared/agents/principles.md` must also include `@../shared/agents/languages.md` so language-specific skills are always in scope. If the new agent never touches source code, add its stem to the `_NON_CODE_AGENTS` set at the top of `scripts/validate.py` to suppress this check. See `docs/extending.md` for the full recipe.
+**Skill catalog**: The catalog is split across three slice files under `shared/agents/`: `principles.md`, `languages.md`, and `workflows.md`. When you add a new skill, add a corresponding entry in the appropriate slice (format: `- \`swe-workbench:<name>\` — <one-line description>`). The slice is determined by the skill-name prefix: `principle-*` → `principles.md`; `language-*` → `languages.md`; `workflow-*` and the `*-context` family (matched by `sid.endswith("-context")`, e.g. `ticket-context`) → `workflows.md`; any other prefix defaults to `principles.md`. <!-- validate: prose-ref --> `check_catalog_completeness()` enforces that each slice exactly matches the on-disk skills in its prefix group.
+
+Agents do not discover this catalog via `@path` includes — `@../shared/agents/principles.md`-style references are never expanded inside an agent body (only in CLAUDE.md memory imports and interactive prompts; see `docs/shared-agent-blocks.md` for the full story). That was a silent no-op in every agent from the day the pattern was introduced until issue #619 fixed it. Instead, every agent carries a `<!-- BEGIN shared/agents/skill-catalog-pointer.md -->` / `<!-- END ... -->` sentinel block — a byte-identical, verbatim copy of `shared/agents/skill-catalog-pointer.md` — which points the agent at the harness's own available-skills listing rather than duplicating the full catalog. Every code-touching agent (any agent whose stem is not in `_NON_CODE_AGENTS`) also carries a `<!-- BEGIN shared/agents/language-skill-required.md -->` sentinel block. `check_catalog_completeness()` checks for these sentinel markers' *presence*; a separate `check_shared_blocks_in_sync()` enforces that every sentinel block's content stays byte-identical to its `shared/agents/*.md` source; and `check_no_inert_at_includes()` permanently bans any `@../shared/` or `@./shared/` reference anywhere in `agents/`, `commands/`, or `skills/`, citing issue #619, so the dead pattern can't quietly reappear. If a new agent never touches source code, add its stem to `_NON_CODE_AGENTS` (unchanged escape hatch). See "Adding a shared agent-body fragment reference" below, and `docs/extending.md`, for the full authoring recipe.
 
 ## Cutting a release
 
@@ -125,6 +127,22 @@ When creating a new interactive command that supports interrogation mode (i.e. o
 4. Add the command name to the `argument-hint` note in `docs/catalog.md`.
 
 **Important:** the mode gate (`AskUserQuestion`) and the grill loop (`swe-workbench:workflow-grill`) run in the **orchestrator** (command body), never in a shared subagent. Embedding it in a shared subagent (e.g. `swe-workbench:product-manager`, `swe-workbench:senior-engineer`) would leak the mode gate into other flows that reuse the same agent.
+
+## Adding a shared agent-body fragment reference
+
+Shared agent-body fragments — the catalog pointer, the language-skill-required list, and the four behavioral-contract fragments (`severity-output-contract.md`, `comment-scan.md`, `external-repo-reading.md`, `lsp.md`) — live under `shared/agents/` and reach a consuming `agents/*.md` file as a sentinel-delimited, byte-identical inline block, never as an `@path` include (see `docs/shared-agent-blocks.md` for why `@path` doesn't work here).
+
+1. Add an **empty** sentinel pair by hand, at the point in the agent file where the fragment belongs:
+
+   ```markdown
+   <!-- BEGIN shared/agents/lsp.md -->
+   <!-- END shared/agents/lsp.md -->
+   ```
+
+2. Run `python3 scripts/sync-shared-blocks.py --write` to fill it with the source file's current content.
+3. Run `python3 scripts/sync-shared-blocks.py --check` (or `bash scripts/validate.sh`, which now includes this check) to confirm there's no drift.
+
+**The generator never creates a sentinel pair on its own** — it only fills or verifies pairs a contributor already added by hand. A file with zero sentinel pairs is skipped, not an error. If you edit a `shared/agents/*.md` source file itself, every agent inlining it goes stale until you re-run `--write`; a forgotten sync is caught by `validate.sh`'s `check_shared_blocks_in_sync()`.
 
 ## `.githooks/` vs `hooks/hooks.json`
 

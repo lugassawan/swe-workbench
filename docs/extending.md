@@ -9,7 +9,18 @@ To add a new language skill (say, Ruby or another language not already shipped):
 3. Replace the body with the idioms that matter: error handling, typing, packaging, async, testing.
 4. Keep it under 150 lines.
 5. Add an entry to `shared/agents/languages.md` (the language slice of the skill catalog) — see CONTRIBUTING.md for the required format and how the validator enforces it.
-6. Commit; users who reinstall the plugin will pick it up.
+6. Also add the new `swe-workbench:language-<your-language>` id to the explicit list in `shared/agents/language-skill-required.md`, then run `python3 scripts/sync-shared-blocks.py --write` to refresh the inlined copies of that fragment across the 21 code-touching agents that carry it (see CONTRIBUTING.md's "Adding a shared agent-body fragment reference"). `check_language_pointer_matches_disk()` fails the validator if this file's id list and the on-disk `skills/language-*` set disagree.
+7. Commit; users who reinstall the plugin will pick it up.
+
+## Adding an agent
+
+Creating a new `agents/<name>.md` follows a fixed shape: every agent needs the catalog pointer, most need the language-required block, and any agent that depends on one of the shared behavioral-contract fragments needs a `## Shared references` section. See CONTRIBUTING.md's "Adding a shared agent-body fragment reference" for the sentinel-block mechanics this recipe uses — that section is the reference; this one is the end-to-end sequence for a brand-new agent file.
+
+1. Create `agents/<name>.md` with standard frontmatter (`name`, `description`, `model`, `tools`, optionally `skills:` for principle skills that should preload unconditionally).
+2. Add the catalog-pointer sentinel block (`<!-- BEGIN shared/agents/skill-catalog-pointer.md -->` / `<!-- END ... -->`) inside a `## Principle consultation` section (or equivalent) — every agent needs this.
+3. Unless the agent never touches source code (in which case add its stem to `_NON_CODE_AGENTS` in `scripts/validate.py`), also add the language-required sentinel block right after it.
+4. If the agent needs one of the four behavioral-contract fragments (`severity-output-contract.md`, `comment-scan.md`, `external-repo-reading.md`, `lsp.md` — check `shared/agents/` for the current list), add a `## Shared references` section at the end of the file holding one sentinel block per fragment used, and write prose pointers to it wherever the agent's body needs to invoke that fragment's rules.
+5. Run `python3 scripts/sync-shared-blocks.py --write` then `bash scripts/validate.sh`.
 
 ## Adding a context adapter
 
