@@ -183,11 +183,11 @@ the record. `"n/a"` never graduates to `"wired"`.
 
 ## 9. `task` — a first-party subagent dispatcher, not a fork of `pi-subagents`
 
-Issue #610 asked for a way to dispatch any of this plugin's `agents/*.md` definitions
-(`swe-workbench:reviewer`, etc.) as a nested Pi session, preserving each agent's declared `tools`
-and preloaded `skills:` content. `pi/extensions/subagent.ts` registers a `task` tool that does
-exactly this, composing an agent's body plus its preloaded skills into a system prompt and running
-it as a real child `pi -p` process via `pi.exec()`.
+This plugin needed a way to dispatch any of its `agents/*.md` definitions (`swe-workbench:reviewer`,
+etc.) as a nested Pi session, preserving each agent's declared `tools` and preloaded `skills:`
+content. `pi/extensions/subagent.ts` registers a `task` tool that does exactly this, composing an
+agent's body plus its preloaded skills into a system prompt and running it as a real child `pi -p`
+process via `pi.exec()`.
 
 **swe-workbench does not own a general subagent runtime.** The `pi-subagents` package is the
 supported route for generic delegation on Pi — chains, parallel fan-out, async runs, forked
@@ -226,11 +226,11 @@ from its vocabulary. Costs nothing beyond one line in the `--tools` allowlist.
 shell out to `pi -p ...` directly inside a dispatched child — no argv
 flag on that child prevents a further, unbounded level of recursion this way. Closing it belongs
 in `hooks/bash_guard.sh`, pattern-matching a `pi ... -p`/`--print` invocation, since that reuses an
-already-audited boundary instead of adding a new one. Not built as part of #610; tracked as a
-follow-up rather than silently left open.
+already-audited boundary instead of adding a new one. Not built as part of this dispatcher; tracked
+as a follow-up rather than silently left open.
 
-**Model-tier mapping was cut from #610's scope entirely**, not deferred here — a project-committed
+**Model-tier mapping was cut from scope entirely**, not deferred here — a project-committed
 `.pi/settings.json` reading a `modelTiers` block would be a real exfiltration primitive
 (redirecting subagent traffic to an attacker-chosen provider/endpoint) for near-zero value at zero
-current users. Recorded on the issue, not in this file, since there is no partial implementation
-of it to document a boundary around.
+current users. Recorded on the originating issue, not in this file, since there is no partial
+implementation of it to document a boundary around.
