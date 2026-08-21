@@ -5,14 +5,14 @@ prompts. They are **not** expanded inside an agent (`agents/*.md`), skill (`skil
 or command (`commands/*.md`) body. A dispatched subagent receives the literal `@path` text — it
 never sees the referenced file's content.
 
-## The incident (#619)
+## The incident
 
-All 22 `agents/*.md` files used `@../shared/agents/<fragment>.md`-style includes, added when the
-pattern was introduced in #105, expecting them to resolve to real content at dispatch time. They
-never did. Every agent silently ran without the shared behavioral-contract text it was written to
-depend on, from #105 until #619 fixed it. The pre-existing test suite didn't catch this because it
-asserted the include *string* was present in the agent file — never that the referenced content
-actually reached the dispatched agent.
+All 22 `agents/*.md` files used `@../shared/agents/<fragment>.md`-style includes, expecting them
+to resolve to real content at dispatch time. They never did. Every agent silently ran without the
+shared behavioral-contract text it was written to depend on, for a long time before this was
+noticed and fixed. The pre-existing test suite didn't catch this because it asserted the include
+*string* was present in the agent file — never that the referenced content actually reached the
+dispatched agent.
 
 ## The fix
 
@@ -35,5 +35,5 @@ CONTRIBUTING.md's "Adding a shared agent-body fragment reference" for the author
 
 Never add a bare `@../shared/...` or `@./shared/...` reference anywhere in `agents/`, `commands/`,
 or `skills/` expecting it to resolve — it won't. `scripts/validate.py`'s
-`check_no_inert_at_includes()` rejects any such reference on sight, citing issue #619, so this
-specific dead pattern can't quietly reappear.
+`check_no_inert_at_includes()` rejects any such reference on sight, so this specific dead pattern
+can't quietly reappear.
