@@ -38,7 +38,6 @@ TOOL_TOKENS = {
     "Edit",
     "Glob",
     "Grep",
-    "LSP",
     "Read",
     "Skill",
     "WebFetch",
