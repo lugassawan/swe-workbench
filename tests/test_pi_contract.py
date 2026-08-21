@@ -57,6 +57,11 @@ PI_SUBSTITUTE_ARGS_RE = re.compile(
 # Phase 7 `pi:` override block) must be added here deliberately, not discovered by CI red.
 FRONTMATTER_KEYS = {"name", "description", "model", "tools", "skills"}
 
+# Union of every agents/*.md `model:` value. Mirrors model-tier.ts's KNOWN_MODEL_TIERS — a new
+# tier value on disk not also added to that module's MODEL_TIER_TABLE would resolve to nothing
+# for every provider, silently falling back to the parent's model with zero signal.
+MODEL_TIERS = {"haiku", "sonnet", "opus"}
+
 # Union of every comma-separated token across all agents/*.md `tools:` lines. Grows only
 # when an agent's frontmatter is edited to grant a new tool — not on every agent edit.
 TOOL_TOKENS = {
@@ -241,6 +246,23 @@ def test_tool_tokens_and_skill_ids_are_inventoried():
         "agents/*.md skill ids have drifted from the inventory — "
         f"only on disk: {sorted(skill_ids - SKILL_IDS)}, "
         f"only in SKILL_IDS: {sorted(SKILL_IDS - skill_ids)}"
+    )
+
+
+def test_model_tiers_are_inventoried():
+    tiers = set()
+    for path in sorted(AGENTS_DIR.glob("*.md")):
+        fm = validate.parse_frontmatter(path)
+        assert fm is not None, f"{path} has no parseable frontmatter"
+        model = fm.get("model")
+        if model:
+            tiers.add(model)
+    assert tiers == MODEL_TIERS, (
+        "agents/*.md model tiers have drifted from the inventory — "
+        f"only on disk: {sorted(tiers - MODEL_TIERS)}, "
+        f"only in MODEL_TIERS: {sorted(MODEL_TIERS - tiers)}. A new tier value must also be "
+        "added to model-tier.ts's KNOWN_MODEL_TIERS and MODEL_TIER_TABLE, or it silently "
+        "resolves to nothing for every provider."
     )
 
 
@@ -606,3 +628,271 @@ def test_ask_user_ts_has_no_typebox_import():
         "ask-user.ts must derive its parameter type from the SDK's own ToolDefinition re-export, "
         "never by importing typebox directly — see the file's own module docstring for why"
     )
+
+
+# ---------------------------------------------------------------------------
+# task-tool dispatcher (agent-spec.ts + subagent.ts). Layering boundary, translation-table
+# exhaustiveness, and a live zero-LLM probe of the --exclude-tools recursion guard.
+# ---------------------------------------------------------------------------
+
+AGENT_SPEC_TS = EXTENSIONS_DIR / "agent-spec.ts"
+MODEL_TIER_TS = EXTENSIONS_DIR / "model-tier.ts"
+SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
+
+
+def test_agent_spec_ts_never_references_pi():
+    """agent-spec.ts is the domain layer for the task tool: it may read this plugin's own
+    agents/*.md and skills/*/SKILL.md files, but must never reference the Pi SDK or spawn a
+    process — that's subagent.ts's job. Stricter than the generic bare-specifier test above (which
+    permits `import type`): this scans the whole file text, so it would also catch a stray
+    reference in a comment or a future non-import usage, not just an import statement."""
+    text = AGENT_SPEC_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "agent-spec.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "agent-spec.ts must not spawn processes — that is subagent.ts's job"
+
+
+def test_model_tier_ts_never_references_pi():
+    """model-tier.ts is the domain layer for tier->model resolution: pure data and pure
+    functions, no Pi SDK reference and no process spawning — subagent.ts owns querying
+    ctx.modelRegistry and everything else that touches Pi. Same posture, same test shape, as
+    test_agent_spec_ts_never_references_pi above."""
+    text = MODEL_TIER_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "model-tier.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "model-tier.ts must not spawn processes — that is subagent.ts's job"
+
+
+_TRANSLATION_TABLE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , toolVocabPath, agentSpecPath] = process.argv;
+const toolVocab = await import(pathToFileURL(toolVocabPath).href);
+const agentSpec = await import(pathToFileURL(agentSpecPath).href);
+console.log(JSON.stringify({
+  renameKeys: toolVocab.RENAME_TABLE.map(([cc]) => cc),
+  dropTokens: [...agentSpec.DROP_TOKENS],
+}));
+"""
+
+
+@requires_node
+def test_task_tool_translation_table_is_exhaustive_over_tool_tokens():
+    """Every token in TOOL_TOKENS (the live inventory of agents/*.md `tools:` values) must have
+    a mapping — via RENAME_TABLE (rename) or DROP_TOKENS (drop) — so a future 8th/9th tool token
+    can't silently fall through translateToolTokens un-mapped. The reverse direction is checked
+    too, but with one documented exception: RENAME_TABLE carries `LS` for tool-vocab.ts's general
+    CC->Pi prose even though no agent's `tools:` frontmatter currently grants LS — a real Pi
+    rename target, not drift, so it is the one allowed extra rather than asserted away."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "translation-table-dump.mjs"
+        driver.write_text(_TRANSLATION_TABLE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "tool-vocab.ts"), str(AGENT_SPEC_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    mapped = set(dumped["renameKeys"]) | set(dumped["dropTokens"])
+
+    missing = TOOL_TOKENS - mapped
+    assert not missing, f"TOOL_TOKENS not covered by RENAME_TABLE/DROP_TOKENS: {sorted(missing)}"
+
+    extra = mapped - TOOL_TOKENS
+    assert extra == {"LS"}, (
+        "RENAME_TABLE/DROP_TOKENS carries tokens beyond agents/*.md's live TOOL_TOKENS vocabulary "
+        f"other than the known LS entry (see this test's docstring): {sorted(extra)}"
+    )
+
+
+_REAL_AGENTS_PARSE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , agentSpecPath, root] = process.argv;
+const mod = await import(pathToFileURL(agentSpecPath).href);
+
+const out = {};
+for (const name of mod.listAgentNames(root)) {
+  try {
+    const spec = mod.readAgentSpec(root, name);
+    const translated = mod.translateToolTokens(spec.tools);
+    out[name] = { ok: true, toolCount: translated.length };
+  } catch (err) {
+    out[name] = { ok: false, message: String(err && err.message) };
+  }
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@requires_node
+def test_real_agents_parse_and_translate_without_throwing():
+    """Drives the REAL hand-rolled TS parser (readAgentSpec/translateToolTokens) against every
+    actual agents/*.md file on disk — not the synthetic fixtures test_pi_extension.py's parser
+    tests use, and not validate.py's separate lenient Python parser (which the exhaustiveness
+    ratchets above cross-check against instead of the TS one). A frontmatter edit that's valid
+    under the Python parser's rules but breaks an assumption the TS regex parser makes (e.g. a
+    block-style `tools:` sequence instead of the assumed inline comma string) would otherwise
+    stay CI-green and only surface as a runtime throw the first time that agent is actually
+    dispatched via `task` — the exact 'frontmatter drift should fail CI, not silently break at
+    dispatch time' failure mode this repo's Pi port is designed to avoid."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "real-agents-parse-dump.mjs"
+        driver.write_text(_REAL_AGENTS_PARSE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(AGENT_SPEC_TS), str(ROOT)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped, "no agents/*.md files were discovered — listAgentNames or ROOT is likely wrong"
+    failures = {name: r["message"] for name, r in dumped.items() if not r["ok"]}
+    assert not failures, f"real agents/*.md files failed to parse/translate via the TS parser: {failures}"
+
+
+_MODEL_TIER_TABLE_DUMP_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+console.log(JSON.stringify({
+  knownTiers: mod.KNOWN_MODEL_TIERS,
+  tableTiersByProvider: Object.fromEntries(
+    Object.entries(mod.MODEL_TIER_TABLE).map(([provider, row]) => [provider, Object.keys(row)]),
+  ),
+}));
+"""
+
+
+@requires_node
+def test_model_tier_table_is_exhaustive_over_known_tiers():
+    """model-tier.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet, and every
+    provider row in MODEL_TIER_TABLE must cover all three tiers — a provider entry missing a
+    tier would silently resolve to undefined (parent-model fallback) for that tier only, which
+    is easy to miss without an exhaustiveness check."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "model-tier-table-dump.mjs"
+        driver.write_text(_MODEL_TIER_TABLE_DUMP_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "model-tier.ts")],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert set(dumped["knownTiers"]) == MODEL_TIERS, (
+        f"model-tier.ts's KNOWN_MODEL_TIERS ({sorted(dumped['knownTiers'])}) has drifted from "
+        f"the live agents/*.md inventory ({sorted(MODEL_TIERS)})"
+    )
+    for provider, tiers in dumped["tableTiersByProvider"].items():
+        assert set(tiers) == MODEL_TIERS, (
+            f"MODEL_TIER_TABLE[{provider!r}] covers {sorted(tiers)}, missing "
+            f"{sorted(MODEL_TIERS - set(tiers))} — an uncovered tier silently falls back to the "
+            "parent's model for that provider only"
+        )
+
+
+_TASK_SCHEMA_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+let registered;
+const stubPi = { registerTool(tool) { registered = tool; } };
+mod.registerSubagent(stubPi, process.argv[3]);
+console.log(JSON.stringify({
+  parameters: registered.parameters,
+  hasPromptSnippet: typeof registered.promptSnippet === "string" && registered.promptSnippet.length > 0,
+  name: registered.name,
+}));
+"""
+
+
+@requires_node
+def test_task_tool_parameters_is_a_plain_json_schema_object():
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "task-schema-dump.mjs"
+        driver.write_text(_TASK_SCHEMA_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(SUBAGENT_TS), tmp],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["name"] == "task"
+    parameters = dumped["parameters"]
+    assert isinstance(parameters, dict), "parameters must serialize as a plain JSON object"
+    assert parameters.get("type") == "object"
+    assert set(parameters.get("required", [])) == {"agent", "prompt"}
+    assert dumped["hasPromptSnippet"] is True, (
+        "custom tools are omitted from the system prompt's Available tools section without a "
+        "promptSnippet — task must always carry one"
+    )
+
+
+_EXCLUDE_TOOLS_PROBE_WRAPPER = """
+import {{ registerSubagent }} from {subagent_path};
+
+export default function (pi) {{
+  registerSubagent(pi, {root});
+  pi.on("session_start", (event, ctx) => {{
+    const active = pi.getActiveTools();
+    process.stderr.write("PROBE_ACTIVE_TOOLS:" + JSON.stringify(active) + "\\n");
+    ctx.shutdown();
+  }});
+}}
+"""
+
+
+def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_factory):
+    """Live-CLI, zero-model-call probe: registers the REAL task tool (subagent.ts's
+    registerSubagent) via the real `pi` binary, and confirms `--exclude-tools task,subagent`
+    keeps it out of pi.getActiveTools() — the exact mechanism subagent.ts's own argv relies on
+    for its recursion guard (verified against dist/core/agent-session.js's isAllowedTool: an
+    excluded tool is never added to the tool registry at construction time, so it cannot be
+    resurrected from inside the child session). A session_start handler calls ctx.shutdown()
+    before any prompt is sent — `pi -p` with zero message args never calls session.prompt(), so
+    this makes no network or model call.
+
+    No pi/node_modules and no global `pi` install exists in this repo's pytest CI job today
+    (only the separate typecheck-pi job runs `npm ci --prefix pi`, and no job installs `pi`
+    globally) — this test provides real coverage on any developer machine with `pi` installed,
+    and will start providing CI coverage automatically if a future CI change adds a `pi`
+    install step to the pytest job. Skipping here is a documented, intentional trade-off, not a
+    silent no-op."""
+    pi_bin = shutil.which("pi")
+    if pi_bin is None:
+        pytest.skip("requires a global `pi` CLI on PATH — not provisioned in this repo's pytest CI job")
+
+    wrapper = tmp_path_factory.mktemp("pi-exclude-tools-probe") / "probe.ts"
+    wrapper.write_text(
+        _EXCLUDE_TOOLS_PROBE_WRAPPER.format(
+            subagent_path=json.dumps(str(SUBAGENT_TS)),
+            root=json.dumps(str(ROOT)),
+        ),
+        encoding="utf-8",
+    )
+
+    def run_probe(exclude):
+        args = [pi_bin, "-p", "--extension", str(wrapper), "--no-session", "--mode", "text"]
+        if exclude:
+            args += ["--exclude-tools", "task,subagent"]
+        result = subprocess.run(args, capture_output=True, text=True, env=dict(_CLEAN_ENV), timeout=30)
+        assert result.returncode == 0, f"probe failed: {result.stderr}"
+        marker = "PROBE_ACTIVE_TOOLS:"
+        line = next((l for l in result.stderr.splitlines() if l.startswith(marker)), None)
+        assert line is not None, f"probe never reported active tools; stderr={result.stderr!r}"
+        return json.loads(line[len(marker):])
+
+    with_task = run_probe(exclude=False)
+    assert "task" in with_task, f"expected task active with no --exclude-tools, got {with_task}"
+
+    excluded = run_probe(exclude=True)
+    assert "task" not in excluded, f"--exclude-tools task,subagent failed to exclude task: {excluded}"

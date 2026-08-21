@@ -40,15 +40,28 @@ _DRIVER = """
 import { pathToFileURL } from "node:url";
 import { delimiter } from "node:path";
 
-const mod = await import(pathToFileURL(process.argv[2]).href);
+const [, , indexPath, configJson] = process.argv;
+const config = configJson ? JSON.parse(configJson) : {};
+const excludedTools = new Set(config.excludedTools || []);
+
+const mod = await import(pathToFileURL(indexPath).href);
 const factory = mod.default;
 
 const handlers = {};
+const registeredToolNames = [];
 const stubPi = {
   on(event, handler) {
     handlers[event] = handler;
   },
-  registerTool() {},
+  registerTool(tool) {
+    registeredToolNames.push(tool.name);
+  },
+  // Mirrors the real SDK's isAllowedTool: a registered tool this session's own argv excludes
+  // (simulated here via config.excludedTools) is filtered out of the active set even though
+  // registerTool() was called for it — see index.ts's getPreamble() for why this matters.
+  getActiveTools() {
+    return registeredToolNames.filter((name) => !excludedTools.has(name));
+  },
 };
 const stubCtx = { hasUI: true, ui: { notify() {} } };
 
@@ -246,9 +259,40 @@ def test_before_agent_start_injects_tool_vocab_section(extension_result):
 
 
 @requires_node
+def test_before_agent_start_names_task_tool_when_kill_switch_unset(extension_result):
+    """index.ts's getPreamble() reads pi.getActiveTools() — with the kill switch unset (the
+    default) and no --exclude-tools in play, `task` is actually registered AND active, so the
+    preamble must name the real `task` tool, not warn against fabricating one."""
+    injected = extension_result["firstInjection"]["systemPrompt"]
+    assert "`task(agent, prompt)`" in injected
+    assert "fabricate `Task` calls" not in injected
+
+
+@requires_node
+def test_before_agent_start_falls_back_when_task_registered_but_excluded(tmp_path_factory):
+    """Regression test for the dispatched-child case: registerSubagent() still calls
+    pi.registerTool() for `task` whenever SWE_WORKBENCH_PI_TOOLS is unset — including inside a
+    child session whose own argv carries `--exclude-tools task,subagent` (subagent.ts's own
+    recursion guard). The preamble must NOT tell that child to use a `task` tool that has been
+    filtered out of its actual active-tool set — checking pi.getActiveTools() (not the raw env
+    var) is what index.ts's getPreamble() now does to get this right."""
+    result = _run_node(
+        _DRIVER,
+        [str(INDEX_TS), json.dumps({"excludedTools": ["task"]})],
+        tmp_path_factory,
+        label="pi-extension-driver-task-excluded",
+    )
+    injected = result["firstInjection"]["systemPrompt"]
+    assert "fabricate `Task` calls" in injected
+    assert "`task(agent, prompt)`" not in injected
+
+
+@requires_node
 def test_tool_vocab_preamble_survives_the_kill_switch(tmp_path_factory):
     """SWE_WORKBENCH_PI_TOOLS=0 gates Tier-2 tool registration only — the Tier-1 vocabulary
-    prose must stay unconditional, since disabling it makes the session worse, not safer."""
+    prose must stay unconditional, since disabling it makes the session worse, not safer. With
+    the kill switch on, `task` is never registered, so the preamble must fall back to the
+    do-not-fabricate framing rather than naming a tool that isn't actually live."""
     driver = tmp_path_factory.mktemp("pi-extension-driver-kill-switch") / "driver.mjs"
     driver.write_text(_DRIVER, encoding="utf-8")
     node = shutil.which("node")
@@ -264,6 +308,8 @@ def test_tool_vocab_preamble_survives_the_kill_switch(tmp_path_factory):
     injected = parsed["firstInjection"]["systemPrompt"]
     assert "Claude Code -> Pi tool vocabulary" in injected
     assert "| `Read` | `read` |" in injected
+    assert "fabricate `Task` calls" in injected
+    assert "`task(agent, prompt)`" not in injected
 
 
 @requires_node
@@ -292,7 +338,16 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
     synthetic_index.parent.mkdir(parents=True)
     synthetic_index.write_text(INDEX_TS.read_text(encoding="utf-8"), encoding="utf-8")
-    for helper in ("guards.ts", "cc-payload.ts", "guard-runner.ts", "tool-vocab.ts", "ask-user.ts"):
+    for helper in (
+        "guards.ts",
+        "cc-payload.ts",
+        "guard-runner.ts",
+        "tool-vocab.ts",
+        "ask-user.ts",
+        "agent-spec.ts",
+        "model-tier.ts",
+        "subagent.ts",
+    ):
         (synthetic_index.parent / helper).write_text(
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
         )
@@ -835,15 +890,20 @@ def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtur
 _TOOL_VOCAB_DRIVER = """
 import { pathToFileURL } from "node:url";
 
-const [, , modPath, root] = process.argv;
+const [, , modPath, root, taskToolRegistered] = process.argv;
 const mod = await import(pathToFileURL(modPath).href);
-const section = mod.toolVocabSection(root);
+const section = taskToolRegistered === undefined
+  ? mod.toolVocabSection(root)
+  : mod.toolVocabSection(root, taskToolRegistered === "true");
 console.log(JSON.stringify(section));
 """
 
 
-def _tool_vocab_section(root, tmp_path_factory):
-    return _run_node(_TOOL_VOCAB_DRIVER, [str(TOOL_VOCAB_TS), str(root)], tmp_path_factory, label="pi-tool-vocab-driver")
+def _tool_vocab_section(root, tmp_path_factory, task_tool_registered=None):
+    args = [str(TOOL_VOCAB_TS), str(root)]
+    if task_tool_registered is not None:
+        args.append("true" if task_tool_registered else "false")
+    return _run_node(_TOOL_VOCAB_DRIVER, args, tmp_path_factory, label="pi-tool-vocab-driver")
 
 
 @requires_node
@@ -858,6 +918,19 @@ def test_tool_vocab_section_has_rename_table_and_legend_rule(tmp_path_factory):
     assert "ExitPlanMode" in section["body"]
     assert "EnterWorktree" in section["body"]
     assert "fabricate `Task` calls" in section["body"]
+
+
+@requires_node
+def test_tool_vocab_section_names_task_tool_when_registered(tmp_path_factory):
+    """taskToolRegistered=true must swap the 'do not fabricate `Task` calls' framing for prose
+    naming the real `task` tool — a stale fabrication warning while `task` is actually live would
+    actively mislead the model."""
+    section = _tool_vocab_section(ROOT, tmp_path_factory, task_tool_registered=True)
+    assert "`task(agent, prompt)`" in section["body"]
+    assert "fabricate `Task` calls" not in section["body"]
+    # Unaffected sections must still be present.
+    assert "| `Read` | `read` |" in section["body"]
+    assert "ask_user_question" in section["body"]
 
 
 @requires_node
@@ -1001,3 +1074,675 @@ def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
     assert result["noUI"]["ok"] is False
     assert "interactive UI" in result["noUI"]["message"]
     assert result["inputCalls"] == [], "hasUI:false must fail loudly, never silently fall back to ctx.ui.input"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: subagent.ts. Drives the real registerSubagent(pi, root) against a stub
+# ExtensionAPI/ExtensionContext and a synthetic agents/+skills/ tree — no real `pi.exec`, no LLM.
+# ---------------------------------------------------------------------------
+
+SUBAGENT_TS = ROOT / "pi" / "extensions" / "subagent.ts"
+AGENT_SPEC_TS = ROOT / "pi" / "extensions" / "agent-spec.ts"
+MODEL_TIER_TS = ROOT / "pi" / "extensions" / "model-tier.ts"
+
+_SUBAGENT_DRIVER = """
+import { existsSync, readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+const execCalls = [];
+const modelRegistryCalls = [];
+const stubPi = {
+  registerTool(tool) { this._registered = tool; },
+  async exec(command, args, options) {
+    // Read the composed prompt's content HERE, before returning — subagent.ts deletes the temp
+    // file in its own `finally` immediately after this call resolves, so by the time run()
+    // returns to the caller below, the file is already gone.
+    const promptIdx = args.indexOf("--append-system-prompt");
+    const promptFileContent = promptIdx === -1 ? null : readFileSync(args[promptIdx + 1], "utf8");
+    execCalls.push({
+      command, args, promptFileContent,
+      cwd: options && options.cwd, timeout: options && options.timeout,
+    });
+    if (config.execBehavior === "throw") throw new Error("forced exec throw (test)");
+    if (config.execBehavior === "failure") return { stdout: "", stderr: "boom", code: 1, killed: false };
+    return { stdout: "agent output", stderr: "", code: 0, killed: false };
+  },
+};
+
+mod.registerSubagent(stubPi, config.root);
+const registered = stubPi._registered;
+const out = { registered: registered !== undefined, toolName: registered && registered.name };
+
+function lastPromptFile() {
+  const last = execCalls[execCalls.length - 1];
+  const idx = last.args.indexOf("--append-system-prompt");
+  return last.args[idx + 1];
+}
+
+async function run(agent, prompt, model, availableModels, scopedModels) {
+  const ctx = {
+    cwd: config.cwd,
+    model,
+    scopedModels: scopedModels || [],
+    modelRegistry: {
+      getAvailable() {
+        modelRegistryCalls.push(availableModels || []);
+        return availableModels || [];
+      },
+    },
+  };
+  try {
+    const result = await registered.execute("tc1", { agent, prompt }, undefined, undefined, ctx);
+    return { ok: true, result };
+  } catch (err) {
+    return { ok: false, message: String(err && err.message) };
+  }
+}
+
+if (registered) {
+  out.notFound = await run("does-not-exist", "hi");
+
+  out.emptyTools = await run("empty-tools-agent", "hi");
+
+  execCalls.length = 0;
+  out.success = await run("real-agent", "hi");
+  out.successExecCalls = execCalls.slice();
+  out.promptFileGoneAfterSuccess = !existsSync(lastPromptFile());
+
+  execCalls.length = 0;
+  out.withModel = await run("real-agent", "hi", { provider: "anthropic", id: "claude-x" });
+  out.withModelExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  out.execThrows = await run("real-agent", "hi");
+  out.promptFileGoneAfterThrow = !existsSync(lastPromptFile());
+
+  execCalls.length = 0;
+  out.execFails = await run("real-agent", "hi");
+
+  const anthropicCandidates = [
+    { provider: "anthropic", id: "claude-haiku-4-5" },
+    { provider: "anthropic", id: "claude-sonnet-5" },
+    { provider: "anthropic", id: "claude-opus-5" },
+  ];
+  const mixedProviderCandidates = [
+    ...anthropicCandidates,
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+  ];
+
+  execCalls.length = 0;
+  out.tieredAgentResolvesHaiku = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.tieredAgentExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  out.tieredAgentIgnoresOtherProviderCandidates = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, mixedProviderCandidates,
+  );
+  out.tieredAgentIgnoresOtherProviderExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  out.untieredAgentFallsBackToParentModel = await run(
+    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.untieredAgentFallsBackExecCalls = execCalls.slice();
+
+  // ctx.scopedModels restricts the session to only claude-sonnet-5 — the haiku-tier candidate
+  // exists in the full modelRegistry catalog but is NOT in scope, so resolution must respect
+  // the restriction (fall back to the parent model) rather than reaching past it.
+  const sonnetOnlyScope = [{ model: { provider: "anthropic", id: "claude-sonnet-5" } }];
+
+  execCalls.length = 0;
+  modelRegistryCalls.length = 0;
+  out.scopedModelsRestrictsResolution = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates, sonnetOnlyScope,
+  );
+  out.scopedModelsExecCalls = execCalls.slice();
+  out.scopedModelsBypassedModelRegistry = modelRegistryCalls.length === 0;
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _write_synthetic_agents_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("pi-subagent-root")
+    agents = root / "agents"
+    agents.mkdir()
+    (agents / "real-agent.md").write_text(
+        "---\n"
+        "name: real-agent\n"
+        "description: test agent\n"
+        "tools: Read, Bash\n"
+        "skills:\n"
+        "  - swe-workbench:fake-skill\n"
+        "---\n\n"
+        "Real agent body.\n",
+        encoding="utf-8",
+    )
+    (agents / "empty-tools-agent.md").write_text(
+        "---\n"
+        "name: empty-tools-agent\n"
+        "description: test agent with no mappable tools\n"
+        "tools: Skill\n"
+        "---\n\n"
+        "Empty tools agent body.\n",
+        encoding="utf-8",
+    )
+    (agents / "tiered-agent.md").write_text(
+        "---\n"
+        "name: tiered-agent\n"
+        "description: test agent with a known model tier\n"
+        "model: haiku\n"
+        "tools: Read\n"
+        "---\n\n"
+        "Tiered agent body.\n",
+        encoding="utf-8",
+    )
+    skill_dir = root / "skills" / "fake-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: fake-skill\ndescription: test skill\n---\n"
+        "<!-- preload-canary: SWB-PRELOAD-FAKE-SKILL -->\n\nFake skill body.\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _subagent_result(root, tmp_path_factory, *, exec_behavior="success", env=None):
+    config = {"root": str(root), "cwd": str(root), "execBehavior": exec_behavior}
+    node = shutil.which("node")
+    assert node is not None
+    driver = tmp_path_factory.mktemp("pi-subagent-driver") / "driver.mjs"
+    driver.write_text(_SUBAGENT_DRIVER, encoding="utf-8")
+    run_env = dict(_CLEAN_ENV)
+    run_env.update(env or {})
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(SUBAGENT_TS), json.dumps(config)],
+        capture_output=True, text=True, env=run_env, timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def subagent_root(tmp_path_factory):
+    return _write_synthetic_agents_root(tmp_path_factory)
+
+
+@requires_node
+def test_subagent_registers_by_default(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["registered"] is True
+    assert result["toolName"] == "task"
+
+
+@requires_node
+def test_subagent_kill_switch_skips_registration(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory, env={"SWE_WORKBENCH_PI_TOOLS": "0"})
+    assert result["registered"] is False
+
+
+@requires_node
+def test_subagent_unknown_agent_reports_available_list(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["notFound"]["ok"] is False
+    assert "does-not-exist" in result["notFound"]["message"]
+    assert "empty-tools-agent" in result["notFound"]["message"]
+    assert "real-agent" in result["notFound"]["message"]
+
+
+@requires_node
+def test_subagent_empty_translated_tools_throws_before_exec(subagent_root, tmp_path_factory):
+    """empty-tools-agent's only tool token (Skill) is drop-only — translateToolTokens must
+    throw before pi.exec is ever called, never silently build an empty --tools allowlist."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["emptyTools"]["ok"] is False
+    assert "no Pi mapping" in result["emptyTools"]["message"] or "empty" in result["emptyTools"]["message"]
+
+
+@requires_node
+def test_subagent_success_builds_expected_argv_and_cleans_up_temp_file(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["success"]["ok"] is True
+    assert result["success"]["result"]["content"] == [{"type": "text", "text": "agent output"}]
+
+    call = result["successExecCalls"][0]
+    assert call["command"] == "pi"
+    args = call["args"]
+    assert args[0] == "-p" and args[1] == "hi"
+    assert "--append-system-prompt" in args
+    tools_idx = args.index("--tools")
+    tool_names = set(args[tools_idx + 1].split(","))
+    assert tool_names == {"read", "bash", "ask_user_question"}
+    exclude_idx = args.index("--exclude-tools")
+    assert args[exclude_idx + 1] == "task,subagent"
+    assert "--no-session" in args
+    assert "--model" not in args, "no --model flag when ctx.model is undefined"
+
+    assert result["promptFileGoneAfterSuccess"] is True
+
+
+@requires_node
+def test_subagent_composed_prompt_contains_agent_body_and_preloaded_skill_content(subagent_root, tmp_path_factory):
+    """The whole point of this feature is that a dispatched agent's body AND its preloaded
+    skills actually land in the child's system prompt — not just that some file got written and
+    later deleted. Reads the --append-system-prompt temp file's real content (captured by the
+    driver's stub exec() before subagent.ts's own finally block deletes it) and asserts on it."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    content = result["successExecCalls"][0]["promptFileContent"]
+    assert content is not None
+    assert "Real agent body." in content
+    assert "Fake skill body." in content
+    assert "SWB-PRELOAD-FAKE-SKILL" in content, "the preload-canary marker must survive composition"
+
+
+@requires_node
+def test_subagent_passes_model_when_ctx_model_defined(subagent_root, tmp_path_factory):
+    """real-agent has no `model:` frontmatter tier, so this exercises the fallback path:
+    ctx.model is passed through to --model unchanged. The tier-resolution path is covered
+    separately below (tiered-agent)."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    args = result["withModelExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-x"
+
+
+@requires_node
+def test_subagent_cleans_up_temp_file_when_exec_throws(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="throw")
+    assert result["execThrows"]["ok"] is False
+    assert "forced exec throw" in result["execThrows"]["message"]
+    assert result["promptFileGoneAfterThrow"] is True
+
+
+@requires_node
+def test_subagent_nonzero_exit_surfaces_stderr(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="failure")
+    assert result["execFails"]["ok"] is False
+    assert "boom" in result["execFails"]["message"]
+
+
+_CAP_OUTPUT_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+console.log(JSON.stringify({
+  underCap: mod.capOutput(config.shortText),
+  emojiBoundary: mod.capOutput(config.emojiBoundaryText),
+  plainBoundary: mod.capOutput(config.plainBoundaryText),
+}));
+"""
+
+
+@requires_node
+def test_cap_output_does_not_split_a_surrogate_pair_at_the_boundary(tmp_path_factory):
+    """capOutput's slice() is a UTF-16 code-unit cut, tested directly (not through the full
+    exec/JSON/stdout-UTF-8 round trip — a lone surrogate does not survive that pipeline intact,
+    so this Unicode edge case has to be verified in-process). A surrogate pair (an emoji)
+    straddling the OUTPUT_CAP_CHARS boundary must not leave a lone leading surrogate dangling in
+    the truncated result — the resulting string must stay well-formed UTF-16 throughout."""
+    emoji = "\U0001F600"  # 2 UTF-16 code units — the high surrogate lands exactly at index 49999
+    config = {
+        "shortText": "hello",
+        "emojiBoundaryText": ("a" * 49999) + emoji + "TAIL",
+        "plainBoundaryText": "b" * 50010,
+    }
+    result = _run_node(_CAP_OUTPUT_DRIVER, [str(SUBAGENT_TS), json.dumps(config)], tmp_path_factory, label="pi-cap-output-driver")
+
+    assert result["underCap"] == "hello", "text under the cap must pass through unchanged"
+
+    emoji_boundary = result["emojiBoundary"]
+    assert not any(0xD800 <= ord(c) <= 0xDFFF for c in emoji_boundary), (
+        "a lone surrogate leaked into the truncated output — ill-formed UTF-16"
+    )
+    assert emoji_boundary.startswith("a" * 49999)
+    assert "[truncated" in emoji_boundary
+
+    plain_boundary = result["plainBoundary"]
+    assert plain_boundary.startswith("b" * 50000)
+    assert "[truncated" in plain_boundary
+
+
+@requires_node
+def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_path_factory):
+    """End-to-end: tiered-agent's `model: haiku` frontmatter, combined with ctx.model on
+    anthropic and a fabricated ctx.modelRegistry.getAvailable() candidate list, must resolve to
+    the haiku-tier candidate — not the parent's own (sonnet) model."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["tieredAgentResolvesHaiku"]["ok"] is True
+    args = result["tieredAgentExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+
+
+@requires_node
+def test_subagent_tiered_agent_ignores_other_provider_candidates(subagent_root, tmp_path_factory):
+    """The candidate list handed to resolveModelForTier must already be filtered to
+    ctx.model.provider — an openai-codex candidate must never leak into an anthropic
+    resolution, even when both are present in ctx.modelRegistry.getAvailable()'s raw result."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["tieredAgentIgnoresOtherProviderCandidates"]["ok"] is True
+    args = result["tieredAgentIgnoresOtherProviderExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+
+
+@requires_node
+def test_subagent_untiered_agent_falls_back_to_parent_model(subagent_root, tmp_path_factory):
+    """real-agent has no `model:` tier — even with a populated modelRegistry available, the
+    resolved model must be the parent's own (ctx.model) unchanged, not something derived from
+    the tier table."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["untieredAgentFallsBackToParentModel"]["ok"] is True
+    args = result["untieredAgentFallsBackExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5"
+
+
+@requires_node
+def test_subagent_respects_scoped_models_over_full_registry(subagent_root, tmp_path_factory):
+    """A session-scoped model list (ctx.scopedModels, from --models/enabledModels) must win over
+    the full ctx.modelRegistry.getAvailable() catalog — a haiku candidate that exists in the full
+    catalog but was never scoped into this session must not be reachable, and resolveTargetModel
+    must not even query the full registry when scoping is configured."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["scopedModelsRestrictsResolution"]["ok"] is True
+    args = result["scopedModelsExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5", (
+        "haiku isn't in scope, so resolution must fall back to the parent's (sonnet) model"
+    )
+    assert result["scopedModelsBypassedModelRegistry"] is True
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: agent-spec.ts's pure functions (parseAgentSpec, composeSystemPrompt) directly —
+# subagent.ts's integration tests above only exercise the well-formed happy path; these cover
+# parser edge cases (missing required keys, CRLF normalization, zero/multiple skills) that a
+# fixture-driven integration test alone would not catch a regression in.
+# ---------------------------------------------------------------------------
+
+_AGENT_SPEC_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+function tryParse(text) {
+  try {
+    return { ok: true, result: mod.parseAgentSpec(text) };
+  } catch (err) {
+    return { ok: false, message: String(err && err.message) };
+  }
+}
+
+const out = {
+  wellFormed: tryParse(config.wellFormedText),
+  missingName: tryParse(config.missingNameText),
+  missingDescription: tryParse(config.missingDescriptionText),
+  crlf: tryParse(config.crlfText),
+  noSkills: tryParse(config.noSkillsText),
+  multiSkills: tryParse(config.multiSkillsText),
+  composeNoSkills: mod.composeSystemPrompt({ body: "Agent body." }, []),
+  composeMultiSkills: mod.composeSystemPrompt(
+    { body: "Agent body." },
+    [
+      { id: "swe-workbench:a", body: "Skill A body.", dir: "/fake/skills/a" },
+      { id: "swe-workbench:b", body: "Skill B body.", dir: "/fake/skills/b" },
+    ],
+  ),
+};
+console.log(JSON.stringify(out));
+"""
+
+_WELL_FORMED_TEXT = (
+    "---\nname: sample\ndescription: sample agent\ntools: Read, Bash\n"
+    "skills:\n  - swe-workbench:one\n  - swe-workbench:two\n---\n\nSample agent body.\n"
+)
+_MISSING_NAME_TEXT = "---\ndescription: sample agent\n---\n\nBody.\n"
+_MISSING_DESCRIPTION_TEXT = "---\nname: sample\n---\n\nBody.\n"
+_CRLF_TEXT = "---\r\nname: sample\r\ndescription: sample agent\r\n---\r\n\r\nCRLF body.\r\n"
+_NO_SKILLS_TEXT = "---\nname: sample\ndescription: sample agent\ntools: Read\n---\n\nNo skills body.\n"
+_MULTI_SKILLS_TEXT = (
+    "---\nname: sample\ndescription: sample agent\ntools: Read\n"
+    "skills:\n  - swe-workbench:one\n  - swe-workbench:two\n  - swe-workbench:three\n"
+    "---\n\nMulti skills body.\n"
+)
+
+
+@pytest.fixture(scope="module")
+def agent_spec_result(tmp_path_factory):
+    config = {
+        "wellFormedText": _WELL_FORMED_TEXT,
+        "missingNameText": _MISSING_NAME_TEXT,
+        "missingDescriptionText": _MISSING_DESCRIPTION_TEXT,
+        "crlfText": _CRLF_TEXT,
+        "noSkillsText": _NO_SKILLS_TEXT,
+        "multiSkillsText": _MULTI_SKILLS_TEXT,
+    }
+    return _run_node(
+        _AGENT_SPEC_DRIVER, [str(AGENT_SPEC_TS), json.dumps(config)], tmp_path_factory, label="pi-agent-spec-driver"
+    )
+
+
+@requires_node
+def test_parse_agent_spec_well_formed_extracts_all_fields(agent_spec_result):
+    result = agent_spec_result["wellFormed"]
+    assert result["ok"] is True
+    spec = result["result"]
+    assert spec["name"] == "sample"
+    assert spec["description"] == "sample agent"
+    assert spec["tools"] == ["Read", "Bash"]
+    assert spec["skillIds"] == ["swe-workbench:one", "swe-workbench:two"]
+    assert spec["body"] == "Sample agent body."
+
+
+@requires_node
+def test_parse_agent_spec_missing_name_throws(agent_spec_result):
+    result = agent_spec_result["missingName"]
+    assert result["ok"] is False
+    assert "name" in result["message"]
+
+
+@requires_node
+def test_parse_agent_spec_missing_description_throws(agent_spec_result):
+    result = agent_spec_result["missingDescription"]
+    assert result["ok"] is False
+    assert "description" in result["message"]
+
+
+@requires_node
+def test_parse_agent_spec_normalizes_crlf(agent_spec_result):
+    result = agent_spec_result["crlf"]
+    assert result["ok"] is True
+    assert result["result"]["name"] == "sample"
+    assert result["result"]["body"] == "CRLF body."
+
+
+@requires_node
+def test_parse_agent_spec_empty_skills_list_when_no_skills_key(agent_spec_result):
+    result = agent_spec_result["noSkills"]
+    assert result["ok"] is True
+    assert result["result"]["skillIds"] == []
+
+
+@requires_node
+def test_parse_agent_spec_multiple_skills_preserves_order(agent_spec_result):
+    result = agent_spec_result["multiSkills"]
+    assert result["ok"] is True
+    assert result["result"]["skillIds"] == ["swe-workbench:one", "swe-workbench:two", "swe-workbench:three"]
+
+
+@requires_node
+def test_compose_system_prompt_with_zero_skills_is_just_the_body(agent_spec_result):
+    assert agent_spec_result["composeNoSkills"] == "Agent body."
+
+
+@requires_node
+def test_compose_system_prompt_with_multiple_skills_preserves_order(agent_spec_result):
+    composed = agent_spec_result["composeMultiSkills"]
+    body_idx = composed.index("Agent body.")
+    a_idx = composed.index("Skill A body.")
+    b_idx = composed.index("Skill B body.")
+    assert body_idx < a_idx < b_idx, "skills must appear after the agent body, in skills: order"
+    assert "swe-workbench:a" in composed and "swe-workbench:b" in composed
+
+
+@requires_node
+def test_compose_system_prompt_states_each_skills_resolvable_directory(agent_spec_result):
+    """A skill's body can point at its own examples/ (or similar) with a bare relative path —
+    the composed section must state the skill's absolute directory so a dispatched child with
+    `read` can actually resolve that pointer, not just see a dead reference."""
+    composed = agent_spec_result["composeMultiSkills"]
+    assert "/fake/skills/a" in composed
+    assert "/fake/skills/b" in composed
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: model-tier.ts's pure functions directly. No stub `pi`/`ctx` needed.
+# ---------------------------------------------------------------------------
+
+_MODEL_TIER_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+const out = {
+  knownTiers: {
+    haiku: mod.isKnownModelTier("haiku"),
+    sonnet: mod.isKnownModelTier("sonnet"),
+    opus: mod.isKnownModelTier("opus"),
+    other: mod.isKnownModelTier("gpt-5"),
+    undef: mod.isKnownModelTier(undefined),
+  },
+};
+for (const [label, { provider, tier, candidates }] of Object.entries(config.cases)) {
+  out[label] = mod.resolveModelForTier(provider, tier, candidates) ?? null;
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _model_tier_result(tmp_path_factory):
+    # Verbatim id list + order from the installed SDK's bundled Anthropic catalog
+    # (pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
+    # providers/data/anthropic.json) — NOT a clean one-id-per-tier fixture. This is deliberate:
+    # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the
+    # bare flagship id), in catalog order, not chronological or shortest-first order. A resolver
+    # that just took the first substring match would silently pick a stale snapshot here — this
+    # fixture is what actually caught that bug during review.
+    anthropic_candidates = [
+        {"provider": "anthropic", "id": "claude-fable-5"},
+        {"provider": "anthropic", "id": "claude-haiku-4-5"},
+        {"provider": "anthropic", "id": "claude-haiku-4-5-20251001"},
+        {"provider": "anthropic", "id": "claude-opus-4-5"},
+        {"provider": "anthropic", "id": "claude-opus-4-5-20251101"},
+        {"provider": "anthropic", "id": "claude-opus-4-6"},
+        {"provider": "anthropic", "id": "claude-opus-4-7"},
+        {"provider": "anthropic", "id": "claude-opus-4-8"},
+        {"provider": "anthropic", "id": "claude-opus-5"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-5"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-5-20250929"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-6"},
+        {"provider": "anthropic", "id": "claude-sonnet-5"},
+    ]
+    codex_candidates = [
+        {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+        {"provider": "openai-codex", "id": "gpt-5.6-sol"},
+        {"provider": "openai-codex", "id": "gpt-5.6-terra"},
+        {"provider": "openai-codex", "id": "gpt-5.4-mini"},
+    ]
+    zai_full_candidates = [
+        {"provider": "zai", "id": "glm-5.3"},
+        {"provider": "zai", "id": "glm-5.2"},
+        {"provider": "zai", "id": "glm-5.2-highspeed"},
+    ]
+    zai_no_highspeed_candidates = [
+        {"provider": "zai", "id": "glm-5.3"},
+        {"provider": "zai", "id": "glm-5.2"},
+    ]
+    config = {
+        "cases": {
+            "anthropicOpus": {"provider": "anthropic", "tier": "opus", "candidates": anthropic_candidates},
+            "anthropicSonnet": {"provider": "anthropic", "tier": "sonnet", "candidates": anthropic_candidates},
+            "anthropicHaiku": {"provider": "anthropic", "tier": "haiku", "candidates": anthropic_candidates},
+            "codexOpus": {"provider": "openai-codex", "tier": "opus", "candidates": codex_candidates},
+            "codexSonnet": {"provider": "openai-codex", "tier": "sonnet", "candidates": codex_candidates},
+            "codexHaiku": {"provider": "openai-codex", "tier": "haiku", "candidates": codex_candidates},
+            "zaiOpus": {"provider": "zai", "tier": "opus", "candidates": zai_full_candidates},
+            "zaiSonnet": {"provider": "zai", "tier": "sonnet", "candidates": zai_full_candidates},
+            "zaiHaikuPrefersHighspeed": {"provider": "zai", "tier": "haiku", "candidates": zai_full_candidates},
+            "zaiHaikuFallsBackWithoutHighspeed": {
+                "provider": "zai",
+                "tier": "haiku",
+                "candidates": zai_no_highspeed_candidates,
+            },
+            "unknownProvider": {"provider": "google", "tier": "haiku", "candidates": []},
+            "noMatchingCandidate": {"provider": "anthropic", "tier": "haiku", "candidates": []},
+        },
+    }
+    return _run_node(
+        _MODEL_TIER_DRIVER, [str(MODEL_TIER_TS), json.dumps(config)], tmp_path_factory, label="pi-model-tier-driver"
+    )
+
+
+@requires_node
+def test_is_known_model_tier(tmp_path_factory):
+    result = _model_tier_result(tmp_path_factory)
+    assert result["knownTiers"] == {
+        "haiku": True,
+        "sonnet": True,
+        "opus": True,
+        "other": False,
+        "undef": False,
+    }
+
+
+@requires_node
+def test_resolve_model_for_tier_anthropic(tmp_path_factory):
+    """anthropic_candidates carries the real bundled catalog's dated/versioned siblings
+    (claude-opus-4-5..4-8 alongside claude-opus-5, etc.) — this must still resolve to the bare
+    flagship id via shortestMatch, not whichever same-substring id happens to appear first in
+    catalog order."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["anthropicOpus"]["id"] == "claude-opus-5"
+    assert result["anthropicSonnet"]["id"] == "claude-sonnet-5"
+    assert result["anthropicHaiku"]["id"] == "claude-haiku-4-5"
+
+
+@requires_node
+def test_resolve_model_for_tier_openai_codex(tmp_path_factory):
+    result = _model_tier_result(tmp_path_factory)
+    assert result["codexOpus"]["id"] == "gpt-5.6-sol"
+    assert result["codexSonnet"]["id"] == "gpt-5.6-terra"
+    assert result["codexHaiku"]["id"] == "gpt-5.6-luna"
+
+
+@requires_node
+def test_resolve_model_for_tier_zai_haiku_prefers_highspeed_then_falls_back(tmp_path_factory):
+    """zai's haiku row lists two patterns in priority order — glm-5.2-highspeed first, plain
+    glm-5.2 as the fallback when the faster variant isn't actually available."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["zaiOpus"]["id"] == "glm-5.3"
+    assert result["zaiSonnet"]["id"] == "glm-5.3"
+    assert result["zaiHaikuPrefersHighspeed"]["id"] == "glm-5.2-highspeed"
+    assert result["zaiHaikuFallsBackWithoutHighspeed"]["id"] == "glm-5.2"
+
+
+@requires_node
+def test_resolve_model_for_tier_degrades_to_undefined_when_unresolvable(tmp_path_factory):
+    """An unknown provider (no MODEL_TIER_TABLE row) and a known provider with no matching
+    candidate both return undefined — subagent.ts's resolveTargetModel treats undefined as
+    'fall back to the parent's current model unchanged', never as an error."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["unknownProvider"] is None
+    assert result["noMatchingCandidate"] is None
