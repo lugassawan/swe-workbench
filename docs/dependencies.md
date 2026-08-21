@@ -24,11 +24,20 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 ## Language servers (optional, graceful-fallback)
 
+<!-- verified: Claude Code 2.1.237, macOS native, 2026-08-21 -->
+
+The harness-native `LSP` tool is main-loop-only on Claude Code 2.1.237 —
+absent from every subagent's tool registry, even at the maximum grant a
+subagent can hold. `bin/swe-workbench-lsp` (this plugin's own consumer, not
+the 4 agents directly) closes that gap: it's a stdlib-only script that
+speaks LSP JSON-RPC to a locally installed language server directly,
+reachable via `Bash` from any harness.
+
 | Server | Used by | Install | Required? |
 |---|---|---|---|
-| Any LSP server configured in Claude Code (`gopls`, `tsserver`, `pyright`, `rust-analyzer`, …) | `swe-workbench:reviewer`, `swe-workbench:auditor`, `swe-workbench:debugger`, `swe-workbench:refactorer` — symbol expansion via the `LSP` tool | Configured in Claude Code itself; this plugin declares and installs none | Optional |
+| `pyright-langserver`, `gopls`, `typescript-language-server`, `rust-analyzer`, `clangd`, `jdtls`, `kotlin-language-server`, `ruby-lsp`, `sourcekit-lsp`, `csharp-ls`, `dart`, `bash-language-server` — one per `language-*` skill | `bin/swe-workbench-lsp`, invoked by `swe-workbench:reviewer`, `swe-workbench:auditor`, `swe-workbench:debugger`, `swe-workbench:refactorer` | Whatever your project stack needs, e.g. `npm i -g pyright`, `go install golang.org/x/tools/gopls@latest`; this plugin declares and installs none | Optional |
 
-**Fallback behaviour:** unlike the browser servers above, LSP absence never blocks. Agents attempt one call, state `LSP unavailable — falling back to Grep` once, and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries.
+**Fallback behaviour:** unlike the browser servers above, language-server absence never blocks. Agents attempt one call via `bin/swe-workbench-lsp` (or the native `LSP` tool where an orchestrator can reach it). On exit 2 (a malformed anchor — the caller's own mistake), fix the anchor and retry once. On exit 3/4/5 (no server for the extension or binary missing, timeout, or server/protocol error) — or a persistent exit 2 — state `LSP unavailable — falling back to Grep` once and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries beyond that one anchor-fix attempt. Run `bin/swe-workbench-lsp check` to see per-language availability without spawning a server.
 
 ## Claude Code native tools
 

@@ -48,7 +48,7 @@ Build a plain-prose prompt from the parsed flags:
 
 Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box.
 
-Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `LSP` expands from it — one attempt only; on no servers or error, state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
+Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `bin/swe-workbench-lsp` (via `Bash`; the subagent's `LSP` grant, if any, is main-loop-only and unreachable here) expands from it — one attempt only; on no servers or error (exit 3), state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
 
 ### Phase 3 — Schema validation
 

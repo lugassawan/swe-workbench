@@ -110,7 +110,7 @@ Pass the agent:
 - Footer instruction (opt-in per `## Decision footer`): end with EXACTLY ONE of `**Review Decision: APPROVE**` or `**Review Decision: COMMENT**`. Never `REQUEST_CHANGES`.
 - Blocking-scope instruction (opt-in per `## Blocking-scope verdict`): classify each Critical/High as in-diff (`+` lines) or out-of-diff; mark out-of-diff with `**Informational (out-of-diff):** `; emit `**Blocking Scope: NONE|OUT-OF-DIFF-ONLY|IN-DIFF**` before the footer. APPROVE/COMMENT rule unchanged.
 - Ticket-context prelude (if Step 3 produced one).
-- Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `LSP` expands from it — one attempt only; on no servers or error, state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run. A language server may not be rooted at the ephemeral worktree `$WT`, which is exactly what the one-attempt fallback already handles.
+- Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `bin/swe-workbench-lsp` (via `Bash`; the subagent's `LSP` grant, if any, is main-loop-only and unreachable here) expands from it — one attempt only; on no servers or error (exit 3), state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run. A language server may not be rooted at the ephemeral worktree `$WT` — pass `--root "$WT"`, which is exactly what the one-attempt fallback already handles if it still comes back empty.
 
 This applies identically in both modes — followup re-checks re-run the same reviewer contract against the updated diff.
 
