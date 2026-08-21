@@ -51,18 +51,25 @@ BEGIN { in_sq = 0; in_dq = 0 }
   print out
 }')
 
-# Normalise separators AND newlines/tabs to spaces so rm/git after ; | & \n \t
-# are still detected — the fast-gate `case` and the grep detectors must share
-# ONE separator alphabet (the bug in #501: gate saw ';|&', grep saw [[:space:]]).
-_norm=$(printf '%s' "$_nc" | tr ';|&\n\t' '     ')
+# Normalise separators AND newlines/tabs/backticks to spaces so rm/git after
+# ; | & \n \t \` are still detected — the fast-gate `case` and the grep
+# detectors must share ONE separator alphabet (gate saw ';|&', grep saw
+# [[:space:]]).
+# shellcheck disable=SC2016  # backtick in tr's SET1 is a literal char, not command substitution
+_norm=$(printf '%s' "$_nc" | tr ';|&\n\t`' '      ')
 
-case "$_norm" in
-  rm\ *|*\ rm\ *|*\(*rm\ *|*git*) ;;
-  *)                              exit 0 ;;
+# Fully normalise BEFORE the fast gate, not after: turning "(" and ")" into SPACES (not
+# deleting them) handles $(...), <(...), >(...), and bare (...) uniformly, since whatever
+# preceded "(" no longer occupies the whitespace-or-start position the anchor regex requires.
+# Deleting quotes/brackets/backslashes closes quote-wrapped/backslash-escaped rm ("rm", 'rm',
+# \rm). Gate and detector now both run on this SAME normalized text ($norm), closing the same
+# class of gate/detector divergence for quote-wrapped rm.
+norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\\\")
+
+case "$norm" in
+  rm\ *|*\ rm\ *|*git*) ;;
+  *)                    exit 0 ;;
 esac
-
-# Strip quotes and bracket metacharacters that could mask paths.
-norm=$(printf '%s' "$_norm" | tr -d "'\"()[]{}")
 
 # shellcheck disable=SC2016  # $HOME in single quotes is intentional: matches literal text, not the shell variable
 # [rR] covers both -rf and -Rf (BSD/macOS rm accepts -R as synonym for -r).

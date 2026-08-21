@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from conftest import _CLEAN_ENV
+from pi_guard_fixtures import BASH_GUARD_FIXTURES
 
 GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
 
@@ -93,6 +94,14 @@ class TestRmRfBlocker:
         # swallow real command text that follows on the SAME physical line
         # (issue #501 re-review finding)
         'git commit -m "line one\n# note" && rm -rf ~',
+        # backtick and $(...) subshells previously slipped past both the fast-gate and the
+        # anchor regex
+        "`rm -rf /`",
+        "var=`rm -rf /`",
+        "$(rm -rf /)",
+        "var=$(rm -rf /)",
+        "echo `rm -rf /`",
+        "echo $(rm -rf /)",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -115,6 +124,10 @@ class TestRmRfBlocker:
         "rm -rf /homestead",
         "echo hi\nrm -rf ./build",
         "true\trm -rf ./build",
+        # legitimate backtick/$(...) subshells with no rm inside must stay allowed
+        "echo `ls`",
+        "x=$(date)",
+        "echo $(pwd)",
     ])
     def test_allowed(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -597,3 +610,24 @@ class TestSkillAutoloadHookWiring:
         assert go_result.stdout.strip(), "Go hint should have been emitted"
         assert "language-python" in py_result.stdout
         assert "language-go" in go_result.stdout
+
+
+# ──────────────────────────────────────────────
+# Differential acceptance criterion — direct-invocation half. tests/test_pi_extension.py
+# runs the SAME BASH_GUARD_FIXTURES set through pi/extensions/guards.ts and asserts an
+# identical verdict; a future guard-semantics change has to update pi_guard_fixtures.py and
+# both suites re-verify against it.
+# ──────────────────────────────────────────────
+
+class TestDifferentialFixtures:
+    @pytest.mark.parametrize("cmd,expect_blocked", BASH_GUARD_FIXTURES)
+    def test_direct_invocation_matches_expected_verdict(self, guard_script, cmd, expect_blocked):
+        result = run_guard(guard_script, cmd)
+        if expect_blocked:
+            assert result.returncode == 2 and "BLOCKED" in result.stderr, (
+                f"expected BLOCKED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
+            )
+        else:
+            assert result.returncode == 0 and result.stderr == "", (
+                f"expected ALLOWED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
+            )

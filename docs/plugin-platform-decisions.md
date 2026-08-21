@@ -110,3 +110,18 @@ swe-workbench plugin"). The guard has to run *before* anything that depends on `
 `PATH`, which rules out delegating it to a script that is itself only reachable via `PATH`. It
 stays exactly where it is today: one `command -v` line at the top of each skill's first executable
 block, per `bin/README.md`'s "Reference pattern".
+
+## 6. `worktree_permission_grant.sh` has no Pi equivalent — documented N/A, not deferred
+
+`pi/extensions/guards.ts` reproduces `bash_guard.sh`, `secret_guard.py`,
+`workflow_resume_hint.sh`, and `skill_autoload_hint.sh` on Pi, each exec'ing the unchanged
+Claude Code script. `worktree_permission_grant.sh` is left out deliberately and permanently.
+
+The hook emits `permissionDecision: "allow"` so Claude Code's permission-prompt system skips
+asking about paths inside the active worktree. Pi's README states "No permission popups" — there
+is no prompt surface for a `tool_call` handler to target, so a port would have nothing to grant
+permission *for*.
+
+Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
+— distinct from `"deferred"` (`skill_usage_record.sh`/`skill_usage_flush.sh`, unwired only until
+`Skill`/subagents exist on Pi). `"n/a"` never graduates to `"wired"`.

@@ -31,6 +31,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerGuards } from "./guards.ts";
 
 class PluginRootNotFoundError extends Error {
   constructor(startDir: string) {
@@ -127,4 +128,6 @@ export default function (pi: ExtensionAPI): void {
     if (event.systemPrompt.includes(PREAMBLE_MARKER)) return;
     return { systemPrompt: event.systemPrompt + preamble };
   });
+
+  registerGuards(pi, root);
 }
