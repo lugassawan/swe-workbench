@@ -115,7 +115,7 @@ To verify the missing-file path in `check_skill_trigger_fixtures` is tested:
 
 3. Revert the comment to restore the validator.
 
-To verify the `name` vs. filename-stem mismatch path in `check_agents` is tested (#605):
+To verify the `name` vs. filename-stem mismatch path in `check_agents` is tested:
 
 1. Open `scripts/validate.py` and comment out the `fail(...)` call inside `check_agents`
    for the name-mismatch case:
