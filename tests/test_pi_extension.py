@@ -1367,6 +1367,48 @@ def test_subagent_nonzero_exit_surfaces_stderr(subagent_root, tmp_path_factory):
     assert "boom" in result["execFails"]["message"]
 
 
+_CAP_OUTPUT_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+console.log(JSON.stringify({
+  underCap: mod.capOutput(config.shortText),
+  emojiBoundary: mod.capOutput(config.emojiBoundaryText),
+  plainBoundary: mod.capOutput(config.plainBoundaryText),
+}));
+"""
+
+
+@requires_node
+def test_cap_output_does_not_split_a_surrogate_pair_at_the_boundary(tmp_path_factory):
+    """capOutput's slice() is a UTF-16 code-unit cut, tested directly (not through the full
+    exec/JSON/stdout-UTF-8 round trip — a lone surrogate does not survive that pipeline intact,
+    so this Unicode edge case has to be verified in-process). A surrogate pair (an emoji)
+    straddling the OUTPUT_CAP_CHARS boundary must not leave a lone leading surrogate dangling in
+    the truncated result — the resulting string must stay well-formed UTF-16 throughout."""
+    emoji = "\U0001F600"  # 2 UTF-16 code units — the high surrogate lands exactly at index 49999
+    config = {
+        "shortText": "hello",
+        "emojiBoundaryText": ("a" * 49999) + emoji + "TAIL",
+        "plainBoundaryText": "b" * 50010,
+    }
+    result = _run_node(_CAP_OUTPUT_DRIVER, [str(SUBAGENT_TS), json.dumps(config)], tmp_path_factory, label="pi-cap-output-driver")
+
+    assert result["underCap"] == "hello", "text under the cap must pass through unchanged"
+
+    emoji_boundary = result["emojiBoundary"]
+    assert not any(0xD800 <= ord(c) <= 0xDFFF for c in emoji_boundary), (
+        "a lone surrogate leaked into the truncated output — ill-formed UTF-16"
+    )
+    assert emoji_boundary.startswith("a" * 49999)
+    assert "[truncated" in emoji_boundary
+
+    plain_boundary = result["plainBoundary"]
+    assert plain_boundary.startswith("b" * 50000)
+    assert "[truncated" in plain_boundary
+
+
 @requires_node
 def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_path_factory):
     """End-to-end: tiered-agent's `model: haiku` frontmatter, combined with ctx.model on

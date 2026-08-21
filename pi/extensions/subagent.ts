@@ -43,10 +43,15 @@ const OUTPUT_CAP_CHARS = 50_000;
 
 /** Applied to both the success path's stdout and the failure path's stderr — a dispatched
  *  child's output (or its error output on a bad exit) becomes part of the PARENT model's
- *  context, so an uncapped dump either way is the same context-bloat risk. */
-function capOutput(text: string): string {
+ *  context, so an uncapped dump either way is the same context-bloat risk. `.slice()` is a
+ *  UTF-16 code-unit cut, which can land inside a surrogate pair (e.g. an emoji) right at the
+ *  boundary — the trailing `.replace()` drops a lone leading surrogate left dangling by that
+ *  cut, so the result is never an ill-formed UTF-16 string. Exported for direct unit testing —
+ *  a lone surrogate does not survive a stdout/JSON/UTF-8 round trip intact, so this specific
+ *  Unicode edge case needs to be tested in-process, not via the full exec path. */
+export function capOutput(text: string): string {
   return text.length > OUTPUT_CAP_CHARS
-    ? `${text.slice(0, OUTPUT_CAP_CHARS)}\n\n[truncated — output exceeded ${OUTPUT_CAP_CHARS} chars]`
+    ? `${text.slice(0, OUTPUT_CAP_CHARS).replace(/[\uD800-\uDBFF]$/, "")}\n\n[truncated — output exceeded ${OUTPUT_CAP_CHARS} chars]`
     : text;
 }
 

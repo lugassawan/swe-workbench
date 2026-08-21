@@ -706,6 +706,54 @@ def test_task_tool_translation_table_is_exhaustive_over_tool_tokens():
     )
 
 
+_REAL_AGENTS_PARSE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , agentSpecPath, root] = process.argv;
+const mod = await import(pathToFileURL(agentSpecPath).href);
+
+const out = {};
+for (const name of mod.listAgentNames(root)) {
+  try {
+    const spec = mod.readAgentSpec(root, name);
+    const translated = mod.translateToolTokens(spec.tools);
+    out[name] = { ok: true, toolCount: translated.length };
+  } catch (err) {
+    out[name] = { ok: false, message: String(err && err.message) };
+  }
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@requires_node
+def test_real_agents_parse_and_translate_without_throwing():
+    """Drives the REAL hand-rolled TS parser (readAgentSpec/translateToolTokens) against every
+    actual agents/*.md file on disk — not the synthetic fixtures test_pi_extension.py's parser
+    tests use, and not validate.py's separate lenient Python parser (which the exhaustiveness
+    ratchets above cross-check against instead of the TS one). A frontmatter edit that's valid
+    under the Python parser's rules but breaks an assumption the TS regex parser makes (e.g. a
+    block-style `tools:` sequence instead of the assumed inline comma string) would otherwise
+    stay CI-green and only surface as a runtime throw the first time that agent is actually
+    dispatched via `task` — the exact 'frontmatter drift should fail CI, not silently break at
+    dispatch time' failure mode this repo's Pi port is designed to avoid."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "real-agents-parse-dump.mjs"
+        driver.write_text(_REAL_AGENTS_PARSE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(AGENT_SPEC_TS), str(ROOT)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped, "no agents/*.md files were discovered — listAgentNames or ROOT is likely wrong"
+    failures = {name: r["message"] for name, r in dumped.items() if not r["ok"]}
+    assert not failures, f"real agents/*.md files failed to parse/translate via the TS parser: {failures}"
+
+
 _MODEL_TIER_TABLE_DUMP_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);
