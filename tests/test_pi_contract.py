@@ -36,6 +36,22 @@ COMMANDS_DIR = ROOT / "commands"
 SHARED_DIR = ROOT / "shared"
 EXTENSIONS_DIR = ROOT / "pi" / "extensions"
 HOOKS_DIR = ROOT / "hooks"
+PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
+
+# Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
+# @earendil-works/pi-coding-agent@0.84.2's dist/core/prompt-templates.js (also present,
+# unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
+# against the installed package (`grep -n substituteArgs pi/node_modules/@earendil-works/
+# pi-coding-agent/dist/core/prompt-templates.js`) whenever `pi/package.json`'s
+# peerDependencies bump changes the pin — the alternation is what silently eats `$0`:
+# the final `\$(...|\d+)` branch matches any `$<digits>`, including `$0`, and the
+# matched substring is replaced with `args[-1] ?? ""` — i.e. the empty string, since no
+# template is ever invoked with a 0th positional arg. `$(0)` is the portable escape: it is
+# valid awk (an expression field reference `$(0)` means the same thing as `$0`) but does not
+# match this regex, so Pi's substitution passes it through untouched.
+PI_SUBSTITUTE_ARGS_RE = re.compile(
+    r"\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)"
+)
 
 # The complete key vocabulary agents/*.md frontmatter uses today. A new key (e.g. a future
 # Phase 7 `pi:` override block) must be added here deliberately, not discovered by CI red.
@@ -111,6 +127,34 @@ def _frontmatter_block(path):
     if end == -1:
         return None
     return text[3:end]
+
+
+def _body_after_frontmatter(path):
+    """Return (body, body_start_line): the body Pi's own parseFrontmatter would hand to
+    substituteArgs, and the 1-indexed line in the original file where that body's first
+    character lives (post-normalization, pre-strip) — so callers can report accurate line
+    numbers for matches found inside `body`, which has leading/trailing whitespace stripped
+    and so cannot be offset from directly by counting its own newlines alone.
+
+    Mirrors dist/utils/frontmatter.js's extractFrontmatter exactly (source at
+    @earendil-works/pi-coding-agent@0.84.2): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
+    same as Pi's normalizeNewlines) before any offset math, find the closing '---' via
+    indexOf from index 3, slice from 4 chars past that match, then strip(). Do NOT reuse
+    _frontmatter_block's delimiter logic here — it requires an exact '\\n---\\n' match and
+    never trims, which leaves an extra leading '\\n' in the body for every file using the
+    standard '---\\n\\n<body>' shape.
+    """
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    if not text.startswith("---"):
+        return text, 1
+    end = text.find("\n---", 3)
+    if end == -1:
+        return text, 1
+    raw_body = text[end + 4 :]
+    stripped = raw_body.strip()
+    leading_offset = raw_body.index(stripped) if stripped else len(raw_body)
+    body_start_line = text.count("\n", 0, end + 4 + leading_offset) + 1
+    return stripped, body_start_line
 
 
 def test_all_frontmatter_is_strict_yaml_parseable():
@@ -436,3 +480,51 @@ def test_worktree_permission_grant_is_explicitly_not_applicable():
         "Pi (README.md: 'No permission popups') — this must stay an explicit N/A, not silently "
         "absent from the inventory"
     )
+
+
+def test_no_pi_argument_substitution_hazard_in_commands():
+    """Every $-token Pi's substituteArgs regex would match, across commands/*.md and
+    shared/**/*.md, must be exactly `$ARGUMENTS` — the one substitution swe-workbench's
+    commands are written to expect.
+
+    This allowlists the single legal token rather than blocklisting known-bad ones: `$@`,
+    `$1`, `${2:-x}`, `${@:1:2}` all trip this without being enumerated, and so does any
+    alternation Pi adds to the regex later. `$0` is the hazard this guard was
+    written for — Pi replaces it with the empty string, silently corrupting any awk script
+    that uses `$0` as its whole-record variable. The fix is `$(0)`, valid in every awk and
+    invisible to this regex; see the comment above `PI_SUBSTITUTE_ARGS_RE`.
+    """
+    violations = []
+    paths = sorted(COMMANDS_DIR.glob("*.md")) + sorted(SHARED_DIR.rglob("*.md"))
+    for path in paths:
+        body, body_start_line = _body_after_frontmatter(path)
+        for match in PI_SUBSTITUTE_ARGS_RE.finditer(body):
+            if match.group(0) != "$ARGUMENTS":
+                line_no = body_start_line + body.count("\n", 0, match.start())
+                violations.append(f"{path.relative_to(ROOT)}:{line_no}: {match.group(0)!r}")
+    assert not violations, (
+        "Pi's substituteArgs (dist/core/prompt-templates.js, "
+        "@earendil-works/pi-coding-agent@0.84.2) would rewrite these tokens — every "
+        "alternative it matches other than literal `$ARGUMENTS` is replaced with the "
+        "matched positional arg or, if unset, the empty string, silently corrupting the "
+        "command body when swe-workbench's own commands are loaded as Pi prompt templates. "
+        "Use `$(0)` (or otherwise avoid a bare `$<digits>`/`$@`/`${...}` token) instead:\n"
+        + "\n".join(f"  {v}" for v in violations)
+    )
+
+
+def test_pi_extension_wires_commands_as_prompt_paths():
+    """Smoke check only — flagged honestly as text-not-behaviour.
+
+    tests/test_pi_extension.py's test_resources_discover_returns_exactly_the_skills_and_commands_dirs
+    already exercises this wiring behaviourally (it drives the real extension through Node and
+    asserts exact equality on the resources_discover result) — but that test is `@requires_node`
+    and skips locally on Node < 22, and CI's Node pin could itself be removed or narrowed by a
+    future change to .github/workflows/pr.yml without this repo's own tests objecting. This
+    assertion has no such dependency: it only proves the wiring line is present in source, so the
+    `promptPaths: [join(root, "commands")]` wiring in pi/extensions/index.ts keeps *some* coverage
+    — text, not behaviour — even in a pytest-only run where Node isn't available.
+    """
+    text = PI_EXTENSIONS_INDEX.read_text(encoding="utf-8")
+    assert "promptPaths" in text
+    assert 'join(root, "commands")' in text

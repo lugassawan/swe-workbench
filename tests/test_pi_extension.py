@@ -213,8 +213,11 @@ def extension_result(tmp_path_factory):
 
 
 @requires_node
-def test_resources_discover_returns_exactly_the_skills_dir(extension_result):
-    assert extension_result["discoverResult"] == {"skillPaths": [str(ROOT / "skills")]}
+def test_resources_discover_returns_exactly_the_skills_and_commands_dirs(extension_result):
+    assert extension_result["discoverResult"] == {
+        "skillPaths": [str(ROOT / "skills")],
+        "promptPaths": [str(ROOT / "commands")],
+    }
 
 
 @requires_node
@@ -272,7 +275,10 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     parsed = json.loads(result.stdout)
-    assert parsed["discoverResult"] == {"skillPaths": [str(synthetic_root / "skills")]}
+    assert parsed["discoverResult"] == {
+        "skillPaths": [str(synthetic_root / "skills")],
+        "promptPaths": [str(synthetic_root / "commands")],
+    }
     assert str(synthetic_root / "bin") in parsed["pathEntries"]
     assert "systemPrompt" not in (parsed.get("firstInjection") or {})
 
