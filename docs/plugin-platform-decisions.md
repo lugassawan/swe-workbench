@@ -152,10 +152,10 @@ No prose edit and no new tool. `tool-vocab.ts`'s worktree note tells the model t
 
 ## 8. `LSP` has no Pi tool registration — the capability lives in `bin/`, not the adapter
 
-Issue #609 originally sketched `pi/extensions/lsp.ts`: a repo-marker → server-binary map, PATH
-lookup, and a `vscode-jsonrpc` client exposing a Pi-registered `LSP` tool. That premise was
-overtaken by PR #623, which moved the whole capability out of the harness layer before this phase
-started.
+This phase's scope originally sketched `pi/extensions/lsp.ts`: a repo-marker → server-binary map,
+PATH lookup, and a `vscode-jsonrpc` client exposing a Pi-registered `LSP` tool. That premise was
+overtaken by a prior change that moved the whole capability out of the harness layer before this
+phase started.
 
 The harness-native `LSP` tool is main-loop-only on Claude Code 2.1.237 — absent from every
 subagent's tool registry, even at the maximum grant a subagent can hold
@@ -167,7 +167,7 @@ The real capability is `bin/swe-workbench-lsp`, a stdlib-only script that speaks
 locally installed language server directly — reachable via `Bash` on any harness, with no
 dependency on a harness-provided `LSP` tool ever being wired up.
 
-Phase 1 (#604) already did the only port work this capability needs: `pi/extensions/index.ts`
+Phase 1 already did the only port work this capability needs: `pi/extensions/index.ts`
 appends `<root>/bin` to `process.env.PATH`, so `swe-workbench-lsp` is already a bare command in a
 Pi session, and it splices `bin/README.md`'s `## Current scripts` body into the Tier-1 preamble,
 so a Pi session is already told the capability exists. A Pi-registered `LSP` tool would fork the
