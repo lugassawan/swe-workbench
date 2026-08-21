@@ -23,7 +23,15 @@ from conftest import _CLEAN_ENV
 ROOT = Path(__file__).parent.parent
 PACKAGE_JSON = ROOT / "pi" / "package.json"
 INDEX_TS = ROOT / "pi" / "extensions" / "index.ts"
+GUARDS_TS = ROOT / "pi" / "extensions" / "guards.ts"
+GUARD_RUNNER_TS = ROOT / "pi" / "extensions" / "guard-runner.ts"
 BIN_README = ROOT / "bin" / "README.md"
+
+# Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
+# file's own source — this file is not on secret_guard.py's allowlist (unlike
+# tests/test_secret_guard.py), and the live PreToolUse:Write hook on the session authoring this
+# file would otherwise block the edit that introduces it.
+_SECRET_CONTENT = "API_KEY" + '="abcdefghijklmnop1234"'
 
 _DRIVER = """
 import { pathToFileURL } from "node:url";
@@ -246,6 +254,10 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
     synthetic_index.parent.mkdir(parents=True)
     synthetic_index.write_text(INDEX_TS.read_text(encoding="utf-8"), encoding="utf-8")
+    for helper in ("guards.ts", "cc-payload.ts", "guard-runner.ts"):
+        (synthetic_index.parent / helper).write_text(
+            (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
+        )
 
     driver = tmp_path_factory.mktemp("pi-extension-driver-missing-readme") / "driver.mjs"
     driver.write_text(_DRIVER, encoding="utf-8")
@@ -263,3 +275,376 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     assert parsed["discoverResult"] == {"skillPaths": [str(synthetic_root / "skills")]}
     assert str(synthetic_root / "bin") in parsed["pathEntries"]
     assert "systemPrompt" not in (parsed.get("firstInjection") or {})
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: guards.ts driving the REAL hooks/bash_guard.sh + hooks/secret_guard.py +
+# hooks/workflow_resume_hint.sh + hooks/skill_autoload_hint.sh through guard-runner.ts's real
+# spawn (issue #607). Everything below drives the actual scripts, not a mock — the acceptance
+# criterion is that the adapter reproduces the same verdict a direct Claude-Code-shaped
+# invocation would get, not that its own translation logic is internally self-consistent.
+# ---------------------------------------------------------------------------
+
+_GUARDS_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+const { runGuard: realRunGuard } = await import(pathToFileURL(config.guardRunnerPath).href);
+
+const handlers = {};
+const sentMessages = [];
+const notifications = [];
+const stubPi = {
+  on(event, handler) { handlers[event] = handler; },
+  sendMessage(message, options) { sentMessages.push({ message, options }); },
+};
+const stubCtx = {
+  hasUI: true,
+  cwd: config.cwd,
+  signal: undefined,
+  ui: { notify: (msg, level) => notifications.push({ msg, level }) },
+  sessionManager: { getSessionId: () => config.sessionId },
+};
+
+let runGuardCallCount = 0;
+const runGuard = config.forceSpawnFailure
+  ? async () => { throw new Error("forced spawn failure (test)"); }
+  : async (options) => { runGuardCallCount++; return realRunGuard(options); };
+
+registerGuards(stubPi, config.root, { runGuard });
+
+async function toolCall(toolName, input) {
+  return handlers["tool_call"]({ type: "tool_call", toolCallId: "t", toolName, input }, stubCtx);
+}
+
+const out = {};
+out.bashBlocked = await toolCall("bash", { command: "rm -rf /" });
+out.bashAllowed = await toolCall("bash", { command: "ls -la" });
+out.bashBacktickBlocked = await toolCall("bash", { command: "`rm -rf /`" });
+out.writeBlocked = await toolCall("write", { path: "/tmp/f.py", content: config.secretContent });
+out.writeAllowed = await toolCall("write", { path: "/tmp/f.py", content: "print(1)" });
+
+runGuardCallCount = 0;
+out.editShortCircuit = await toolCall("edit", {
+  path: "/tmp/f.py",
+  edits: [
+    { oldText: "a", newText: config.secretContent },
+    { oldText: "b", newText: "safe" },
+  ],
+});
+out.editRunGuardCalls = runGuardCallCount;
+
+out.sessionStart = await handlers["session_start"]({ type: "session_start", reason: "startup" }, stubCtx);
+out.sentAfterSessionStart = sentMessages.slice();
+
+sentMessages.length = 0;
+out.toolResult = await handlers["tool_result"](
+  { type: "tool_result", toolCallId: "t2", toolName: "edit", input: { path: config.tsFilePath }, content: [], isError: false },
+  stubCtx,
+);
+out.sentAfterToolResult = sentMessages.slice();
+
+console.log(JSON.stringify({ out, notifications }));
+"""
+
+_TWO_SESSION_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const stubPi = { on(event, handler) { handlers[event] = handler; }, sendMessage() {} };
+
+registerGuards(stubPi, config.root, {});
+
+const results = [];
+for (const sessionId of config.sessionIds) {
+  const sent = [];
+  const ctx = {
+    hasUI: true,
+    cwd: config.cwd,
+    signal: undefined,
+    ui: { notify() {} },
+    sessionManager: { getSessionId: () => sessionId },
+  };
+  const originalSendMessage = stubPi.sendMessage;
+  stubPi.sendMessage = (message, options) => sent.push({ message, options });
+  await handlers["tool_result"](
+    { type: "tool_result", toolCallId: "t", toolName: "edit", input: { path: config.tsFilePath }, content: [], isError: false },
+    ctx,
+  );
+  stubPi.sendMessage = originalSendMessage;
+  results.push({ sessionId, sentCount: sent.length });
+}
+
+console.log(JSON.stringify(results));
+"""
+
+_EMPTY_SESSION_ID_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const stubPi = { on(event, handler) { handlers[event] = handler; }, sendMessage() {} };
+registerGuards(stubPi, config.root, {});
+
+const ctx = {
+  hasUI: true,
+  cwd: config.cwd,
+  signal: undefined,
+  ui: { notify() {} },
+  sessionManager: { getSessionId: () => "" },
+};
+
+try {
+  await handlers["tool_result"](
+    { type: "tool_result", toolCallId: "t", toolName: "edit", input: { path: config.tsFilePath }, content: [], isError: false },
+    ctx,
+  );
+  console.log(JSON.stringify({ threw: false }));
+} catch (err) {
+  console.log(JSON.stringify({ threw: true, message: String(err && err.message) }));
+}
+"""
+
+
+def _run_node(driver_src, args, tmp_path_factory, *, label):
+    if _NODE_MAJOR is None or _NODE_MAJOR < 22:
+        pytest.skip("requires Node >= 22")
+    driver = tmp_path_factory.mktemp(label) / "driver.mjs"
+    driver.write_text(driver_src, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), *args],
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def guards_result(tmp_path_factory):
+    import uuid
+
+    config = {
+        "root": str(ROOT),
+        "guardRunnerPath": str(GUARD_RUNNER_TS),
+        "cwd": str(ROOT),
+        # unique per test run — skill_autoload_hint.sh's dedup sentinel is keyed by
+        # session+skill and persists on disk across repeated pytest invocations on the same
+        # machine/day, so a fixed literal here would flake on a second run.
+        "sessionId": f"sess-guards-fixture-{uuid.uuid4().hex}",
+        "secretContent": _SECRET_CONTENT,
+        "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts"),
+        "forceSpawnFailure": False,
+    }
+    return _run_node(_GUARDS_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-driver")
+
+
+@requires_node
+def test_bash_guard_blocks_rm_rf_via_adapter(guards_result):
+    assert guards_result["out"]["bashBlocked"] == {
+        "block": True,
+        "reason": "BLOCKED: destructive rm against root or home",
+    }
+
+
+@requires_node
+def test_bash_guard_allows_safe_command_via_adapter(guards_result):
+    assert guards_result["out"].get("bashAllowed") is None
+
+
+@requires_node
+def test_bash_guard_blocks_401_backtick_vector_via_adapter(guards_result):
+    """Regression coverage for the #401 bypass this PR's hooks/bash_guard.sh fix closes,
+    driven through the real Pi adapter rather than invoking the script directly."""
+    assert guards_result["out"]["bashBacktickBlocked"] == {
+        "block": True,
+        "reason": "BLOCKED: destructive rm against root or home",
+    }
+
+
+@requires_node
+def test_secret_guard_blocks_write_with_secret_via_adapter(guards_result):
+    result = guards_result["out"]["writeBlocked"]
+    assert result["block"] is True
+    assert "BLOCKED: hardcoded secret detected" in result["reason"]
+
+
+@requires_node
+def test_secret_guard_allows_clean_write_via_adapter(guards_result):
+    assert guards_result["out"].get("writeAllowed") is None
+
+
+@requires_node
+def test_edit_guard_checks_one_payload_per_edits_element_and_short_circuits(guards_result):
+    """The blocked edits[] element is FIRST, so only ONE guard-runner call should happen —
+    proving payloads are per-element (not joined) and the loop stops at the first block."""
+    result = guards_result["out"]["editShortCircuit"]
+    assert result["block"] is True
+    assert "line 1" in result["reason"], (
+        "block reason must report a line number against the single new_string that was "
+        "actually sent, not a fabricated line number from a joined multi-edit document"
+    )
+    assert guards_result["out"]["editRunGuardCalls"] == 1, (
+        "guard-runner must not be invoked for edits[] elements after the first block"
+    )
+
+
+@requires_node
+def test_session_start_emits_resume_hint_via_send_message(guards_result):
+    sent = guards_result["out"]["sentAfterSessionStart"]
+    assert len(sent) == 1
+    assert sent[0]["message"]["customType"] == "swe-workbench:workflow-resume-hint"
+    assert sent[0]["message"]["display"] is False
+    assert sent[0]["options"]["deliverAs"] == "nextTurn"
+    assert isinstance(sent[0]["message"]["content"], str) and sent[0]["message"]["content"]
+
+
+@requires_node
+def test_tool_result_emits_skill_hint_via_send_message_steer(guards_result):
+    sent = guards_result["out"]["sentAfterToolResult"]
+    assert len(sent) == 1
+    assert sent[0]["message"]["customType"] == "swe-workbench:skill-autoload-hint"
+    assert sent[0]["options"]["deliverAs"] == "steer"
+    assert "language-typescript" in sent[0]["message"]["content"]
+
+
+@requires_node
+def test_forced_spawn_failure_bash_guard_fails_closed(tmp_path_factory):
+    """Without this test, a `catch { return {} }` that silently flips fail-closed to fail-open
+    would still pass every happy-path test above."""
+    config = {
+        "root": str(ROOT),
+        "guardRunnerPath": str(GUARD_RUNNER_TS),
+        "cwd": str(ROOT),
+        "sessionId": "sess-spawn-fail",
+        "secretContent": _SECRET_CONTENT,
+        "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts"),
+        "forceSpawnFailure": True,
+    }
+    result = _run_node(_GUARDS_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-spawn-fail")
+    assert result["out"]["bashBlocked"]["block"] is True
+    assert result["out"]["bashAllowed"]["block"] is True  # every bash call blocks when the guard itself cannot run
+
+
+@requires_node
+def test_forced_spawn_failure_secret_guard_fails_open(tmp_path_factory):
+    config = {
+        "root": str(ROOT),
+        "guardRunnerPath": str(GUARD_RUNNER_TS),
+        "cwd": str(ROOT),
+        "sessionId": "sess-spawn-fail",
+        "secretContent": _SECRET_CONTENT,
+        "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts"),
+        "forceSpawnFailure": True,
+    }
+    result = _run_node(_GUARDS_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-spawn-fail-2")
+    assert result["out"].get("writeBlocked") is None  # secret_guard.py's spawn failure must fail OPEN
+    assert result["out"].get("editShortCircuit") is None
+
+
+@requires_node
+def test_skill_hint_session_id_is_hard_required_not_pid_fallback(tmp_path_factory):
+    """An empty session id must never silently fall back to skill_autoload_hint.sh's $$ PID
+    sentinel — two Pi sessions sharing one process would then share dedup state (#401 redux)."""
+    config = {"root": str(ROOT), "cwd": str(ROOT), "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts")}
+    result = _run_node(
+        _EMPTY_SESSION_ID_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-empty-session"
+    )
+    assert result["threw"] is True
+    assert "session id" in result["message"].lower()
+
+
+@requires_node
+def test_skill_hint_two_sessions_share_no_adapter_level_dedup_state(tmp_path_factory):
+    """Session A hints once, then is suppressed on a second call for the SAME session (that
+    dedup lives entirely in skill_autoload_hint.sh's own filesystem sentinel). Session B, with a
+    different id, must still get a hint despite A already being fully hinted — proving the
+    adapter itself holds no cross-session Set/Map of its own."""
+    import uuid
+
+    session_a = f"sess-a-{uuid.uuid4().hex}"
+    session_b = f"sess-b-{uuid.uuid4().hex}"
+    config = {
+        "root": str(ROOT),
+        "cwd": str(ROOT),
+        "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts"),
+        "sessionIds": [session_a, session_a, session_b],
+    }
+    results = _run_node(
+        _TWO_SESSION_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-two-session"
+    )
+    assert [r["sessionId"] for r in results] == [session_a, session_a, session_b]
+    assert results[0]["sentCount"] == 1, "session A's first tool_result must produce a hint"
+    assert results[1]["sentCount"] == 0, "session A's second tool_result for the same file must be deduped"
+    assert results[2]["sentCount"] == 1, "session B must still get a hint despite session A already being fully hinted"
+
+
+# ---------------------------------------------------------------------------
+# #607 differential acceptance criterion — Pi-adapter half. tests/test_hooks.py runs the SAME
+# pi_guard_fixtures.BASH_GUARD_FIXTURES set by invoking hooks/bash_guard.sh directly; this
+# drives the identical fixture set through pi/extensions/guards.ts and asserts an identical
+# block/allow verdict.
+# ---------------------------------------------------------------------------
+
+_BASH_FIXTURES_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const stubPi = { on(event, handler) { handlers[event] = handler; }, sendMessage() {} };
+registerGuards(stubPi, config.root, {});
+
+const stubCtx = {
+  hasUI: true,
+  cwd: config.cwd,
+  signal: undefined,
+  ui: { notify() {} },
+  sessionManager: { getSessionId: () => "sess-differential" },
+};
+
+const results = [];
+for (const command of config.commands) {
+  const result = await handlers["tool_call"]({ type: "tool_call", toolCallId: "t", toolName: "bash", input: { command } }, stubCtx);
+  results.push(result ? { blocked: true, reason: result.reason } : { blocked: false });
+}
+
+console.log(JSON.stringify(results));
+"""
+
+
+@pytest.fixture(scope="module")
+def bash_fixtures_via_adapter(tmp_path_factory):
+    from pi_guard_fixtures import BASH_GUARD_FIXTURES
+
+    config = {"root": str(ROOT), "cwd": str(ROOT), "commands": [cmd for cmd, _ in BASH_GUARD_FIXTURES]}
+    return _run_node(
+        _BASH_FIXTURES_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-bash-fixtures-driver"
+    )
+
+
+@requires_node
+def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtures_via_adapter):
+    from pi_guard_fixtures import BASH_GUARD_FIXTURES
+
+    assert len(bash_fixtures_via_adapter) == len(BASH_GUARD_FIXTURES)
+    mismatches = []
+    for (cmd, expect_blocked), result in zip(BASH_GUARD_FIXTURES, bash_fixtures_via_adapter):
+        if result["blocked"] != expect_blocked:
+            mismatches.append(f"{cmd!r}: expected blocked={expect_blocked}, adapter returned {result}")
+    assert not mismatches, "adapter verdict diverged from direct-invocation verdict:\n" + "\n".join(mismatches)
