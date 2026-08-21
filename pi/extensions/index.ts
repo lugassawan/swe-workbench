@@ -1,11 +1,21 @@
 /**
  * swe-workbench adapter for Pi Coding Agent.
  *
- * Mirrors two harness affordances Claude Code already provides for this plugin, pointing at
- * the SAME skills/ and bin/ trees Claude Code uses — nothing under skills/ is duplicated:
+ * Mirrors three harness affordances Claude Code already provides for this plugin, pointing at
+ * the SAME skills/, bin/, and commands/ trees Claude Code uses — nothing under those is
+ * duplicated:
  *   1. `<plugin>/bin` on PATH, so every skill's bare `swe-workbench-<name>` command resolves
  *      unchanged (see bin/README.md).
  *   2. All skills/<name>/SKILL.md directories reachable, via `resources_discover`.
+ *   3. All commands/*.md reachable as Pi prompt templates, also via `resources_discover`'s
+ *      `promptPaths` — deliberately NOT the `pi.prompts` manifest key (#606). The manifest
+ *      route's loader (`collectFiles()`) recurses into subdirectories; `promptPaths`'s loader
+ *      (`loadTemplatesFromDir()`, dist/core/prompt-templates.js) does not. Since template names
+ *      are derived with a flat `basename()` at every depth, the manifest route would silently
+ *      publish any future `commands/<subdir>/*.md` as a top-level `/command` — this repo held
+ *      exactly such a subdirectory (`commands/shared/`) until Phase 0 removed it. The
+ *      `resources_discover` route makes that class of bug structurally unrepresentable instead
+ *      of requiring a regression test to catch it.
  *
  * Two Pi API facts recorded here so a later phase (#607) does not rediscover them the hard way:
  *   - `ExtensionContext` (dist/core/extensions/types.d.ts) exposes no settings accessor. An
@@ -96,7 +106,10 @@ export default function (pi: ExtensionAPI): void {
 
   let warnedMissingAnchor = false;
 
-  pi.on("resources_discover", () => ({ skillPaths: [join(root, "skills")] }));
+  pi.on("resources_discover", () => ({
+    skillPaths: [join(root, "skills")],
+    promptPaths: [join(root, "commands")],
+  }));
 
   pi.on("session_start", (_event, ctx: ExtensionContext) => {
     if (preamble === null && !warnedMissingAnchor && ctx.hasUI) {

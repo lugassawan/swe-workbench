@@ -213,13 +213,16 @@ jq -c '.[] | select(.anchor == "inline")' "$RUN_DIR/round-${N}-findings.json" | 
     # `diff-line-lookup` does internally — rather than merely falling inside a hunk's numeric
     # range, which would also match unchanged context lines and defeat the "exact line, not just
     # some added line in the hunk" guarantee stated above.
+    # $(0) means the same thing as awk's whole-record variable in every awk — written this way
+    # because Pi's prompt-template argument substitution rewrites a bare dollar-zero token to
+    # the empty string. Do not "simplify" this back to a bare dollar-zero.
     IN_HUNK=$(git diff "origin/$BASE"...HEAD -- "$ROW_PATH" | awk -v line="$ROW_LINE" '
       /^@@/ {
-        if (match($0, /\+[0-9]+/)) new_line = substr($0, RSTART + 1, RLENGTH - 1) + 0
+        if (match($(0), /\+[0-9]+/)) new_line = substr($(0), RSTART + 1, RLENGTH - 1) + 0
         next
       }
       {
-        first = substr($0, 1, 1)
+        first = substr($(0), 1, 1)
         if (first == "+") {
           if (new_line == line) { print "yes"; exit }
           new_line++
