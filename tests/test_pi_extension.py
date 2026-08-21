@@ -286,9 +286,9 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
 # ---------------------------------------------------------------------------
 # Behavioural: guards.ts driving the REAL hooks/bash_guard.sh + hooks/secret_guard.py +
 # hooks/workflow_resume_hint.sh + hooks/skill_autoload_hint.sh through guard-runner.ts's real
-# spawn (issue #607). Everything below drives the actual scripts, not a mock — the acceptance
-# criterion is that the adapter reproduces the same verdict a direct Claude-Code-shaped
-# invocation would get, not that its own translation logic is internally self-consistent.
+# spawn. Everything below drives the actual scripts, not a mock — the acceptance criterion is
+# that the adapter reproduces the same verdict a direct Claude-Code-shaped invocation would
+# get, not that its own translation logic is internally self-consistent.
 # ---------------------------------------------------------------------------
 
 _GUARDS_DRIVER = """
@@ -474,7 +474,7 @@ def test_bash_guard_allows_safe_command_via_adapter(guards_result):
 
 @requires_node
 def test_bash_guard_blocks_401_backtick_vector_via_adapter(guards_result):
-    """Regression coverage for the #401 bypass this PR's hooks/bash_guard.sh fix closes,
+    """Regression coverage for the backtick rm -rf bypass hooks/bash_guard.sh now closes,
     driven through the real Pi adapter rather than invoking the script directly."""
     assert guards_result["out"]["bashBacktickBlocked"] == {
         "block": True,
@@ -627,7 +627,7 @@ def test_missing_script_exits_127_and_bash_guard_still_fails_closed(tmp_path_fac
 @requires_node
 def test_skill_hint_session_id_is_hard_required_not_pid_fallback(tmp_path_factory):
     """An empty session id must never silently fall back to skill_autoload_hint.sh's $$ PID
-    sentinel — two Pi sessions sharing one process would then share dedup state (#401 redux)."""
+    sentinel — two Pi sessions sharing one process would then share dedup state."""
     config = {"root": str(ROOT), "cwd": str(ROOT), "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts")}
     result = _run_node(
         _EMPTY_SESSION_ID_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-empty-session"
@@ -662,7 +662,7 @@ def test_skill_hint_two_sessions_share_no_adapter_level_dedup_state(tmp_path_fac
 
 
 # ---------------------------------------------------------------------------
-# #607 differential acceptance criterion — Pi-adapter half. tests/test_hooks.py runs the SAME
+# Differential acceptance criterion — Pi-adapter half. tests/test_hooks.py runs the SAME
 # pi_guard_fixtures.BASH_GUARD_FIXTURES set by invoking hooks/bash_guard.sh directly; this
 # drives the identical fixture set through pi/extensions/guards.ts and asserts an identical
 # block/allow verdict.

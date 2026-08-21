@@ -1,7 +1,7 @@
 /**
  * Composition root: wires bash_guard.sh/secret_guard.py as Pi tool_call guards, and
  * workflow_resume_hint.sh/skill_autoload_hint.sh as Pi session/tool_result hint sources — all
- * via guard-runner.ts, never reimplemented (#607).
+ * via guard-runner.ts, never reimplemented.
  *
  * `toolName` narrowing uses a manual cast rather than the SDK's `isToolCallEventType` helper so
  * every @earendil-works/pi-coding-agent import here stays `import type`-only (pinned by
@@ -172,11 +172,10 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     const sessionId = ctx.sessionManager.getSessionId();
     if (!sessionId) {
       // skill_autoload_hint.sh falls back to $$ (the process PID) when session_id is absent —
-      // two Pi sessions sharing one process would then silently share its dedup sentinel,
-      // reproducing #401's cross-session state bleed. Hard error instead of a silent fallback.
+      // two Pi sessions sharing one process would then silently share its dedup sentinel.
       throw new Error(
         "swe-workbench: ctx.sessionManager.getSessionId() returned empty — refusing to call " +
-          "skill_autoload_hint.sh without a session id (#607)",
+          "skill_autoload_hint.sh without a session id",
       );
     }
 

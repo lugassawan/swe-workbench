@@ -1,7 +1,7 @@
 /**
  * Pure translation from Pi's tool-call/session events to the CC-shaped JSON payloads
  * hooks/bash_guard.sh, hooks/secret_guard.py, hooks/workflow_resume_hint.sh, and
- * hooks/skill_autoload_hint.sh already read from stdin (#607).
+ * hooks/skill_autoload_hint.sh already read from stdin.
  *
  * No I/O, no node:child_process, and no runtime import of @earendil-works/pi-coding-agent —
  * only `import type` — so this file stays exercisable under `node --experimental-strip-types`

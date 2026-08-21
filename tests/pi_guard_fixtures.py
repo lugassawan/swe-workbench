@@ -1,6 +1,6 @@
-"""Shared fixture set for hooks/bash_guard.sh's #607 acceptance criterion:
+"""Shared fixture set for hooks/bash_guard.sh's differential acceptance criterion:
 
-  For this fixture set (including the #401 backtick/$(...) vectors bash_guard.sh now closes),
+  For this fixture set (including the backtick/$(...) vectors bash_guard.sh now closes),
   the verdict produced through the Pi adapter must be identical to the verdict produced by
   invoking the guard script directly with the equivalent Claude-Code-shaped payload.
 
@@ -19,15 +19,16 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("rm -rf $HOME", True),
     ("sudo rm -rf /", True),
     ("rm -rf /Users/foo", True),
-    # #401 bypass vectors — the reason this fixture set exists as a differential contract
+    # backtick/$(...) rm -rf bypass vectors — the reason this fixture set exists as a
+    # differential contract
     ("`rm -rf /`", True),
     ("var=`rm -rf /`", True),
     ("$(rm -rf /)", True),
     ("var=$(rm -rf /)", True),
     ("echo `rm -rf /`", True),
     ("echo $(rm -rf /)", True),
-    # same bypass CLASS, found by #607's post-fix security review: process substitution
-    # (`<(...)`/`>(...)`) has the identical "(" shape and was left open by a $(-only patch
+    # same bypass class: process substitution (`<(...)`/`>(...)`) has the identical "(" shape
+    # and was left open by a $(-only patch
     ("<(rm -rf ~)", True),
     (">(rm -rf /)", True),
     ("echo <(rm -rf /Users/bob)", True),

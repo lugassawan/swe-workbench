@@ -2,7 +2,7 @@
  * Spawns hooks/*.sh|py unchanged with a CC-shaped JSON payload piped to stdin, returning exit
  * code plus stdout/stderr. The ONLY file under pi/extensions/ that imports node:child_process
  * (pinned by tests/test_pi_contract.py) — every hook invocation funnels through this one
- * auditable process boundary (#607).
+ * auditable process boundary.
  *
  * pi.exec() has no stdin API, and every hook reads its payload from stdin — so the transport is
  * spawn() with a piped stdin and an argv array, never a shell-interpolated string.

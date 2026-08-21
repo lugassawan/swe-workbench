@@ -94,8 +94,8 @@ class TestRmRfBlocker:
         # swallow real command text that follows on the SAME physical line
         # (issue #501 re-review finding)
         'git commit -m "line one\n# note" && rm -rf ~',
-        # #401 bypass vectors — backtick and $(...) subshells previously
-        # slipped past both the fast-gate and the anchor regex (issue #607)
+        # backtick and $(...) subshells previously slipped past both the fast-gate and the
+        # anchor regex
         "`rm -rf /`",
         "var=`rm -rf /`",
         "$(rm -rf /)",
@@ -613,7 +613,7 @@ class TestSkillAutoloadHookWiring:
 
 
 # ──────────────────────────────────────────────
-# #607 differential acceptance criterion — direct-invocation half. tests/test_pi_extension.py
+# Differential acceptance criterion — direct-invocation half. tests/test_pi_extension.py
 # runs the SAME BASH_GUARD_FIXTURES set through pi/extensions/guards.ts and asserts an
 # identical verdict; a future guard-semantics change has to update pi_guard_fixtures.py and
 # both suites re-verify against it.

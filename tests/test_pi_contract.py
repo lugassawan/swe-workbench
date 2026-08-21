@@ -1,5 +1,5 @@
 """Contract tests for the swe-workbench <-> Pi Coding Agent frontmatter boundary (issue #605)
-and, below, the guard/hint event-translation boundary (issue #607).
+and, below, the guard/hint event-translation boundary.
 
 ADR-0001's runtime adapter (pi/) reads agents/*.md, skills/*/SKILL.md, and commands/*.md
 frontmatter through Pi's own YAML parser — which is strict. scripts/validate.py's
@@ -245,7 +245,7 @@ def test_tool_tokens_and_skill_ids_are_inventoried():
 
 
 # ---------------------------------------------------------------------------
-# Guard/hint event-translation contract (issue #607). Golden-inventory ratchets over
+# Guard/hint event-translation contract. Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
 # docs/plugin-platform-decisions.md §2.
 # ---------------------------------------------------------------------------
