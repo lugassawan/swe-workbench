@@ -221,15 +221,16 @@ a clear, actionable rejection back — steering it to stop and report the blocke
 response — instead of either silently guessing (no signal at all) or the tool being simply absent
 from its vocabulary. Costs nothing beyond one line in the `--tools` allowlist.
 
-**Accepted gap, not closed here — tracked as issue #632.** `--exclude-tools task,subagent` blocks
+**Accepted gap, not closed here — tracked as a follow-up.** `--exclude-tools task,subagent` blocks
 recursion only through the `task`/`subagent` tool-call surface. An agent granted `Bash` (20 of the
 22 `agents/*.md` definitions — the large majority of real dispatches, not an edge case) can still
 shell out to `pi -p ...` directly inside a dispatched child, which spawns a fresh child session
 with `task` re-registered and no `--exclude-tools` at all — no argv flag on that child prevents a
 further, unbounded level of recursion this way. Closing it belongs in `hooks/bash_guard.sh`,
 pattern-matching a `pi ... -p`/`--print` invocation, since that reuses an already-audited boundary
-instead of adding a new one. Not built as part of this dispatcher — see #632 for the concrete
-tracked follow-up.
+instead of adding a new one. Not built as part of this dispatcher — tracked separately (see the
+open "Close bash-escape-hatch recursion gap in task dispatcher" issue) rather than silently left
+open.
 
 **Model-tier mapping: an agent's `model: haiku|sonnet|opus` frontmatter picks a real model, by
 name, from a table hardcoded in `pi/extensions/model-tier.ts`.** An earlier iteration of this
