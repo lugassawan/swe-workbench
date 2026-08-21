@@ -1,14 +1,14 @@
-"""Acceptance-pinning tests — LSP code-intelligence literacy (#559, #621).
+"""Acceptance-pinning tests — LSP code-intelligence literacy.
 
-#559 pinned the native `LSP` harness tool's content across four agents
-(`reviewer`, `auditor`, `debugger`, `refactorer`). #621 found that tool
-main-loop-only on Claude Code 2.1.237 — unreachable from any subagent, on
-any build, even at the maximum grant a subagent can hold — and replaced the
-dependency on it with `bin/swe-workbench-lsp`, a stdlib-only script reachable
-via `Bash` from any harness. This file now pins that script-based contract:
-the four agents' shared prose still references it, the doc names its
-subcommands, the three orchestrator skills still carry the fallback
-sentence, and docs/dependencies.md still documents it.
+This file previously pinned the native `LSP` harness tool's content across
+four agents (`reviewer`, `auditor`, `debugger`, `refactorer`). That tool
+turned out main-loop-only on Claude Code 2.1.237 — unreachable from any
+subagent, on any build, even at the maximum grant a subagent can hold — and
+the dependency on it was replaced with `bin/swe-workbench-lsp`, a stdlib-only
+script reachable via `Bash` from any harness. This file now pins that
+script-based contract: the four agents' shared prose still references it,
+the doc names its subcommands, the three orchestrator skills still carry the
+fallback sentence, and docs/dependencies.md still documents it.
 
 Agent tools:/body content for these four agents is otherwise covered by
 `scripts/validate.py`'s check_lsp_tool_gate() (self-disarms once no agent
@@ -103,8 +103,8 @@ def test_shared_lsp_doc_has_fallback_sentence():
 @pytest.mark.parametrize("agent_name", LSP_AGENTS)
 def test_agent_does_not_grant_native_lsp_tool(agent_name):
     """None of the four agents should list the harness-native 'LSP' tool in
-    tools: frontmatter any more — #621 replaced it with the bin/ script,
-    reachable via the Bash tool every agent already holds."""
+    tools: frontmatter any more — replaced with the bin/ script, reachable
+    via the Bash tool every agent already holds."""
     text = _agent_text(agent_name)
     parts = text.split("---", 2)
     assert len(parts) >= 3, f"agents/{agent_name}.md has no closed frontmatter block"
@@ -116,7 +116,7 @@ def test_agent_does_not_grant_native_lsp_tool(agent_name):
     assert tools_line is not None, f"agents/{agent_name}.md has no tools: line in frontmatter"
     tools = [t.strip() for t in tools_line.split(":", 1)[1].split(",")]
     assert "LSP" not in tools, (
-        f"agents/{agent_name}.md still grants 'LSP' in tools: frontmatter — #621 dropped this "
+        f"agents/{agent_name}.md still grants 'LSP' in tools: frontmatter — dropped this "
         f"in favor of bin/swe-workbench-lsp, reachable via Bash: {tools_line!r}"
     )
 

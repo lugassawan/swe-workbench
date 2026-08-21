@@ -26,12 +26,12 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 <!-- verified: Claude Code 2.1.237, macOS native, 2026-08-21 -->
 
-Issue #621 found the harness-native `LSP` tool main-loop-only on Claude Code
-2.1.237 — absent from every subagent's tool registry, even at the maximum
-grant a subagent can hold. `bin/swe-workbench-lsp` (this plugin's own
-consumer, not the 4 agents directly) closes that gap: it's a stdlib-only
-script that speaks LSP JSON-RPC to a locally installed language server
-directly, reachable via `Bash` from any harness.
+The harness-native `LSP` tool is main-loop-only on Claude Code 2.1.237 —
+absent from every subagent's tool registry, even at the maximum grant a
+subagent can hold. `bin/swe-workbench-lsp` (this plugin's own consumer, not
+the 4 agents directly) closes that gap: it's a stdlib-only script that
+speaks LSP JSON-RPC to a locally installed language server directly,
+reachable via `Bash` from any harness.
 
 | Server | Used by | Install | Required? |
 |---|---|---|---|

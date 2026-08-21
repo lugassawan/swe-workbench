@@ -1,4 +1,4 @@
-"""Tests for bin/swe-workbench-lsp (issue #621).
+"""Tests for bin/swe-workbench-lsp.
 
 CI has no real language servers, so behavioral tests drive a fake one — a
 tmp_path script speaking the same Content-Length JSON-RPC framing — swapped
