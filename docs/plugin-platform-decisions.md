@@ -221,7 +221,7 @@ a clear, actionable rejection back — steering it to stop and report the blocke
 response — instead of either silently guessing (no signal at all) or the tool being simply absent
 from its vocabulary. Costs nothing beyond one line in the `--tools` allowlist.
 
-**Bash-escape-hatch recursion gap: closed via `hooks/bash_guard.sh`, not this dispatcher (#632).**
+**Bash-escape-hatch recursion gap: closed via `hooks/bash_guard.sh`, not this dispatcher.**
 `--exclude-tools task,subagent` blocks recursion only through the `task`/`subagent` tool-call
 surface. An agent granted `Bash` (20 of the 22 `agents/*.md` definitions — the large majority of
 real dispatches, not an edge case) could still shell out to `pi -p ...` directly inside a dispatched
