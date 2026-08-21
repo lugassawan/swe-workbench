@@ -778,6 +778,17 @@ class TestCheckAgents:
         validate.check_agents()
         assert len(validate.FAILURES) == 0
 
+    def test_name_mismatch_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: other-name\ndescription: An agent\n---\nBody\n",
+            encoding="utf-8",
+        )
+        validate.check_agents()
+        assert any("does not match" in f for f in validate.FAILURES)
+
 
 # ──────────────────────────────────────────────
 # performance-tuner agent structural assertions
@@ -2969,7 +2980,7 @@ class TestNoDeadCodeReviewerRef:
         hits = [
             str(p.relative_to(self.REAL_ROOT))
             for p in self.REAL_ROOT.rglob("*.md")
-            if ".git" not in p.parts
+            if not (validate._NEVER_SCAN_DIRS & set(p.parts))
             and self.DEAD_REF in p.read_text(encoding="utf-8", errors="replace")
         ]
         assert hits == [], (
@@ -2992,7 +3003,7 @@ class TestNoPhantomSkillsCatalogRef:
         hits = [
             str(p.relative_to(self.REAL_ROOT))
             for p in self.REAL_ROOT.rglob("*.md")
-            if ".git" not in p.parts
+            if not (validate._NEVER_SCAN_DIRS & set(p.parts))
             and self.PHANTOM_REF in p.read_text(encoding="utf-8", errors="replace")
         ]
         assert hits == [], (

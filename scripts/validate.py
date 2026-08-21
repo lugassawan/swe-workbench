@@ -58,6 +58,14 @@ _BROWSER_INSTALL_HINTS = re.compile(
 _LSP_FALLBACK = "LSP unavailable — falling back to Grep"   # em dash, U+2014
 _LSP_SHARED_INCLUDE = "<!-- BEGIN shared/agents/lsp.md -->"
 
+# Directories no root-wide file walker may ever descend into (#605) — checked as whole-path
+# membership (`_NEVER_SCAN_DIRS & set(rel.parts)`), not `rel.parts[0]`, so a nested path like
+# `pi/node_modules/...` is still caught. Deliberately excludes "tests": walkers that skip
+# tests/ do so by their own local policy (see check_bare_actionable_refs), while other
+# walkers (and test_validate.py's own two rglob("*.md") sweeps) scan it on purpose — sharing
+# this set must not silently change what those already scan.
+_NEVER_SCAN_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv", ".worktrees"})
+
 
 def fail(path, reason):
     FAILURES.append(f"  {path}: {reason}")
@@ -411,6 +419,11 @@ def check_agents(cache=None):
         for field in ("name", "description"):
             if field not in fm:
                 fail(agent_md.relative_to(ROOT), f"frontmatter missing required field: {field!r}")
+        if "name" in fm and fm["name"] != agent_md.stem:
+            fail(
+                agent_md.relative_to(ROOT),
+                f"frontmatter name {fm['name']!r} does not match filename stem {agent_md.stem!r}",
+            )
         if (
             re.search(r'`swe-workbench:[\w-]+`', text)
             and "tools" in fm
@@ -597,8 +610,8 @@ def check_bare_actionable_refs(cache=None):
     dispatch id (e.g. "Delegate to the `senior-engineer` subagent") is never
     validated and can silently drift from the namespaced form used for the
     identical construct elsewhere. This is a single flat rule with no
-    heuristic: every markdown file in the repo (outside tests/, .git/, and
-    __pycache__/) is scanned, fenced code blocks are stripped first
+    heuristic: every markdown file in the repo (outside tests/ and
+    _NEVER_SCAN_DIRS) is scanned, fenced code blocks are stripped first
     (_strip_fenced_code_blocks — preserves line numbers so messages stay
     accurate), and any bare id that resolves to a real skill or agent fails —
     including a file naming its own id, and including prose, catalog tables,
@@ -623,7 +636,9 @@ def check_bare_actionable_refs(cache=None):
 
     for md in sorted(ROOT.rglob("*.md")):
         rel = md.relative_to(ROOT)
-        if rel.parts[0] in ("tests", ".git", "__pycache__"):
+        if rel.parts[0] == "tests":
+            continue
+        if _NEVER_SCAN_DIRS & set(rel.parts):
             continue
         if md in text_cache:
             text = text_cache[md]
@@ -1120,6 +1135,8 @@ def check_no_inert_at_includes(cache=None):
         _scan(cmd_md, text)
 
     for skill_file in sorted((ROOT / "skills").rglob("*.md")):
+        if _NEVER_SCAN_DIRS & set(skill_file.relative_to(ROOT).parts):
+            continue
         if skills_cache is not None and skill_file in skills_cache:
             text = skills_cache[skill_file]
             if text is None:
