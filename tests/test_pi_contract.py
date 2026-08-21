@@ -609,7 +609,7 @@ def test_ask_user_ts_has_no_typebox_import():
 
 
 # ---------------------------------------------------------------------------
-# #610: task-tool dispatcher (agent-spec.ts + subagent.ts). Layering boundary, translation-table
+# task-tool dispatcher (agent-spec.ts + subagent.ts). Layering boundary, translation-table
 # exhaustiveness, and a live zero-LLM probe of the --exclude-tools recursion guard.
 # ---------------------------------------------------------------------------
 
@@ -618,7 +618,7 @@ SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
 
 
 def test_agent_spec_ts_never_references_pi():
-    """agent-spec.ts is the domain layer for #610's task tool: it may read this plugin's own
+    """agent-spec.ts is the domain layer for the task tool: it may read this plugin's own
     agents/*.md and skills/*/SKILL.md files, but must never reference the Pi SDK or spawn a
     process — that's subagent.ts's job. Stricter than the generic bare-specifier test above (which
     permits `import type`): this scans the whole file text, so it would also catch a stray

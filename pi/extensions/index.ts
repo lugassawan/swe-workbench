@@ -116,16 +116,12 @@ export default function (pi: ExtensionAPI): void {
   let warnedMissingAnchor = false;
   let cachedPreamble: string | undefined;
 
-  // Computed lazily (on first before_agent_start, not at factory-invocation time) and cached.
-  // `SWE_WORKBENCH_PI_TOOLS` alone is NOT enough to decide this: registerSubagent() still calls
-  // pi.registerTool() unconditionally whenever the kill switch is off, even in a dispatched
-  // child whose own argv carries `--exclude-tools task,subagent` — the child re-runs this same
-  // index.ts, the kill switch env var is still unset there, but the real tool registry has
-  // already filtered `task` out (see docs/plugin-platform-decisions.md §9's recursion-guard
-  // section). Only pi.getActiveTools(), read after all extensions have finished registering
-  // their tools, reflects that filtering — checking the env var here would tell every
-  // dispatched agent to use a `task` tool that was deliberately removed from its own
-  // function-calling surface.
+  // Computed lazily (on first before_agent_start) and cached. `SWE_WORKBENCH_PI_TOOLS` alone
+  // is not enough: a dispatched child re-runs this same index.ts with the kill switch still
+  // unset, but its own argv carries `--exclude-tools task,subagent` — the real tool registry
+  // has already filtered `task` out by the time extensions finish registering (see
+  // docs/plugin-platform-decisions.md §9). Only pi.getActiveTools() reflects that; the env var
+  // alone would tell a dispatched agent to use a tool deliberately removed from its surface.
   function getPreamble(): string {
     if (cachedPreamble === undefined) {
       const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);

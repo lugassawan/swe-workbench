@@ -106,10 +106,11 @@ function antiHallucinationSection(taskToolRegistered: boolean): string {
 
 /** Returns the {title, body}-shaped section composePreamble expects for the CC->Pi tool
  *  vocabulary this repo's shared prose (skills/, commands/, agents/) assumes.
- *  `taskToolRegistered` should mirror whether subagent.ts's `task` tool was actually registered
- *  this session (index.ts computes this once from the same kill switch registerSubagent reads),
- *  so the preamble never tells the model to fabricate `Task` calls while a real `task` tool is
- *  live, nor names a `task` tool that was never registered. */
+ *  `taskToolRegistered` should reflect whether `task` is actually live in this session's tool
+ *  registry (index.ts derives it from `pi.getActiveTools()`, not just the kill switch — a
+ *  dispatched child can have `task` registered yet excluded via its own argv), so the preamble
+ *  never tells the model to fabricate `Task` calls while `task` is live, nor names a `task`
+ *  tool that isn't actually callable. */
 export function toolVocabSection(
   root: string,
   taskToolRegistered = false,

@@ -96,13 +96,10 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
 
       const spec = readAgentSpec(root, agent);
       const translated = translateToolTokens(spec.tools);
-      // ask_user_question is granted even though no agent declares it and the child (always
-      // print-mode, ctx.hasUI: false) is structurally guaranteed to reject any call to it — the
-      // rejection message itself is the point: it steers the dispatched agent to stop and report
-      // the blocking decision back to us, instead of silently guessing when it hits one that
-      // only a user could make. Registering the tool costs nothing (translated tokens already
-      // dominate the system prompt's "Available tools" documentation) and gives the model a
-      // named way to signal "I need a human here" rather than no signal at all.
+      // ask_user_question is granted even though it's structurally guaranteed to fail: the
+      // child always runs in print mode (ctx.hasUI: false), so any call throws. That thrown
+      // message is the point — it steers a dispatched agent to report a decision only a human
+      // could make, instead of silently guessing.
       const toolNames = Array.from(new Set([...translated, "ask_user_question"]));
 
       const skills = spec.skillIds.map((id) => ({ id, body: readSkillBody(root, id) }));
