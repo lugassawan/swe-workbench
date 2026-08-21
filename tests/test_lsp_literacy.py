@@ -1,10 +1,19 @@
-"""Acceptance-pinning tests — LSP code-intelligence literacy (#559).
+"""Acceptance-pinning tests — LSP code-intelligence literacy (#559, #621).
 
-Pins the real, already-shipped content added across Tasks 1-4 of this
-feature: the four agents that grant LSP in their tools: frontmatter and
-reference the shared LSP doc, shared/agents/lsp.md's nine named operations,
-the three orchestrator skills' LSP-unavailable fallback sentence, and
-docs/dependencies.md's Language servers section.
+#559 pinned the native `LSP` harness tool's content across four agents
+(`reviewer`, `auditor`, `debugger`, `refactorer`). #621 found that tool
+main-loop-only on Claude Code 2.1.237 — unreachable from any subagent, on
+any build, even at the maximum grant a subagent can hold — and replaced the
+dependency on it with `bin/swe-workbench-lsp`, a stdlib-only script reachable
+via `Bash` from any harness. This file now pins that script-based contract:
+the four agents' shared prose still references it, the doc names its
+subcommands, the three orchestrator skills still carry the fallback
+sentence, and docs/dependencies.md still documents it.
+
+Agent tools:/body content for these four agents is otherwise covered by
+`scripts/validate.py`'s check_lsp_tool_gate() (self-disarms once no agent
+grants `LSP`) and check_shared_blocks_in_sync() (generic sentinel-block sync
+check for every agent) — not duplicated here.
 
 This is a regression suite against the real repo tree, not a red-green
 TDD exercise — every test here should pass immediately and simply guard
@@ -17,28 +26,25 @@ from pathlib import Path
 
 import pytest
 
-from helpers import sentinel_block
-
 ROOT = Path(__file__).parent.parent
 AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
 SHARED_DIR = ROOT / "shared"
 LSP_SRC = SHARED_DIR / "agents" / "lsp.md"
 
-# The four agents this feature grants LSP to.
+# The four agents this feature's shared doc still targets.
 LSP_AGENTS = ["reviewer", "auditor", "debugger", "refactorer"]
 
-# The nine LSP operations named in shared/agents/lsp.md.
-LSP_OPERATIONS = [
-    "goToDefinition",
-    "findReferences",
+# The eight subcommands named in shared/agents/lsp.md.
+SCRIPT_SUBCOMMANDS = [
+    "refs",
+    "def",
+    "impl",
+    "callers",
+    "callees",
     "hover",
-    "documentSymbol",
-    "workspaceSymbol",
-    "goToImplementation",
-    "prepareCallHierarchy",
-    "incomingCalls",
-    "outgoingCalls",
+    "symbols",
+    "wsymbols",
 ]
 
 # The three orchestrator skills that carry the LSP-unavailable fallback hint.
@@ -57,88 +63,61 @@ def _agent_text(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _agent_frontmatter(name: str) -> str:
-    """Return the raw text between the first two '---' lines."""
-    text = _agent_text(name)
-    parts = text.split("---", 2)
-    assert len(parts) >= 3, f"agents/{name}.md has no closed frontmatter block"
-    return parts[1]
+# ──────────────────────────────────────────────────────────────
+# shared/agents/lsp.md names the script and every subcommand
+# ──────────────────────────────────────────────────────────────
+
+
+def test_shared_lsp_doc_references_the_script():
+    """shared/agents/lsp.md points at bin/swe-workbench-lsp, not the dead
+    harness LSP tool."""
+    assert LSP_SRC.exists(), "shared/agents/lsp.md does not exist"
+    text = LSP_SRC.read_text(encoding="utf-8")
+    assert "swe-workbench-lsp" in text, (
+        "shared/agents/lsp.md is missing a reference to the bin/swe-workbench-lsp script."
+    )
+
+
+@pytest.mark.parametrize("subcommand", SCRIPT_SUBCOMMANDS)
+def test_shared_lsp_doc_names_subcommand(subcommand):
+    """shared/agents/lsp.md names every one of the script's subcommands."""
+    text = LSP_SRC.read_text(encoding="utf-8")
+    assert subcommand in text, (
+        f"shared/agents/lsp.md is missing the subcommand name '{subcommand}'."
+    )
+
+
+def test_shared_lsp_doc_has_fallback_sentence():
+    text = LSP_SRC.read_text(encoding="utf-8")
+    assert FALLBACK_SENTENCE in text, (
+        f"shared/agents/lsp.md is missing the literal fallback sentence "
+        f"'{FALLBACK_SENTENCE}' (real em dash, U+2014)."
+    )
 
 
 # ──────────────────────────────────────────────────────────────
-# Agent tools: grants LSP + carries the lsp.md sentinel block
+# The four agents no longer grant the native LSP tool
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("agent_name", LSP_AGENTS)
-def test_agent_grants_lsp_tool(agent_name):
-    """Each LSP agent's tools: frontmatter scalar lists LSP."""
-    frontmatter = _agent_frontmatter(agent_name)
+def test_agent_does_not_grant_native_lsp_tool(agent_name):
+    """None of the four agents should list the harness-native 'LSP' tool in
+    tools: frontmatter any more — #621 replaced it with the bin/ script,
+    reachable via the Bash tool every agent already holds."""
+    text = _agent_text(agent_name)
+    parts = text.split("---", 2)
+    assert len(parts) >= 3, f"agents/{agent_name}.md has no closed frontmatter block"
+    frontmatter = parts[1]
     tools_line = next(
         (line for line in frontmatter.splitlines() if line.strip().startswith("tools:")),
         None,
     )
     assert tools_line is not None, f"agents/{agent_name}.md has no tools: line in frontmatter"
     tools = [t.strip() for t in tools_line.split(":", 1)[1].split(",")]
-    assert "LSP" in tools, (
-        f"agents/{agent_name}.md tools: frontmatter is missing 'LSP': {tools_line!r}"
-    )
-
-
-@pytest.mark.parametrize("agent_name", LSP_AGENTS)
-def test_agent_references_shared_lsp_doc(agent_name):
-    """Each LSP agent's body carries the lsp.md sentinel block, byte-identical
-    to shared/agents/lsp.md (#619 — a plain include string never proved the
-    include actually resolved to real content)."""
-    text = _agent_text(agent_name)
-    block = sentinel_block(text, "lsp.md")
-    assert block is not None, (
-        f"agents/{agent_name}.md is missing the "
-        "'<!-- BEGIN shared/agents/lsp.md -->' sentinel block."
-    )
-    source = LSP_SRC.read_text(encoding="utf-8")
-    assert block == source, (
-        f"agents/{agent_name}.md's lsp.md block has drifted from shared/agents/lsp.md — "
-        "run python3 scripts/sync-shared-blocks.py --write"
-    )
-
-
-# ──────────────────────────────────────────────────────────────
-# No background: key (pins Spike 3's resolution)
-# ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("agent_name", LSP_AGENTS)
-def test_agent_has_no_background_key(agent_name):
-    """No LSP agent carries a background: key in frontmatter.
-
-    An agent with no `background` key keeps `LSP` intact (Spike 3's
-    resolution). This guards against a future regression that adds one.
-    """
-    frontmatter = _agent_frontmatter(agent_name)
-    has_background_key = any(
-        line.strip().startswith("background:") for line in frontmatter.splitlines()
-    )
-    assert not has_background_key, (
-        f"agents/{agent_name}.md unexpectedly has a 'background:' key in "
-        "frontmatter — this key is known to strip LSP from an agent's "
-        "effective toolset."
-    )
-
-
-# ──────────────────────────────────────────────────────────────
-# shared/agents/lsp.md names all nine operations
-# ──────────────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("operation", LSP_OPERATIONS)
-def test_shared_lsp_doc_names_operation(operation):
-    """shared/agents/lsp.md names every one of the nine LSP operations."""
-    path = SHARED_DIR / "agents" / "lsp.md"
-    assert path.exists(), "shared/agents/lsp.md does not exist"
-    text = path.read_text(encoding="utf-8")
-    assert operation in text, (
-        f"shared/agents/lsp.md is missing the operation name '{operation}'."
+    assert "LSP" not in tools, (
+        f"agents/{agent_name}.md still grants 'LSP' in tools: frontmatter — #621 dropped this "
+        f"in favor of bin/swe-workbench-lsp, reachable via Bash: {tools_line!r}"
     )
 
 

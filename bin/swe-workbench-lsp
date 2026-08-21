@@ -1,0 +1,886 @@
+#!/usr/bin/env python3
+"""Stdlib-only LSP JSON-RPC client — semantic code navigation reachable from any
+agent that holds Bash, regardless of whether the harness's own `LSP` tool is
+wired up for subagents on the current build (issue #621).
+
+Speaks the Language Server Protocol's Content-Length-framed JSON-RPC directly
+to a spawned language server (pyright-langserver, gopls, rust-analyzer, …).
+
+The empty-result trap (why `refs`/`callers` prefilter before asking):
+a language server only knows about files it has been told to open. Asking
+`textDocument/references` for a symbol whose callers live in files the server
+has never seen returns an empty array — indistinguishable from "no callers
+exist". A caller (e.g. a refactorer deciding whether a rename is safe) would
+read that as "safe". So `refs`/`callers` do a text prefilter across the
+workspace for the anchor symbol's name, `didOpen` every candidate file (capped
+by --max-files), and only then ask the server — and the provenance line always
+states how many files were analyzed, so a clean zero is never silently
+indistinguishable from an unseeded one.
+
+Known limitation: some servers (rust-analyzer, gopls) index newly-opened
+files asynchronously, so a very large prefilter batch can still be mid-index
+when the request lands — this script has no portable "indexing settled"
+signal to wait on. A suspiciously-low result count on a large prefilter is
+worth one retry before trusting it as final.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from collections import namedtuple
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_NO_SERVER = 3
+EXIT_TIMEOUT = 4
+EXIT_SERVER_ERROR = 5
+
+DEFAULT_TIMEOUT = 20.0
+DEFAULT_MAX_FILES = 40
+
+ServerSpec = namedtuple("ServerSpec", ["name", "cmd"])
+
+# extension -> ServerSpec, keyed to the plugin's language-* skills.
+LANGUAGE_SERVERS = {
+    ".py": ServerSpec("pyright-langserver", ("pyright-langserver", "--stdio")),
+    ".pyi": ServerSpec("pyright-langserver", ("pyright-langserver", "--stdio")),
+    ".go": ServerSpec("gopls", ("gopls",)),
+    ".ts": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".tsx": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".js": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".jsx": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".mjs": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".cjs": ServerSpec("typescript-language-server", ("typescript-language-server", "--stdio")),
+    ".rs": ServerSpec("rust-analyzer", ("rust-analyzer",)),
+    ".c": ServerSpec("clangd", ("clangd",)),
+    ".h": ServerSpec("clangd", ("clangd",)),
+    ".cpp": ServerSpec("clangd", ("clangd",)),
+    ".hpp": ServerSpec("clangd", ("clangd",)),
+    ".cc": ServerSpec("clangd", ("clangd",)),
+    ".cxx": ServerSpec("clangd", ("clangd",)),
+    ".java": ServerSpec("jdtls", ("jdtls",)),
+    ".kt": ServerSpec("kotlin-language-server", ("kotlin-language-server",)),
+    ".kts": ServerSpec("kotlin-language-server", ("kotlin-language-server",)),
+    ".rb": ServerSpec("ruby-lsp", ("ruby-lsp",)),
+    ".swift": ServerSpec("sourcekit-lsp", ("sourcekit-lsp",)),
+    ".cs": ServerSpec("csharp-ls", ("csharp-ls",)),
+    ".dart": ServerSpec("dart language server", ("dart", "language-server")),
+    ".sh": ServerSpec("bash-language-server", ("bash-language-server", "start")),
+    ".bash": ServerSpec("bash-language-server", ("bash-language-server", "start")),
+}
+
+# Prefilter/didOpen sibling extensions per anchor extension — e.g. a TS
+# reference can live in a plain .js call site.
+_EXT_GROUPS = {
+    ".py": {".py", ".pyi"}, ".pyi": {".py", ".pyi"},
+    ".go": {".go"},
+    ".ts": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".tsx": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".js": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".jsx": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".mjs": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".cjs": {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+    ".rs": {".rs"},
+    ".c": {".c", ".h"}, ".h": {".c", ".h", ".cpp", ".hpp", ".cc", ".cxx"},
+    ".cpp": {".cpp", ".hpp", ".cc", ".cxx", ".h"},
+    ".hpp": {".cpp", ".hpp", ".cc", ".cxx", ".h"},
+    ".cc": {".cpp", ".hpp", ".cc", ".cxx", ".h"},
+    ".cxx": {".cpp", ".hpp", ".cc", ".cxx", ".h"},
+    ".java": {".java"},
+    ".kt": {".kt", ".kts"}, ".kts": {".kt", ".kts"},
+    ".rb": {".rb"},
+    ".swift": {".swift"},
+    ".cs": {".cs"},
+    ".dart": {".dart"},
+    ".sh": {".sh", ".bash"}, ".bash": {".sh", ".bash"},
+}
+
+_LANG_IDS = {
+    ".py": "python", ".pyi": "python", ".go": "go",
+    ".ts": "typescript", ".tsx": "typescriptreact",
+    ".js": "javascript", ".jsx": "javascriptreact", ".mjs": "javascript", ".cjs": "javascript",
+    ".rs": "rust", ".c": "c", ".h": "c",
+    ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
+    ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+    ".rb": "ruby", ".swift": "swift", ".cs": "csharp", ".dart": "dart",
+    ".sh": "shellscript", ".bash": "shellscript",
+}
+
+UNSUPPORTED = {
+    ".sql": "no LSP server with meaningful reference support for SQL",
+}
+
+_EXCLUDED_DIR_NAMES = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
+    "target", "vendor", ".mypy_cache", ".pytest_cache", ".tox",
+}
+
+_SYMBOL_KINDS = {
+    1: "File", 2: "Module", 3: "Namespace", 4: "Package", 5: "Class",
+    6: "Method", 7: "Property", 8: "Field", 9: "Constructor", 10: "Enum",
+    11: "Interface", 12: "Function", 13: "Variable", 14: "Constant",
+    15: "String", 16: "Number", 17: "Boolean", 18: "Array", 19: "Object",
+    20: "Key", 21: "Null", 22: "EnumMember", 23: "Struct", 24: "Event",
+    25: "Operator", 26: "TypeParameter",
+}
+
+
+class AnchorError(Exception):
+    pass
+
+
+class ServerUnavailable(Exception):
+    pass
+
+
+class LspError(Exception):
+    pass
+
+
+class LspTimeout(LspError):
+    pass
+
+
+class LspProtocolError(LspError):
+    pass
+
+
+class LspServerError(LspError):
+    def __init__(self, error_obj):
+        super().__init__(error_obj.get("message", str(error_obj)))
+        self.error_obj = error_obj
+
+
+# ── JSON-RPC transport ──────────────────────────────────────────────────────
+
+
+class LspClient:
+    """One spawned language server, speaking Content-Length-framed JSON-RPC
+    over its own stdio. A background reader thread demultiplexes responses by
+    id and auto-acknowledges server->client requests (e.g. workspace/configuration)
+    with a null result so the server never blocks waiting on us."""
+
+    def __init__(self, cmd, timeout):
+        self.timeout = timeout
+        self.proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self._next_id = 0
+        self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._pending = {}
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
+
+    def _read_loop(self):
+        try:
+            while True:
+                msg = self._read_message()
+                if msg is None:
+                    break
+                self._dispatch(msg)
+        finally:
+            with self._lock:
+                waiters = list(self._pending.values())
+                self._pending.clear()
+            for ev, _box in waiters:
+                ev.set()
+
+    def _dispatch(self, msg):
+        if "method" not in msg and "id" in msg:
+            with self._lock:
+                entry = self._pending.pop(msg["id"], None)
+            if entry is not None:
+                ev, box = entry
+                box.append(msg)
+                ev.set()
+        elif "method" in msg and "id" in msg:
+            # workspace/configuration expects one result entry per requested
+            # item, not a bare null — some servers don't defensively handle
+            # a non-array reply and stall waiting for the shape they asked for.
+            if msg["method"] == "workspace/configuration":
+                items = (msg.get("params") or {}).get("items") or []
+                result = [None] * len(items)
+            else:
+                result = None
+            try:
+                self._send_raw({"jsonrpc": "2.0", "id": msg["id"], "result": result})
+            except OSError:
+                pass
+        # notifications (method, no id) are not needed by any current command
+
+    def _read_message(self):
+        headers = {}
+        while True:
+            line = self._read_header_line()
+            if line is None:
+                return None
+            if line == b"":
+                break
+            if b":" in line:
+                key, _, value = line.partition(b":")
+                headers[key.strip().lower()] = value.strip()
+        try:
+            length = int(headers.get(b"content-length", b"0"))
+        except ValueError:
+            return None
+        if length <= 0:
+            return None
+        body = self._read_exact(length)
+        if body is None:
+            return None
+        try:
+            return json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+    def _read_header_line(self):
+        buf = bytearray()
+        stdout = self.proc.stdout
+        while True:
+            ch = stdout.read(1)
+            if not ch:
+                return None
+            if ch == b"\n":
+                if buf[-1:] == b"\r":
+                    buf = buf[:-1]
+                return bytes(buf)
+            buf += ch
+
+    def _read_exact(self, n):
+        buf = bytearray()
+        stdout = self.proc.stdout
+        while len(buf) < n:
+            chunk = stdout.read(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return bytes(buf)
+
+    def _send_raw(self, obj):
+        data = json.dumps(obj).encode("utf-8")
+        header = ("Content-Length: %d\r\n\r\n" % len(data)).encode("ascii")
+        with self._write_lock:
+            self.proc.stdin.write(header + data)
+            self.proc.stdin.flush()
+
+    def notify(self, method, params):
+        self._send_raw({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def request(self, method, params, timeout=None):
+        with self._lock:
+            self._next_id += 1
+            msg_id = self._next_id
+            ev = threading.Event()
+            box = []
+            self._pending[msg_id] = (ev, box)
+        self._send_raw({"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params})
+        if not ev.wait(timeout if timeout is not None else self.timeout):
+            with self._lock:
+                self._pending.pop(msg_id, None)
+            raise LspTimeout(f"{method} timed out after {timeout or self.timeout}s")
+        if not box:
+            raise LspProtocolError(f"connection closed while waiting for {method}")
+        resp = box[0]
+        if "error" in resp:
+            raise LspServerError(resp["error"])
+        return resp.get("result")
+
+    def close(self):
+        try:
+            self.request("shutdown", None, timeout=3)
+            self.notify("exit", None)
+        except (LspError, OSError):
+            pass
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait()
+
+
+# ── Server resolution & spawning ────────────────────────────────────────────
+
+
+def _server_for_ext(ext):
+    if ext in UNSUPPORTED:
+        raise ServerUnavailable(f"{ext}: {UNSUPPORTED[ext]}")
+    spec = LANGUAGE_SERVERS.get(ext)
+    if spec is None:
+        raise ServerUnavailable(f"{ext}: no language server registered for this extension")
+    if shutil.which(spec.cmd[0]) is None:
+        raise ServerUnavailable(
+            f"{spec.name} ({spec.cmd[0]}) not found on PATH — install it, or fall back to text search"
+        )
+    return spec
+
+
+def _server_for(path):
+    return _server_for_ext(path.suffix.lower())
+
+
+def _initialize_params(root):
+    uri = root.resolve().as_uri()
+    return {
+        "processId": os.getpid(),
+        "rootUri": uri,
+        "rootPath": str(root.resolve()),
+        "workspaceFolders": [{"uri": uri, "name": root.resolve().name}],
+        "capabilities": {
+            "textDocument": {
+                "synchronization": {"didSave": True, "dynamicRegistration": False},
+                "references": {"dynamicRegistration": False},
+                "definition": {"dynamicRegistration": False},
+                "implementation": {"dynamicRegistration": False},
+                "hover": {"dynamicRegistration": False, "contentFormat": ["plaintext", "markdown"]},
+                "documentSymbol": {"dynamicRegistration": False, "hierarchicalDocumentSymbolSupport": True},
+                "callHierarchy": {"dynamicRegistration": False},
+            },
+            "workspace": {"symbol": {"dynamicRegistration": False}, "workspaceFolders": True},
+        },
+    }
+
+
+def _spawn_and_init(spec, root, timeout):
+    """Spawn + handshake as one unit: a caller's `try/finally` only starts once
+    this returns, so a failure partway through the handshake (initialize
+    timeout, server-side error, dead pipe) must close the just-spawned
+    process itself rather than leaving it to a `finally` that never runs."""
+    try:
+        client = LspClient(list(spec.cmd), timeout)
+    except OSError as exc:
+        raise ServerUnavailable(f"{spec.name}: failed to start ({exc})") from exc
+    try:
+        client.request("initialize", _initialize_params(root))
+        client.notify("initialized", {})
+    except Exception:
+        client.close()
+        raise
+    return client
+
+
+# ── Anchor resolution ────────────────────────────────────────────────────────
+
+
+def _parse_anchor(anchor_str):
+    """Split 'path[:line[:col]]' into (file_part, line_or_None, col_or_None).
+    Pure string operation — no filesystem access."""
+    segments = anchor_str.split(":")
+    line = col = None
+    if len(segments) >= 3 and segments[-1].isdigit() and segments[-2].isdigit():
+        col = int(segments.pop())
+        line = int(segments.pop())
+    elif len(segments) >= 2 and segments[-1].isdigit():
+        line = int(segments.pop())
+    return ":".join(segments), line, col
+
+
+def _resolve_path(file_part, root):
+    path = Path(file_part)
+    if not path.is_absolute():
+        candidate = root / path
+        if candidate.is_file():
+            path = candidate
+    if not path.is_file():
+        raise AnchorError(f"{file_part}: no such file")
+    return path
+
+
+def _resolve_position(path, line, col, symbol):
+    """Resolve (line0, col0) given optional explicit line/col and/or --symbol.
+    A --symbol with no line searches the whole file for the first word-boundary
+    match; with a line, it searches only that line. Grep is load-bearing here
+    exactly as it is for the anchor itself — this is the same mechanism, just
+    inline instead of a separate tool call."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    if symbol:
+        pattern = re.compile(r"\b" + re.escape(symbol) + r"\b")
+        indices = [line - 1] if line is not None else range(len(lines))
+        for i in indices:
+            if 0 <= i < len(lines):
+                m = pattern.search(lines[i])
+                if m:
+                    return i, m.start()
+        where = f" on line {line}" if line is not None else ""
+        raise AnchorError(f"symbol {symbol!r} not found in {path.name}{where}")
+    if line is None:
+        raise AnchorError(f"{path.name}: anchor needs :line or --symbol")
+    if not (1 <= line <= len(lines)):
+        raise AnchorError(f"{path.name}: line {line} out of range (file has {len(lines)} lines)")
+    line0 = line - 1
+    if col is None:
+        text_line = lines[line0]
+        col0 = len(text_line) - len(text_line.lstrip())
+    else:
+        col0 = max(0, col - 1)
+    return line0, col0
+
+
+def _word_at(path, line0, col0):
+    """Identifier under the resolved position — used as the prefilter search
+    term when the caller didn't pass --symbol explicitly."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not (0 <= line0 < len(lines)):
+        raise AnchorError("anchor line out of range")
+    text_line = lines[line0]
+    start = end = min(col0, len(text_line))
+
+    def _is_word(c):
+        return c.isalnum() or c == "_"
+
+    while start > 0 and _is_word(text_line[start - 1]):
+        start -= 1
+    while end < len(text_line) and _is_word(text_line[end]):
+        end += 1
+    word = text_line[start:end]
+    if not word:
+        raise AnchorError("no identifier at anchor position — pass --symbol explicitly")
+    return word
+
+
+def _anchor_context(anchor_str, symbol, root):
+    """Ordered resolution: path existence -> server availability -> symbol/
+    position. Server availability is checked before reading the file for a
+    symbol match, so an unsupported extension exits 3 even if --symbol can't
+    be found in it — the caller shouldn't pay for a text search the server
+    could never answer anyway."""
+    file_part, line, col = _parse_anchor(anchor_str)
+    path = _resolve_path(file_part, root)
+    spec = _server_for(path)
+    line0, col0 = _resolve_position(path, line, col, symbol)
+    return path, spec, line0, col0
+
+
+# ── Prefilter (the empty-result-trap guard) ─────────────────────────────────
+
+
+def _iter_source_files(root, extensions):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in _EXCLUDED_DIR_NAMES and not d.startswith(".")
+        )
+        for fn in sorted(filenames):
+            p = Path(dirpath) / fn
+            if p.suffix.lower() in extensions:
+                yield p
+
+
+def _prefilter(root, word, extensions, exclude, max_files):
+    pattern = re.compile(r"\b" + re.escape(word) + r"\b")
+    matches = []
+    for path in _iter_source_files(root, extensions):
+        if path == exclude:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if pattern.search(text):
+            matches.append(path)
+    truncated = len(matches) > max_files
+    return matches[:max_files], truncated
+
+
+# ── LSP <-> plain-data helpers ───────────────────────────────────────────────
+
+
+def _file_uri(path):
+    return path.resolve().as_uri()
+
+
+def _did_open_params(path):
+    ext = path.suffix.lower()
+    return {
+        "textDocument": {
+            "uri": _file_uri(path),
+            "languageId": _LANG_IDS.get(ext, "plaintext"),
+            "version": 1,
+            "text": path.read_text(encoding="utf-8", errors="replace"),
+        }
+    }
+
+
+def _uri_to_rel(uri, root):
+    if not uri:
+        return "<unknown>"
+    path = Path(unquote(urlparse(uri).path))
+    try:
+        return str(path.relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _normalize_locations(result):
+    """A Location | Location[] | LocationLink[] | null response, normalized to
+    a flat (uri, line0, char0) list."""
+    if result is None:
+        return []
+    items = [result] if isinstance(result, dict) else result
+    out = []
+    for item in items:
+        if "uri" in item:
+            uri, rng = item["uri"], item.get("range", {})
+        else:
+            uri = item.get("targetUri")
+            rng = item.get("targetSelectionRange") or item.get("targetRange", {})
+        start = rng.get("start", {})
+        out.append((uri, start.get("line", 0), start.get("character", 0)))
+    return out
+
+
+def _flatten_symbols(items, depth=0):
+    out = []
+    for it in items or []:
+        if "location" in it:  # SymbolInformation (flat form)
+            uri = it["location"]["uri"]
+            line = it["location"]["range"]["start"]["line"]
+        else:  # DocumentSymbol (hierarchical form)
+            uri = None
+            rng = it.get("selectionRange") or it.get("range", {})
+            line = rng.get("start", {}).get("line", 0)
+        out.append((depth, it.get("name", "?"), it.get("kind"), line, uri))
+        children = it.get("children")
+        if children:
+            out.extend(_flatten_symbols(children, depth + 1))
+    return out
+
+
+# ── Output ───────────────────────────────────────────────────────────────────
+
+
+def _provenance(server_name, analyzed_n, truncated, elapsed):
+    cap_note = " (capped)" if truncated else ""
+    return f"server: {server_name} | analyzed: {analyzed_n} file(s){cap_note} | {elapsed:.2f}s"
+
+
+def _emit_locations(server_name, analyzed_n, truncated, elapsed, locations, root, as_json, unit="site"):
+    if as_json:
+        payload = {
+            "server": server_name,
+            "analyzed_files": analyzed_n,
+            "truncated": truncated,
+            "elapsed_seconds": round(elapsed, 3),
+            "results": [
+                {"file": _uri_to_rel(uri, root), "line": line0 + 1, "character": char0 + 1}
+                for uri, line0, char0 in locations
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    print(_provenance(server_name, analyzed_n, truncated, elapsed))
+    files_seen = set()
+    for uri, line0, char0 in locations:
+        rel = _uri_to_rel(uri, root)
+        files_seen.add(rel)
+        print(f"{rel}:{line0 + 1}:{char0 + 1}")
+    print("—")
+    print(f"{len(locations)} {unit}(s) in {len(files_seen)} file(s)")
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+
+def _root_of(args):
+    return Path(args.root).resolve() if args.root else Path.cwd()
+
+
+def _refs_like(args, method, use_prefilter, extra_params=None, unit="site"):
+    root = _root_of(args)
+    path, spec, line0, col0 = _anchor_context(args.anchor, args.symbol, root)
+    start = time.monotonic()
+    client = _spawn_and_init(spec, root, args.timeout)
+    try:
+        client.notify("textDocument/didOpen", _did_open_params(path))
+        analyzed = 1
+        truncated = False
+        if use_prefilter:
+            word = args.symbol or _word_at(path, line0, col0)
+            candidates, truncated = _prefilter(
+                root, word, _EXT_GROUPS[path.suffix.lower()], path, args.max_files
+            )
+            for c in candidates:
+                client.notify("textDocument/didOpen", _did_open_params(c))
+            analyzed += len(candidates)
+        params = {"textDocument": {"uri": _file_uri(path)}, "position": {"line": line0, "character": col0}}
+        if extra_params:
+            params.update(extra_params)
+        result = client.request(method, params)
+    finally:
+        client.close()
+    elapsed = time.monotonic() - start
+    locations = _normalize_locations(result)
+    _emit_locations(spec.name, analyzed, truncated, elapsed, locations, root, args.json, unit)
+    return EXIT_OK
+
+
+def cmd_refs(args):
+    return _refs_like(args, "textDocument/references", True, {"context": {"includeDeclaration": True}})
+
+
+def cmd_def(args):
+    return _refs_like(args, "textDocument/definition", False)
+
+
+def cmd_impl(args):
+    return _refs_like(args, "textDocument/implementation", False)
+
+
+def _call_hierarchy(args, direction, use_prefilter):
+    root = _root_of(args)
+    path, spec, line0, col0 = _anchor_context(args.anchor, args.symbol, root)
+    start = time.monotonic()
+    client = _spawn_and_init(spec, root, args.timeout)
+    try:
+        client.notify("textDocument/didOpen", _did_open_params(path))
+        analyzed = 1
+        truncated = False
+        if use_prefilter:
+            word = args.symbol or _word_at(path, line0, col0)
+            candidates, truncated = _prefilter(
+                root, word, _EXT_GROUPS[path.suffix.lower()], path, args.max_files
+            )
+            for c in candidates:
+                client.notify("textDocument/didOpen", _did_open_params(c))
+            analyzed += len(candidates)
+        items = client.request(
+            "textDocument/prepareCallHierarchy",
+            {"textDocument": {"uri": _file_uri(path)}, "position": {"line": line0, "character": col0}},
+        )
+        if not items:
+            elapsed = time.monotonic() - start
+            print(_provenance(spec.name, analyzed, truncated, elapsed))
+            print("no call-hierarchy item resolved at anchor — position may not name a callable symbol")
+            return EXIT_OK
+        method = "callHierarchy/incomingCalls" if direction == "incoming" else "callHierarchy/outgoingCalls"
+        calls = client.request(method, {"item": items[0]}) or []
+    finally:
+        client.close()
+    elapsed = time.monotonic() - start
+    locations = []
+    key = "from" if direction == "incoming" else "to"
+    for call in calls:
+        target = call.get(key)
+        if not target:
+            continue
+        rng = target.get("selectionRange") or target.get("range", {})
+        start_pos = rng.get("start", {})
+        locations.append((target.get("uri"), start_pos.get("line", 0), start_pos.get("character", 0)))
+    _emit_locations(spec.name, analyzed, truncated, elapsed, locations, root, args.json, "caller" if direction == "incoming" else "callee")
+    return EXIT_OK
+
+
+def cmd_callers(args):
+    return _call_hierarchy(args, "incoming", True)
+
+
+def cmd_callees(args):
+    return _call_hierarchy(args, "outgoing", False)
+
+
+def cmd_hover(args):
+    root = _root_of(args)
+    path, spec, line0, col0 = _anchor_context(args.anchor, args.symbol, root)
+    start = time.monotonic()
+    client = _spawn_and_init(spec, root, args.timeout)
+    try:
+        client.notify("textDocument/didOpen", _did_open_params(path))
+        result = client.request(
+            "textDocument/hover",
+            {"textDocument": {"uri": _file_uri(path)}, "position": {"line": line0, "character": col0}},
+        )
+    finally:
+        client.close()
+    elapsed = time.monotonic() - start
+    contents = (result or {}).get("contents") if result else None
+    text = _hover_text(contents)
+    if args.json:
+        print(json.dumps({
+            "server": spec.name, "analyzed_files": 1, "truncated": False,
+            "elapsed_seconds": round(elapsed, 3), "text": text,
+        }, indent=2))
+        return EXIT_OK
+    print(_provenance(spec.name, 1, False, elapsed))
+    print(text if text else "(no hover info at anchor)")
+    return EXIT_OK
+
+
+def _hover_text(contents):
+    if contents is None:
+        return None
+    if isinstance(contents, str):
+        return contents
+    if isinstance(contents, dict):
+        return contents.get("value", "")
+    if isinstance(contents, list):
+        parts = [c.get("value", c) if isinstance(c, dict) else c for c in contents]
+        return "\n".join(str(p) for p in parts)
+    return str(contents)
+
+
+def cmd_symbols(args):
+    root = _root_of(args)
+    path = _resolve_path(args.file, root)
+    spec = _server_for(path)
+    start = time.monotonic()
+    client = _spawn_and_init(spec, root, args.timeout)
+    try:
+        client.notify("textDocument/didOpen", _did_open_params(path))
+        result = client.request("textDocument/documentSymbol", {"textDocument": {"uri": _file_uri(path)}})
+    finally:
+        client.close()
+    elapsed = time.monotonic() - start
+    flat = _flatten_symbols(result or [])
+    if args.json:
+        payload = {
+            "server": spec.name,
+            "analyzed_files": 1,
+            "truncated": False,
+            "elapsed_seconds": round(elapsed, 3),
+            "symbols": [
+                {"name": name, "kind": _SYMBOL_KINDS.get(kind, kind), "line": line + 1}
+                for _depth, name, kind, line, _uri in flat
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return EXIT_OK
+    print(_provenance(spec.name, 1, False, elapsed))
+    for depth, name, kind, line, _uri in flat:
+        kind_name = _SYMBOL_KINDS.get(kind, str(kind))
+        print(f"{'  ' * depth}{name} ({kind_name}) :{line + 1}")
+    print("—")
+    print(f"{len(flat)} symbol(s)")
+    return EXIT_OK
+
+
+def cmd_wsymbols(args):
+    root = _root_of(args)
+    ext = args.ext if args.ext.startswith(".") else f".{args.ext}"
+    spec = _server_for_ext(ext)
+    start = time.monotonic()
+    client = _spawn_and_init(spec, root, args.timeout)
+    try:
+        result = client.request("workspace/symbol", {"query": args.query})
+    finally:
+        client.close()
+    elapsed = time.monotonic() - start
+    locations = []
+    for it in result or []:
+        loc = it.get("location", {})
+        rng = loc.get("range", {})
+        start_pos = rng.get("start", {})
+        locations.append((loc.get("uri"), start_pos.get("line", 0), start_pos.get("character", 0)))
+    _emit_locations(spec.name, 0, False, elapsed, locations, root, args.json, "match")
+    return EXIT_OK
+
+
+def cmd_check(args):
+    seen = set()
+    rows = []
+    for spec in LANGUAGE_SERVERS.values():
+        if spec.name in seen:
+            continue
+        seen.add(spec.name)
+        status = "OK" if shutil.which(spec.cmd[0]) else "MISSING"
+        rows.append((spec.name, status, spec.cmd[0]))
+    if args.json:
+        print(json.dumps({
+            "servers": [{"name": n, "status": s, "binary": b} for n, s, b in sorted(rows)],
+            "unsupported": [{"extension": e, "reason": r} for e, r in sorted(UNSUPPORTED.items())],
+        }, indent=2))
+        return EXIT_OK
+    for name, status, binary in sorted(rows):
+        print(f"{status:8} {name} ({binary})")
+    for ext, reason in sorted(UNSUPPORTED.items()):
+        print(f"{'N/A':8} {ext} — {reason}")
+    return EXIT_OK
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def _add_common(p):
+    p.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of text")
+    p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"per-request timeout in seconds (default {DEFAULT_TIMEOUT})")
+    p.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES, help=f"prefilter file cap for refs/callers (default {DEFAULT_MAX_FILES})")
+    p.add_argument("--root", default=None, help="workspace root (default: cwd)")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="swe-workbench-lsp",
+        description="Stdlib-only LSP JSON-RPC client for semantic code navigation.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    anchor_commands = {
+        "refs": (cmd_refs, "find all references to the symbol at an anchor"),
+        "def": (cmd_def, "go to the definition of the symbol at an anchor"),
+        "impl": (cmd_impl, "go to the implementation(s) of the symbol at an anchor"),
+        "callers": (cmd_callers, "walk the call hierarchy: who calls the symbol at an anchor"),
+        "callees": (cmd_callees, "walk the call hierarchy: what the symbol at an anchor calls"),
+        "hover": (cmd_hover, "show hover info (type/doc) for the symbol at an anchor"),
+    }
+    for name, (_fn, help_text) in anchor_commands.items():
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("anchor", help="<file>[:line[:col]]")
+        p.add_argument("--symbol", help="symbol name to auto-resolve the anchor's line/column")
+        _add_common(p)
+        p.set_defaults(func=anchor_commands[name][0])
+
+    p_symbols = sub.add_parser("symbols", help="list all symbols declared in a file")
+    p_symbols.add_argument("file")
+    _add_common(p_symbols)
+    p_symbols.set_defaults(func=cmd_symbols)
+
+    p_wsymbols = sub.add_parser("wsymbols", help="search symbols by name across the workspace")
+    p_wsymbols.add_argument("query")
+    p_wsymbols.add_argument("--ext", required=True, help="extension selecting the language server, e.g. .py")
+    _add_common(p_wsymbols)
+    p_wsymbols.set_defaults(func=cmd_wsymbols)
+
+    p_check = sub.add_parser("check", help="report per-language server availability (no server spawn)")
+    _add_common(p_check)
+    p_check.set_defaults(func=cmd_check)
+
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except AnchorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except ServerUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_NO_SERVER
+    except LspTimeout as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_TIMEOUT
+    except (LspServerError, LspProtocolError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_SERVER_ERROR
+    except Exception as exc:  # a malformed/nonconformant server response must still exit 5, not traceback
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_SERVER_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main())
