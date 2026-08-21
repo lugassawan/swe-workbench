@@ -1,28 +1,33 @@
 /**
  * Registers `task`, a first-party subagent dispatcher: runs one of this plugin's agents/*.md
- * definitions as a nested `pi` child process, with that agent's declared tools and preloaded
- * skills composed into its system prompt.
+ * definitions as a nested `pi` child process, with that agent's declared tools, preloaded
+ * skills, and (when its `model:` frontmatter names a known tier) a resolved model composed into
+ * its dispatch.
  *
  * Exists because pi-subagents' `skills:` field only makes a skill *available* (an XML manifest
  * read on demand via its own `read` tool) — it never preloads skill body into context, which
  * this repo's agents/*.md convention requires (docs/skill-preload.md). See
- * docs/plugin-platform-decisions.md §9 for the full rationale and the accepted `bash`-escape-
- * hatch recursion gap.
+ * docs/plugin-platform-decisions.md §9 for the full rationale, the model-tier-mapping safety
+ * posture, and the accepted `bash`-escape-hatch recursion gap.
  *
  * Everything that touches Pi itself (argv construction, pi.exec, temp-file lifecycle, tool
- * registration) lives here. agent-spec.ts stays SDK-free — see its own file header.
+ * registration, model-registry queries) lives here. agent-spec.ts and model-tier.ts stay
+ * SDK-free — see their own file headers.
  */
 import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  type AgentSpec,
   composeSystemPrompt,
   listAgentNames,
   readAgentSpec,
   readSkillBody,
+  skillDir,
   translateToolTokens,
 } from "./agent-spec.ts";
+import { isKnownModelTier, type ModelCandidate, resolveModelForTier } from "./model-tier.ts";
 
 /** Single source of truth for the tool's registered name — consumed both by pi.registerTool()
  *  below and by the `--exclude-tools` argv builder, so a rename can't silently desync
@@ -66,6 +71,30 @@ const TASK_PARAMS_SCHEMA = {
   additionalProperties: false,
 } as ToolDefinition["parameters"];
 
+/** Decides which model to dispatch the child with. Undefined `ctx.model` -> undefined (today's
+ *  omit-the-flag fallback). Otherwise: an unrecognized/missing `spec.model` tier, a provider with
+ *  no MODEL_TIER_TABLE row, or no available candidate matching the row's pattern(s) all degrade
+ *  to the parent's own active model unchanged — this function never throws and never reaches for
+ *  a provider other than `ctx.model.provider`. Candidates come from `ctx.scopedModels` when the
+ *  session is scoped (`--models`/`enabledModels`) — an explicit session-level restriction that
+ *  tier resolution must respect, not bypass — and fall back to the full
+ *  `ctx.modelRegistry.getAvailable()` catalog only when no scoping is configured (`scopedModels`
+ *  is documented as empty in that case). */
+function resolveTargetModel(
+  ctx: ExtensionContext,
+  spec: Pick<AgentSpec, "model">,
+): { provider: string; id: string } | undefined {
+  if (!ctx.model) return undefined;
+  const parent = { provider: ctx.model.provider, id: ctx.model.id };
+  if (!isKnownModelTier(spec.model)) return parent;
+
+  const pool = ctx.scopedModels.length > 0 ? ctx.scopedModels.map((sm) => sm.model) : ctx.modelRegistry.getAvailable();
+  const candidates: ModelCandidate[] = pool
+    .filter((m) => m.provider === parent.provider)
+    .map((m) => ({ provider: m.provider, id: m.id }));
+  return resolveModelForTier(parent.provider, spec.model, candidates) ?? parent;
+}
+
 export function registerSubagent(pi: ExtensionAPI, root: string): void {
   // Same Tier-2 kill switch as ask-user.ts's registerAskUser — an immutable config read at
   // registration time, gating tool registration only. Tier-1 vocabulary prose stays unconditional.
@@ -102,7 +131,7 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
       // could make, instead of silently guessing.
       const toolNames = Array.from(new Set([...translated, "ask_user_question"]));
 
-      const skills = spec.skillIds.map((id) => ({ id, body: readSkillBody(root, id) }));
+      const skills = spec.skillIds.map((id) => ({ id, body: readSkillBody(root, id), dir: skillDir(root, id) }));
       const systemPrompt = composeSystemPrompt(spec, skills);
 
       const tmpDir = mkdtempSync(join(tmpdir(), "swe-workbench-subagent-"));
@@ -121,8 +150,9 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           `${TASK_TOOL_NAME},${PI_SUBAGENTS_TOOL_NAME}`,
           "--no-session",
         ];
-        if (ctx.model) {
-          args.push("--model", `${ctx.model.provider}/${ctx.model.id}`);
+        const targetModel = resolveTargetModel(ctx, spec);
+        if (targetModel) {
+          args.push("--model", `${targetModel.provider}/${targetModel.id}`);
         }
 
         const result = await pi.exec("pi", args, { cwd: ctx.cwd, timeout: TASK_TIMEOUT_MS, signal });

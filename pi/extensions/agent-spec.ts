@@ -19,12 +19,21 @@ import { RENAME_TABLE } from "./tool-vocab.ts";
 export interface AgentSpec {
   readonly name: string;
   readonly description: string;
+  /** Raw `model:` frontmatter value, e.g. "haiku"/"sonnet"/"opus" — not validated against
+   *  KNOWN_MODEL_TIERS (model-tier.ts) here; callers use isKnownModelTier() before acting on
+   *  it. Undefined when the agent has no `model:` key. */
+  readonly model: string | undefined;
   readonly tools: readonly string[];
   readonly skillIds: readonly string[];
   readonly body: string;
 }
 
 const SKILL_NAMESPACE_PREFIX = "swe-workbench:";
+
+/** Strips the `swe-workbench:` namespace prefix from a skill id, if present. */
+function bareSkillId(skillId: string): string {
+  return skillId.startsWith(SKILL_NAMESPACE_PREFIX) ? skillId.slice(SKILL_NAMESPACE_PREFIX.length) : skillId;
+}
 
 /** Tool tokens with no Pi tool equivalent — dropped rather than renamed. Exported so
  *  tests/test_pi_contract.py can assert exhaustiveness over TOOL_TOKENS. */
@@ -95,8 +104,9 @@ export function parseAgentSpec(text: string): AgentSpec {
         .filter((t) => t.length > 0)
     : [];
   const skillIds = lists.skills ?? [];
+  const model = scalars.model;
 
-  return { name, description, tools, skillIds, body };
+  return { name, description, model, tools, skillIds, body };
 }
 
 /** Translates Claude Code tool tokens (as found in an agent's `tools:` frontmatter) into Pi
@@ -129,14 +139,22 @@ export function translateToolTokens(tokens: readonly string[]): string[] {
 }
 
 /** Composes an agent's system prompt: its own body, followed by each preloaded skill's
- *  (frontmatter-stripped) body in `skills:` order. Pure string composition. */
+ *  (frontmatter-stripped) body in `skills:` order. `dir` is each skill's absolute on-disk
+ *  directory — stated in the section header (not inlined content) so a relative pointer the
+ *  skill's own body makes (e.g. "see `examples/` for...") is resolvable by a dispatched child
+ *  that has `read`, instead of being a dead reference with no path context. Pure string
+ *  composition. */
 export function composeSystemPrompt(
   spec: Pick<AgentSpec, "body">,
-  skills: ReadonlyArray<{ readonly id: string; readonly body: string }>,
+  skills: ReadonlyArray<{ readonly id: string; readonly body: string; readonly dir: string }>,
 ): string {
   const sections = [spec.body.trim()];
   for (const skill of skills) {
-    sections.push(`## Preloaded skill: ${skill.id}\n\n${skill.body.trim()}`);
+    sections.push(
+      `## Preloaded skill: ${skill.id}\n` +
+        `(relative paths this skill's body mentions, e.g. \`examples/...\`, resolve against: ${skill.dir})\n\n` +
+        skill.body.trim(),
+    );
   }
   return sections.join("\n\n---\n\n");
 }
@@ -152,11 +170,14 @@ export function readAgentSpec(root: string, name: string): AgentSpec {
  *  happened, so it must survive into the composed prompt). `skillId` may be namespaced
  *  (`swe-workbench:<id>`) or bare; the namespace prefix is stripped before resolving the path. */
 export function readSkillBody(root: string, skillId: string): string {
-  const bareId = skillId.startsWith(SKILL_NAMESPACE_PREFIX)
-    ? skillId.slice(SKILL_NAMESPACE_PREFIX.length)
-    : skillId;
-  const text = readFileSync(join(root, "skills", bareId, "SKILL.md"), "utf8");
+  const text = readFileSync(join(root, "skills", bareSkillId(skillId), "SKILL.md"), "utf8");
   return splitFrontmatter(text).body;
+}
+
+/** The absolute directory a skill's own relative path mentions (`examples/...`) resolve
+ *  against. Pure path join — does not check the directory exists. */
+export function skillDir(root: string, skillId: string): string {
+  return join(root, "skills", bareSkillId(skillId));
 }
 
 /** Lists agent ids (basenames, no .md) under agents/ — for a "not found, available: ..." error. */

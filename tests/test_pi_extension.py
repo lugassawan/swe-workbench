@@ -345,6 +345,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "tool-vocab.ts",
         "ask-user.ts",
         "agent-spec.ts",
+        "model-tier.ts",
         "subagent.ts",
     ):
         (synthetic_index.parent / helper).write_text(
@@ -1082,6 +1083,7 @@ def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
 
 SUBAGENT_TS = ROOT / "pi" / "extensions" / "subagent.ts"
 AGENT_SPEC_TS = ROOT / "pi" / "extensions" / "agent-spec.ts"
+MODEL_TIER_TS = ROOT / "pi" / "extensions" / "model-tier.ts"
 
 _SUBAGENT_DRIVER = """
 import { existsSync, readFileSync } from "node:fs";
@@ -1092,6 +1094,7 @@ const config = JSON.parse(configJson);
 const mod = await import(pathToFileURL(modPath).href);
 
 const execCalls = [];
+const modelRegistryCalls = [];
 const stubPi = {
   registerTool(tool) { this._registered = tool; },
   async exec(command, args, options) {
@@ -1120,8 +1123,18 @@ function lastPromptFile() {
   return last.args[idx + 1];
 }
 
-async function run(agent, prompt, model) {
-  const ctx = { cwd: config.cwd, model };
+async function run(agent, prompt, model, availableModels, scopedModels) {
+  const ctx = {
+    cwd: config.cwd,
+    model,
+    scopedModels: scopedModels || [],
+    modelRegistry: {
+      getAvailable() {
+        modelRegistryCalls.push(availableModels || []);
+        return availableModels || [];
+      },
+    },
+  };
   try {
     const result = await registered.execute("tc1", { agent, prompt }, undefined, undefined, ctx);
     return { ok: true, result };
@@ -1150,6 +1163,47 @@ if (registered) {
 
   execCalls.length = 0;
   out.execFails = await run("real-agent", "hi");
+
+  const anthropicCandidates = [
+    { provider: "anthropic", id: "claude-haiku-4-5" },
+    { provider: "anthropic", id: "claude-sonnet-5" },
+    { provider: "anthropic", id: "claude-opus-5" },
+  ];
+  const mixedProviderCandidates = [
+    ...anthropicCandidates,
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+  ];
+
+  execCalls.length = 0;
+  out.tieredAgentResolvesHaiku = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.tieredAgentExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  out.tieredAgentIgnoresOtherProviderCandidates = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, mixedProviderCandidates,
+  );
+  out.tieredAgentIgnoresOtherProviderExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  out.untieredAgentFallsBackToParentModel = await run(
+    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.untieredAgentFallsBackExecCalls = execCalls.slice();
+
+  // ctx.scopedModels restricts the session to only claude-sonnet-5 — the haiku-tier candidate
+  // exists in the full modelRegistry catalog but is NOT in scope, so resolution must respect
+  // the restriction (fall back to the parent model) rather than reaching past it.
+  const sonnetOnlyScope = [{ model: { provider: "anthropic", id: "claude-sonnet-5" } }];
+
+  execCalls.length = 0;
+  modelRegistryCalls.length = 0;
+  out.scopedModelsRestrictsResolution = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates, sonnetOnlyScope,
+  );
+  out.scopedModelsExecCalls = execCalls.slice();
+  out.scopedModelsBypassedModelRegistry = modelRegistryCalls.length === 0;
 }
 console.log(JSON.stringify(out));
 """
@@ -1177,6 +1231,16 @@ def _write_synthetic_agents_root(tmp_path_factory):
         "tools: Skill\n"
         "---\n\n"
         "Empty tools agent body.\n",
+        encoding="utf-8",
+    )
+    (agents / "tiered-agent.md").write_text(
+        "---\n"
+        "name: tiered-agent\n"
+        "description: test agent with a known model tier\n"
+        "model: haiku\n"
+        "tools: Read\n"
+        "---\n\n"
+        "Tiered agent body.\n",
         encoding="utf-8",
     )
     skill_dir = root / "skills" / "fake-skill"
@@ -1279,6 +1343,9 @@ def test_subagent_composed_prompt_contains_agent_body_and_preloaded_skill_conten
 
 @requires_node
 def test_subagent_passes_model_when_ctx_model_defined(subagent_root, tmp_path_factory):
+    """real-agent has no `model:` frontmatter tier, so this exercises the fallback path:
+    ctx.model is passed through to --model unchanged. The tier-resolution path is covered
+    separately below (tiered-agent)."""
     result = _subagent_result(subagent_root, tmp_path_factory)
     args = result["withModelExecCalls"][0]["args"]
     model_idx = args.index("--model")
@@ -1298,6 +1365,58 @@ def test_subagent_nonzero_exit_surfaces_stderr(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="failure")
     assert result["execFails"]["ok"] is False
     assert "boom" in result["execFails"]["message"]
+
+
+@requires_node
+def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_path_factory):
+    """End-to-end: tiered-agent's `model: haiku` frontmatter, combined with ctx.model on
+    anthropic and a fabricated ctx.modelRegistry.getAvailable() candidate list, must resolve to
+    the haiku-tier candidate — not the parent's own (sonnet) model."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["tieredAgentResolvesHaiku"]["ok"] is True
+    args = result["tieredAgentExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+
+
+@requires_node
+def test_subagent_tiered_agent_ignores_other_provider_candidates(subagent_root, tmp_path_factory):
+    """The candidate list handed to resolveModelForTier must already be filtered to
+    ctx.model.provider — an openai-codex candidate must never leak into an anthropic
+    resolution, even when both are present in ctx.modelRegistry.getAvailable()'s raw result."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["tieredAgentIgnoresOtherProviderCandidates"]["ok"] is True
+    args = result["tieredAgentIgnoresOtherProviderExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+
+
+@requires_node
+def test_subagent_untiered_agent_falls_back_to_parent_model(subagent_root, tmp_path_factory):
+    """real-agent has no `model:` tier — even with a populated modelRegistry available, the
+    resolved model must be the parent's own (ctx.model) unchanged, not something derived from
+    the tier table."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["untieredAgentFallsBackToParentModel"]["ok"] is True
+    args = result["untieredAgentFallsBackExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5"
+
+
+@requires_node
+def test_subagent_respects_scoped_models_over_full_registry(subagent_root, tmp_path_factory):
+    """A session-scoped model list (ctx.scopedModels, from --models/enabledModels) must win over
+    the full ctx.modelRegistry.getAvailable() catalog — a haiku candidate that exists in the full
+    catalog but was never scoped into this session must not be reachable, and resolveTargetModel
+    must not even query the full registry when scoping is configured."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["scopedModelsRestrictsResolution"]["ok"] is True
+    args = result["scopedModelsExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5", (
+        "haiku isn't in scope, so resolution must fall back to the parent's (sonnet) model"
+    )
+    assert result["scopedModelsBypassedModelRegistry"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1333,8 +1452,8 @@ const out = {
   composeMultiSkills: mod.composeSystemPrompt(
     { body: "Agent body." },
     [
-      { id: "swe-workbench:a", body: "Skill A body." },
-      { id: "swe-workbench:b", body: "Skill B body." },
+      { id: "swe-workbench:a", body: "Skill A body.", dir: "/fake/skills/a" },
+      { id: "swe-workbench:b", body: "Skill B body.", dir: "/fake/skills/b" },
     ],
   ),
 };
@@ -1432,3 +1551,156 @@ def test_compose_system_prompt_with_multiple_skills_preserves_order(agent_spec_r
     b_idx = composed.index("Skill B body.")
     assert body_idx < a_idx < b_idx, "skills must appear after the agent body, in skills: order"
     assert "swe-workbench:a" in composed and "swe-workbench:b" in composed
+
+
+@requires_node
+def test_compose_system_prompt_states_each_skills_resolvable_directory(agent_spec_result):
+    """A skill's body can point at its own examples/ (or similar) with a bare relative path —
+    the composed section must state the skill's absolute directory so a dispatched child with
+    `read` can actually resolve that pointer, not just see a dead reference."""
+    composed = agent_spec_result["composeMultiSkills"]
+    assert "/fake/skills/a" in composed
+    assert "/fake/skills/b" in composed
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: model-tier.ts's pure functions directly. No stub `pi`/`ctx` needed.
+# ---------------------------------------------------------------------------
+
+_MODEL_TIER_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+const out = {
+  knownTiers: {
+    haiku: mod.isKnownModelTier("haiku"),
+    sonnet: mod.isKnownModelTier("sonnet"),
+    opus: mod.isKnownModelTier("opus"),
+    other: mod.isKnownModelTier("gpt-5"),
+    undef: mod.isKnownModelTier(undefined),
+  },
+};
+for (const [label, { provider, tier, candidates }] of Object.entries(config.cases)) {
+  out[label] = mod.resolveModelForTier(provider, tier, candidates) ?? null;
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _model_tier_result(tmp_path_factory):
+    # Verbatim id list + order from the installed SDK's bundled Anthropic catalog
+    # (pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
+    # providers/data/anthropic.json) — NOT a clean one-id-per-tier fixture. This is deliberate:
+    # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the
+    # bare flagship id), in catalog order, not chronological or shortest-first order. A resolver
+    # that just took the first substring match would silently pick a stale snapshot here — this
+    # fixture is what actually caught that bug during review.
+    anthropic_candidates = [
+        {"provider": "anthropic", "id": "claude-fable-5"},
+        {"provider": "anthropic", "id": "claude-haiku-4-5"},
+        {"provider": "anthropic", "id": "claude-haiku-4-5-20251001"},
+        {"provider": "anthropic", "id": "claude-opus-4-5"},
+        {"provider": "anthropic", "id": "claude-opus-4-5-20251101"},
+        {"provider": "anthropic", "id": "claude-opus-4-6"},
+        {"provider": "anthropic", "id": "claude-opus-4-7"},
+        {"provider": "anthropic", "id": "claude-opus-4-8"},
+        {"provider": "anthropic", "id": "claude-opus-5"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-5"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-5-20250929"},
+        {"provider": "anthropic", "id": "claude-sonnet-4-6"},
+        {"provider": "anthropic", "id": "claude-sonnet-5"},
+    ]
+    codex_candidates = [
+        {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+        {"provider": "openai-codex", "id": "gpt-5.6-sol"},
+        {"provider": "openai-codex", "id": "gpt-5.6-terra"},
+        {"provider": "openai-codex", "id": "gpt-5.4-mini"},
+    ]
+    zai_full_candidates = [
+        {"provider": "zai", "id": "glm-5.3"},
+        {"provider": "zai", "id": "glm-5.2"},
+        {"provider": "zai", "id": "glm-5.2-highspeed"},
+    ]
+    zai_no_highspeed_candidates = [
+        {"provider": "zai", "id": "glm-5.3"},
+        {"provider": "zai", "id": "glm-5.2"},
+    ]
+    config = {
+        "cases": {
+            "anthropicOpus": {"provider": "anthropic", "tier": "opus", "candidates": anthropic_candidates},
+            "anthropicSonnet": {"provider": "anthropic", "tier": "sonnet", "candidates": anthropic_candidates},
+            "anthropicHaiku": {"provider": "anthropic", "tier": "haiku", "candidates": anthropic_candidates},
+            "codexOpus": {"provider": "openai-codex", "tier": "opus", "candidates": codex_candidates},
+            "codexSonnet": {"provider": "openai-codex", "tier": "sonnet", "candidates": codex_candidates},
+            "codexHaiku": {"provider": "openai-codex", "tier": "haiku", "candidates": codex_candidates},
+            "zaiOpus": {"provider": "zai", "tier": "opus", "candidates": zai_full_candidates},
+            "zaiSonnet": {"provider": "zai", "tier": "sonnet", "candidates": zai_full_candidates},
+            "zaiHaikuPrefersHighspeed": {"provider": "zai", "tier": "haiku", "candidates": zai_full_candidates},
+            "zaiHaikuFallsBackWithoutHighspeed": {
+                "provider": "zai",
+                "tier": "haiku",
+                "candidates": zai_no_highspeed_candidates,
+            },
+            "unknownProvider": {"provider": "google", "tier": "haiku", "candidates": []},
+            "noMatchingCandidate": {"provider": "anthropic", "tier": "haiku", "candidates": []},
+        },
+    }
+    return _run_node(
+        _MODEL_TIER_DRIVER, [str(MODEL_TIER_TS), json.dumps(config)], tmp_path_factory, label="pi-model-tier-driver"
+    )
+
+
+@requires_node
+def test_is_known_model_tier(tmp_path_factory):
+    result = _model_tier_result(tmp_path_factory)
+    assert result["knownTiers"] == {
+        "haiku": True,
+        "sonnet": True,
+        "opus": True,
+        "other": False,
+        "undef": False,
+    }
+
+
+@requires_node
+def test_resolve_model_for_tier_anthropic(tmp_path_factory):
+    """anthropic_candidates carries the real bundled catalog's dated/versioned siblings
+    (claude-opus-4-5..4-8 alongside claude-opus-5, etc.) — this must still resolve to the bare
+    flagship id via shortestMatch, not whichever same-substring id happens to appear first in
+    catalog order."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["anthropicOpus"]["id"] == "claude-opus-5"
+    assert result["anthropicSonnet"]["id"] == "claude-sonnet-5"
+    assert result["anthropicHaiku"]["id"] == "claude-haiku-4-5"
+
+
+@requires_node
+def test_resolve_model_for_tier_openai_codex(tmp_path_factory):
+    result = _model_tier_result(tmp_path_factory)
+    assert result["codexOpus"]["id"] == "gpt-5.6-sol"
+    assert result["codexSonnet"]["id"] == "gpt-5.6-terra"
+    assert result["codexHaiku"]["id"] == "gpt-5.6-luna"
+
+
+@requires_node
+def test_resolve_model_for_tier_zai_haiku_prefers_highspeed_then_falls_back(tmp_path_factory):
+    """zai's haiku row lists two patterns in priority order — glm-5.2-highspeed first, plain
+    glm-5.2 as the fallback when the faster variant isn't actually available."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["zaiOpus"]["id"] == "glm-5.3"
+    assert result["zaiSonnet"]["id"] == "glm-5.3"
+    assert result["zaiHaikuPrefersHighspeed"]["id"] == "glm-5.2-highspeed"
+    assert result["zaiHaikuFallsBackWithoutHighspeed"]["id"] == "glm-5.2"
+
+
+@requires_node
+def test_resolve_model_for_tier_degrades_to_undefined_when_unresolvable(tmp_path_factory):
+    """An unknown provider (no MODEL_TIER_TABLE row) and a known provider with no matching
+    candidate both return undefined — subagent.ts's resolveTargetModel treats undefined as
+    'fall back to the parent's current model unchanged', never as an error."""
+    result = _model_tier_result(tmp_path_factory)
+    assert result["unknownProvider"] is None
+    assert result["noMatchingCandidate"] is None

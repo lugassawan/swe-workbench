@@ -184,10 +184,10 @@ the record. `"n/a"` never graduates to `"wired"`.
 ## 9. `task` — a first-party subagent dispatcher, not a fork of `pi-subagents`
 
 This plugin needed a way to dispatch any of its `agents/*.md` definitions (`swe-workbench:reviewer`,
-etc.) as a nested Pi session, preserving each agent's declared `tools` and preloaded `skills:`
-content. `pi/extensions/subagent.ts` registers a `task` tool that does exactly this, composing an
-agent's body plus its preloaded skills into a system prompt and running it as a real child `pi -p`
-process via `pi.exec()`.
+etc.) as a nested Pi session, preserving each agent's declared `tools`, preloaded `skills:` content,
+and (when declared) a model matched to its `model:` tier. `pi/extensions/subagent.ts` registers a
+`task` tool that does exactly this, composing an agent's body plus its preloaded skills into a
+system prompt and running it as a real child `pi -p` process via `pi.exec()`.
 
 **swe-workbench does not own a general subagent runtime.** The `pi-subagents` package is the
 supported route for generic delegation on Pi — chains, parallel fan-out, async runs, forked
@@ -229,8 +229,45 @@ in `hooks/bash_guard.sh`, pattern-matching a `pi ... -p`/`--print` invocation, s
 already-audited boundary instead of adding a new one. Not built as part of this dispatcher; tracked
 as a follow-up rather than silently left open.
 
-**Model-tier mapping was cut from scope entirely**, not deferred here — a project-committed
-`.pi/settings.json` reading a `modelTiers` block would be a real exfiltration primitive
-(redirecting subagent traffic to an attacker-chosen provider/endpoint) for near-zero value at zero
-current users. Recorded on the originating issue, not in this file, since there is no partial
-implementation of it to document a boundary around.
+**Model-tier mapping: an agent's `model: haiku|sonnet|opus` frontmatter picks a real model, by
+name, from a table hardcoded in `pi/extensions/model-tier.ts`.** An earlier iteration of this
+decision cut model-tier mapping entirely, on the grounds that a project-committed `.pi/settings.json`
+reading a `modelTiers` block would be a real exfiltration primitive — redirecting subagent traffic
+to an attacker-chosen provider/endpoint via a config surface outside normal code review. That
+concern is real, but it is a property of *where the mapping lives and what it can point at*, not
+of model-tier mapping itself, and the actual implementation avoids it entirely:
+
+- The table (`MODEL_TIER_TABLE`) is code shipped in this plugin's own reviewed source tree
+  (`pi/extensions/`) — the same trust boundary as every guard script path and tool-token mapping
+  already hardcoded elsewhere in this file group, not an independently-editable runtime settings
+  file.
+- Resolution is scoped to `ctx.model.provider` — whichever provider the parent session is already
+  on — and only ever selects among `ctx.scopedModels` (when the session is scoped via
+  `--models`/`enabledModels`) or, when unscoped, `ctx.modelRegistry.getAvailable()` results
+  (models the user has already configured credentials for). It never introduces a new provider,
+  baseUrl, or apiKey; a stale or missing table entry degrades to the parent's own current model
+  unchanged, never to something else.
+- Matching is by substring against `Model.id` (e.g. `"opus"` matches `claude-opus-5`, `"sol"`
+  matches `gpt-5.6-sol`), not exact-version pinning, so a provider's routine model-id version bumps
+  don't silently break the mapping. Substring matching alone is ambiguous, though: the bundled
+  Anthropic catalog carries dated/versioned siblings of a bare flagship id (`claude-opus-4-5`,
+  `claude-opus-4-5-20251101`, `claude-opus-4-6`... alongside `claude-opus-5`, all containing
+  `"opus"`), in catalog order rather than recency order — a plain first-match would silently
+  resolve to a stale snapshot. Resolution picks the *shortest* matching id instead: a
+  dated/versioned sibling is always the bare id plus extra suffix characters, so it can never be
+  shorter, making this a reliable, provider-catalog-agnostic tiebreak rather than a
+  version-pinning hack. `tests/test_pi_extension.py`'s anthropic fixture reproduces the real
+  bundled catalog's ambiguity verbatim to lock this in.
+
+`tests/test_pi_contract.py::test_model_tiers_are_inventoried` and
+`test_model_tier_table_is_exhaustive_over_known_tiers` ratchet the tier vocabulary and each
+provider row against the live `agents/*.md` inventory, the same pattern §2 already uses for tool
+tokens and skill ids.
+
+**Preloaded skills state their own resolvable directory.** A skill's body sometimes points at its
+own `examples/` subdirectory ("see `examples/` for a worked implementation..." —
+`swe-workbench:principle-solid`, `swe-workbench:principle-ddd`, etc.) without stating a path a
+reader could actually resolve. `composeSystemPrompt` now prepends each preloaded skill's absolute
+on-disk directory to its section header — not inlining `examples/` content (that stays on-demand,
+fetched by the dispatched agent's own `read` tool if it decides the pointer is relevant), just
+making the pointer resolvable instead of dead.

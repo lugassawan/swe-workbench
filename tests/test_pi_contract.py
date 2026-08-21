@@ -57,6 +57,11 @@ PI_SUBSTITUTE_ARGS_RE = re.compile(
 # Phase 7 `pi:` override block) must be added here deliberately, not discovered by CI red.
 FRONTMATTER_KEYS = {"name", "description", "model", "tools", "skills"}
 
+# Union of every agents/*.md `model:` value. Mirrors model-tier.ts's KNOWN_MODEL_TIERS — a new
+# tier value on disk not also added to that module's MODEL_TIER_TABLE would resolve to nothing
+# for every provider, silently falling back to the parent's model with zero signal.
+MODEL_TIERS = {"haiku", "sonnet", "opus"}
+
 # Union of every comma-separated token across all agents/*.md `tools:` lines. Grows only
 # when an agent's frontmatter is edited to grant a new tool — not on every agent edit.
 TOOL_TOKENS = {
@@ -241,6 +246,23 @@ def test_tool_tokens_and_skill_ids_are_inventoried():
         "agents/*.md skill ids have drifted from the inventory — "
         f"only on disk: {sorted(skill_ids - SKILL_IDS)}, "
         f"only in SKILL_IDS: {sorted(SKILL_IDS - skill_ids)}"
+    )
+
+
+def test_model_tiers_are_inventoried():
+    tiers = set()
+    for path in sorted(AGENTS_DIR.glob("*.md")):
+        fm = validate.parse_frontmatter(path)
+        assert fm is not None, f"{path} has no parseable frontmatter"
+        model = fm.get("model")
+        if model:
+            tiers.add(model)
+    assert tiers == MODEL_TIERS, (
+        "agents/*.md model tiers have drifted from the inventory — "
+        f"only on disk: {sorted(tiers - MODEL_TIERS)}, "
+        f"only in MODEL_TIERS: {sorted(MODEL_TIERS - tiers)}. A new tier value must also be "
+        "added to model-tier.ts's KNOWN_MODEL_TIERS and MODEL_TIER_TABLE, or it silently "
+        "resolves to nothing for every provider."
     )
 
 
@@ -614,6 +636,7 @@ def test_ask_user_ts_has_no_typebox_import():
 # ---------------------------------------------------------------------------
 
 AGENT_SPEC_TS = EXTENSIONS_DIR / "agent-spec.ts"
+MODEL_TIER_TS = EXTENSIONS_DIR / "model-tier.ts"
 SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
 
 
@@ -626,6 +649,16 @@ def test_agent_spec_ts_never_references_pi():
     text = AGENT_SPEC_TS.read_text(encoding="utf-8")
     assert "pi-coding-agent" not in text, "agent-spec.ts must not reference the Pi SDK at all"
     assert "node:child_process" not in text, "agent-spec.ts must not spawn processes — that is subagent.ts's job"
+
+
+def test_model_tier_ts_never_references_pi():
+    """model-tier.ts is the domain layer for tier->model resolution: pure data and pure
+    functions, no Pi SDK reference and no process spawning — subagent.ts owns querying
+    ctx.modelRegistry and everything else that touches Pi. Same posture, same test shape, as
+    test_agent_spec_ts_never_references_pi above."""
+    text = MODEL_TIER_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "model-tier.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "model-tier.ts must not spawn processes — that is subagent.ts's job"
 
 
 _TRANSLATION_TABLE_DRIVER = """
@@ -671,6 +704,49 @@ def test_task_tool_translation_table_is_exhaustive_over_tool_tokens():
         "RENAME_TABLE/DROP_TOKENS carries tokens beyond agents/*.md's live TOOL_TOKENS vocabulary "
         f"other than the known LS entry (see this test's docstring): {sorted(extra)}"
     )
+
+
+_MODEL_TIER_TABLE_DUMP_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+console.log(JSON.stringify({
+  knownTiers: mod.KNOWN_MODEL_TIERS,
+  tableTiersByProvider: Object.fromEntries(
+    Object.entries(mod.MODEL_TIER_TABLE).map(([provider, row]) => [provider, Object.keys(row)]),
+  ),
+}));
+"""
+
+
+@requires_node
+def test_model_tier_table_is_exhaustive_over_known_tiers():
+    """model-tier.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet, and every
+    provider row in MODEL_TIER_TABLE must cover all three tiers — a provider entry missing a
+    tier would silently resolve to undefined (parent-model fallback) for that tier only, which
+    is easy to miss without an exhaustiveness check."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "model-tier-table-dump.mjs"
+        driver.write_text(_MODEL_TIER_TABLE_DUMP_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "model-tier.ts")],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert set(dumped["knownTiers"]) == MODEL_TIERS, (
+        f"model-tier.ts's KNOWN_MODEL_TIERS ({sorted(dumped['knownTiers'])}) has drifted from "
+        f"the live agents/*.md inventory ({sorted(MODEL_TIERS)})"
+    )
+    for provider, tiers in dumped["tableTiersByProvider"].items():
+        assert set(tiers) == MODEL_TIERS, (
+            f"MODEL_TIER_TABLE[{provider!r}] covers {sorted(tiers)}, missing "
+            f"{sorted(MODEL_TIERS - set(tiers))} — an uncovered tier silently falls back to the "
+            "parent's model for that provider only"
+        )
 
 
 _TASK_SCHEMA_DRIVER = """
