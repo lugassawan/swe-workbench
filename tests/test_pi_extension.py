@@ -25,7 +25,10 @@ PACKAGE_JSON = ROOT / "pi" / "package.json"
 INDEX_TS = ROOT / "pi" / "extensions" / "index.ts"
 GUARDS_TS = ROOT / "pi" / "extensions" / "guards.ts"
 GUARD_RUNNER_TS = ROOT / "pi" / "extensions" / "guard-runner.ts"
+TOOL_VOCAB_TS = ROOT / "pi" / "extensions" / "tool-vocab.ts"
+ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
 BIN_README = ROOT / "bin" / "README.md"
+SKILLS_DIR = ROOT / "skills"
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
 # file's own source — this file is not on secret_guard.py's allowlist (unlike
@@ -45,6 +48,7 @@ const stubPi = {
   on(event, handler) {
     handlers[event] = handler;
   },
+  registerTool() {},
 };
 const stubCtx = { hasUI: true, ui: { notify() {} } };
 
@@ -234,6 +238,35 @@ def test_before_agent_start_injects_marker_and_first_script_row(extension_result
 
 
 @requires_node
+def test_before_agent_start_injects_tool_vocab_section(extension_result):
+    injected = extension_result["firstInjection"]["systemPrompt"]
+    assert "Claude Code -> Pi tool vocabulary" in injected
+    assert "| `Read` | `read` |" in injected
+    assert "ask_user_question" in injected
+
+
+@requires_node
+def test_tool_vocab_preamble_survives_the_kill_switch(tmp_path_factory):
+    """SWE_WORKBENCH_PI_TOOLS=0 gates Tier-2 tool registration only — the Tier-1 vocabulary
+    prose must stay unconditional, since disabling it makes the session worse, not safer."""
+    driver = tmp_path_factory.mktemp("pi-extension-driver-kill-switch") / "driver.mjs"
+    driver.write_text(_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    run_env = dict(_CLEAN_ENV)
+    run_env["SWE_WORKBENCH_PI_TOOLS"] = "0"
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(INDEX_TS)],
+        capture_output=True, text=True, env=run_env, timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    parsed = json.loads(result.stdout)
+    injected = parsed["firstInjection"]["systemPrompt"]
+    assert "Claude Code -> Pi tool vocabulary" in injected
+    assert "| `Read` | `read` |" in injected
+
+
+@requires_node
 def test_before_agent_start_does_not_duplicate_on_already_injected_prompt(extension_result):
     # Second call received a prompt that already contains the marker; it must be a no-op.
     # A void handler return serializes as an absent key, not JSON null.
@@ -247,7 +280,9 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
 
     Regression test: the extension used to read bin/README.md unguarded, so a missing file
     threw synchronously inside the factory — which fails the whole extension, not just the
-    system-prompt preamble feature (the one failure mode the code already degrades for).
+    bin-scripts row of the preamble (the one failure mode the code already degrades for). The
+    rest of the preamble — tool-vocab.ts's content, including the anti-hallucination rule —
+    must still be injected; only the bin-scripts row disappears.
     """
     synthetic_root = tmp_path_factory.mktemp("pi-synthetic-root")
     (synthetic_root / ".claude-plugin").mkdir()
@@ -257,7 +292,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
     synthetic_index.parent.mkdir(parents=True)
     synthetic_index.write_text(INDEX_TS.read_text(encoding="utf-8"), encoding="utf-8")
-    for helper in ("guards.ts", "cc-payload.ts", "guard-runner.ts"):
+    for helper in ("guards.ts", "cc-payload.ts", "guard-runner.ts", "tool-vocab.ts", "ask-user.ts"):
         (synthetic_index.parent / helper).write_text(
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
         )
@@ -280,7 +315,10 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "promptPaths": [str(synthetic_root / "commands")],
     }
     assert str(synthetic_root / "bin") in parsed["pathEntries"]
-    assert "systemPrompt" not in (parsed.get("firstInjection") or {})
+    injected = parsed["firstInjection"]["systemPrompt"]
+    assert "<!-- swe-workbench:pi-bin-preamble -->" in injected
+    assert "swe-workbench-clean-ephemeral" not in injected, "bin-scripts row must be absent"
+    assert "Claude Code -> Pi tool vocabulary" in injected, "tool-vocab section must still inject"
 
 
 # ---------------------------------------------------------------------------
@@ -787,3 +825,179 @@ def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtur
         if result["blocked"] != expect_blocked:
             mismatches.append(f"{cmd!r}: expected blocked={expect_blocked}, adapter returned {result}")
     assert not mismatches, "adapter verdict diverged from direct-invocation verdict:\n" + "\n".join(mismatches)
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: tool-vocab.ts. Pure text generation — no stub `pi`/`ctx` needed, but still
+# imported through Node under --experimental-strip-types since it is a .ts module.
+# ---------------------------------------------------------------------------
+
+_TOOL_VOCAB_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, root] = process.argv;
+const mod = await import(pathToFileURL(modPath).href);
+const section = mod.toolVocabSection(root);
+console.log(JSON.stringify(section));
+"""
+
+
+def _tool_vocab_section(root, tmp_path_factory):
+    return _run_node(_TOOL_VOCAB_DRIVER, [str(TOOL_VOCAB_TS), str(root)], tmp_path_factory, label="pi-tool-vocab-driver")
+
+
+@requires_node
+def test_tool_vocab_section_has_rename_table_and_legend_rule(tmp_path_factory):
+    section = _tool_vocab_section(ROOT, tmp_path_factory)
+    assert section["title"] == "Claude Code -> Pi tool vocabulary"
+    for cc_name, pi_name in [("Read", "read"), ("Write", "write"), ("Edit", "edit"), ("Bash", "bash"), ("Grep", "grep"), ("Glob", "find"), ("LS", "ls")]:
+        assert f"`{cc_name}`" in section["body"] and f"`{pi_name}`" in section["body"]
+    assert "swe-workbench:<id>" in section["body"] and "/skill:<id>" in section["body"]
+    assert "superpowers:<id>" in section["body"]
+    assert "ask_user_question" in section["body"]
+    assert "ExitPlanMode" in section["body"]
+    assert "EnterWorktree" in section["body"]
+    assert "fabricate `Task` calls" in section["body"]
+
+
+@requires_node
+def test_tool_vocab_generated_skill_id_list_matches_disk(tmp_path_factory):
+    section = _tool_vocab_section(ROOT, tmp_path_factory)
+    on_disk = sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
+    for skill_id in on_disk:
+        assert skill_id in section["body"], f"{skill_id} missing from the generated skill legend"
+
+
+@requires_node
+def test_tool_vocab_missing_skills_dir_degrades_to_rule_without_list(tmp_path_factory):
+    """A root with no skills/ directory at all must not throw — the legend degrades to the bare
+    rule, mirroring index.ts's readCurrentScripts posture for a missing bin/README.md."""
+    synthetic_root = tmp_path_factory.mktemp("pi-tool-vocab-no-skills")
+    section = _tool_vocab_section(synthetic_root, tmp_path_factory)
+    assert "swe-workbench:<id>" in section["body"]
+    assert "Available ids:" not in section["body"]
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: ask-user.ts. Drives the real registerAskUser(pi) against a stub ExtensionAPI/
+# ExtensionContext — no LLM, no real TUI.
+# ---------------------------------------------------------------------------
+
+_ASK_USER_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+let registered;
+const stubPi = { registerTool(tool) { registered = tool; } };
+mod.registerAskUser(stubPi);
+
+const out = { registered: registered !== undefined };
+if (registered) {
+  const inputCalls = [];
+  const selectCalls = [];
+  function makeCtx(hasUI) {
+    return {
+      hasUI,
+      ui: {
+        select: async (title, options) => { selectCalls.push({ title, options }); return options[0]; },
+        input: async (...args) => { inputCalls.push(args); return "SHOULD-NEVER-HAPPEN"; },
+      },
+    };
+  }
+  async function run(hasUI, params) {
+    try {
+      const result = await registered.execute("tc1", params, undefined, undefined, makeCtx(hasUI));
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, message: String(err && err.message) };
+    }
+  }
+  out.singleSelect = await run(true, config.singleParams);
+  out.multiSelect = await run(true, config.multiParams);
+  out.duplicate = await run(true, config.duplicateParams);
+  out.noUI = await run(false, config.singleParams);
+  out.selectCalls = selectCalls;
+  out.inputCalls = inputCalls;
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _ask_user_result(env, tmp_path_factory):
+    config = {
+        "singleParams": {
+            "questions": [
+                {"question": "Pick one", "header": "Pick", "multiSelect": False, "options": [{"label": "A", "description": "desc A"}, {"label": "B"}]},
+            ]
+        },
+        "multiParams": {
+            "questions": [{"question": "Pick many", "header": "Many", "multiSelect": True, "options": [{"label": "A"}, {"label": "B"}]}]
+        },
+        "duplicateParams": {
+            "questions": [
+                {"question": "Same text", "header": "Q1", "multiSelect": False, "options": [{"label": "A"}, {"label": "B"}]},
+                {"question": "Same text", "header": "Q2", "multiSelect": False, "options": [{"label": "C"}, {"label": "D"}]},
+            ]
+        },
+    }
+    node = shutil.which("node")
+    assert node is not None
+    driver = tmp_path_factory.mktemp("pi-ask-user-driver") / "driver.mjs"
+    driver.write_text(_ASK_USER_DRIVER, encoding="utf-8")
+    run_env = dict(_CLEAN_ENV)
+    run_env.update(env)
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(ASK_USER_TS), json.dumps(config)],
+        capture_output=True, text=True, env=run_env, timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+@requires_node
+def test_ask_user_registers_by_default(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["registered"] is True
+
+
+@requires_node
+def test_ask_user_kill_switch_skips_registration(tmp_path_factory):
+    result = _ask_user_result({"SWE_WORKBENCH_PI_TOOLS": "0"}, tmp_path_factory)
+    assert result["registered"] is False
+
+
+@requires_node
+def test_ask_user_single_select_returns_the_choice_via_ctx_ui_select(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["singleSelect"]["ok"] is True
+    assert result["singleSelect"]["result"]["details"] == {"Pick one": "A — desc A"}
+    assert result["selectCalls"][0]["options"] == ["A — desc A", "B"]
+    assert result["inputCalls"] == [], "ask_user_question must never fall back to ctx.ui.input"
+
+
+@requires_node
+def test_ask_user_multi_select_is_rejected_with_a_remedy(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["multiSelect"]["ok"] is False
+    assert "sequential single-select" in result["multiSelect"]["message"]
+
+
+@requires_node
+def test_ask_user_duplicate_question_text_is_rejected(tmp_path_factory):
+    """answers[] is keyed by question text — a duplicate would silently overwrite an earlier
+    answer with no error, one of the user's picks vanishing unnoticed. Must reject up front,
+    before any ctx.ui.select call."""
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["duplicate"]["ok"] is False
+    assert "duplicate question" in result["duplicate"]["message"]
+
+
+@requires_node
+def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["noUI"]["ok"] is False
+    assert "interactive UI" in result["noUI"]["message"]
+    assert result["inputCalls"] == [], "hasUI:false must fail loudly, never silently fall back to ctx.ui.input"

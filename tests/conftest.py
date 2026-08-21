@@ -31,6 +31,12 @@ import pytest
 # Tests that want to exercise the session-scratchpad path opt in explicitly via
 # env={**_CLEAN_ENV, "CLAUDE_CODE_SESSION_ID": "<fake-uuid>"}.
 #
+# SWE_WORKBENCH_PI_TOOLS is also stripped: it's the pi/extensions/ask-user.ts kill switch. If a
+# developer or CI shell happens to export it (plausible while testing the kill switch itself),
+# every "registers by default" test in tests/test_pi_extension.py and test_pi_contract.py would
+# fail unexpectedly on an unrelated ambient value. Tests that want to exercise the kill switch
+# opt in explicitly via env={**_CLEAN_ENV, "SWE_WORKBENCH_PI_TOOLS": "0"}.
+#
 # Snapshot: built once from os.environ at pytest collection time. Session-scoped
 # fixtures that mutate GIT_* vars after import will not be reflected here.
 #
@@ -44,6 +50,7 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
         if not k.startswith("GIT_")
         and k != "GITHUB_STEP_SUMMARY"
         and k != "CLAUDE_CODE_SESSION_ID"
+        and k != "SWE_WORKBENCH_PI_TOOLS"
     }
     | {
         "GIT_CONFIG_NOSYSTEM": "1",

@@ -31,7 +31,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerAskUser } from "./ask-user.ts";
 import { registerGuards } from "./guards.ts";
+import { toolVocabSection } from "./tool-vocab.ts";
 
 class PluginRootNotFoundError extends Error {
   constructor(startDir: string) {
@@ -74,8 +76,9 @@ function extractCurrentScripts(readmeText: string): string | null {
 /**
  * Reads bin/README.md and extracts the "## Current scripts" section. Returns null on any
  * failure (file missing/unreadable, or heading missing) — this is a doc file, not load-bearing
- * for PATH exposure or skill discovery, so its absence must degrade the preamble feature alone,
- * never take down the whole extension.
+ * for PATH exposure or skill discovery, so its absence must degrade only the bin-scripts row of
+ * the preamble, never take down the whole extension or the rest of the preamble (in particular,
+ * toolVocabSection's content — including the anti-hallucination rule — must still be injected).
  */
 function readCurrentScripts(binDir: string): string | null {
   let readmeText: string;
@@ -97,13 +100,17 @@ export default function (pi: ExtensionAPI): void {
     process.env.PATH = [...pathEntries, binDir].join(delimiter);
   }
 
+  // Only the bin-scripts section depends on bin/README.md; toolVocabSection is pure and never
+  // fails, so it must NOT be dragged down by a missing/unreadable README — Tier-1 vocabulary
+  // prose (including the anti-hallucination rule) stays on unconditionally, same posture as
+  // ask-user.ts's kill switch. composePreamble is still called exactly once, so the single
+  // PREAMBLE_MARKER dedup check keeps proving something real.
   const currentScripts = readCurrentScripts(binDir);
-  const preamble =
+  const binSection =
     currentScripts === null
-      ? null
-      : composePreamble([
-          { title: "swe-workbench bin/ scripts (bare commands, already on PATH)", body: currentScripts },
-        ]);
+      ? []
+      : [{ title: "swe-workbench bin/ scripts (bare commands, already on PATH)", body: currentScripts }];
+  const preamble = composePreamble([...binSection, toolVocabSection(root)]);
 
   let warnedMissingAnchor = false;
 
@@ -113,7 +120,7 @@ export default function (pi: ExtensionAPI): void {
   }));
 
   pi.on("session_start", (_event, ctx: ExtensionContext) => {
-    if (preamble === null && !warnedMissingAnchor && ctx.hasUI) {
+    if (currentScripts === null && !warnedMissingAnchor && ctx.hasUI) {
       warnedMissingAnchor = true;
       ctx.ui.notify(
         "swe-workbench: bin/README.md's '## Current scripts' section could not be read — the " +
@@ -124,10 +131,16 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", (event) => {
-    if (preamble === null) return;
     if (event.systemPrompt.includes(PREAMBLE_MARKER)) return;
     return { systemPrompt: event.systemPrompt + preamble };
   });
 
+  // registerGuards must register first: emitToolCall (runner.js:701) runs tool_call handlers in
+  // registration order and short-circuits only on `block: true`, so a later-registered guard
+  // would be a silent security regression. registerAskUser adds no tool_call handler today, but
+  // a future one must be added after this line too — and emitToolCall has no try/catch around a
+  // handler's body (unlike emitUserBash), so any future tool_call handler must wrap its own body
+  // and return undefined on throw.
   registerGuards(pi, root);
+  registerAskUser(pi);
 }

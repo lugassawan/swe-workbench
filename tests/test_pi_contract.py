@@ -253,27 +253,49 @@ def test_tool_tokens_and_skill_ids_are_inventoried():
 _EXTENSION_TS_FILES = sorted(EXTENSIONS_DIR.glob("*.ts"))
 _NON_INDEX_TS_FILES = [p for p in _EXTENSION_TS_FILES if p.name != "index.ts"]
 
-_PACKAGE_IMPORT_RE = re.compile(
+_IMPORT_FROM_RE = re.compile(
     # [^}]* (not a DOTALL .*?) so this cannot swallow past the FIRST closing brace it meets —
     # a lazy .*? still crosses unrelated statements in between when the file has multiple
-    # `import ... from "..."` blocks between the first "import" keyword and this package name.
-    r'import\s+(type\s+)?\{[^}]*\}\s+from\s+["\']@earendil-works/pi-coding-agent["\']',
+    # `import ... from "..."` blocks in one file. The `\*\s+as\s+\S+` alternative is required
+    # separately from `\S+` — for `import * as Type from "typebox"`, `\S+` greedily consumes
+    # only `*` (stops at the following space), and then `\s+from` fails to match "as Type
+    # from...", so the WHOLE alternation fails at that position with no backtrack into a
+    # shorter match; without this explicit alternative a namespace import silently never
+    # matches at all, rather than merely mis-capturing.
+    r'import\s+(type\s+)?(?:\{[^}]*\}|\*\s+as\s+\S+|\S+)\s+from\s+["\']([^"\']+)["\']',
 )
 
+# Bare side-effect imports (`import "polyfill"`) have no `from` clause at all, so they never
+# match _IMPORT_FROM_RE regardless of alternation — a structurally separate pattern, not a gap
+# in the one above.
+_IMPORT_SIDE_EFFECT_RE = re.compile(r'import\s+(type\s+)?["\']([^"\']+)["\']')
 
-def test_every_sdk_import_under_extensions_is_type_only():
-    """Every narrowing this adapter does uses a manual `toolName === "..."` check plus a type
-    cast instead of the SDK's `isToolCallEventType` runtime helper, so no import here needs to
-    be a value import."""
+
+def test_no_extension_file_has_a_value_import_of_a_bare_specifier():
+    """Every @earendil-works/pi-coding-agent import here is `import type` (this adapter narrows
+    tool events with a manual `toolName === "..."` check plus a cast, never the SDK's
+    `isToolCallEventType` runtime helper) — but the real rationale is broader than that one
+    package: tests/test_pi_extension.py and test_pi_contract.py drive these files under
+    `node --experimental-strip-types`, which has no bundler, no jiti, and no node_modules alias
+    resolution beyond plain Node module resolution. A value import of ANY bare specifier (a
+    package name, not `node:*` or a relative `./*.ts` path) breaks that harness the same way a
+    value import of the SDK would — e.g. `import { Type } from "typebox"` would sail through the
+    old package-name-hardcoded check while still breaking every pytest run. Zero violations
+    today; this is a pure strengthening, not a behavior change."""
     violations = []
     for path in _EXTENSION_TS_FILES:
         text = path.read_text(encoding="utf-8")
-        for match in _PACKAGE_IMPORT_RE.finditer(text):
-            if match.group(1) is None:
+        for pattern in (_IMPORT_FROM_RE, _IMPORT_SIDE_EFFECT_RE):
+            for match in pattern.finditer(text):
+                is_type_only, specifier = match.group(1), match.group(2)
+                if is_type_only is not None:
+                    continue
+                if specifier.startswith("node:") or specifier.startswith("./") or specifier.startswith("../"):
+                    continue
                 violations.append(f"{path.relative_to(ROOT)}: {match.group(0)!r}")
     assert not violations, (
-        "every import of @earendil-works/pi-coding-agent under pi/extensions/ must be "
-        f"`import type` — found non-type-only import(s):\n" + "\n".join(violations)
+        "pi/extensions/*.ts must not value-import any bare specifier (only `node:*` or a "
+        f"relative `./*.ts` import may be a value import) — found:\n" + "\n".join(violations)
     )
 
 
@@ -452,8 +474,8 @@ def test_referenced_fields_actually_appear_in_hook_source():
 
 # hooks/*.sh|py -> Pi wiring status. "wired": translated by guards.ts this phase. "n/a": the
 # concept the hook manipulates does not exist on Pi (documented in
-# docs/plugin-platform-decisions.md §6). "deferred": not wired yet because the Pi tool it needs
-# (Skill / subagents) doesn't exist until #608/#610 — tracked there, not here.
+# docs/plugin-platform-decisions.md §6). "deferred": not wired yet because the Pi capability it
+# needs (subagents) doesn't exist yet — tracked on the follow-up issue, not here.
 HOOK_PI_STATUS = {
     "bash_guard.sh": "wired",
     "secret_guard.py": "wired",
@@ -528,3 +550,59 @@ def test_pi_extension_wires_commands_as_prompt_paths():
     text = PI_EXTENSIONS_INDEX.read_text(encoding="utf-8")
     assert "promptPaths" in text
     assert 'join(root, "commands")' in text
+
+
+# ---------------------------------------------------------------------------
+# ask_user_question schema-as-data ratchet. Pins pi/extensions/ask-user.ts's parameters to a
+# plain JSON-Schema object literal — never a TypeBox value import — since
+# @earendil-works/pi-ai's constrained-sampling.js (getJsonSchemaToolParameters, ~line 112 as of
+# pi-coding-agent@0.84.2) returns `tool.parameters` verbatim to the provider and nothing on the
+# registration path (dist/core/tools/tool-definition-wrapper.js) runs TypeBox's
+# Value.Check/Compile against it. Re-diff that citation directly if this test ever needs to
+# change: `grep -n getJsonSchemaToolParameters` against the installed pi-ai package.
+# ---------------------------------------------------------------------------
+
+_ASK_USER_SCHEMA_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const mod = await import(pathToFileURL(process.argv[2]).href);
+let registered;
+const stubPi = { registerTool(tool) { registered = tool; } };
+mod.registerAskUser(stubPi);
+console.log(JSON.stringify({ parameters: registered.parameters, hasPromptSnippet: typeof registered.promptSnippet === "string" && registered.promptSnippet.length > 0 }));
+"""
+
+ASK_USER_TS = EXTENSIONS_DIR / "ask-user.ts"
+
+
+@requires_node
+def test_ask_user_question_parameters_is_a_plain_json_schema_object():
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "ask-user-schema-dump.mjs"
+        driver.write_text(_ASK_USER_SCHEMA_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(ASK_USER_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    parameters = dumped["parameters"]
+    assert isinstance(parameters, dict), "parameters must serialize as a plain JSON object"
+    assert parameters.get("type") == "object"
+    assert "questions" in parameters.get("properties", {})
+    assert dumped["hasPromptSnippet"] is True, (
+        "custom tools are omitted from the system prompt's Available tools section without a "
+        "promptSnippet — ask_user_question must always carry one"
+    )
+
+
+def test_ask_user_ts_has_no_typebox_import():
+    text = ASK_USER_TS.read_text(encoding="utf-8")
+    assert '"typebox"' not in text and "'typebox'" not in text, (
+        "ask-user.ts must derive its parameter type from the SDK's own ToolDefinition re-export, "
+        "never by importing typebox directly — see the file's own module docstring for why"
+    )
