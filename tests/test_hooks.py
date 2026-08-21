@@ -93,6 +93,14 @@ class TestRmRfBlocker:
         # swallow real command text that follows on the SAME physical line
         # (issue #501 re-review finding)
         'git commit -m "line one\n# note" && rm -rf ~',
+        # #401 bypass vectors — backtick and $(...) subshells previously
+        # slipped past both the fast-gate and the anchor regex (issue #607)
+        "`rm -rf /`",
+        "var=`rm -rf /`",
+        "$(rm -rf /)",
+        "var=$(rm -rf /)",
+        "echo `rm -rf /`",
+        "echo $(rm -rf /)",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -115,6 +123,10 @@ class TestRmRfBlocker:
         "rm -rf /homestead",
         "echo hi\nrm -rf ./build",
         "true\trm -rf ./build",
+        # legitimate backtick/$(...) subshells with no rm inside must stay allowed
+        "echo `ls`",
+        "x=$(date)",
+        "echo $(pwd)",
     ])
     def test_allowed(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
