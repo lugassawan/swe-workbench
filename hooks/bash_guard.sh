@@ -64,7 +64,7 @@ _norm=$(printf '%s' "$_nc" | tr ';|&\n\t`' '      ')
 # Deleting quotes/brackets/backslashes closes quote-wrapped/backslash-escaped rm ("rm", 'rm',
 # \rm). Gate and detector now both run on this SAME normalized text ($norm), closing the same
 # class of gate/detector divergence for quote-wrapped rm.
-norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\")
+norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\\\")
 
 case "$norm" in
   rm\ *|*\ rm\ *|*git*) ;;
