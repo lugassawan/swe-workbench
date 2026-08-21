@@ -149,3 +149,34 @@ No prose edit and no new tool. `tool-vocab.ts`'s worktree note tells the model t
 <absolute-path>` fallback documented in `skills/workflow-worktree-session/SKILL.md` (lines 30 and
 87 as of this writing) is *the* mechanism on Pi, not a last resort. Recorded as an explicit
 `"n/a"`-shaped decision here — mirroring §6 — rather than left implicit.
+
+## 8. `LSP` has no Pi tool registration — the capability lives in `bin/`, not the adapter
+
+This phase's scope originally sketched `pi/extensions/lsp.ts`: a repo-marker → server-binary map,
+PATH lookup, and a `vscode-jsonrpc` client exposing a Pi-registered `LSP` tool. That premise was
+overtaken by a prior change that moved the whole capability out of the harness layer before this
+phase started.
+
+The harness-native `LSP` tool is main-loop-only on Claude Code 2.1.237 — absent from every
+subagent's tool registry, even at the maximum grant a subagent can hold
+(`docs/dependencies.md`'s "Language servers" section). None of the four consumers
+(`swe-workbench:reviewer`, `swe-workbench:auditor`, `swe-workbench:debugger`,
+`swe-workbench:refactorer`) grant `LSP` in their `tools:` frontmatter; all four grant `Bash`
+instead (pinned by `tests/test_lsp_literacy.py`'s `test_agent_does_not_grant_native_lsp_tool`).
+The real capability is `bin/swe-workbench-lsp`, a stdlib-only script that speaks LSP JSON-RPC to a
+locally installed language server directly — reachable via `Bash` on any harness, with no
+dependency on a harness-provided `LSP` tool ever being wired up.
+
+Phase 1 already did the only port work this capability needs: `pi/extensions/index.ts`
+appends `<root>/bin` to `process.env.PATH`, so `swe-workbench-lsp` is already a bare command in a
+Pi session, and it splices `bin/README.md`'s `## Current scripts` body into the Tier-1 preamble,
+so a Pi session is already told the capability exists. A Pi-registered `LSP` tool would fork the
+886-line script plus `tests/test_lsp_script.py`'s suite into a second implementation, teach the
+two harnesses different vocabularies for one capability — the opposite of what
+`pi/extensions/tool-vocab.ts` exists to do — and gain zero callers, since the four consumers
+already reach the capability through `Bash`.
+
+Recorded as an explicit `"n/a"` decision — mirroring §6 and §7 — rather than left implicit.
+Unlike §6, this is not a `HOOK_PI_STATUS` row: that inventory is keyed to `hooks/*.sh|py` and
+asserted exhaustive against that directory; `swe-workbench-lsp` lives in `bin/`, so this section is
+the record. `"n/a"` never graduates to `"wired"`.

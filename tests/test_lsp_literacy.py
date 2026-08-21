@@ -152,3 +152,39 @@ def test_dependencies_doc_has_language_servers_section():
         "docs/dependencies.md is missing the "
         "'## Language servers (optional, graceful-fallback)' section."
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# bin/README.md's Current scripts section is the sole channel by which a
+# Pi session learns swe-workbench-lsp exists (pi/extensions/index.ts
+# splices that section into the Tier-1 preamble)
+# ──────────────────────────────────────────────────────────────
+
+
+def test_bin_readme_lsp_row_is_the_pi_discovery_surface():
+    """bin/README.md's Current scripts section names swe-workbench-lsp and
+    every one of its subcommands. pi/extensions/index.ts makes this section
+    the sole channel by which a Pi session learns the script exists, and
+    test_pi_extension.py only pins the section's first row
+    (swe-workbench-clean-ephemeral) — so deleting or renaming this row would
+    silently drop LSP from every Pi session with a fully green suite."""
+    path = ROOT / "bin" / "README.md"
+    assert path.exists(), "bin/README.md does not exist"
+    text = path.read_text(encoding="utf-8")
+    start = text.find("## Current scripts")
+    assert start != -1, "bin/README.md is missing the '## Current scripts' heading"
+    end = text.find("\n## ", start + len("## Current scripts"))
+    assert end != -1, "bin/README.md's Current scripts section has no terminating heading"
+    section = text[start:end]
+
+    lsp_row = next(
+        (line for line in section.splitlines() if "swe-workbench-lsp" in line),
+        None,
+    )
+    assert lsp_row is not None, (
+        "bin/README.md's Current scripts section is missing the swe-workbench-lsp row"
+    )
+    for subcommand in [*SCRIPT_SUBCOMMANDS, "check"]:
+        assert subcommand in lsp_row, (
+            f"bin/README.md's swe-workbench-lsp row is missing the subcommand '{subcommand}'"
+        )
