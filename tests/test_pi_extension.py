@@ -10,6 +10,8 @@ Two layers:
 """
 
 import json
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -80,8 +82,21 @@ def _node_major_version():
 
 
 _NODE_MAJOR = _node_major_version()
+_NODE_TOO_OLD = _NODE_MAJOR is None or _NODE_MAJOR < 22
+
+if _NODE_TOO_OLD and os.environ.get("CI"):
+    # CI's pytest job pins Node >= 22 via actions/setup-node specifically so these
+    # behavioural tests always run there — a missing/too-old Node in CI is a broken
+    # job, not something to silently skip past. A local run without Node still gets
+    # the softer skip below.
+    pytest.fail(
+        "Node >= 22 required for pi extension behavioural tests but not found (or "
+        "too old) in CI — check the pytest job's actions/setup-node step",
+        pytrace=False,
+    )
+
 requires_node = pytest.mark.skipif(
-    _NODE_MAJOR is None or _NODE_MAJOR < 22,
+    _NODE_TOO_OLD,
     reason="behavioural pi extension tests require Node >= 22 (--experimental-strip-types)",
 )
 
@@ -91,17 +106,15 @@ requires_node = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
-def test_package_json_is_valid_json_with_exact_keys():
+def test_package_json_is_valid_json_with_required_keys():
+    """Required-keys-present, not an exact-set equality — the manifest is expected to
+    grow (Group 2's devDependencies/scripts, later phases' own additions), and an
+    exact-set assertion would just be a maintenance tax. Forbidden-keys-absent coverage
+    (dependencies, pi.skills) lives in the two dedicated tests below — not duplicated
+    here."""
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
-    assert set(data.keys()) == {
-        "name",
-        "version",
-        "private",
-        "type",
-        "description",
-        "pi",
-        "peerDependencies",
-    }
+    for key in ("name", "version", "private", "type", "description", "pi", "peerDependencies"):
+        assert key in data, f"package.json must have a {key!r} key"
 
 
 def test_package_json_values():
@@ -111,7 +124,27 @@ def test_package_json_values():
     assert data["private"] is True
     assert data["type"] == "module"
     assert data["pi"] == {"extensions": ["./extensions"]}
-    assert data["peerDependencies"] == {"@earendil-works/pi-coding-agent": "*"}
+
+    dev_pin = data["devDependencies"]["@earendil-works/pi-coding-agent"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", dev_pin), (
+        f"devDependencies pin must be an exact X.Y.Z version — no ^, ~, *, ||, - range, "
+        f"or other npm range syntax anywhere in the string — got {dev_pin!r}"
+    )
+
+    peer_range = data["peerDependencies"]["@earendil-works/pi-coding-agent"]
+    parts = peer_range.split()
+    assert len(parts) == 2, (
+        f"peerDependencies range must have an explicit floor and ceiling, got {peer_range!r}"
+    )
+    floor, ceiling = parts
+    assert floor == ">=0.84.2", (
+        f"peerDependencies floor must equal the devDependencies pin ({dev_pin!r}), got {floor!r}"
+    )
+    assert ceiling == "<1", (
+        "peerDependencies ceiling must stay below the next major — pre-1.0 semver gives no "
+        f"compatibility guarantee across majors — got {ceiling!r}. A widened or dropped "
+        "ceiling would let an untested major version of the peer satisfy this range silently."
+    )
 
 
 def test_package_json_has_no_pi_skills_key():

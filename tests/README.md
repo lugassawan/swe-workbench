@@ -114,3 +114,28 @@ To verify the missing-file path in `check_skill_trigger_fixtures` is tested:
    because the validator no longer records the expected failure.
 
 3. Revert the comment to restore the validator.
+
+To verify the `name` vs. filename-stem mismatch path in `check_agents` is tested (#605):
+
+1. Open `scripts/validate.py` and comment out the `fail(...)` call inside `check_agents`
+   for the name-mismatch case:
+
+   ```python
+   # fail(
+   #     agent_md.relative_to(ROOT),
+   #     f"frontmatter name {fm['name']!r} does not match filename stem {agent_md.stem!r}",
+   # )
+   ```
+
+2. Run the targeted test:
+
+   ```bash
+   pytest tests/test_validate.py -k "TestCheckAgents and name_mismatch" -v
+   ```
+
+   `TestCheckAgents::test_name_mismatch_fails` will **fail** because the validator no
+   longer records the expected failure. (`-k "name_mismatch_fails"` alone also matches
+   `TestCheckSkills::test_frontmatter_name_mismatch_fails`, which is unaffected by this
+   change — the `TestCheckAgents and` prefix selects only the one test this proof is about.)
+
+3. Revert the comment to restore the validator.

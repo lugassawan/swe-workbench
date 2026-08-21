@@ -36,6 +36,14 @@ Two things were considered and rejected for the same reason:
 
 Prefer assertions the repo can always satisfy by editing its own files.
 
+**Sanctioned open-world alternative:** when a coupling genuinely needs a closed-form contract
+(e.g. #605's Pi frontmatter boundary), express it as a golden inventory ratchet — a
+module-level dict/set literal asserted equal to what's on disk — not a schema. It fails only
+when *this repo* writes a new value into a file, never on an upstream addition it hasn't
+adopted yet. `tests/test_agent_model_tiers.py` is the reference implementation;
+`tests/test_pi_contract.py`'s `FRONTMATTER_KEYS`/`TOOL_TOKENS`/`SKILL_IDS` follow the same
+shape.
+
 ## 3. Dev-loop caveat: `bin/` changes cannot be dogfooded in-repo
 
 `<plugin>/bin` is appended to the Bash tool's `PATH` for the **installed plugin cache**

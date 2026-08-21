@@ -7,7 +7,15 @@
   "pi": {
     "extensions": ["./extensions"]
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@types/node": "^22.20.1",
+    "typescript": "^7.0.2"
+  },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.84.2 <1"
   }
 }

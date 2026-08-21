@@ -21,3 +21,10 @@ updates:
     # processes untrusted input, and its version is pinned by us regardless.
     ignore:
       - dependency-name: "pip"
+
+  - package-ecosystem: npm
+    directory: "/pi"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "[chore]"

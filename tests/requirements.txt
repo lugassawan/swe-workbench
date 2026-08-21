@@ -1,1 +1,6 @@
 pytest==9.1.1
+# PyYAML: strict-parse gate for tests/test_pi_contract.py (#605). PyYAML implements YAML 1.1;
+# a future JS-side parser (js-yaml et al.) is YAML 1.2. The divergences (yes/no as booleans,
+# sexagesimal numbers, octal literals) don't touch this repo's frontmatter, which is five
+# all-string keys — so the version mismatch is not a drift risk here.
+PyYAML==6.0.3
