@@ -138,9 +138,9 @@ export default function (pi: ExtensionAPI): void {
   // registerGuards must register first: emitToolCall (runner.js:701) runs tool_call handlers in
   // registration order and short-circuits only on `block: true`, so a later-registered guard
   // would be a silent security regression. registerAskUser adds no tool_call handler today, but
-  // a future one (#609/#610) must be added after this line too — and emitToolCall has no
-  // try/catch around a handler's body (unlike emitUserBash), so any future tool_call handler
-  // must wrap its own body and return undefined on throw.
+  // a future one must be added after this line too — and emitToolCall has no try/catch around a
+  // handler's body (unlike emitUserBash), so any future tool_call handler must wrap its own body
+  // and return undefined on throw.
   registerGuards(pi, root);
   registerAskUser(pi);
 }

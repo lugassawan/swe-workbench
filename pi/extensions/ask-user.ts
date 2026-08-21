@@ -75,9 +75,9 @@ function optionLabel(option: AskUserOption): string {
 }
 
 export function registerAskUser(pi: ExtensionAPI): void {
-  // Read once per process at registration time — an immutable config read, not the #401
-  // module-state anti-pattern (nothing here mutates after this check). Gates Tier-2 tool
-  // registration only; Tier-1 vocabulary prose (tool-vocab.ts) stays on unconditionally.
+  // Read once per process at registration time — an immutable config read, not a module-state
+  // anti-pattern (nothing here mutates after this check). Gates Tier-2 tool registration only;
+  // Tier-1 vocabulary prose (tool-vocab.ts) stays on unconditionally.
   if (process.env.SWE_WORKBENCH_PI_TOOLS === "0") return;
 
   pi.registerTool({
