@@ -78,6 +78,15 @@ class TestRmRfBlocker:
         "echo hi\trm -rf /",
         "true\trm -rf /",
         "true;\nrm -Rf $HOME",
+        # backslash-continuation join must be parity-aware: an EVEN trailing-backslash
+        # count is literal escaped backslashes, not a continuation — treating it as one
+        # anyway joins two genuinely separate commands with zero characters between them
+        # and erases the word boundary, hiding the rm on the second line
+        "echo hi\\\\\nrm -rf ~",
+        # a trailing backslash INSIDE a comment has no continuation meaning in real bash —
+        # the comment ends at the physical newline regardless. Joining before stripping
+        # comments would let the comment absorb a real command on the next line
+        "echo a # note \\\nrm -rf ~",
         # comment-strip must run BEFORE the newline fold, else an early
         # comment on line 1 would swallow a destructive rm on line 2
         "git push --force  # note\nrm -rf /",
@@ -409,6 +418,103 @@ class TestHardResetBlocker:
 
 
 # ──────────────────────────────────────────────
+# nested non-interactive `pi` session — bash escape hatch around the
+# subagent dispatcher's --exclude-tools recursion guard
+# ──────────────────────────────────────────────
+
+class TestNestedPiSessionBlocker:
+    @pytest.mark.parametrize("cmd", [
+        # blocked: direct -p/--print invocations
+        'pi -p "review this"',
+        "pi --print \"x\"",
+        # blocked: tab / backslash-continuation segment vectors
+        "pi\t-p x",
+        "pi \\\n-p \"hello\"",
+        # blocked: backtick / $(...) substitution boundaries
+        "`pi -p x`",
+        "$(pi -p y)",
+        "echo $(pi -p x)",
+        # blocked: quoted / path-qualified / prefixed forms
+        '"pi" -p x',
+        'bash -c "pi -p x"',
+        "/usr/local/bin/pi -p x",
+        "npx pi -p hello",
+        "PI_OFFLINE=1 pi -p x",
+        "cd /tmp && pi -p x",
+        "pi --model foo/bar -p prompt",
+        # a separator character embedded inside a QUOTED pi argument must not be treated as
+        # a segment break — the vector that defeated the segmenter's first version
+        'pi -m ";" -p file.txt',
+        'pi --system-prompt "a;b" --print',
+        # a backslash-continuation split mid-token must still resolve to a single "pi" word,
+        # not two separate tokens
+        "p\\\ni -p x",
+        # parity boundary: an EVEN trailing-backslash count is not a continuation — it must
+        # not swallow a separate, genuinely recursive pi invocation on the next line
+        "echo hi\\\\\npi -p x",
+        # a backslash-ESCAPED separator between the pi token and the flag must not be
+        # treated as a real segment break — bash consumes it as a literal argument byte
+        'pi \\; -p "review this"',
+        "pi --model a\\&b -p hi",
+        # a trailing backslash INSIDE a comment has no continuation meaning in real bash —
+        # must not let the comment absorb a real recursive pi call on the next line
+        "echo a # note \\\npi -p x",
+        # a REAL (unescaped) newline INSIDE a quoted argument is a literal argument byte in
+        # bash, not a segment break — a multi-line -m message is the natural shape a
+        # dispatched subagent would actually write
+        'pi -m "a\nb" -p x',
+        'pi "a\nb" --print',
+        # case-insensitive command-name resolution: on a case-insensitive filesystem (macOS
+        # default), "Pi"/"PI" resolve to the same binary as "pi" — the command-NAME token
+        # must be matched case-insensitively even though flags stay case-sensitive
+        "Pi -p x",
+        "PI -p x",
+        "pI --print x",
+    ])
+    def test_blocked(self, guard_script, cmd):
+        result = run_guard(guard_script, cmd)
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        # allowed: non-recursive pi subcommands
+        "pi --version",
+        "pi list",
+        "pi auth check",
+        "pi update self",
+        "pi",
+        # allowed: git -p is unrelated to the pi CLI
+        "git log -p",
+        "git diff -p -- foo",
+        "git log -p && pi list",
+        "git log -p; pi --version",
+        # allowed: pi-shaped substrings that aren't the pi command token
+        "pip install foo",
+        "python -p",
+        "mkdir -p src/api",
+        "docker run -p 8080:80 img",
+        "ls /opt/pi",
+        "grep -rn pi docs/",
+        "cat notes.md # pi -p x",
+        # command-name case-insensitivity must not extend to flags — real CLI parsers are
+        # case-sensitive for flag spellings, so "--PRINT" is not "--print"
+        "Pi --PRINT x",
+        "Pi --version",
+        "PI list",
+    ])
+    def test_allowed(self, guard_script, cmd):
+        result = run_guard(guard_script, cmd)
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+
+# ──────────────────────────────────────────────
 # short-circuit: non-rm/non-git commands skip grep
 # ──────────────────────────────────────────────
 
@@ -430,7 +536,10 @@ class TestShortCircuit:
         run_guard(script, cmd, env=env)
         return trace.read_text() if trace.exists() else ""
 
-    @pytest.mark.parametrize("cmd", ["ls .", "cat foo.txt", "echo hello", "make build"])
+    @pytest.mark.parametrize("cmd", [
+        "ls .", "cat foo.txt", "echo hello", "make build",
+        "pip install foo", "mkdir -p src/api", "python -m pytest",
+    ])
     def test_no_grep_for_safe_commands(self, guard_script, cmd, tmp_path):
         trace = self._run_with_shims(guard_script, cmd, tmp_path)
         assert "jq" in trace, f"Expected jq to run for {cmd!r}"
@@ -441,6 +550,11 @@ class TestShortCircuit:
         trace = self._run_with_shims(guard_script, cmd, tmp_path)
         assert "jq" in trace, f"Expected jq to run for {cmd!r}"
         assert "grep" in trace, f"Expected grep to run for {cmd!r}"
+
+    def test_grep_runs_for_pi(self, guard_script, tmp_path):
+        trace = self._run_with_shims(guard_script, "pi -p x", tmp_path)
+        assert "jq" in trace, "Expected jq to run for 'pi -p x'"
+        assert "grep" in trace, "Expected grep to run for 'pi -p x'"
 
 
 # ──────────────────────────────────────────────

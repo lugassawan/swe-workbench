@@ -8,7 +8,8 @@
  * read on demand via its own `read` tool) — it never preloads skill body into context, which
  * this repo's agents/*.md convention requires (docs/skill-preload.md). See
  * docs/plugin-platform-decisions.md §9 for the full rationale, the model-tier-mapping safety
- * posture, and the accepted `bash`-escape-hatch recursion gap.
+ * posture, and how the `bash`-escape-hatch recursion gap is closed (in hooks/bash_guard.sh, not
+ * here).
  *
  * Everything that touches Pi itself (argv construction, pi.exec, temp-file lifecycle, tool
  * registration, model-registry queries) lives here. agent-spec.ts and model-tier.ts stay

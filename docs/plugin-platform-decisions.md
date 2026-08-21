@@ -221,16 +221,21 @@ a clear, actionable rejection back — steering it to stop and report the blocke
 response — instead of either silently guessing (no signal at all) or the tool being simply absent
 from its vocabulary. Costs nothing beyond one line in the `--tools` allowlist.
 
-**Accepted gap, not closed here — tracked as a follow-up.** `--exclude-tools task,subagent` blocks
-recursion only through the `task`/`subagent` tool-call surface. An agent granted `Bash` (20 of the
-22 `agents/*.md` definitions — the large majority of real dispatches, not an edge case) can still
-shell out to `pi -p ...` directly inside a dispatched child, which spawns a fresh child session
-with `task` re-registered and no `--exclude-tools` at all — no argv flag on that child prevents a
-further, unbounded level of recursion this way. Closing it belongs in `hooks/bash_guard.sh`,
-pattern-matching a `pi ... -p`/`--print` invocation, since that reuses an already-audited boundary
-instead of adding a new one. Not built as part of this dispatcher — tracked separately (see the
-open "Close bash-escape-hatch recursion gap in task dispatcher" issue) rather than silently left
-open.
+**Bash-escape-hatch recursion gap: closed via `hooks/bash_guard.sh`, not this dispatcher (#632).**
+`--exclude-tools task,subagent` blocks recursion only through the `task`/`subagent` tool-call
+surface. An agent granted `Bash` (20 of the 22 `agents/*.md` definitions — the large majority of
+real dispatches, not an edge case) could still shell out to `pi -p ...` directly inside a dispatched
+child, which spawns a fresh child session with `task` re-registered and no `--exclude-tools` at
+all — no argv flag on that child prevented a further, unbounded level of recursion this way.
+Closed in `hooks/bash_guard.sh`, which now blocks a segment-scoped `pi ... -p`/`--print` invocation
+(one command segment must carry both a `pi` command token and a `-p`/`--print` flag, so everyday
+commands like `git log -p && pi list` stay allowed) — reusing this already-audited boundary instead
+of adding a new one, since every dispatched agent's `bash` tool call already routes through it
+(`pi/extensions/guards.ts` registers it as a Pi `tool_call` guard unconditionally, and
+`hooks/hooks.json` wires the same script as `PreToolUse:Bash` in Claude Code). `pi.exec()` inside
+this dispatcher is unaffected — it is not a `bash` tool call, so the real dispatch path never
+touches this guard. Non-recursive `pi` subcommands (`pi --version`, `pi list`, `pi auth check`)
+stay allowed.
 
 **Model-tier mapping: an agent's `model: haiku|sonnet|opus` frontmatter picks a real model, by
 name, from a table hardcoded in `pi/extensions/model-tier.ts`.** An earlier iteration of this
