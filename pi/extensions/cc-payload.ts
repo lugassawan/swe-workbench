@@ -4,10 +4,8 @@
  * hooks/skill_autoload_hint.sh already read from stdin (#607).
  *
  * No I/O, no node:child_process, and no runtime import of @earendil-works/pi-coding-agent —
- * only `import type`, so this file is exercisable and type-checkable without ever needing to
- * resolve the SDK package, preserving both the golden-inventory import ratchet
- * (tests/test_pi_contract.py) and the `node --experimental-strip-types` test harness
- * (tests/test_pi_extension.py) that elides type-only imports without touching node_modules.
+ * only `import type` — so this file stays exercisable under `node --experimental-strip-types`
+ * without ever resolving the SDK package.
  */
 import type {
   BashToolCallEvent,
@@ -20,19 +18,15 @@ import type {
 export type FailPosture = "open" | "closed";
 
 export interface GuardSpec {
-  /** tool_name value the CC-shaped payload carries. null for bash_guard.sh, which reads only
-   *  .tool_input.command and never checks tool_name. */
+  /** null for bash_guard.sh, which reads only .tool_input.command and never checks tool_name. */
   readonly ccToolName: "Write" | "Edit" | null;
   readonly interpreter: string;
   readonly scriptRelPath: string;
   readonly failPosture: FailPosture;
 }
 
-/**
- * Pi tool name -> the CC hook it must reproduce verbatim. Data, not branching logic, so a
- * contract test can assert every field directly (interpreter, script path, fail posture, and
- * the exact "Write"/"Edit" casing secret_guard.py matches by strict string equality).
- */
+/** Pi tool name -> the CC hook it must reproduce verbatim. Data, not branching logic, so a
+ *  contract test can assert every field directly. */
 export const GUARD_DISPATCH: Record<"bash" | "write" | "edit", GuardSpec> = {
   bash: {
     ccToolName: null,
@@ -93,12 +87,16 @@ export function sessionStartSource(event: SessionStartEvent): WorkflowResumeSour
   return SESSION_START_SOURCE[event.reason];
 }
 
-/**
- * session_compact only ever fires because a compaction happened — Pi's own sub-reason
- * ("manual" | "threshold" | "overflow") is not one workflow_resume_hint.sh reads or branches
- * on; the hook's `.source` is always "compact" here, matching the SessionStart(compact) matcher
- * Claude Code wires this hook to.
- */
+/** session_compact only ever fires because a compaction happened — Pi's own sub-reason
+ *  ("manual"|"threshold"|"overflow") isn't one the hook reads, so `.source` is always "compact". */
 export function sessionCompactSource(_event: SessionCompactEvent): WorkflowResumeSource {
   return "compact";
+}
+
+export function resumeHintPayload(cwd: string, source: WorkflowResumeSource): Record<string, unknown> {
+  return { cwd, source };
+}
+
+export function skillHintPayload(filePath: string, sessionId: string): Record<string, unknown> {
+  return { tool_input: { file_path: filePath }, session_id: sessionId };
 }

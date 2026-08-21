@@ -3,11 +3,9 @@
  * workflow_resume_hint.sh/skill_autoload_hint.sh as Pi session/tool_result hint sources — all
  * via guard-runner.ts, never reimplemented (#607).
  *
- * Every hook is executed unchanged; this file only translates events to payloads (cc-payload.ts)
- * and dispatches exit codes to Pi's block/allow/notify vocabulary. Narrowing tool_call/tool_result
- * events by `toolName` uses a manual cast rather than the SDK's `isToolCallEventType` helper —
- * that keeps every @earendil-works/pi-coding-agent import in this file `import type`-only
- * (pinned by tests/test_pi_contract.py), matching pi/extensions/index.ts's existing convention.
+ * `toolName` narrowing uses a manual cast rather than the SDK's `isToolCallEventType` helper so
+ * every @earendil-works/pi-coding-agent import here stays `import type`-only (pinned by
+ * tests/test_pi_contract.py).
  */
 import { join } from "node:path";
 import type {
@@ -25,8 +23,10 @@ import {
   editPayloads,
   GUARD_DISPATCH,
   type GuardSpec,
+  resumeHintPayload,
   sessionCompactSource,
   sessionStartSource,
+  skillHintPayload,
   writePayload,
 } from "./cc-payload.ts";
 import { runGuard as defaultRunGuard, type RunGuard } from "./guard-runner.ts";
@@ -58,6 +58,21 @@ export interface RegisterGuardsOptions {
 export function registerGuards(pi: ExtensionAPI, root: string, options: RegisterGuardsOptions = {}): void {
   const run = options.runGuard ?? defaultRunGuard;
 
+  // Applies a guard's OWN declared posture to a run with no real verdict — spawn
+  // failure/timeout, or an exit code outside {0, 2} (this repo's hooks only ever emit those
+  // two; 127/126/null mean the guard never actually ran). bash_guard.sh fails closed;
+  // secret_guard.py fails open — but never silently, since an unnoticed self-disabled guard is
+  // worse than no guard.
+  function handleGuardFailure(spec: GuardSpec, ctx: ExtensionContext, detail: string): ToolCallEventResult | undefined {
+    if (spec.failPosture === "closed") {
+      return { block: true, reason: `${detail} — blocking (fail-closed)` };
+    }
+    if (ctx.hasUI) {
+      ctx.ui.notify(`${detail} — not blocking (fail-open)`, "warning");
+    }
+    return undefined;
+  }
+
   async function checkGuard(
     spec: GuardSpec,
     payload: Record<string, unknown>,
@@ -73,15 +88,9 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
         pluginRoot: root,
         signal: ctx.signal,
       });
-    } catch {
-      // Spawn failure or timeout — governed by the guard's OWN declared posture, never
-      // conflated with a normal non-zero exit below. bash_guard.sh fails closed (a broken
-      // security control must not silently become "allow everything"); secret_guard.py fails
-      // open (a broken hint must not become a self-inflicted DoS on every write/edit).
-      if (spec.failPosture === "closed") {
-        return { block: true, reason: `${spec.scriptRelPath} could not run — blocking (fail-closed)` };
-      }
-      return undefined;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return handleGuardFailure(spec, ctx, `${spec.scriptRelPath} could not run: ${message}`);
     }
 
     if (result.code === 2) {
@@ -90,13 +99,11 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     if (result.code === 0) {
       return undefined;
     }
-    if (ctx.hasUI) {
-      ctx.ui.notify(
-        `${spec.scriptRelPath} exited ${result.code} — not blocking: ${result.stderr.trim()}`,
-        "warning",
-      );
-    }
-    return undefined;
+    return handleGuardFailure(
+      spec,
+      ctx,
+      `${spec.scriptRelPath} exited ${result.code} unexpectedly: ${result.stderr.trim()}`,
+    );
   }
 
   pi.on("tool_call", async (event, ctx) => {
@@ -141,14 +148,19 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     pi.sendMessage({ customType, content, display: false }, { deliverAs });
   }
 
+  // Gated on project trust: workflow_resume_hint.sh injects repo-committed
+  // `.claude/cache/workflow-state/<branch>.json` content into model context, so an untrusted
+  // repo shouldn't reach the model this way.
   pi.on("session_start", async (event, ctx) => {
+    if (!ctx.isProjectTrusted()) return;
     const source = sessionStartSource(event as SessionStartEvent);
-    await emitHint(RESUME_HINT_SCRIPT, { cwd: ctx.cwd, source }, ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
+    await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
   });
 
   pi.on("session_compact", async (event, ctx) => {
+    if (!ctx.isProjectTrusted()) return;
     const source = sessionCompactSource(event as SessionCompactEvent);
-    await emitHint(RESUME_HINT_SCRIPT, { cwd: ctx.cwd, source }, ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
+    await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
   });
 
   pi.on("tool_result", async (event, ctx) => {
@@ -170,7 +182,7 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
 
     await emitHint(
       SKILL_HINT_SCRIPT,
-      { tool_input: { file_path: filePath }, session_id: sessionId },
+      skillHintPayload(filePath, sessionId),
       ctx,
       "swe-workbench:skill-autoload-hint",
       "steer",

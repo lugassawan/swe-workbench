@@ -114,22 +114,14 @@ block, per `bin/README.md`'s "Reference pattern".
 ## 6. `worktree_permission_grant.sh` has no Pi equivalent — documented N/A, not deferred
 
 `pi/extensions/guards.ts` (#607) reproduces `bash_guard.sh`, `secret_guard.py`,
-`workflow_resume_hint.sh`, and `skill_autoload_hint.sh` as Pi `tool_call`/`tool_result`/
-`session_start`/`session_compact` handlers, each exec'ing the unchanged Claude Code script.
-`worktree_permission_grant.sh` is the one hook in `hooks/hooks.json` left out — deliberately,
-and permanently, not as a placeholder for a later phase.
+`workflow_resume_hint.sh`, and `skill_autoload_hint.sh` on Pi, each exec'ing the unchanged
+Claude Code script. `worktree_permission_grant.sh` is left out deliberately and permanently.
 
-The hook's entire purpose is to emit `permissionDecision: "allow"` for a
-`PreToolUse:Read|Edit|Write` call so Claude Code's permission-prompt system skips asking about
-paths already inside the active worktree. Pi's own README states "No permission popups" as a
-design decision: there is no `allow`/`deny`/`ask` prompt surface on Pi for a `tool_call` handler
-to target in the first place. A Pi port of this hook would have nothing to grant permission
-*for* — the concept the hook manipulates does not exist on this harness, which is a stronger
-reason than #402's original "declined to port."
+The hook emits `permissionDecision: "allow"` so Claude Code's permission-prompt system skips
+asking about paths inside the active worktree. Pi's README states "No permission popups" — there
+is no prompt surface for a `tool_call` handler to target, so a port would have nothing to grant
+permission *for*.
 
-This is recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS`
-golden inventory (distinct from `"deferred"`, which `skill_usage_record.sh`/`skill_usage_flush.sh`
-carry — those two are unwired only because the Pi tools they need, `Skill` and subagents, don't
-exist yet and are tracked for #608/#610). `"n/a"` never graduates to `"wired"`; asserting the row
-exists (rather than letting the hook's absence go unmentioned) is what makes the omission a
-decision instead of an oversight.
+Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
+— distinct from `"deferred"` (`skill_usage_record.sh`/`skill_usage_flush.sh`, unwired only until
+`Skill`/subagents exist on Pi, tracked for #608/#610). `"n/a"` never graduates to `"wired"`.

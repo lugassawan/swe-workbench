@@ -304,6 +304,7 @@ const stubCtx = {
   hasUI: true,
   cwd: config.cwd,
   signal: undefined,
+  isProjectTrusted: () => true,
   ui: { notify: (msg, level) => notifications.push({ msg, level }) },
   sessionManager: { getSessionId: () => config.sessionId },
 };
@@ -553,6 +554,68 @@ def test_forced_spawn_failure_secret_guard_fails_open(tmp_path_factory):
     result = _run_node(_GUARDS_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-guards-spawn-fail-2")
     assert result["out"].get("writeBlocked") is None  # secret_guard.py's spawn failure must fail OPEN
     assert result["out"].get("editShortCircuit") is None
+
+
+_REAL_SPAWN_FAILURE_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardRunnerPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { runGuard } = await import(pathToFileURL(guardRunnerPath).href);
+
+try {
+  await runGuard({
+    interpreter: config.interpreter,
+    scriptPath: config.scriptPath,
+    payload: {},
+    cwd: config.cwd,
+    pluginRoot: config.cwd,
+    signal: undefined,
+  });
+  console.log(JSON.stringify({ threw: false }));
+} catch (err) {
+  console.log(JSON.stringify({ threw: true, message: String(err && err.message) }));
+}
+"""
+
+
+@requires_node
+def test_guard_runner_real_spawn_rejects_on_nonexistent_interpreter(tmp_path_factory):
+    """Exercises guard-runner.ts's ACTUAL child_process.spawn -> child.on("error") -> reject
+    wiring — not the injected-mock failure path the tests above use. This is the highest-stakes
+    branch in the diff (it's what governs bash_guard.sh's fail-closed posture) and must be
+    covered by more than a fake throwing function standing in for it."""
+    config = {
+        "interpreter": "/nonexistent/interpreter-xyz-607",
+        "scriptPath": str(ROOT / "hooks" / "bash_guard.sh"),
+        "cwd": str(ROOT),
+    }
+    result = _run_node(
+        _REAL_SPAWN_FAILURE_DRIVER,
+        [str(GUARD_RUNNER_TS), json.dumps(config)],
+        tmp_path_factory,
+        label="pi-guard-runner-real-spawn-fail",
+    )
+    assert result["threw"] is True
+
+
+@requires_node
+def test_missing_script_exits_127_and_bash_guard_still_fails_closed(tmp_path_factory):
+    """A missing/unreadable hooks/bash_guard.sh makes bash itself exit 127 — spawn() succeeds
+    (bash exists), so this is NOT a JS-level spawn failure. Regression coverage: an exit code
+    outside {0, 2} used to fall straight through to allow. Uses the REAL (uninjected) runGuard."""
+    synthetic_root = tmp_path_factory.mktemp("pi-missing-script-root")
+    # deliberately no hooks/ directory at all under synthetic_root
+    config = {"root": str(synthetic_root), "cwd": str(ROOT), "tsFilePath": str(ROOT / "pi" / "extensions" / "index.ts")}
+    result = _run_node(
+        _GUARDS_DRIVER,
+        [str(GUARDS_TS), json.dumps({**config, "guardRunnerPath": str(GUARD_RUNNER_TS), "sessionId": "sess-missing-script", "secretContent": _SECRET_CONTENT, "forceSpawnFailure": False})],
+        tmp_path_factory,
+        label="pi-guards-missing-script",
+    )
+    blocked = result["out"]["bashAllowed"]  # "ls -la" — a totally safe command
+    assert blocked is not None and blocked["block"] is True
+    assert "fail-closed" in blocked["reason"]
 
 
 @requires_node

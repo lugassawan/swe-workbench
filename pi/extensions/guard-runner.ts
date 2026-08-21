@@ -1,15 +1,11 @@
 /**
- * Spawns hooks/*.sh|py unchanged with a CC-shaped JSON payload piped to stdin, and returns
- * their exit code plus captured stdout/stderr. The ONLY file under pi/extensions/ that imports
- * node:child_process (pinned by tests/test_pi_contract.py) — every hook invocation from the Pi
- * adapter funnels through this one auditable process boundary, whether it's a blocking guard
- * (bash_guard.sh, secret_guard.py) or an advisory hint script that emits JSON on stdout
- * (workflow_resume_hint.sh, skill_autoload_hint.sh) (#607).
+ * Spawns hooks/*.sh|py unchanged with a CC-shaped JSON payload piped to stdin, returning exit
+ * code plus stdout/stderr. The ONLY file under pi/extensions/ that imports node:child_process
+ * (pinned by tests/test_pi_contract.py) — every hook invocation funnels through this one
+ * auditable process boundary (#607).
  *
- * No stdin API exists on pi.exec() (the ADR's original sketch) — every one of these hooks reads
- * its payload from stdin, so the transport here is node:child_process.spawn with a piped stdin,
- * argv array (never a shell-interpolated string, which would re-introduce exactly the
- * shell-injection class bash_guard.sh exists to block).
+ * pi.exec() has no stdin API, and every hook reads its payload from stdin — so the transport is
+ * spawn() with a piped stdin and an argv array, never a shell-interpolated string.
  */
 import { spawn } from "node:child_process";
 
@@ -23,9 +19,8 @@ export interface GuardRunOptions {
   readonly interpreter: string;
   readonly scriptPath: string;
   readonly payload: Record<string, unknown>;
-  /** Ambient cwd for the child — load-bearing for bash_guard.sh, which runs
-   *  `git rev-parse --abbrev-ref HEAD` against the process cwd, not any `.cwd` field the JSON
-   *  payload might carry. */
+  /** bash_guard.sh runs `git rev-parse --abbrev-ref HEAD` against this, not any `.cwd` in the
+   *  JSON payload. */
   readonly cwd: string;
   readonly pluginRoot: string;
   readonly signal: AbortSignal | undefined;

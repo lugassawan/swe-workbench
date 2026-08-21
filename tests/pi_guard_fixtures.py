@@ -26,10 +26,22 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("var=$(rm -rf /)", True),
     ("echo `rm -rf /`", True),
     ("echo $(rm -rf /)", True),
+    # same bypass CLASS, found by #607's post-fix security review: process substitution
+    # (`<(...)`/`>(...)`) has the identical "(" shape and was left open by a $(-only patch
+    ("<(rm -rf ~)", True),
+    (">(rm -rf /)", True),
+    ("echo <(rm -rf /Users/bob)", True),
+    # quote-wrapped / backslash-escaped rm — found by the same review: the fast-gate case
+    # used to run on pre-quote-strip text, so a quote immediately before "rm" defeated it
+    ('"rm" -rf ~', True),
+    ("'rm' -rf $HOME", True),
+    ('bash -c "rm -rf /"', True),
+    ("\\rm -rf ~", True),
     # allow-list, including legitimate backtick/$(...) subshells with no rm inside
     ("ls -la", False),
     ("rm -rf ./build", False),
     ("rm -rf node_modules", False),
     ("echo `ls`", False),
     ("x=$(date)", False),
+    ("echo $(pwd)", False),
 ]

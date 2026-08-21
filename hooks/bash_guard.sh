@@ -54,27 +54,22 @@ BEGIN { in_sq = 0; in_dq = 0 }
 # Normalise separators AND newlines/tabs/backticks to spaces so rm/git after
 # ; | & \n \t \` are still detected — the fast-gate `case` and the grep
 # detectors must share ONE separator alphabet (the bug in #501: gate saw
-# ';|&', grep saw [[:space:]]). Backticks are folded here (not just stripped
-# later) so a backtick-wrapped `rm` both trips the fast-gate's `*\ rm\ *` arm
-# and gets a real whitespace separator ahead of the anchor check below (#607:
-# a bare strip would leave "`rm" with no separator, defeating the anchor).
+# ';|&', grep saw [[:space:]]).
 # shellcheck disable=SC2016  # backtick in tr's SET1 is a literal char, not command substitution
 _norm=$(printf '%s' "$_nc" | tr ';|&\n\t`' '      ')
 
-case "$_norm" in
-  rm\ *|*\ rm\ *|*\(*rm\ *|*git*) ;;
-  *)                              exit 0 ;;
+# Fully normalise BEFORE the fast gate, not after: turning "(" and ")" into SPACES (not
+# deleting them) handles $(...), <(...), >(...), and bare (...) uniformly, since whatever
+# preceded "(" no longer occupies the whitespace-or-start position the anchor regex requires.
+# Deleting quotes/brackets/backslashes closes quote-wrapped/backslash-escaped rm ("rm", 'rm',
+# \rm). Gate and detector now both run on this SAME normalized text ($norm), closing the
+# #501-class gate/detector divergence for quote-wrapped rm.
+norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\")
+
+case "$norm" in
+  rm\ *|*\ rm\ *|*git*) ;;
+  *)                    exit 0 ;;
 esac
-
-# Neutralise `$(` before stripping parens: a bare paren-strip turns
-# "$(rm -rf /)" into "$rm -rf /" — the leftover `$` occupies the position
-# the anchor below requires to be whitespace-or-start, silently defeating it
-# (#607). Inserting a space ahead of `(` first means the paren-strip leaves a
-# real separator in front of `rm`.
-_norm=$(printf '%s' "$_norm" | sed 's/\$(/ (/g')
-
-# Strip quotes and bracket metacharacters that could mask paths.
-norm=$(printf '%s' "$_norm" | tr -d "'\"()[]{}")
 
 # shellcheck disable=SC2016  # $HOME in single quotes is intentional: matches literal text, not the shell variable
 # [rR] covers both -rf and -Rf (BSD/macOS rm accepts -R as synonym for -r).

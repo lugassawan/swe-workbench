@@ -203,8 +203,7 @@ def test_tool_tokens_and_skill_ids_are_inventoried():
 # ---------------------------------------------------------------------------
 # Guard/hint event-translation contract (issue #607). Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
-# docs/plugin-platform-decisions.md §2. These fail only when THIS repo's adapter drifts from
-# the invariants #607's design settled on, never on an upstream SDK addition.
+# docs/plugin-platform-decisions.md §2.
 # ---------------------------------------------------------------------------
 
 _EXTENSION_TS_FILES = sorted(EXTENSIONS_DIR.glob("*.ts"))
@@ -219,12 +218,9 @@ _PACKAGE_IMPORT_RE = re.compile(
 
 
 def test_every_sdk_import_under_extensions_is_type_only():
-    """A plain (non-type) import of a runtime SDK symbol would defeat the
-    `node --experimental-strip-types` test harness the moment it's exercised outside a
-    node_modules-having checkout, and — per this repo's own established convention in
-    pi/extensions/index.ts — is never actually needed: every narrowing this adapter does uses
-    a manual `toolName === "..."` check plus a type cast instead of the SDK's
-    `isToolCallEventType` runtime helper."""
+    """Every narrowing this adapter does uses a manual `toolName === "..."` check plus a type
+    cast instead of the SDK's `isToolCallEventType` runtime helper, so no import here needs to
+    be a value import."""
     violations = []
     for path in _EXTENSION_TS_FILES:
         text = path.read_text(encoding="utf-8")
@@ -296,12 +292,37 @@ requires_node = pytest.mark.skipif(
 _DUMP_DISPATCH_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);
-console.log(JSON.stringify(mod.GUARD_DISPATCH));
+
+function flatten(obj, prefix) {
+  const out = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) out.push(...flatten(v, path));
+    else out.push(path);
+  }
+  return out;
+}
+
+const bashEvent = { input: { command: "x" } };
+const writeEvent = { input: { content: "x", path: "y" } };
+const editEvent = { input: { path: "y", edits: [{ oldText: "a", newText: "b" }] } };
+
+const fields = {
+  "bash_guard.sh": flatten(mod.bashPayload(bashEvent)),
+  "secret_guard.py": [
+    ...flatten(mod.writePayload(writeEvent)),
+    ...flatten(mod.editPayloads(editEvent)[0]),
+  ],
+  "workflow_resume_hint.sh": flatten(mod.resumeHintPayload("cwd-value", "startup")),
+  "skill_autoload_hint.sh": flatten(mod.skillHintPayload("path-value", "session-value")),
+};
+
+console.log(JSON.stringify({ dispatch: mod.GUARD_DISPATCH, fields }));
 """
 
 
 @pytest.fixture(scope="module")
-def guard_dispatch():
+def cc_payload_dump():
     if _NODE_TOO_OLD:
         pytest.skip("requires Node >= 22")
     import tempfile
@@ -317,6 +338,11 @@ def guard_dispatch():
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def guard_dispatch(cc_payload_dump):
+    return cc_payload_dump["dispatch"]
 
 
 @requires_node
@@ -345,26 +371,19 @@ def test_guard_dispatch_fail_postures_are_pinned(guard_dispatch):
     assert guard_dispatch["edit"]["failPosture"] == "open"
 
 
-# Every JSON field path each hook actually reads (verified against hooks/*.sh|py source below),
-# and every field path the adapter's CC-shaped payloads carry for the Pi tool that reaches it.
-# A hook reading a field the adapter never sends would silently no-op that behavior on Pi.
+# Every JSON field path each hook actually reads, verified against hooks/*.sh|py source below.
 REFERENCED_FIELDS = {
     "bash_guard.sh": {"tool_input.command"},
     "secret_guard.py": {"tool_name", "tool_input.content", "tool_input.file_path", "tool_input.new_string"},
     "workflow_resume_hint.sh": {"cwd", "source"},
     "skill_autoload_hint.sh": {"tool_input.file_path", "session_id"},
 }
-ADAPTER_PAYLOAD_FIELDS = {
-    "bash_guard.sh": {"tool_input.command"},
-    "secret_guard.py": {"tool_name", "tool_input.content", "tool_input.file_path", "tool_input.new_string"},
-    "workflow_resume_hint.sh": {"cwd", "source"},
-    "skill_autoload_hint.sh": {"tool_input.file_path", "session_id"},
-}
 
 
-def test_referenced_fields_are_a_subset_of_adapter_payload_fields():
+@requires_node
+def test_referenced_fields_are_a_subset_of_adapter_payload_fields(cc_payload_dump):
     for hook, referenced in REFERENCED_FIELDS.items():
-        carried = ADAPTER_PAYLOAD_FIELDS[hook]
+        carried = set(cc_payload_dump["fields"][hook])
         assert referenced <= carried, (
             f"{hook} reads field(s) {referenced - carried} that the adapter's payload for it "
             "never carries — that field would silently always read empty on Pi"
