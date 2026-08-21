@@ -20,7 +20,7 @@ CODE_IMPL_AGENT = ROOT / "agents" / "code-impl.md"
 
 CAPS_TOKENS = ("comment discipline", "comment cap", "comment quality")
 
-# Agents wired to the comment-scan gate via @../shared/agents/comment-scan.md.
+# Agents wired to the comment-scan gate via the inlined comment-scan.md sentinel block.
 SCAN_WIRED_AGENTS = {
     "code-impl": CODE_IMPL_AGENT,
     "debugger": ROOT / "agents" / "debugger.md",

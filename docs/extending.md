@@ -18,7 +18,7 @@ Creating a new `agents/<name>.md` follows a fixed shape: every agent needs the c
 
 1. Create `agents/<name>.md` with standard frontmatter (`name`, `description`, `model`, `tools`, optionally `skills:` for principle skills that should preload unconditionally).
 2. Add the catalog-pointer sentinel block (`<!-- BEGIN shared/agents/skill-catalog-pointer.md -->` / `<!-- END ... -->`) inside a `## Principle consultation` section (or equivalent) — every agent needs this.
-3. Unless the agent never touches source code (in which case add its stem to `_NON_CODE_AGENTS` in `scripts/validate.py`), also add the language-required sentinel block right after it.
+3. Unless the agent never touches source code (in which case add its stem to `_NON_CODE_AGENTS` in `scripts/validate.py`), also add the language-required sentinel block right after it. That block's content names all `swe-workbench:language-*` skills by name, so once it's inlined the agent's `tools:` frontmatter must include `Skill` — `check_agents()` fails any agent that mentions a `swe-workbench:` skill by name without it.
 4. If the agent needs one of the four behavioral-contract fragments (`severity-output-contract.md`, `comment-scan.md`, `external-repo-reading.md`, `lsp.md` — check `shared/agents/` for the current list), add a `## Shared references` section at the end of the file holding one sentinel block per fragment used, and write prose pointers to it wherever the agent's body needs to invoke that fragment's rules.
 5. Run `python3 scripts/sync-shared-blocks.py --write` then `bash scripts/validate.sh`.
 

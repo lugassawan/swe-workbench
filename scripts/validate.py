@@ -28,10 +28,9 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # must carry a "matcher" field. Only true lifecycle events belong in this set.
 _LIFECYCLE_HOOK_EVENTS = frozenset({"SubagentStop", "PreCompact", "Stop", "Notification"})
 
-# Agents that reference @../shared/agents/principles.md but are NOT code-touching and
-# are therefore exempt from the languages.md co-requirement enforced by
-# check_catalog_completeness(). Add an agent's stem here when it genuinely
-# never reads or writes source code (e.g. it only files GitHub issues).
+# Agents exempt from the language-skill-required sentinel-block requirement
+# enforced by check_catalog_completeness(). Add an agent's stem here when it
+# genuinely never reads or writes source code (e.g. it only files GitHub issues).
 _NON_CODE_AGENTS = frozenset({
     "product-manager",
 })
@@ -1005,8 +1004,11 @@ def _iter_sentinel_pairs(text):
     `inner_text` is the text between the BEGIN and END markers, or None if
     no matching END marker follows the BEGIN (a malformed pair) — in that
     case inner_start/inner_stop mark (BEGIN-line-end, None).
-    Mirrors scripts/sync-shared-blocks.py's private helper of the same name;
-    kept as two small copies rather than one shared module for two call sites.
+    Mirrors scripts/sync-shared-blocks.py's private helper of the same name.
+    validate.py and sync-shared-blocks.py each keep their own copy since
+    there's no clean import path between a script and a hyphenated CLI
+    script; tests/helpers.py and tests/test_shared_relocation.py also
+    carry their own separate test-side copies of this parsing logic.
     """
     for m in _SENTINEL_BEGIN_RE.finditer(text):
         name = m.group(1)

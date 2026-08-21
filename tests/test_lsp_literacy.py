@@ -66,7 +66,7 @@ def _agent_frontmatter(name: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# Agent tools: grants LSP + references @../shared/agents/lsp.md
+# Agent tools: grants LSP + carries the lsp.md sentinel block
 # ──────────────────────────────────────────────────────────────
 
 

@@ -3,7 +3,8 @@
 Acceptance criteria:
 - agents/code-impl.md exists with required frontmatter (name, description).
 - tools: includes Edit and Skill.
-- At least one slice-catalog ref is present (@../shared/agents/principles.md etc.).
+- The skill-catalog-pointer sentinel block is present and content-identical to
+  shared/agents/skill-catalog-pointer.md.
 - **Reachable via:** references workflow-delegated-implementation.
 - Output-contract section forbids pushing/opening PRs.
 - Output-contract section declares a summary return — not diffs.

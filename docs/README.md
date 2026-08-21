@@ -13,3 +13,4 @@
 - [shell-echo-vs-printf.md](shell-echo-vs-printf.md) — `echo` vs `printf` on variables holding JSON: zsh expands backslash escapes and corrupts the data.
 - [skill-preload.md](skill-preload.md) — `skills:` frontmatter preloads unconditional principle skills at dispatch; the silent-no-op trap and manual verification runbook.
 - [plugin-platform-decisions.md](plugin-platform-decisions.md) — rulings from the bare-PATH-command migration and the `runtime/`/`bin/` collapse: why `CLAUDE_PLUGIN_DATA` wasn't adopted, why CI has no closed-world plugin-schema validator, and the `bin/` dev-loop caveat.
+- [shared-agent-blocks.md](shared-agent-blocks.md) — why `@path` includes don't expand in agent/skill/command bodies, and the sentinel-delimited inlined-block mechanism (with `sync-shared-blocks.py`) that replaced them.

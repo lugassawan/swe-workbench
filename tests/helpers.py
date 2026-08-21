@@ -1,15 +1,7 @@
 """Shared test helpers — importable from test modules."""
 
 import json
-import re
 from pathlib import Path
-
-# Mirrors scripts/validate.py's and scripts/sync-shared-blocks.py's own
-# _SENTINEL_BEGIN_RE / sentinel-pair parsing (issue #619's sentinel-delimited
-# shared-block mechanism) — kept here so every test module that needs to
-# assert on a live/fixture agent's inlined block content can reuse one
-# parser instead of reinventing the regex.
-_SENTINEL_BEGIN_RE = re.compile(r'<!-- BEGIN (shared/agents/[\w-]+\.md) -->\n')
 
 
 def sentinel_block(text: str, fragment_name: str) -> str | None:

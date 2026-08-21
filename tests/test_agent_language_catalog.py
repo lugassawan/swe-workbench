@@ -1,14 +1,13 @@
 """Structural tests — language-skill under-selection fix.
 
-T1: Every code-touching agent body contains @../shared/agents/languages.md.
+T1: Every code-touching agent body carries the language-skill-required
+    sentinel block, byte-identical to shared/agents/language-skill-required.md
+    (#619 — sentinel-delimited inlined content, not a dead @include string).
 T2: Every code-touching agent body directly contains a mandatory language-skill
     gate marker (`language-*`) in its consultation section, signalling required
     (not optional) language-skill loading.
 T4: Every principle-*/language-* SKILL.md description field contains
     'Auto-load when'.
-
-Tests T1 and T2 fail today (before implementation). T4 fails for
-principle-communication and principle-data-modeling.
 """
 
 import re
@@ -53,12 +52,13 @@ def _agent_text(name: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# T1 — @../shared/agents/languages.md present in every code-touching agent
+# T1 — language-skill-required sentinel block present (and content-identical
+# to its source) in every code-touching agent
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("agent_name", CODE_TOUCHING_AGENTS)
-def test_agent_has_languages_catalog_include(agent_name):
+def test_agent_has_language_skill_required_block(agent_name):
     """T1: code-touching agent body must carry the language-skill-required
     sentinel block, byte-identical to shared/agents/language-skill-required.md
     (#619 — a plain include string proved nothing about whether the include
@@ -89,7 +89,8 @@ def test_agent_has_mandatory_language_gate(agent_name):
     text = _agent_text(agent_name)
     # The mandatory gate paragraph uses `language-*` (with the asterisk) to
     # indicate the required invocation pattern. This is the specific signal
-    # added by the fix; it is NOT present in the @../shared/agents/languages.md include.
+    # added by the fix; it lives in the agent's own prose, separate from the
+    # inlined language-skill-required sentinel block checked by T1.
     assert "language-*" in text, (
         f"agents/{agent_name}.md is missing a mandatory language-skill gate "
         "('language-*'). Add a required consultation paragraph that instructs "

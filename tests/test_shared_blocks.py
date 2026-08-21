@@ -148,6 +148,40 @@ class TestSyncScriptWrite:
         # Re-checking must now report clean.
         assert sb._check(agent_files) == 0
 
+    def test_repairs_two_drifted_pairs_in_same_file(self, tmp_path, monkeypatch, capsys):
+        """Two independent DRIFTED sentinel pairs in one file must both be repaired.
+        Uses replacement content of different lengths than the stale content for
+        each pair, so a left-to-right (rather than rightmost-first) splice order
+        would invalidate the second pair's offsets and corrupt the file."""
+        monkeypatch.setattr(sb, "ROOT", tmp_path)
+        _write_fragment(tmp_path, "shared/agents/lsp.md", "Fresh LSP content, now longer than before.\n")
+        _write_fragment(tmp_path, "shared/agents/skill-catalog-pointer.md", "Fresh pointer.\n")
+        agent_path = _write_agent(
+            tmp_path,
+            "my-agent",
+            "Before text.\n\n"
+            + _block("shared/agents/lsp.md", "Stale LSP.\n")
+            + "\nMiddle text.\n\n"
+            + _block(
+                "shared/agents/skill-catalog-pointer.md",
+                "Stale pointer, much longer than the fresh replacement text.\n",
+            )
+            + "\nAfter text.\n",
+        )
+        agent_files = sorted((tmp_path / "agents").glob("*.md"))
+        assert sb._write(agent_files) == 0
+        new_text = agent_path.read_text(encoding="utf-8")
+        assert "Fresh LSP content, now longer than before.\n" in new_text
+        assert "Fresh pointer.\n" in new_text
+        assert "Stale LSP." not in new_text
+        assert "Stale pointer" not in new_text
+        assert "Before text.\n" in new_text
+        assert "Middle text.\n" in new_text
+        assert "After text.\n" in new_text
+        # Re-checking must now report clean — proves both pairs were actually
+        # repaired, not just one of the two.
+        assert sb._check(agent_files) == 0
+
     def test_source_missing_stays_an_error(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(sb, "ROOT", tmp_path)
         _write_agent(tmp_path, "my-agent", _block("shared/agents/ghost.md", "Ghost content.\n"))
@@ -456,8 +490,9 @@ class TestLiveTreeIntegration:
 
     def test_sync_script_write_is_idempotent_against_real_tree(self, tmp_path):
         """--write must report 'Nothing needed changing' against a copy of the real
-        tree, since Task 2's inlined copies are already byte-exact — proving that,
-        never mutates the live working tree; runs against a throwaway tmp copy."""
+        tree, since Task 2's inlined copies are already byte-exact. Runs against a
+        throwaway tmp copy so the test can assert genuine idempotency (no accidental
+        mutation) without ever touching the live working tree."""
         tmp_root = tmp_path / "repo_copy"
         shutil.copytree(_AGENTS_DIR, tmp_root / "agents")
         shutil.copytree(_SHARED_AGENTS_DIR, tmp_root / "shared" / "agents")
