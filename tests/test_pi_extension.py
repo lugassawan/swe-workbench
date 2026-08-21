@@ -509,9 +509,79 @@ def test_edit_guard_checks_one_payload_per_edits_element_and_short_circuits(guar
     )
 
 
+_SESSION_START_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const sent = [];
+const stubPi = {
+  on(event, handler) { handlers[event] = handler; },
+  sendMessage(message, options) { sent.push({ message, options }); },
+};
+registerGuards(stubPi, config.root, {});
+
+const stubCtx = {
+  hasUI: true,
+  cwd: config.cwd,
+  signal: undefined,
+  isProjectTrusted: () => true,
+  ui: { notify() {} },
+  sessionManager: { getSessionId: () => "sess-resume-hint" },
+};
+
+await handlers["session_start"]({ type: "session_start", reason: "startup" }, stubCtx);
+console.log(JSON.stringify({ sent }));
+"""
+
+
 @requires_node
-def test_session_start_emits_resume_hint_via_send_message(guards_result):
-    sent = guards_result["out"]["sentAfterSessionStart"]
+def test_session_start_emits_resume_hint_via_send_message(tmp_path_factory):
+    """Builds its own git repo + workflow-state checkpoint rather than running against ROOT —
+    workflow_resume_hint.sh only emits an advisory when a fresh checkpoint exists for the
+    current branch, OR when cwd is a linked git worktree with no checkpoint. Relying on ROOT's
+    ambient worktree-ness made this test pass locally (inside a rimba worktree) but fail in CI
+    (a plain checkout, is_linked_worktree=0, no advisory)."""
+    import subprocess
+
+    repo_dir = tmp_path_factory.mktemp("pi-resume-hint-repo") / "repo"
+    repo_dir.mkdir()
+    branch = "feature/pi-resume-hint-test"
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=repo_dir, env=_CLEAN_ENV, check=True)
+    (repo_dir / "README").write_text("init", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_dir, env=_CLEAN_ENV, check=True)
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.email=t@t.com", "-c", "user.name=T",
+         "commit", "-qm", "init"],
+        cwd=repo_dir, env=_CLEAN_ENV, check=True,
+    )
+
+    state_dir = repo_dir / ".claude" / "cache" / "workflow-state"
+    state_dir.mkdir(parents=True)
+    state = {
+        "version": 1,
+        "skill": "swe-workbench:workflow-development",
+        "mode": "B",
+        "phase": "3",
+        "phase_label": "Verify",
+        "completed_phases": ["1", "2"],
+        "context": {
+            "branch": branch, "worktree_root": None, "pr": None,
+            "base": None, "head_sha": None, "decision": None, "notes": "checkpoint",
+        },
+        "updated_at": "2026-08-21T00:00:00Z",
+    }
+    safe_branch = branch.replace("/", "-")
+    (state_dir / f"{safe_branch}.json").write_text(json.dumps(state), encoding="utf-8")
+
+    config = {"root": str(ROOT), "cwd": str(repo_dir)}
+    result = _run_node(
+        _SESSION_START_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-session-start-hint"
+    )
+    sent = result["sent"]
     assert len(sent) == 1
     assert sent[0]["message"]["customType"] == "swe-workbench:workflow-resume-hint"
     assert sent[0]["message"]["display"] is False
