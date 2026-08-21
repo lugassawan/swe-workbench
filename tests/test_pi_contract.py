@@ -34,8 +34,8 @@ PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
 # unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
 # against the installed package (`grep -n substituteArgs pi/node_modules/@earendil-works/
 # pi-coding-agent/dist/core/prompt-templates.js`) whenever `pi/package.json`'s
-# peerDependencies bump changes the pin — the alternation is what silently eats `$0` (issue
-# #606): the final `\$(...|\d+)` branch matches any `$<digits>`, including `$0`, and the
+# peerDependencies bump changes the pin — the alternation is what silently eats `$0`:
+# the final `\$(...|\d+)` branch matches any `$<digits>`, including `$0`, and the
 # matched substring is replaced with `args[-1] ?? ""` — i.e. the empty string, since no
 # template is ever invoked with a 0th positional arg. `$(0)` is the portable escape: it is
 # valid awk (an expression field reference `$(0)` means the same thing as `$0`) but does not
@@ -121,25 +121,31 @@ def _frontmatter_block(path):
 
 
 def _body_after_frontmatter(path):
-    """Return the body Pi's own parseFrontmatter would hand to substituteArgs.
+    """Return (body, body_start_line): the body Pi's own parseFrontmatter would hand to
+    substituteArgs, and the 1-indexed line in the original file where that body's first
+    character lives (post-normalization, pre-strip) — so callers can report accurate line
+    numbers for matches found inside `body`, which has leading/trailing whitespace stripped
+    and so cannot be offset from directly by counting its own newlines alone.
 
     Mirrors dist/utils/frontmatter.js's extractFrontmatter exactly (source at
-    @earendil-works/pi-coding-agent@0.84.2): find the closing '---' via indexOf from index 3
-    (no trailing-newline requirement — a body-level '---' horizontal rule on its own line
-    would still be found first if it came before the real close, but frontmatter always
-    closes before any body content), slice from 4 chars past that match, then strip(). Do
-    NOT reuse _frontmatter_block's delimiter logic here — it requires an exact '\\n---\\n'
-    match and never trims, which leaves an extra leading '\\n' in the body for every file
-    using the standard '---\\n\\n<body>' shape and throws off this function's line-number
-    reporting by one.
+    @earendil-works/pi-coding-agent@0.84.2): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
+    same as Pi's normalizeNewlines) before any offset math, find the closing '---' via
+    indexOf from index 3, slice from 4 chars past that match, then strip(). Do NOT reuse
+    _frontmatter_block's delimiter logic here — it requires an exact '\\n---\\n' match and
+    never trims, which leaves an extra leading '\\n' in the body for every file using the
+    standard '---\\n\\n<body>' shape.
     """
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---"):
-        return text
+        return text, 1
     end = text.find("\n---", 3)
     if end == -1:
-        return text
-    return text[end + 4 :].strip()
+        return text, 1
+    raw_body = text[end + 4 :]
+    stripped = raw_body.strip()
+    leading_offset = raw_body.index(stripped) if stripped else len(raw_body)
+    body_start_line = text.count("\n", 0, end + 4 + leading_offset) + 1
+    return stripped, body_start_line
 
 
 def test_all_frontmatter_is_strict_yaml_parseable():
@@ -236,7 +242,7 @@ def test_no_pi_argument_substitution_hazard_in_commands():
 
     This allowlists the single legal token rather than blocklisting known-bad ones: `$@`,
     `$1`, `${2:-x}`, `${@:1:2}` all trip this without being enumerated, and so does any
-    alternation Pi adds to the regex later. `$0` (issue #606) is the hazard this guard was
+    alternation Pi adds to the regex later. `$0` is the hazard this guard was
     written for — Pi replaces it with the empty string, silently corrupting any awk script
     that uses `$0` as its whole-record variable. The fix is `$(0)`, valid in every awk and
     invisible to this regex; see the comment above `PI_SUBSTITUTE_ARGS_RE`.
@@ -244,10 +250,10 @@ def test_no_pi_argument_substitution_hazard_in_commands():
     violations = []
     paths = sorted(COMMANDS_DIR.glob("*.md")) + sorted(SHARED_DIR.rglob("*.md"))
     for path in paths:
-        body = _body_after_frontmatter(path)
+        body, body_start_line = _body_after_frontmatter(path)
         for match in PI_SUBSTITUTE_ARGS_RE.finditer(body):
             if match.group(0) != "$ARGUMENTS":
-                line_no = body.count("\n", 0, match.start()) + 1
+                line_no = body_start_line + body.count("\n", 0, match.start())
                 violations.append(f"{path.relative_to(ROOT)}:{line_no}: {match.group(0)!r}")
     assert not violations, (
         "Pi's substituteArgs (dist/core/prompt-templates.js, "
@@ -263,11 +269,14 @@ def test_no_pi_argument_substitution_hazard_in_commands():
 def test_pi_extension_wires_commands_as_prompt_paths():
     """Smoke check only — flagged honestly as text-not-behaviour.
 
-    CI is pytest-only and pi/ has no test runner wired into it, so without this assertion the
-    `promptPaths: [join(root, "commands")]` wiring in pi/extensions/index.ts would have zero
-    coverage and nothing would object to its deletion. This does not exercise the extension at
-    runtime (that requires a live Pi install; see the plan's Verification section) — it only
-    proves the wiring line is still present in source.
+    tests/test_pi_extension.py's test_resources_discover_returns_exactly_the_skills_and_commands_dirs
+    already exercises this wiring behaviourally (it drives the real extension through Node and
+    asserts exact equality on the resources_discover result) — but that test is `@requires_node`
+    and skips locally on Node < 22, and CI's Node pin could itself be removed or narrowed by a
+    future change to .github/workflows/pr.yml without this repo's own tests objecting. This
+    assertion has no such dependency: it only proves the wiring line is present in source, so the
+    `promptPaths: [join(root, "commands")]` wiring in pi/extensions/index.ts keeps *some* coverage
+    — text, not behaviour — even in a pytest-only run where Node isn't available.
     """
     text = PI_EXTENSIONS_INDEX.read_text(encoding="utf-8")
     assert "promptPaths" in text

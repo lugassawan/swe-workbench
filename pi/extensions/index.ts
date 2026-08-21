@@ -8,7 +8,7 @@
  *      unchanged (see bin/README.md).
  *   2. All skills/<name>/SKILL.md directories reachable, via `resources_discover`.
  *   3. All commands/*.md reachable as Pi prompt templates, also via `resources_discover`'s
- *      `promptPaths` — deliberately NOT the `pi.prompts` manifest key (#606). The manifest
+ *      `promptPaths` — deliberately NOT the `pi.prompts` manifest key. The manifest
  *      route's loader (`collectFiles()`) recurses into subdirectories; `promptPaths`'s loader
  *      (`loadTemplatesFromDir()`, dist/core/prompt-templates.js) does not. Since template names
  *      are derived with a flat `basename()` at every depth, the manifest route would silently
@@ -17,7 +17,7 @@
  *      `resources_discover` route makes that class of bug structurally unrepresentable instead
  *      of requiring a regression test to catch it.
  *
- * Two Pi API facts recorded here so a later phase (#607) does not rediscover them the hard way:
+ * Two Pi API facts recorded here so a later phase does not rediscover them the hard way:
  *   - `ExtensionContext` (dist/core/extensions/types.d.ts) exposes no settings accessor. An
  *     extension that wants the user's `shellPath`/`shellCommandPrefix` would have to re-register
  *     the `bash` tool, which silently discards both — and a `commandPrefix` approach would
