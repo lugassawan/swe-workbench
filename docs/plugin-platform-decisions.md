@@ -125,3 +125,27 @@ permission *for*.
 Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
 — distinct from `"deferred"` (`skill_usage_record.sh`/`skill_usage_flush.sh`, unwired only until
 `Skill`/subagents exist on Pi). `"n/a"` never graduates to `"wired"`.
+
+## 7. `EnterWorktree`/`ExitWorktree` have no Pi equivalent — documented N/A, not deferred
+
+The tool-vocabulary preamble (`pi/extensions/tool-vocab.ts`) maps every Claude Code tool name
+this repo's prose uses to a Pi equivalent, except one: there is no Pi primitive that anchors a
+session to a different working directory the way `EnterWorktree`/`ExitWorktree` do.
+
+`dist/core/session-cwd.d.ts` only validates that a session's recorded cwd still exists on disk
+(`getMissingSessionCwdIssue`, `assertSessionCwdExists`) — it never changes it.
+`ExtensionContext.cwd` (`dist/core/extensions/types.d.ts`) is a plain read-only `string`; neither
+`ExtensionContext` nor `ExtensionCommandContext` exposes a `setCwd`. There is nothing for a
+worktree-anchoring tool to call.
+
+A `cd`-shelling tool named `EnterWorktree` would be worse than none: `skills/workflow-worktree-session/SKILL.md`
+teaches a specific cd-vs-`EnterWorktree` distinction — `cd` only anchors the Bash subprocess's
+cwd, while `EnterWorktree` re-anchors session-level caches (plans dir, memory dir) that `cd`
+cannot touch. A tool that shells out to `cd` under the `EnterWorktree` name would claim the
+stronger guarantee while delivering only the weaker one, silently breaking that diagnostic for
+every Pi session.
+
+No prose edit and no new tool. `tool-vocab.ts`'s worktree note tells the model the `cd
+<absolute-path>` fallback documented in `skills/workflow-worktree-session/SKILL.md` (lines 30 and
+87 as of this writing) is *the* mechanism on Pi, not a last resort. Recorded as an explicit
+`"n/a"`-shaped decision here — mirroring §6 — rather than left implicit.
