@@ -17,10 +17,13 @@ from pathlib import Path
 
 import pytest
 
+from helpers import sentinel_block
+
 ROOT = Path(__file__).parent.parent
 AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
 SHARED_DIR = ROOT / "shared"
+LSP_SRC = SHARED_DIR / "agents" / "lsp.md"
 
 # The four agents this feature grants LSP to.
 LSP_AGENTS = ["reviewer", "auditor", "debugger", "refactorer"]
@@ -63,7 +66,7 @@ def _agent_frontmatter(name: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# Agent tools: grants LSP + references @../shared/agents/lsp.md
+# Agent tools: grants LSP + carries the lsp.md sentinel block
 # ──────────────────────────────────────────────────────────────
 
 
@@ -84,10 +87,19 @@ def test_agent_grants_lsp_tool(agent_name):
 
 @pytest.mark.parametrize("agent_name", LSP_AGENTS)
 def test_agent_references_shared_lsp_doc(agent_name):
-    """Each LSP agent's body references @../shared/agents/lsp.md."""
+    """Each LSP agent's body carries the lsp.md sentinel block, byte-identical
+    to shared/agents/lsp.md (#619 — a plain include string never proved the
+    include actually resolved to real content)."""
     text = _agent_text(agent_name)
-    assert "@../shared/agents/lsp.md" in text, (
-        f"agents/{agent_name}.md is missing a reference to '@../shared/agents/lsp.md'."
+    block = sentinel_block(text, "lsp.md")
+    assert block is not None, (
+        f"agents/{agent_name}.md is missing the "
+        "'<!-- BEGIN shared/agents/lsp.md -->' sentinel block."
+    )
+    source = LSP_SRC.read_text(encoding="utf-8")
+    assert block == source, (
+        f"agents/{agent_name}.md's lsp.md block has drifted from shared/agents/lsp.md — "
+        "run python3 scripts/sync-shared-blocks.py --write"
     )
 
 
