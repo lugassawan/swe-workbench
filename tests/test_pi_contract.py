@@ -606,3 +606,169 @@ def test_ask_user_ts_has_no_typebox_import():
         "ask-user.ts must derive its parameter type from the SDK's own ToolDefinition re-export, "
         "never by importing typebox directly — see the file's own module docstring for why"
     )
+
+
+# ---------------------------------------------------------------------------
+# #610: task-tool dispatcher (agent-spec.ts + subagent.ts). Layering boundary, translation-table
+# exhaustiveness, and a live zero-LLM probe of the --exclude-tools recursion guard.
+# ---------------------------------------------------------------------------
+
+AGENT_SPEC_TS = EXTENSIONS_DIR / "agent-spec.ts"
+SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
+
+
+def test_agent_spec_ts_never_references_pi():
+    """agent-spec.ts is the domain layer for #610's task tool: it may read this plugin's own
+    agents/*.md and skills/*/SKILL.md files, but must never reference the Pi SDK or spawn a
+    process — that's subagent.ts's job. Stricter than the generic bare-specifier test above (which
+    permits `import type`): this scans the whole file text, so it would also catch a stray
+    reference in a comment or a future non-import usage, not just an import statement."""
+    text = AGENT_SPEC_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "agent-spec.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "agent-spec.ts must not spawn processes — that is subagent.ts's job"
+
+
+_TRANSLATION_TABLE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , toolVocabPath, agentSpecPath] = process.argv;
+const toolVocab = await import(pathToFileURL(toolVocabPath).href);
+const agentSpec = await import(pathToFileURL(agentSpecPath).href);
+console.log(JSON.stringify({
+  renameKeys: toolVocab.RENAME_TABLE.map(([cc]) => cc),
+  dropTokens: [...agentSpec.DROP_TOKENS],
+}));
+"""
+
+
+@requires_node
+def test_task_tool_translation_table_is_exhaustive_over_tool_tokens():
+    """Every token in TOOL_TOKENS (the live inventory of agents/*.md `tools:` values) must have
+    a mapping — via RENAME_TABLE (rename) or DROP_TOKENS (drop) — so a future 8th/9th tool token
+    can't silently fall through translateToolTokens un-mapped. The reverse direction is checked
+    too, but with one documented exception: RENAME_TABLE carries `LS` for tool-vocab.ts's general
+    CC->Pi prose even though no agent's `tools:` frontmatter currently grants LS — a real Pi
+    rename target, not drift, so it is the one allowed extra rather than asserted away."""
+    import tempfile
+
+    node = shutil.which("node")
+    assert node is not None
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "translation-table-dump.mjs"
+        driver.write_text(_TRANSLATION_TABLE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "tool-vocab.ts"), str(AGENT_SPEC_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    mapped = set(dumped["renameKeys"]) | set(dumped["dropTokens"])
+
+    missing = TOOL_TOKENS - mapped
+    assert not missing, f"TOOL_TOKENS not covered by RENAME_TABLE/DROP_TOKENS: {sorted(missing)}"
+
+    extra = mapped - TOOL_TOKENS
+    assert extra == {"LS"}, (
+        "RENAME_TABLE/DROP_TOKENS carries tokens beyond agents/*.md's live TOOL_TOKENS vocabulary "
+        f"other than the known LS entry (see this test's docstring): {sorted(extra)}"
+    )
+
+
+_TASK_SCHEMA_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+let registered;
+const stubPi = { registerTool(tool) { registered = tool; } };
+mod.registerSubagent(stubPi, process.argv[3]);
+console.log(JSON.stringify({
+  parameters: registered.parameters,
+  hasPromptSnippet: typeof registered.promptSnippet === "string" && registered.promptSnippet.length > 0,
+  name: registered.name,
+}));
+"""
+
+
+@requires_node
+def test_task_tool_parameters_is_a_plain_json_schema_object():
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "task-schema-dump.mjs"
+        driver.write_text(_TASK_SCHEMA_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(SUBAGENT_TS), tmp],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["name"] == "task"
+    parameters = dumped["parameters"]
+    assert isinstance(parameters, dict), "parameters must serialize as a plain JSON object"
+    assert parameters.get("type") == "object"
+    assert set(parameters.get("required", [])) == {"agent", "prompt"}
+    assert dumped["hasPromptSnippet"] is True, (
+        "custom tools are omitted from the system prompt's Available tools section without a "
+        "promptSnippet — task must always carry one"
+    )
+
+
+_EXCLUDE_TOOLS_PROBE_WRAPPER = """
+import {{ registerSubagent }} from {subagent_path};
+
+export default function (pi) {{
+  registerSubagent(pi, {root});
+  pi.on("session_start", (event, ctx) => {{
+    const active = pi.getActiveTools();
+    process.stderr.write("PROBE_ACTIVE_TOOLS:" + JSON.stringify(active) + "\\n");
+    ctx.shutdown();
+  }});
+}}
+"""
+
+
+def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_factory):
+    """Live-CLI, zero-model-call probe: registers the REAL task tool (subagent.ts's
+    registerSubagent) via the real `pi` binary, and confirms `--exclude-tools task,subagent`
+    keeps it out of pi.getActiveTools() — the exact mechanism subagent.ts's own argv relies on
+    for its recursion guard (verified against dist/core/agent-session.js's isAllowedTool: an
+    excluded tool is never added to the tool registry at construction time, so it cannot be
+    resurrected from inside the child session). A session_start handler calls ctx.shutdown()
+    before any prompt is sent — `pi -p` with zero message args never calls session.prompt(), so
+    this makes no network or model call.
+
+    No pi/node_modules and no global `pi` install exists in this repo's pytest CI job today
+    (only the separate typecheck-pi job runs `npm ci --prefix pi`, and no job installs `pi`
+    globally) — this test provides real coverage on any developer machine with `pi` installed,
+    and will start providing CI coverage automatically if a future CI change adds a `pi`
+    install step to the pytest job. Skipping here is a documented, intentional trade-off, not a
+    silent no-op."""
+    pi_bin = shutil.which("pi")
+    if pi_bin is None:
+        pytest.skip("requires a global `pi` CLI on PATH — not provisioned in this repo's pytest CI job")
+
+    wrapper = tmp_path_factory.mktemp("pi-exclude-tools-probe") / "probe.ts"
+    wrapper.write_text(
+        _EXCLUDE_TOOLS_PROBE_WRAPPER.format(
+            subagent_path=json.dumps(str(SUBAGENT_TS)),
+            root=json.dumps(str(ROOT)),
+        ),
+        encoding="utf-8",
+    )
+
+    def run_probe(exclude):
+        args = [pi_bin, "-p", "--extension", str(wrapper), "--no-session", "--mode", "text"]
+        if exclude:
+            args += ["--exclude-tools", "task,subagent"]
+        result = subprocess.run(args, capture_output=True, text=True, env=dict(_CLEAN_ENV), timeout=30)
+        assert result.returncode == 0, f"probe failed: {result.stderr}"
+        marker = "PROBE_ACTIVE_TOOLS:"
+        line = next((l for l in result.stderr.splitlines() if l.startswith(marker)), None)
+        assert line is not None, f"probe never reported active tools; stderr={result.stderr!r}"
+        return json.loads(line[len(marker):])
+
+    with_task = run_probe(exclude=False)
+    assert "task" in with_task, f"expected task active with no --exclude-tools, got {with_task}"
+
+    excluded = run_probe(exclude=True)
+    assert "task" not in excluded, f"--exclude-tools task,subagent failed to exclude task: {excluded}"

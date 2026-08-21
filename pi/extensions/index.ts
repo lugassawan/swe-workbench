@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask-user.ts";
 import { registerGuards } from "./guards.ts";
+import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
 
 class PluginRootNotFoundError extends Error {
@@ -103,16 +104,35 @@ export default function (pi: ExtensionAPI): void {
   // Only the bin-scripts section depends on bin/README.md; toolVocabSection is pure and never
   // fails, so it must NOT be dragged down by a missing/unreadable README — Tier-1 vocabulary
   // prose (including the anti-hallucination rule) stays on unconditionally, same posture as
-  // ask-user.ts's kill switch. composePreamble is still called exactly once, so the single
-  // PREAMBLE_MARKER dedup check keeps proving something real.
+  // ask-user.ts's kill switch. composePreamble (via getPreamble() below) is still computed
+  // exactly once per session (cached after first call), so the single PREAMBLE_MARKER dedup
+  // check keeps proving something real.
   const currentScripts = readCurrentScripts(binDir);
   const binSection =
     currentScripts === null
       ? []
       : [{ title: "swe-workbench bin/ scripts (bare commands, already on PATH)", body: currentScripts }];
-  const preamble = composePreamble([...binSection, toolVocabSection(root)]);
 
   let warnedMissingAnchor = false;
+  let cachedPreamble: string | undefined;
+
+  // Computed lazily (on first before_agent_start, not at factory-invocation time) and cached.
+  // `SWE_WORKBENCH_PI_TOOLS` alone is NOT enough to decide this: registerSubagent() still calls
+  // pi.registerTool() unconditionally whenever the kill switch is off, even in a dispatched
+  // child whose own argv carries `--exclude-tools task,subagent` — the child re-runs this same
+  // index.ts, the kill switch env var is still unset there, but the real tool registry has
+  // already filtered `task` out (see docs/plugin-platform-decisions.md §9's recursion-guard
+  // section). Only pi.getActiveTools(), read after all extensions have finished registering
+  // their tools, reflects that filtering — checking the env var here would tell every
+  // dispatched agent to use a `task` tool that was deliberately removed from its own
+  // function-calling surface.
+  function getPreamble(): string {
+    if (cachedPreamble === undefined) {
+      const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);
+      cachedPreamble = composePreamble([...binSection, toolVocabSection(root, taskToolRegistered)]);
+    }
+    return cachedPreamble;
+  }
 
   pi.on("resources_discover", () => ({
     skillPaths: [join(root, "skills")],
@@ -132,7 +152,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("before_agent_start", (event) => {
     if (event.systemPrompt.includes(PREAMBLE_MARKER)) return;
-    return { systemPrompt: event.systemPrompt + preamble };
+    return { systemPrompt: event.systemPrompt + getPreamble() };
   });
 
   // registerGuards must register first: emitToolCall (runner.js:701) runs tool_call handlers in
@@ -143,4 +163,5 @@ export default function (pi: ExtensionAPI): void {
   // and return undefined on throw.
   registerGuards(pi, root);
   registerAskUser(pi);
+  registerSubagent(pi, root);
 }
