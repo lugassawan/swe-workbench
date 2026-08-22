@@ -39,12 +39,22 @@ HOOKS_DIR = ROOT / "hooks"
 PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
 
 
+_PI_YAML_CORE_SCALAR_TAGS = frozenset(
+    {
+        "tag:yaml.org,2002:bool",
+        "tag:yaml.org,2002:int",
+        "tag:yaml.org,2002:float",
+        "tag:yaml.org,2002:timestamp",
+    }
+)
+
+
 class PiCompatibleYamlLoader(yaml.SafeLoader):
     yaml_implicit_resolvers = {
         initial: [
             resolver
             for resolver in resolvers
-            if resolver[0] != "tag:yaml.org,2002:bool"
+            if resolver[0] not in _PI_YAML_CORE_SCALAR_TAGS
         ]
         for initial, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
     }
@@ -54,6 +64,20 @@ PiCompatibleYamlLoader.add_implicit_resolver(
     "tag:yaml.org,2002:bool",
     re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
     list("tTfF"),
+)
+PiCompatibleYamlLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:int",
+    re.compile(r"^(?:0o[0-7]+|[-+]?[0-9]+|0x[0-9a-fA-F]+)$"),
+    list("+-0123456789"),
+)
+PiCompatibleYamlLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(
+        r"^(?:[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)|"
+        r"[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+|"
+        r"[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*))$"
+    ),
+    list("+-.0123456789"),
 )
 
 # Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
@@ -217,6 +241,20 @@ def test_strict_skill_descriptions_follow_pi_contract():
                 f"({description_length})"
             )
     assert not failures, "Pi skill description contract violations:\n" + "\n".join(failures)
+
+
+@pytest.mark.parametrize("description", ["0b101", "1_000", "2026-08-22", "12:34:56"])
+def test_pi_loader_keeps_pi_string_scalars_as_strings(description):
+    frontmatter = yaml.load(f"description: {description}\n", Loader=PiCompatibleYamlLoader)
+
+    assert frontmatter["description"] == description
+
+
+@pytest.mark.parametrize("description", ["0o755", ".nan"])
+def test_pi_loader_resolves_pi_non_string_scalars(description):
+    frontmatter = yaml.load(f"description: {description}\n", Loader=PiCompatibleYamlLoader)
+
+    assert not isinstance(frontmatter["description"], str)
 
 
 @pytest.mark.parametrize("description", ["yes", "no", "on", "off"])

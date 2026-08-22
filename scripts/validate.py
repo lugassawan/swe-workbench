@@ -86,7 +86,7 @@ _FM_ITEM_RE = re.compile(r'^-\s+(.*\S)\s*$')
 _YAML_DESCRIPTION_NON_STRING_RE = re.compile(
     r"^(?:~|null|true|false|[-+]?(?:[0-9]+|0[oO][0-7]+|0[xX][0-9A-Fa-f]+|"
     r"(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|"
-    r"[0-9]+[eE][-+]?[0-9]+|\.(?:inf|nan)))$",
+    r"[0-9]+[eE][-+]?[0-9]+|\.inf)|\.nan)$",
     re.IGNORECASE,
 )
 _YAML_DOUBLE_QUOTE_ESCAPES = {
@@ -242,6 +242,7 @@ def _parse_plain_description(value: str) -> str | None:
         not value
         or _YAML_DESCRIPTION_NON_STRING_RE.fullmatch(value)
         or value.startswith(("[", "{", "!", "&", "*", "|", ">"))
+        or value in {"-", "?"}
         or value.startswith(("- ", "? "))
         or re.search(r":(?:[ \t]|$)", value)
     ):
