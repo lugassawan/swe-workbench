@@ -13,7 +13,7 @@ assignees: ''
 - [ ] CI / workflow (`.github/workflows/`, actions)
 - [ ] Dependency / tooling bump
 - [ ] Repository config (templates, Dependabot, labels)
-- [ ] Release / packaging (`.claude-plugin/`, `scripts/`)
+- [ ] Release / packaging (`.claude-plugin/`, `package.json`, `scripts/`)
 
 ## Surface
 

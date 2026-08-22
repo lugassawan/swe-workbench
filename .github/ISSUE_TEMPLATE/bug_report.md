@@ -16,14 +16,22 @@ assignees: ''
 - [ ] Subagent
 - [ ] Slash command
 - [ ] Hook
+- [ ] Pi adapter — `pi/extensions/`
 - [ ] Documentation
 - [ ] Build / CI / release
 
 **Specific surface** (e.g., `swe-workbench:principle-tdd`, `/swe-workbench:review`, `swe-workbench:debugger`):
 
-## Claude Code version
+## Harness
 
-<!-- Output of: claude --version -->
+<!-- Check the harness you hit this on. -->
+- [ ] Claude Code
+- [ ] Pi Coding Agent
+
+## Harness version
+
+<!-- Claude Code: output of `claude --version`
+     Pi:          output of `pi --version` -->
 
 ## Plugin version
 
