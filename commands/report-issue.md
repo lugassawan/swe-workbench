@@ -89,7 +89,7 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 **Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
 - **Title:** `[feat] <theme>: <concise enhancement>` — the `[feat]` tag drives label discovery to `enhancement` via delegation step 5c.
 - **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets citing the memory entries feeding this theme, by `name` + `type`) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
-- **Footer:** the same `_Reported via ... plugin v<version>, Claude Code <cli-version>._` footer, version captured once and shared across all picked insights.
+- **Footer:** the same `_Reported via ... plugin v<version>, <harness> <cli-version>._` footer, version captured once and shared across all picked insights.
 
 ---
 
@@ -124,16 +124,26 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
 
    ```markdown
    ---
-   _Reported via `/swe-workbench:report-issue` — plugin v<version>, Claude Code <cli-version>._
+   _Reported via `/swe-workbench:report-issue` — plugin v<version>, <harness> <cli-version>._
    ```
 
-   **Version capture (run once, before drafting):**
-   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
-   - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
+   …where `<harness>` renders as `Claude Code` or `Pi`, per the detection below.
+
+   **Harness detection (run once, before version capture).** Do not probe `PATH` — both CLIs can be installed while only one is running. Use the session env var each harness injects into its own bash tool:
+   ```bash
+   [ -n "${PI_SESSION_ID:-}" ] && echo pi || echo claude-code
+   ```
+
+   **Version capture (run once, before drafting).** Run only the two bullets (CLI + plugin) for the harness detected above; skip the other harness's bullets.
+   - **Claude Code — CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
+   - **Claude Code — plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`.
+   - **Pi — CLI version:** `pi --version`.
+   - **Pi — plugin version:** read `~/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json` directly: `python3 -c "import json; print(json.load(open('$HOME/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json'))['version'])" 2>/dev/null`.
+   - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
 
    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
 
-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
+   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, Pi / Pi Coding Agent, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
    - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
      - Email addresses → `[internal-email]`
      - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`

@@ -951,7 +951,14 @@ def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_facto
     globally) — this test provides real coverage on any developer machine with `pi` installed,
     and will start providing CI coverage automatically if a future CI change adds a `pi`
     install step to the pytest job. Skipping here is a documented, intentional trade-off, not a
-    silent no-op."""
+    silent no-op.
+
+    `run_probe` passes `--no-extensions` alongside its own explicit `--extension`: on a
+    developer machine that has ever run `pi install git:github.com/lugassawan/swe-workbench`
+    (e.g. to dogfood the Pi port), that install persists as a globally-discovered extension
+    registering its own `task` tool, which collides with this probe's `task` tool registration.
+    `--no-extensions` disables discovery of that pre-existing global registration while still
+    honoring the explicit `--extension` path (per `pi --help`), keeping the probe hermetic."""
     pi_bin = shutil.which("pi")
     if pi_bin is None:
         pytest.skip("requires a global `pi` CLI on PATH — not provisioned in this repo's pytest CI job")
@@ -966,7 +973,10 @@ def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_facto
     )
 
     def run_probe(exclude):
-        args = [pi_bin, "-p", "--extension", str(wrapper), "--no-session", "--mode", "text"]
+        args = [
+            pi_bin, "-p", "--no-extensions", "--extension", str(wrapper),
+            "--no-session", "--mode", "text",
+        ]
         if exclude:
             args += ["--exclude-tools", "task,subagent"]
         result = subprocess.run(args, capture_output=True, text=True, env=dict(_CLEAN_ENV), timeout=30)

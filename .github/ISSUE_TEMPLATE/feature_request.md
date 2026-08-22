@@ -24,6 +24,7 @@ assignees: ''
 - [ ] Subagent
 - [ ] Slash command
 - [ ] Hook
+- [ ] Pi adapter — `pi/extensions/`
 - [ ] Documentation
 - [ ] Build / CI / release
 
