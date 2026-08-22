@@ -91,6 +91,21 @@ case "$MODE" in
       [[ "$1" == "$prefix" || "$1" == "$prefix"/* ]]
     }
 
+    # Any-depth matching is EXCLUDES-only: a bare DECLARED_PATHS entry like "package.json" must
+    # stay anchored (via the unmodified _under_prefix), or vendor/package.json would wrongly
+    # count as declared and a real undeclared hit would go unreported.
+    _matches_exclude() {
+      local candidate="$1" entry="$2"
+      if _under_prefix "$candidate" "$entry"; then
+        return 0
+      fi
+      local name="${entry%/}"
+      if [[ "$name" == */* ]]; then
+        return 1
+      fi
+      [[ "$candidate" == *"/${name}" || "$candidate" == *"/${name}/"* ]]
+    }
+
     UNDECLARED=()
     for hit in "${HITS[@]}"; do
       skip=0
@@ -102,7 +117,7 @@ case "$MODE" in
       done
       if [[ "$skip" -eq 0 ]]; then
         for ex in "${EXCLUDES[@]}"; do
-          if _under_prefix "$hit" "$ex"; then
+          if _matches_exclude "$hit" "$ex"; then
             skip=1
             break
           fi
