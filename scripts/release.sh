@@ -83,9 +83,6 @@ echo "Target: ${CURRENT} → ${NEXT} (${TAG}) on ${BRANCH}"
 
 # ── Branch (resume-aware) ────────────────────────────────────
 
-PLUGIN_JSON=".claude-plugin/plugin.json"
-MKT_JSON=".claude-plugin/marketplace.json"
-
 if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
   echo "Local branch ${BRANCH} exists — reusing."
   git checkout "$BRANCH"
@@ -113,19 +110,24 @@ if ! git merge-base --is-ancestor "$BRANCH" origin/main 2>/dev/null; then
 fi
 
 # ── Bump commit (only if files don't already match) ──────────
+# N-way over every file declared in .version-bump.json, not hardcoded to plugin/marketplace —
+# scripts/bump-version.sh is the single source of truth for which files carry the version.
 
-ON_BRANCH_PLUGIN_VERSION=$(jq -r .version "$PLUGIN_JSON")
-ON_BRANCH_MKT_VERSION=$(jq -r '.plugins[0].version' "$MKT_JSON")
+DECLARED_PATHS=()
+ALREADY_CORRECT=1
+while IFS=$'\t' read -r path field; do
+  DECLARED_PATHS+=("$path")
+  VER=$(jq -r "$field" "$path")
+  [[ "$VER" == "$NEXT" ]] || ALREADY_CORRECT=0
+done < <(jq -r '.files[] | [.path, .field] | @tsv' .version-bump.json)
+
 COMMITTED=0
 
-if [[ "$ON_BRANCH_PLUGIN_VERSION" == "$NEXT" && "$ON_BRANCH_MKT_VERSION" == "$NEXT" ]]; then
-  echo "plugin.json and marketplace.json already at ${NEXT} — skipping bump commit."
+if [[ "$ALREADY_CORRECT" -eq 1 ]]; then
+  echo "All declared manifests already at ${NEXT} — skipping bump commit."
 else
-  TMP_PLUGIN=$(mktemp)
-  TMP_MKT=$(mktemp)
-  jq --arg v "$NEXT" '.version = $v' "$PLUGIN_JSON" > "$TMP_PLUGIN" && mv "$TMP_PLUGIN" "$PLUGIN_JSON"
-  jq --arg v "$NEXT" '.plugins[0].version = $v' "$MKT_JSON" > "$TMP_MKT" && mv "$TMP_MKT" "$MKT_JSON"
-  git add "$PLUGIN_JSON" "$MKT_JSON"
+  ./scripts/bump-version.sh "$NEXT"
+  git add "${DECLARED_PATHS[@]}"
   git commit -m "[chore] Bump version to ${NEXT}"
   COMMITTED=1
 fi

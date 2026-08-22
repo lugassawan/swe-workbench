@@ -22,6 +22,13 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 **Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … run \`claude mcp add …\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/swe-workbench:test` (unit) and non-web-UI `/swe-workbench:debug` are completely unaffected by these servers.
 
+**On the Pi Coding Agent:** none of the three browser backends above have a Pi equivalent —
+`pi/extensions/` contains no browser/Chrome/Playwright reference of any kind. This is an
+unaddressed gap, not a verified N/A ruling like `docs/plugin-platform-decisions.md` §6/§7/§8: the
+browser-gated commands (`/swe-workbench:test --mode e2e[-live]`, browser diagnostics in
+`/swe-workbench:debug`) will hit the same `BLOCKED:` message on Pi as when no backend is
+connected on Claude Code, since Pi has nothing registered to satisfy the gate.
+
 ## Language servers (optional, graceful-fallback)
 
 <!-- verified: Claude Code 2.1.237, macOS native, 2026-08-21 -->
@@ -50,3 +57,10 @@ The following tools are built into Claude Code itself — no plugin install requ
 | `ExitWorktree(action: "keep"\|"remove")` | Returns the session to the main worktree. `"remove"` deletes the linked worktree dir; `"keep"` leaves it on disk. | same |
 
 These are the tools `swe-workbench:workflow-worktree-session` routes to. If a tool is not found, your Claude Code version may predate its introduction — run `claude --version` and update if needed.
+
+**On the Pi Coding Agent:** none of the three tools above have a Pi equivalent — confirmed by
+reading the installed SDK (`ExtensionContext.cwd` is a plain read-only `string`; neither
+`ExtensionContext` nor `ExtensionCommandContext` exposes a `setCwd`). This is a permanent,
+explicit N/A, not a gap: see `docs/plugin-platform-decisions.md` §7. `pi/extensions/tool-vocab.ts`
+tells a Pi session that `cd <absolute-path>` — the fallback `skills/workflow-worktree-session/SKILL.md`
+already documents for other harnesses — is *the* worktree-anchoring mechanism there, not a last resort.

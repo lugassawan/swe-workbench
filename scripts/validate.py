@@ -207,6 +207,40 @@ def check_marketplace_json(plugin_data):
             )
 
 
+def check_pi_package_json(plugin_data):
+    """Root package.json (the `pi install git:...` manifest) must stay version-locked
+    with plugin.json and keep the shape resources_discover's skill/command routing depends on:
+    `private: true` (blocks an accidental `npm publish`) and `pi.extensions` present with no
+    `pi.skills`/`pi.prompts`/`pi.themes` sibling key — the manifest route's loader recurses into
+    subdirectories where resources_discover's does not, so declaring any of those here would
+    silently republish a future nested skills/commands subdirectory as a top-level artifact (see
+    docs/plugin-platform-decisions.md)."""
+    path = ROOT / "package.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        fail(path.relative_to(ROOT), f"JSON parse error: {e}")
+        return
+    if plugin_data and data.get("version") != plugin_data.get("version"):
+        fail(
+            path.relative_to(ROOT),
+            f"version {data.get('version')!r} != plugin.json version {plugin_data.get('version')!r}",
+        )
+    if data.get("private") is not True:
+        fail(path.relative_to(ROOT), "'private' must be true")
+    pi_block = data.get("pi")
+    if not isinstance(pi_block, dict) or "extensions" not in pi_block:
+        fail(path.relative_to(ROOT), "'pi.extensions' must be present")
+    else:
+        for forbidden in ("skills", "prompts", "themes"):
+            if forbidden in pi_block:
+                fail(
+                    path.relative_to(ROOT),
+                    f"'pi.{forbidden}' must be absent — resources_discover must stay the sole "
+                    "source of truth for skill/command paths (see docs/plugin-platform-decisions.md)",
+                )
+
+
 # Closed-form shape for every hooks.json command string (issue #557): an
 # explicit interpreter plus a quoted, braced CLAUDE_PLUGIN_ROOT expansion.
 # This is a positive invariant this repo owns, not validation against the
@@ -2060,6 +2094,7 @@ def main():
 
     plugin_data = check_plugin_json()
     check_marketplace_json(plugin_data)
+    check_pi_package_json(plugin_data)
     check_hooks_json()
     check_skills(cache=cache)
     check_skill_cap_headroom(cache=cache)

@@ -61,16 +61,13 @@ jobs:
       - name: Verify tag matches manifest versions
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          PLUGIN_VER=$(jq -r .version .claude-plugin/plugin.json)
-          MKT_VER=$(jq -r '.plugins[0].version' .claude-plugin/marketplace.json)
-          if [ "$TAG" != "$PLUGIN_VER" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} (=$TAG) does not match plugin.json version ($PLUGIN_VER)"
-            exit 1
-          fi
-          if [ "$TAG" != "$MKT_VER" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} (=$TAG) does not match marketplace.json version ($MKT_VER)"
-            exit 1
-          fi
+          while IFS=$'\t' read -r path field; do
+            VER=$(jq -r "$field" "$path")
+            if [ "$TAG" != "$VER" ]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} (=$TAG) does not match ${path} (${field}) version ($VER)"
+              exit 1
+            fi
+          done < <(jq -r '.files[] | [.path, .field] | @tsv' .version-bump.json)
 
   publish-release:
     needs: validate-schemas

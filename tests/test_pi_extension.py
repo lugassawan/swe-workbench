@@ -1,7 +1,7 @@
 """Contract and behavioural tests for the Pi Coding Agent adapter.
 
 Two layers:
-  - Always-on (static/contract): pi/package.json shape, bin/README.md anchor shape, no
+  - Always-on (static/contract): root package.json shape, bin/README.md anchor shape, no
     hardcoded root hop in the extension source. No Node required.
   - Behavioural (skipif no Node >= 22): drives the real pi/extensions/index.ts through
     `node --experimental-strip-types` with a stub ExtensionAPI, since every
@@ -21,7 +21,7 @@ import pytest
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
-PACKAGE_JSON = ROOT / "pi" / "package.json"
+PACKAGE_JSON = ROOT / "package.json"
 INDEX_TS = ROOT / "pi" / "extensions" / "index.ts"
 GUARDS_TS = ROOT / "pi" / "extensions" / "guards.ts"
 GUARD_RUNNER_TS = ROOT / "pi" / "extensions" / "guard-runner.ts"
@@ -143,12 +143,15 @@ def test_package_json_is_valid_json_with_required_keys():
 
 
 def test_package_json_values():
+    """No hardcoded version literal here — check_pi_package_json() in scripts/validate.py
+    asserts version parity against plugin.json on every PR, so a per-release literal would
+    break on every single version bump before the next release even lands. This test only
+    asserts fields that don't change per release."""
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     assert data["name"] == "swe-workbench-pi"
-    assert data["version"] == "0.0.0"
     assert data["private"] is True
     assert data["type"] == "module"
-    assert data["pi"] == {"extensions": ["./extensions"]}
+    assert data["pi"] == {"extensions": ["./pi/extensions/index.ts"]}
 
     dev_pin = data["devDependencies"]["@earendil-works/pi-coding-agent"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", dev_pin), (
@@ -171,14 +174,25 @@ def test_package_json_values():
         "ceiling would let an untested major version of the peer satisfy this range silently."
     )
 
+    assert data["peerDependenciesMeta"]["@earendil-works/pi-coding-agent"]["optional"] is True, (
+        "without peerDependenciesMeta.optional, npm >=7 auto-installs the full Pi SDK into "
+        "every consumer's tree for an import that is type-only and elided at runtime"
+    )
 
-def test_package_json_has_no_pi_skills_key():
+
+def test_package_json_has_no_forbidden_pi_keys():
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     assert "skills" not in data["pi"], (
         "pi.skills must be absent — the extension's resources_discover handler must stay the "
         "sole, single source of truth for skill paths, not one of two independently maintained "
         "declarations that could drift apart"
     )
+    assert "prompts" not in data["pi"], (
+        "pi.prompts must be absent — the manifest route's loader recurses into subdirectories "
+        "where resources_discover's promptPaths loader does not; declaring it here would "
+        "silently republish a future commands/<subdir>/*.md as a top-level command"
+    )
+    assert "themes" not in data["pi"], "pi.themes is not used by this plugin"
 
 
 def test_package_json_has_no_dependencies_key():
@@ -1634,7 +1648,7 @@ console.log(JSON.stringify(out));
 
 def _model_tier_result(tmp_path_factory):
     # Verbatim id list + order from the installed SDK's bundled Anthropic catalog
-    # (pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
+    # (node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
     # providers/data/anthropic.json) — NOT a clean one-id-per-tier fixture. This is deliberate:
     # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the
     # bare flagship id), in catalog order, not chronological or shortest-first order. A resolver

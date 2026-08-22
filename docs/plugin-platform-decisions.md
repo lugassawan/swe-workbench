@@ -1,9 +1,11 @@
 # Plugin platform decisions
 
 Rulings made while migrating skills, commands, and agents to invoke plugin scripts as bare PATH
-commands instead of resolving them through `$CLAUDE_PLUGIN_ROOT`, and while collapsing the
-resulting `runtime/`/`bin/` wrapper split back into a single `bin/` directory and retiring the
-`CLAUDE_PLUGIN_ROOT` injector hook. Recorded here so they don't have to be re-litigated.
+commands instead of resolving them through `$CLAUDE_PLUGIN_ROOT`, while collapsing the resulting
+`runtime/`/`bin/` wrapper split back into a single `bin/` directory and retiring the
+`CLAUDE_PLUGIN_ROOT` injector hook, and while porting the plugin to run on the Pi Coding Agent
+(§6 onward) — a runtime adapter (`pi/extensions/`) that loads this plugin's existing `skills/`,
+`commands/`, and `agents/` trees unchanged. Recorded here so they don't have to be re-litigated.
 
 ## 1. `${CLAUDE_PLUGIN_DATA}` — considered, not adopted
 
@@ -279,3 +281,60 @@ reader could actually resolve. `composeSystemPrompt` now prepends each preloaded
 on-disk directory to its section header — not inlining `examples/` content (that stays on-demand,
 fetched by the dispatched agent's own `read` tool if it decides the pointer is relevant), just
 making the pointer resolvable instead of dead.
+
+## 10. Framing decisions and rejected alternatives for the whole Pi port
+
+§6–§9 above record decisions made as each phase of the Pi port needed them. This section records
+the two decisions that framed the whole effort before any phase started, and the alternatives
+considered and rejected before choosing them.
+
+**Framing decision 1: event-translation over reimplementation.** `pi/extensions/guards.ts`
+translates Pi's `tool_call`/`tool_result`/`session_start`/`session_compact` events into the exact
+payload shape `hooks/bash_guard.sh`, `hooks/secret_guard.py`, `hooks/workflow_resume_hint.sh`, and
+`hooks/skill_autoload_hint.sh` already expect, then execs the unchanged script (`guard-runner.ts`).
+Every guard and hint stays a single source of truth on disk; Pi gets a thin translation layer, not
+a second implementation of the same logic that could drift from Claude Code's.
+
+**Framing decision 2: runtime parsing over generation.** The adapter reads `agents/*.md`,
+`skills/*/SKILL.md`, and `commands/*.md` frontmatter and bodies at Pi session start
+(`resources_discover`, `composeSystemPrompt`) rather than generating a separate Pi-native artifact
+tree from those sources at build/release time. There is nothing to keep in sync, nothing to
+regenerate, and no generator to maintain — the tradeoff is `tests/test_pi_contract.py`'s
+golden-inventory ratchet standing in for the type safety a generation step would otherwise buy
+(see §2).
+
+**Rejected alternatives:**
+
+- **Generate + drift-check** — emit a Pi-native copy of `agents/`/`skills/`/`commands/` at release
+  time, with a CI check asserting the generated tree matches source. Rejected: doubles the
+  maintenance surface (source + generated artifact) for a benefit runtime parsing already gets for
+  free once a contract test exists.
+- **Neutralize prose** — rewrite every skill/agent/command body to strip Claude-Code-specific tool
+  names and replace them with harness-neutral placeholders. Rejected: would require touching every
+  one of the 60 skills and 22 agents for a single consumer, and would still need a translation
+  layer at read time for the tool names that remain — which `tool-vocab.ts`'s preamble already
+  provides without any body-text rewrite.
+- **Fork the repo** — maintain a separate repo or branch with its own copies of
+  `skills/`/`agents/`/`commands/` for Pi. Rejected: guarantees drift from day one; every future
+  skill or agent change would need a second, manual port.
+
+**Where this has drifted from what shipped:**
+
+- **Model-tier settings design reversed.** An earlier iteration planned a project-committed
+  `.pi/settings.json` `modelTiers` block; §9 above records why that was reversed in favor of a
+  hardcoded `MODEL_TIER_TABLE` in reviewed source (`pi/extensions/model-tier.ts`) — a real
+  exfiltration primitive avoided, not the design that originally shipped.
+- **Tier-2 tool set landed as 2 of 5 originally promised.** Only `ask_user_question`
+  (`ask-user.ts`) and `task` (`subagent.ts`) are registered Pi tools today. A Pi-registered `LSP`
+  tool was one of the tools scoped and then dropped — §8 above records why (the capability moved
+  to `bin/swe-workbench-lsp`, reachable via `Bash` on any harness, before this phase started). The
+  Tier-1 vocabulary prose (`tool-vocab.ts`) stays unconditional regardless of which Tier-2 tools
+  actually register.
+
+**`HOOK_PI_STATUS`'s `"deferred"` rationale is now half-stale.** `tests/test_pi_contract.py`'s
+inventory marks `skill_usage_record.sh`/`skill_usage_flush.sh` `"deferred"`, with the comment
+"not wired yet because the Pi capability it needs (subagents) doesn't exist yet." The `task`
+subagent-dispatch tool has since shipped (`pi/extensions/subagent.ts`) — the trigger condition is
+now half-true, not fully unmet. Whether to wire these two hooks up now that subagents exist is a
+real question, not resolved here — filed as a post-merge follow-up rather than decided or
+implemented in this docs pass.

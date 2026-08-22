@@ -134,3 +134,8 @@ product-manager, tech-writer, test-writer.
 **Enforcement:** `tests/test_agent_model_tiers.py` pins every agent's `model:` to the table
 above and asserts every `opus` agent is named in this section — the tier cannot drift
 silently.
+
+**On the Pi Coding Agent:** this audit's tier assignments (the `model:` frontmatter values
+themselves) are harness-agnostic — they apply to Pi the same as Claude Code. How a tier resolves
+to an actual model differs, though: see `cost-tiers.md`'s "On the Pi Coding Agent" section for
+`pi/extensions/model-tier.ts`'s name-based (not cost-based) resolution and its 3-provider scope.

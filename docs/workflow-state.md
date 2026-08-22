@@ -99,6 +99,20 @@ falsely claims "this session was compacted".
 
 The hook always exits 0 — it never blocks session startup.
 
+### On the Pi Coding Agent
+
+`pi/extensions/guards.ts` registers the same unchanged `hooks/workflow_resume_hint.sh` script on
+Pi's `session_start` and `session_compact` events. The three-way `startup`/`resume`/`compact`
+distinction survives as an event-to-source mapping rather than three separate hook registrations:
+`cc-payload.ts`'s `sessionStartSource()` maps Pi's `session_start` event `.reason` field
+(`startup`/`new` → `"startup"`, `resume`/`reload`/`fork` → `"resume"`) onto the same `.source`
+vocabulary the script already reads, and `sessionCompactSource()` always maps `session_compact`
+to `"compact"`. The script itself is invoked unmodified via `guard-runner.ts`'s `exec`; a non-empty
+result is then delivered via `pi.sendMessage({ customType: "swe-workbench:workflow-resume-hint",
+... }, { deliverAs: "nextTurn" })` rather than Claude Code's `hookSpecificOutput.additionalContext`
+— same resume preamble content and source-aware wording, different delivery mechanism, since Pi
+has no additional-context hook return shape.
+
 ## What survives compaction and what doesn't
 
 | Information | Survives? | Why |

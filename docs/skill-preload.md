@@ -54,3 +54,23 @@ The rule is mechanical: `SWB-PRELOAD-` followed by the skill id, uppercased.
 - **`language-*` skills, in general** — which language applies is unknown until the diff is read; there's nothing to preload before that. One exception: `swe-workbench:accessibility-auditor` preloads `swe-workbench:language-typescript`, since that agent is scoped specifically to frontend/TSX review — unlike general-purpose agents, the applicable language isn't actually in doubt for it.
 - **Individual catalog entries a given agent leaves conditional** — e.g. `swe-workbench:senior-engineer`'s `swe-workbench:principle-cost-awareness`, `swe-workbench:principle-release-engineering`, and `swe-workbench:principle-postmortem`, and `swe-workbench:reviewer`'s `swe-workbench:principle-i18n` (see above).
 - **Live-dispatch CI verification** — no agent-dispatch harness exists in this repo, and building one would cost more than the frontmatter changes it would guard. The manual runbook above is the substitute.
+
+## On the Pi Coding Agent
+
+There is no `Skill` tool on Pi (`pi/extensions/agent-spec.ts`'s `DROP_TOKENS` explicitly drops
+the token `"Skill"` from any tool list it composes), so nothing above about frontmatter-triggered
+preloading via a `Skill` tool call applies there. Skills reach a Pi session through three
+different, unrelated mechanisms instead:
+
+1. **`resources_discover`'s `skillPaths`** (`pi/extensions/index.ts`) — makes every
+   `skills/<name>/SKILL.md` directory reachable to Pi as a skill resource, the same discovery
+   Claude Code does natively. This is directory-level discoverability, not per-agent preloading.
+2. **The `/skill:<id>` vocabulary legend** — `pi/extensions/tool-vocab.ts`'s `toolVocabSection`
+   injects an always-on preamble section (Tier 1, unconditional) telling the model it can invoke
+   `swe-workbench:<id>` skills as `/skill:<id>`, with the full on-disk skill id list.
+3. **`composeSystemPrompt` inlining** (`pi/extensions/agent-spec.ts`) — when `pi/extensions/subagent.ts`'s
+   `task` tool dispatches one of this repo's `agents/*.md` definitions, every skill named in that
+   agent's `skills:` frontmatter is composed verbatim into the dispatched child's system prompt,
+   the same preload contract this file describes for Claude Code — including the
+   `<!-- preload-canary: SWB-PRELOAD-<ID> -->` marker, which is preserved unmodified so the manual
+   verification runbook above works identically on both harnesses.

@@ -172,6 +172,72 @@ class TestCheckMarketplaceJson:
 
 
 # ──────────────────────────────────────────────
+# check_pi_package_json
+# ──────────────────────────────────────────────
+
+class TestCheckPiPackageJson:
+    def _plugin_data(self):
+        return {"name": "test-plugin", "version": "1.0.0", "description": "d"}
+
+    def _valid_package_json(self):
+        return {
+            "name": "swe-workbench-pi",
+            "version": "1.0.0",
+            "private": True,
+            "type": "module",
+            "pi": {"extensions": ["./pi/extensions/index.ts"]},
+        }
+
+    def _write(self, root, data):
+        (root / "package.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_matching_passes(self, reset_validate):
+        root = reset_validate
+        self._write(root, self._valid_package_json())
+        validate.check_pi_package_json(self._plugin_data())
+        assert len(validate.FAILURES) == 0
+
+    def test_version_mismatch(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["version"] = "9.9.9"
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("version" in f for f in validate.FAILURES)
+
+    def test_not_private_fails(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["private"] = False
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("private" in f for f in validate.FAILURES)
+
+    def test_missing_pi_extensions_fails(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["pi"] = {}
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("pi.extensions" in f for f in validate.FAILURES)
+
+    @pytest.mark.parametrize("forbidden_key", ["skills", "prompts", "themes"])
+    def test_forbidden_pi_key_fails(self, reset_validate, forbidden_key):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["pi"][forbidden_key] = ["whatever"]
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any(f"pi.{forbidden_key}" in f for f in validate.FAILURES)
+
+    def test_json_parse_error(self, reset_validate):
+        root = reset_validate
+        (root / "package.json").write_text("{not valid json", encoding="utf-8")
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("JSON parse error" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
 # check_hooks_json
 # ──────────────────────────────────────────────
 

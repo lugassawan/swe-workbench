@@ -13,5 +13,5 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["extensions/**/*.ts"]
+  "include": ["pi/extensions/**/*.ts"]
 }

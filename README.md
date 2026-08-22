@@ -24,6 +24,14 @@ cd swe-workbench
 /plugin install swe-workbench
 ```
 
+For the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) (a separate harness from Claude Code — not a `/plugin` install):
+
+```
+pi install git:github.com/lugassawan/swe-workbench
+```
+
+This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/plugin-platform-decisions.md` for the Pi-specific rulings.
+
 ## What's inside
 
 - **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:hotfix`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor`, `/swe-workbench:converge` — see [docs/catalog.md](docs/catalog.md).
