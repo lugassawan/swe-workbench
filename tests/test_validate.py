@@ -532,10 +532,167 @@ class TestCheckBinWrappers:
 # ──────────────────────────────────────────────
 
 class TestCheckSkills:
-    def _valid_skill(self, name="my-skill", extra_lines=0):
-        body = f"---\nname: {name}\ndescription: A skill\n---\n"
+    def _valid_skill(
+        self,
+        name: str = "my-skill",
+        extra_lines: int = 0,
+        description: str = "A skill",
+    ) -> str:
+        body = f"---\nname: {name}\ndescription: {description}\n---\n"
         body += "x\n" * extra_lines
         return body
+
+    @pytest.mark.parametrize("description", ["x" * 1024, "😀" * 512])
+    def test_description_at_pi_cap_passes(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    def test_double_quoted_description_at_pi_cap_passes(self, reset_validate) -> None:
+        root = reset_validate
+        description = f'"{"x" * 1024}"'
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("description", ["", "   ", '"  "'])
+    def test_empty_or_whitespace_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize("description", ["-.nan", "+.nan"])
+    def test_signed_nan_description_scalars_pass(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("description", ["-", "?"])
+    def test_lone_yaml_mapping_indicators_fail(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Skill text # rationale",
+            "Skill#tag",
+            '"Skill #tag" # rationale',
+            "'Skill ''text'' #tag' # rationale",
+            '"A \\tquoted \\"value\\""',
+            '"' + r"\U0001F600" * 512 + '"',
+            "yes",
+            "no",
+            "on",
+            "off",
+            "0b101",
+            "1_000",
+            r'"\uD83D\uDE00"',
+            r'"\uD800"',
+            r'"\uDC00"',
+            '"true"',
+            "'0xFF'",
+        ],
+    )
+    def test_yaml_string_description_scalars_pass(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            " # rationale",
+            "null",
+            "~",
+            "true",
+            "false",
+            "123",
+            "1.5",
+            "1e3",
+            "0o755",
+            "0xFF",
+            ".inf",
+            ".nan",
+            "[]",
+            "{}",
+            "\n  - Skill text",
+            "\n  text: Skill text",
+            "Skill: text",
+            '"Skill text',
+            "'Skill text",
+            '"Skill text" trailing',
+        ],
+    )
+    def test_non_string_or_malformed_yaml_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize(
+        ("description", "expected_length"),
+        [
+            ("x" * 1025, 1025),
+            ("😀" * 513, 1026),
+            ('"' + r"\U0001F600" * 513 + '"', 1026),
+        ],
+    )
+    def test_description_over_pi_cap_fails(
+        self,
+        reset_validate,
+        description: str,
+        expected_length: int,
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any(
+            f"description exceeds 1024 characters ({expected_length})" in failure
+            for failure in validate.FAILURES
+        ), validate.FAILURES
 
     def test_valid_skill_passes(self, reset_validate):
         root = reset_validate
