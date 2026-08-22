@@ -81,6 +81,20 @@ Revert an opus agent to sonnet when:
 
 Flag concentration in telemetry: if any single agent exceeds 15% of session token spend for more than 3 days, open a cost-audit follow-up issue.
 
+## On the Pi Coding Agent
+
+`pi/extensions/model-tier.ts`'s `MODEL_TIER_TABLE` resolves an agent's `model: haiku|sonnet|opus`
+frontmatter to a concrete Pi model **by name** (substring match against `Model.id`, e.g.
+`"opus"` → `claude-opus-5`), not by cost — an explicit divergence from this doc's cost-driven S/M/L
+framing, which exists to inform a *choice* of tier, not to reproduce it as a runtime lookup.
+Resolution only covers three providers today — `anthropic`, `openai-codex`, and `zai` — each with
+its own name patterns per tier. For any other provider, or a tier/provider combination with no
+matching candidate, `pi/extensions/subagent.ts`'s `task` tool silently falls back to the parent
+session's own current model, unchanged; it never introduces a new provider, `baseUrl`, or API key.
+See `docs/plugin-platform-decisions.md` §9 for the full trust-boundary rationale (the table is
+hardcoded in reviewed source, not a runtime-editable settings file, specifically to avoid becoming
+an exfiltration primitive).
+
 ## Philosophy
 
 Model tier is a budget decision, not a quality signal. Haiku is not "worse" — it is the right tool for mechanical tasks. Defaulting everything to sonnet is wasteful; defaulting everything to haiku is brittle. Assign deliberately, measure, and adjust.

@@ -70,6 +70,7 @@ It checks:
 
 - `.claude-plugin/plugin.json` — JSON well-formedness, required fields (`name`, `version`, `description`).
 - `.claude-plugin/marketplace.json` — JSON well-formedness, `plugins[0].name` and `plugins[0].version` match `plugin.json`.
+- `package.json` (root) — version matches `plugin.json`, `private: true`, `pi.extensions` present, `pi.skills`/`pi.prompts`/`pi.themes` absent. See "Pi adapter" below.
 - `hooks/hooks.json` — JSON well-formedness and structural shape.
 - `skills/*/SKILL.md` — flat layout (no nesting), required frontmatter (`name`, `description`), `name` matches directory name, ≤150-line cap (≤300 for skills with `orchestrator: true`). A skill at or under 150 lines that declares `orchestrator: true` must reference at least one other skill or agent — the flag must be earned by composition or by size, not added opportunistically. See `docs/extending.md` (`## Philosophy`).
 - `agents/*.md` — required frontmatter (`name`, `description`).
@@ -115,7 +116,35 @@ Run the release script from a clean `main`:
 ./scripts/release.sh patch   # or minor / major
 ```
 
-It bumps both manifests, opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+It bumps every file declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and the root `package.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+
+## Pi adapter
+
+`pi/extensions/` is a runtime adapter that lets the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) load this plugin's `skills/`, `commands/`, and `agents/` trees unchanged — see `docs/plugin-platform-decisions.md` §6–§10 for the design rulings behind it. The root `package.json` (there is no `pi/package.json`) is what `pi install git:github.com/lugassawan/swe-workbench` actually reads; Pi's manifest resolution stops at the first `package.json` carrying a `pi` key, and `findPluginRoot()` in `pi/extensions/index.ts` walks up from the extension's own file for `.claude-plugin/plugin.json`, so the publishable unit is the whole plugin tree, not `pi/` alone.
+
+**Setup:**
+
+```sh
+npm install
+```
+
+**Develop:** edit `pi/extensions/*.ts`. Most of the adapter (`agent-spec.ts`, `model-tier.ts`, `tool-vocab.ts`) is deliberately SDK-free — it imports `@earendil-works/*` only as elided types, never at runtime — so most changes need no `pi` CLI installed to exercise.
+
+**Typecheck:**
+
+```sh
+npm run typecheck
+```
+
+**Contract tests:**
+
+```sh
+pytest tests/test_pi_extension.py tests/test_pi_contract.py -v
+```
+
+`test_pi_extension.py` drives the real `pi/extensions/*.ts` under `node --experimental-strip-types` against a stub `ExtensionAPI` — no `pi` CLI or `node_modules` install required, since every `@earendil-works/*` import is type-only and elided by the stripper. `test_pi_contract.py` ratchets the frontmatter/tool-vocabulary boundary between this repo's `agents/*.md`/`commands/*.md` and Pi's own (stricter) YAML parser — a golden-inventory contract, not a schema, per `docs/plugin-platform-decisions.md` §2.
+
+**Release:** the root `package.json`'s `version` field is one of the three files `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
 
 ## Adding a new interactive command
 
@@ -125,6 +154,7 @@ When creating a new interactive command that supports interrogation mode (i.e. o
 2. Add the command name (without `.md`) to `_E312_COMMANDS` in `tests/test_validate.py` — the `TestInterrogationPreludeUniformity` class will then enforce that the prelude stays in sync.
 3. Append ` [--grill | --standard]` to the command's `argument-hint` frontmatter field.
 4. Add the command name to the `argument-hint` note in `docs/catalog.md`.
+5. Run `pytest tests/test_pi_contract.py -v` — commands are also loaded by the Pi Coding Agent as prompt templates (see "Pi adapter" below); `test_no_pi_argument_substitution_hazard_in_commands` catches a bare `$0`/`$@`/`${N}` in command body text that Pi's own argument-substitution would silently mangle.
 
 **Important:** the mode gate (`AskUserQuestion`) and the grill loop (`swe-workbench:workflow-grill`) run in the **orchestrator** (command body), never in a shared subagent. Embedding it in a shared subagent (e.g. `swe-workbench:product-manager`, `swe-workbench:senior-engineer`) would leak the mode gate into other flows that reuse the same agent.
 

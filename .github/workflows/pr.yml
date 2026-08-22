@@ -157,8 +157,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '22'
-      - run: npm ci --prefix pi
-      - run: npm run typecheck --prefix pi
+      - run: npm ci
+      - run: npm run typecheck
 
   lockfile-check:
     runs-on: ubuntu-latest

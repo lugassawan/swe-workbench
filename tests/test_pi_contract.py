@@ -41,8 +41,8 @@ PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
 # Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
 # @earendil-works/pi-coding-agent@0.84.2's dist/core/prompt-templates.js (also present,
 # unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
-# against the installed package (`grep -n substituteArgs pi/node_modules/@earendil-works/
-# pi-coding-agent/dist/core/prompt-templates.js`) whenever `pi/package.json`'s
+# against the installed package (`grep -n substituteArgs node_modules/@earendil-works/
+# pi-coding-agent/dist/core/prompt-templates.js`) whenever the root `package.json`'s
 # peerDependencies bump changes the pin — the alternation is what silently eats `$0`:
 # the final `\$(...|\d+)` branch matches any `$<digits>`, including `$0`, and the
 # matched substring is replaced with `args[-1] ?? ""` — i.e. the empty string, since no
@@ -861,8 +861,8 @@ def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_facto
     before any prompt is sent — `pi -p` with zero message args never calls session.prompt(), so
     this makes no network or model call.
 
-    No pi/node_modules and no global `pi` install exists in this repo's pytest CI job today
-    (only the separate typecheck-pi job runs `npm ci --prefix pi`, and no job installs `pi`
+    No node_modules and no global `pi` install exists in this repo's pytest CI job today
+    (only the separate typecheck-pi job runs `npm ci`, and no job installs `pi`
     globally) — this test provides real coverage on any developer machine with `pi` installed,
     and will start providing CI coverage automatically if a future CI change adds a `pi`
     install step to the pytest job. Skipping here is a documented, intentional trade-off, not a

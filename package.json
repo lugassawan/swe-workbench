@@ -1,0 +1,36 @@
+{
+  "name": "swe-workbench-pi",
+  "version": "0.1.31",
+  "private": true,
+  "type": "module",
+  "description": "swe-workbench: senior-engineer toolkit for Claude Code and the Pi Coding Agent",
+  "pi": {
+    "extensions": ["./pi/extensions/index.ts"]
+  },
+  "files": [
+    ".claude-plugin",
+    "bin/swe-workbench-*",
+    "bin/README.md",
+    "skills",
+    "commands",
+    "agents",
+    "hooks/*.sh",
+    "hooks/*.py",
+    "hooks/*.json",
+    "pi/extensions"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.2 <1"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true }
+  }
+}
