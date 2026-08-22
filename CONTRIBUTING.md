@@ -81,7 +81,9 @@ It checks:
 - Dependency-flow graph (`check_no_cycles`) — action-cued `` `swe-workbench:<id>` `` activations must not form cycles across commands, skills, and agents. See `docs/extending.md` (`## Dependency flow`) for the allowed layering rules that this check enforces.
 - Bare actionable references (`check_bare_actionable_refs`) — every skill/agent id in any `*.md` file outside `tests/` and outside fenced code must use the namespaced `` `swe-workbench:<id>` `` form, including prose, catalog tables, README enumerations, and a file naming itself; the only opt-out is `<!-- validate: prose-ref -->` on a genuinely non-dispatch line.
 
-The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`).
+The same checks run in CI on every PR (`validate-plugin-files` job in `.github/workflows/pr.yml`). That
+job also runs `bash scripts/bump-version.sh --audit`, which fails the PR if the current version string
+appears in a file not declared in `.version-bump.json`.
 
 ## Testing locally
 
@@ -117,6 +119,9 @@ Run the release script from a clean `main`:
 ```
 
 It bumps every file declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and the root `package.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+
+The `bump-version.sh --audit` check described above (see "Validator") is enforced per-PR, so a stray
+hardcoded version literal is caught well before the release script ever runs.
 
 ## Pi adapter
 
