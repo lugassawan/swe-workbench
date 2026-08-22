@@ -57,13 +57,36 @@ def test_report_issue_documents_product_manager_override():
 
 
 def test_report_issue_attaches_version_footer():
-    """commands/report-issue.md must capture plugin version and Claude Code version for the footer."""
+    """commands/report-issue.md must capture plugin version and harness version for the footer,
+    for both the Claude Code and Pi harnesses."""
     text = REPORT_ISSUE_MD.read_text()
     assert "plugin.json" in text, (
         "commands/report-issue.md must read plugin.json to capture the plugin version"
     )
     assert "claude --version" in text, (
         "commands/report-issue.md must run 'claude --version' to capture the CLI version"
+    )
+    assert "pi --version" in text, (
+        "commands/report-issue.md must run 'pi --version' to capture the Pi CLI version"
+    )
+    assert "PI_SESSION_ID" in text, (
+        "commands/report-issue.md must detect the Pi harness via the PI_SESSION_ID env var"
+    )
+
+
+def test_report_issue_footer_names_both_harnesses():
+    """Both footer occurrences (memory-synthesis branch and delegation step 7) must
+    parameterise the harness name rather than hardcoding 'Claude Code'."""
+    text = REPORT_ISSUE_MD.read_text()
+    count = text.count("<harness> <cli-version>")
+    assert count == 2, (
+        "commands/report-issue.md must parameterise 'Claude Code <cli-version>' as "
+        f"'<harness> <cli-version>' in both footer occurrences (Branch B synthesis + "
+        f"delegation step 7) — found {count}"
+    )
+    assert "Claude Code <cli-version>" not in text, (
+        "commands/report-issue.md must not hardcode 'Claude Code <cli-version>' in the "
+        "footer any more — both occurrences must parameterise the harness name"
     )
 
 
@@ -103,6 +126,10 @@ def test_report_issue_redaction_has_allowlist():
     allowlist_block = text[never_redact_pos:allowlist_end]
     assert "swe-workbench" in allowlist_block, (
         "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
+    )
+    assert "Pi" in allowlist_block, (
+        "commands/report-issue.md must name 'Pi' as an allowlisted token, so a Pi bug "
+        "report doesn't get its own harness name redacted"
     )
 
 
