@@ -18,6 +18,9 @@ WARNINGS = []
 BASE_SKILL_CAP = 150
 ORCHESTRATOR_SKILL_CAP = 300
 
+# Pi compares JavaScript String.length, so count UTF-16 code units.
+PI_SKILL_DESCRIPTION_CAP = 1024
+
 # Headroom warning threshold (#567): fraction of a skill's cap at which
 # check_skill_cap_headroom() starts warning, ahead of check_skills()'s hard
 # failure at 100%.
@@ -335,6 +338,15 @@ def check_skills(cache=None):
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'name'")
         if "description" not in fm:
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
+        description = fm.get("description")
+        if isinstance(description, str):
+            description_length = len(description.encode("utf-16-le")) // 2
+            if description_length > PI_SKILL_DESCRIPTION_CAP:
+                fail(
+                    skill_md.relative_to(ROOT),
+                    f"description exceeds {PI_SKILL_DESCRIPTION_CAP} characters "
+                    f"({description_length})",
+                )
         if fm.get("name") != skill_dir_name:
             fail(
                 skill_md.relative_to(ROOT),

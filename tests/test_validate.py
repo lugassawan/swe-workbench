@@ -532,10 +532,51 @@ class TestCheckBinWrappers:
 # ──────────────────────────────────────────────
 
 class TestCheckSkills:
-    def _valid_skill(self, name="my-skill", extra_lines=0):
-        body = f"---\nname: {name}\ndescription: A skill\n---\n"
+    def _valid_skill(
+        self,
+        name: str = "my-skill",
+        extra_lines: int = 0,
+        description: str = "A skill",
+    ) -> str:
+        body = f"---\nname: {name}\ndescription: {description}\n---\n"
         body += "x\n" * extra_lines
         return body
+
+    @pytest.mark.parametrize("description", ["x" * 1024, "😀" * 512])
+    def test_description_at_pi_cap_passes(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize(
+        ("description", "expected_length"),
+        [
+            ("x" * 1025, 1025),
+            ("😀" * 513, 1026),
+        ],
+    )
+    def test_description_over_pi_cap_fails(
+        self,
+        reset_validate,
+        description: str,
+        expected_length: int,
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any(
+            f"description exceeds 1024 characters ({expected_length})" in failure
+            for failure in validate.FAILURES
+        ), validate.FAILURES
 
     def test_valid_skill_passes(self, reset_validate):
         root = reset_validate
