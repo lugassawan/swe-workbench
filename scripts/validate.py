@@ -125,6 +125,25 @@ def parse_frontmatter(path, text=None):
     return result
 
 
+def _parse_description(value):
+    if not isinstance(value, str):
+        return None
+    if value.startswith('"'):
+        if not value.endswith('"'):
+            return None
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    elif value.startswith("'"):
+        if not value.endswith("'"):
+            return None
+        value = value[1:-1].replace("''", "'")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
 # ──────────────────────────────────────────────
 # File-read cache
 # ──────────────────────────────────────────────
@@ -338,15 +357,18 @@ def check_skills(cache=None):
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'name'")
         if "description" not in fm:
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
-        description = fm.get("description")
-        if isinstance(description, str):
-            description_length = len(description.encode("utf-16-le")) // 2
-            if description_length > PI_SKILL_DESCRIPTION_CAP:
-                fail(
-                    skill_md.relative_to(ROOT),
-                    f"description exceeds {PI_SKILL_DESCRIPTION_CAP} characters "
-                    f"({description_length})",
-                )
+        else:
+            description = _parse_description(fm["description"])
+            if description is None:
+                fail(skill_md.relative_to(ROOT), "description is required")
+            else:
+                description_length = len(description.encode("utf-16-le")) // 2
+                if description_length > PI_SKILL_DESCRIPTION_CAP:
+                    fail(
+                        skill_md.relative_to(ROOT),
+                        f"description exceeds {PI_SKILL_DESCRIPTION_CAP} characters "
+                        f"({description_length})",
+                    )
         if fm.get("name") != skill_dir_name:
             fail(
                 skill_md.relative_to(ROOT),

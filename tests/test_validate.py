@@ -554,6 +554,28 @@ class TestCheckSkills:
         validate.check_skills()
         assert validate.FAILURES == []
 
+    def test_double_quoted_description_at_pi_cap_passes(self, reset_validate) -> None:
+        root = reset_validate
+        description = f'"{"x" * 1024}"'
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("description", ["", "   ", '"  "'])
+    def test_empty_or_whitespace_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
     @pytest.mark.parametrize(
         ("description", "expected_length"),
         [
