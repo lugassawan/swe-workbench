@@ -577,10 +577,80 @@ class TestCheckSkills:
         assert any("description is required" in failure for failure in validate.FAILURES)
 
     @pytest.mark.parametrize(
+        "description",
+        [
+            "Skill text # rationale",
+            "Skill#tag",
+            '"Skill #tag" # rationale',
+            "'Skill ''text'' #tag' # rationale",
+            '"A \\tquoted \\"value\\""',
+            '"' + r"\U0001F600" * 512 + '"',
+            "yes",
+            "no",
+            "on",
+            "off",
+            "0b101",
+            "1_000",
+            r'"\uD83D\uDE00"',
+            r'"\uD800"',
+            r'"\uDC00"',
+            '"true"',
+            "'0xFF'",
+        ],
+    )
+    def test_yaml_string_description_scalars_pass(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            " # rationale",
+            "null",
+            "~",
+            "true",
+            "false",
+            "123",
+            "1.5",
+            "1e3",
+            "0o755",
+            "0xFF",
+            ".inf",
+            ".nan",
+            "[]",
+            "{}",
+            "\n  - Skill text",
+            "\n  text: Skill text",
+            "Skill: text",
+            '"Skill text',
+            "'Skill text",
+            '"Skill text" trailing',
+        ],
+    )
+    def test_non_string_or_malformed_yaml_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize(
         ("description", "expected_length"),
         [
             ("x" * 1025, 1025),
             ("😀" * 513, 1026),
+            ('"' + r"\U0001F600" * 513 + '"', 1026),
         ],
     )
     def test_description_over_pi_cap_fails(

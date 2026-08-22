@@ -83,6 +83,32 @@ def warn(path, reason):
 
 _FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
 _FM_ITEM_RE = re.compile(r'^-\s+(.*\S)\s*$')
+_YAML_DESCRIPTION_NON_STRING_RE = re.compile(
+    r"^(?:~|null|true|false|[-+]?(?:[0-9]+|0[oO][0-7]+|0[xX][0-9A-Fa-f]+|"
+    r"(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|"
+    r"[0-9]+[eE][-+]?[0-9]+|\.(?:inf|nan)))$",
+    re.IGNORECASE,
+)
+_YAML_DOUBLE_QUOTE_ESCAPES = {
+    "0": "\0",
+    "a": "\a",
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "v": "\v",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    "N": "\x85",
+    "_": "\xa0",
+    "L": "\u2028",
+    "P": "\u2029",
+}
+_YAML_HEX_ESCAPE_WIDTHS = {"x": 2, "u": 4, "U": 8}
 
 
 def parse_frontmatter(path, text=None):
@@ -125,22 +151,108 @@ def parse_frontmatter(path, text=None):
     return result
 
 
-def _parse_description(value):
+def _parse_description(value: object) -> str | None:
+    """Return a description string from the supported YAML scalar subset."""
     if not isinstance(value, str):
         return None
     if value.startswith('"'):
-        if not value.endswith('"'):
-            return None
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
+        description = _parse_double_quoted_description(value)
     elif value.startswith("'"):
-        if not value.endswith("'"):
-            return None
-        value = value[1:-1].replace("''", "'")
-    if not isinstance(value, str) or not value.strip():
+        description = _parse_single_quoted_description(value)
+    else:
+        description = _parse_plain_description(value)
+    if description is None or not description.strip():
         return None
+    return description
+
+
+def _parse_double_quoted_description(value: str) -> str | None:
+    characters = []
+    index = 1
+    while index < len(value):
+        character = value[index]
+        if character == '"':
+            return "".join(characters) if _is_comment_or_end(value, index + 1) else None
+        if character == "\\":
+            escape = _decode_yaml_escape(value, index)
+            if escape is None:
+                return None
+            decoded, index = escape
+            characters.append(decoded)
+            continue
+        characters.append(character)
+        index += 1
+    return None
+
+
+def _decode_yaml_escape(value: str, index: int) -> tuple[str, int] | None:
+    escape_index = index + 1
+    if escape_index >= len(value):
+        return None
+    escape = value[escape_index]
+    if escape in _YAML_DOUBLE_QUOTE_ESCAPES:
+        return _YAML_DOUBLE_QUOTE_ESCAPES[escape], escape_index + 1
+    width = _YAML_HEX_ESCAPE_WIDTHS.get(escape)
+    if width is None:
+        return None
+    end = escape_index + 1 + width
+    digits = value[escape_index + 1 : end]
+    if len(digits) != width or not all(character in "0123456789abcdefABCDEF" for character in digits):
+        return None
+    codepoint = int(digits, 16)
+    if 0xD800 <= codepoint <= 0xDBFF:
+        surrogate_end = end + 6
+        surrogate = value[end:surrogate_end]
+        if surrogate.startswith("\\u") and len(surrogate) == 6:
+            low_digits = surrogate[2:]
+            if all(character in "0123456789abcdefABCDEF" for character in low_digits):
+                low_surrogate = int(low_digits, 16)
+                if 0xDC00 <= low_surrogate <= 0xDFFF:
+                    astral_codepoint = 0x10000 + (codepoint - 0xD800) * 0x400 + low_surrogate - 0xDC00
+                    return chr(astral_codepoint), surrogate_end
+    if codepoint > 0x10FFFF:
+        return None
+    return chr(codepoint), end
+
+
+def _parse_single_quoted_description(value: str) -> str | None:
+    characters = []
+    index = 1
+    while index < len(value):
+        if value[index] != "'":
+            characters.append(value[index])
+            index += 1
+            continue
+        if index + 1 < len(value) and value[index + 1] == "'":
+            characters.append("'")
+            index += 2
+            continue
+        return "".join(characters) if _is_comment_or_end(value, index + 1) else None
+    return None
+
+
+def _is_comment_or_end(value: str, index: int) -> bool:
+    trailing = value[index:]
+    return not trailing.strip() or (trailing[0].isspace() and trailing.lstrip().startswith("#"))
+
+
+def _parse_plain_description(value: str) -> str | None:
+    value = _strip_plain_yaml_comment(value)
+    if (
+        not value
+        or _YAML_DESCRIPTION_NON_STRING_RE.fullmatch(value)
+        or value.startswith(("[", "{", "!", "&", "*", "|", ">"))
+        or value.startswith(("- ", "? "))
+        or re.search(r":(?:[ \t]|$)", value)
+    ):
+        return None
+    return value
+
+
+def _strip_plain_yaml_comment(value: str) -> str:
+    for index, character in enumerate(value):
+        if character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
     return value
 
 
@@ -362,7 +474,7 @@ def check_skills(cache=None):
             if description is None:
                 fail(skill_md.relative_to(ROOT), "description is required")
             else:
-                description_length = len(description.encode("utf-16-le")) // 2
+                description_length = len(description.encode("utf-16-le", "surrogatepass")) // 2
                 if description_length > PI_SKILL_DESCRIPTION_CAP:
                     fail(
                         skill_md.relative_to(ROOT),

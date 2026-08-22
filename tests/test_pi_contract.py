@@ -179,6 +179,44 @@ def test_all_frontmatter_is_strict_yaml_parseable():
     )
 
 
+def test_strict_skill_descriptions_follow_pi_contract():
+    failures = []
+    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        block = _frontmatter_block(path)
+        try:
+            frontmatter = yaml.safe_load(block) if block is not None else None
+        except yaml.YAMLError as error:
+            failures.append(f"{path.relative_to(ROOT)}: {error}")
+            continue
+        description = frontmatter.get("description") if isinstance(frontmatter, dict) else None
+        if not isinstance(description, str) or not description.strip():
+            failures.append(f"{path.relative_to(ROOT)}: description must be a nonblank string")
+            continue
+        description_length = len(description.encode("utf-16-le", "surrogatepass")) // 2
+        if description_length > 1024:
+            failures.append(
+                f"{path.relative_to(ROOT)}: description exceeds 1024 UTF-16 units "
+                f"({description_length})"
+            )
+    assert not failures, "Pi skill description contract violations:\n" + "\n".join(failures)
+
+
+def test_strict_skill_descriptions_accept_unpaired_yaml_surrogates(monkeypatch, tmp_path):
+    skills_dir = tmp_path / "skills"
+    skill_md = skills_dir / "my-skill" / "SKILL.md"
+    skill_md.parent.mkdir(parents=True)
+    skill_md.write_text(
+        '---\nname: my-skill\ndescription: "\\uD800"\n---\n', encoding="utf-8"
+    )
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "SKILLS_DIR", skills_dir)
+
+    try:
+        test_strict_skill_descriptions_follow_pi_contract()
+    except UnicodeEncodeError as error:
+        pytest.fail(f"Pi-valid unpaired surrogate raised {error}")
+
+
 def test_strict_and_lenient_parsers_agree_on_keys():
     """The only assertion that catches lenient-accepts / strict-rejects key drift.
 
