@@ -38,6 +38,24 @@ EXTENSIONS_DIR = ROOT / "pi" / "extensions"
 HOOKS_DIR = ROOT / "hooks"
 PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
 
+
+class PiCompatibleYamlLoader(yaml.SafeLoader):
+    yaml_implicit_resolvers = {
+        initial: [
+            resolver
+            for resolver in resolvers
+            if resolver[0] != "tag:yaml.org,2002:bool"
+        ]
+        for initial, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+
+
+PiCompatibleYamlLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
+
 # Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
 # @earendil-works/pi-coding-agent@0.84.2's dist/core/prompt-templates.js (also present,
 # unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
@@ -184,7 +202,7 @@ def test_strict_skill_descriptions_follow_pi_contract():
     for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
         block = _frontmatter_block(path)
         try:
-            frontmatter = yaml.safe_load(block) if block is not None else None
+            frontmatter = yaml.load(block, Loader=PiCompatibleYamlLoader) if block is not None else None
         except yaml.YAMLError as error:
             failures.append(f"{path.relative_to(ROOT)}: {error}")
             continue
@@ -199,6 +217,35 @@ def test_strict_skill_descriptions_follow_pi_contract():
                 f"({description_length})"
             )
     assert not failures, "Pi skill description contract violations:\n" + "\n".join(failures)
+
+
+@pytest.mark.parametrize("description", ["yes", "no", "on", "off"])
+def test_strict_skill_descriptions_accept_pi_boolean_like_strings(monkeypatch, tmp_path, description):
+    skills_dir = tmp_path / "skills"
+    skill_md = skills_dir / "my-skill" / "SKILL.md"
+    skill_md.parent.mkdir(parents=True)
+    skill_md.write_text(
+        f"---\nname: my-skill\ndescription: {description}\n---\n", encoding="utf-8"
+    )
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "SKILLS_DIR", skills_dir)
+
+    test_strict_skill_descriptions_follow_pi_contract()
+
+
+@pytest.mark.parametrize("description", ["true", "false"])
+def test_strict_skill_descriptions_reject_pi_boolean_scalars(monkeypatch, tmp_path, description):
+    skills_dir = tmp_path / "skills"
+    skill_md = skills_dir / "my-skill" / "SKILL.md"
+    skill_md.parent.mkdir(parents=True)
+    skill_md.write_text(
+        f"---\nname: my-skill\ndescription: {description}\n---\n", encoding="utf-8"
+    )
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "SKILLS_DIR", skills_dir)
+
+    with pytest.raises(AssertionError, match="description must be a nonblank string"):
+        test_strict_skill_descriptions_follow_pi_contract()
 
 
 def test_strict_skill_descriptions_accept_unpaired_yaml_surrogates(monkeypatch, tmp_path):
