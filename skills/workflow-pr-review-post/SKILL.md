@@ -69,8 +69,8 @@ fallback. The core owns the ` [swe-workbench](https://github.com/lugassawan/swe-
 (appended to the byline on a confirmed-public repo only) — callers' own `BYLINE` stays
 identity-only and never embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for
 the full rationale, and
-[`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md) /
-[`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md) for the shell-side pitfalls
+[`shared/docs/gh-api-field-flags.md`](../../shared/docs/gh-api-field-flags.md) /
+[`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md) for the shell-side pitfalls
 building the payload in Python sidesteps entirely.
 
 `eval` sets `POSTED_INLINE`, `POSTED_PR_LEVEL`, `DEDUPED`, `SUBMITTED`, `EVENT`, `DECISION`,

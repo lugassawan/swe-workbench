@@ -71,5 +71,7 @@ receive the value's exact bytes.
   `skills/`, `commands/`, and `agents/` for a variable piped or redirected through `echo`.
 - `tests/test_validate.py::TestCheckNoEchoVarHazard` covers the flag/no-flag cases.
 
-`docs/` is intentionally outside the scanned roots — this page shows the bad pattern as a
-worked example above, and scanning `docs/` would trip the guard on its own content.
+`shared/docs/` is skipped explicitly by the scanner (worked-example content, #637) —
+this page shows the bad pattern as a worked example above, and scanning it would trip
+the guard on its own content. The scan covers `skills/`, `commands/`, `agents/`, and
+`shared/` minus `shared/docs/`.

@@ -2097,9 +2097,10 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
     `is_hazard_line` returns True. `message` is called with the 1-indexed
     line number and must return the failure reason string.
 
-    docs/ is intentionally excluded from the scanned roots — the sibling doc
+    docs/ and shared/docs/ are intentionally excluded from the scanned roots — the sibling doc
     page must show the bad pattern as a worked example without tripping this
-    guard (#549). Known limitation: scans raw lines with no heredoc-body
+    guard (#549; shared/docs/ added by #637 when those pages relocated out of
+    docs/). Known limitation: scans raw lines with no heredoc-body
     awareness, so a worked "here's the wrong way" example placed inside a
     heredoc (rather than behind a '#' comment, which the command-position
     regex already exempts) would be misread as a real hazard — narrow and
@@ -2117,6 +2118,8 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
         if not base.is_dir():
             continue
         for md in sorted(base.rglob("*.md")):
+            if md.is_relative_to(ROOT / "shared" / "docs"):
+                continue  # worked-example pages live here now (#637)
             if sub_cache is not None and md in sub_cache:
                 text = sub_cache[md]
                 if text is None:
@@ -2138,7 +2141,7 @@ def check_no_echo_var_hazard(cache=None):
     """Flag bash blocks in skills/, commands/, agents/ that pipe or redirect a
     variable through `echo` — zsh (the user's likely login shell) expands
     backslash escapes in echo's argument, corrupting embedded JSON (#549).
-    Use printf '%s' instead; see docs/shell-echo-vs-printf.md.
+    Use printf '%s' instead; see shared/docs/shell-echo-vs-printf.md.
     """
     _scan_bash_blocks_for_hazard(
         cache,
@@ -2146,7 +2149,7 @@ def check_no_echo_var_hazard(cache=None):
         lambda ln: (
             f"line {ln}: bash block pipes/redirects a variable through 'echo' — "
             f"zsh expands backslash escapes and corrupts JSON; use printf '%s' "
-            f"(see docs/shell-echo-vs-printf.md)"
+            f"(see shared/docs/shell-echo-vs-printf.md)"
         ),
     )
 
@@ -2157,7 +2160,7 @@ def check_no_printf_var_format(cache=None):
     dangerous) translation of `echo "$VAR"`: `$VAR` becomes the FORMAT, so a
     literal `%s` inside it reads a nonexistent argument, and `%n` is a
     memory-write primitive in some `printf(1)` implementations. Always
-    `printf '%s' "$VAR"` — see docs/shell-echo-vs-printf.md.
+    `printf '%s' "$VAR"` — see shared/docs/shell-echo-vs-printf.md.
     """
     _scan_bash_blocks_for_hazard(
         cache,
@@ -2165,7 +2168,7 @@ def check_no_printf_var_format(cache=None):
         lambda ln: (
             f"line {ln}: bash block passes a bare variable as printf's format "
             f"string — a literal %s/%n inside it is read as a format directive; "
-            f"use printf '%s' \"$VAR\" (see docs/shell-echo-vs-printf.md)"
+            f"use printf '%s' \"$VAR\" (see shared/docs/shell-echo-vs-printf.md)"
         ),
     )
 

@@ -48,7 +48,7 @@ If `superpowers:systematic-debugging` is unavailable, run the same loop inline â
 
 ## Checkpoint behavior
 
-After entering each phase, write the workflow state file so the investigation can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). After Phase 4 (issue filed), delete the state file.
+After entering each phase, write the workflow state file so the investigation can survive auto-compaction (see `shared/docs/workflow-state.md` for the schema and path). After Phase 4 (issue filed), delete the state file.
 
 ## 4-phase flow
 
