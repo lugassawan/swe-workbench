@@ -232,7 +232,7 @@ The script remains best-effort cleanup and always exits zero. Diagnostics go to 
 | Target disappears before removal | Zero-count no-op |
 | One entry fails removal | Continue with remaining entries; count only successes |
 
-No adapter failure may abort `workflow-cleanup-merged` or suppress the required count assignment.
+No adapter failure may abort `swe-workbench:workflow-cleanup-merged` or suppress the required count assignment.
 
 ## Testing Strategy
 
