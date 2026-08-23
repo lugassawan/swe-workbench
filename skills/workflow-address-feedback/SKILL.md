@@ -115,22 +115,47 @@ if [ -z "$WT" ]; then
   fi
 fi
 ```
-If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree:
+If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree **on the PR branch itself** (`$PR_BRANCH`), so commits pushed in Phase 4 update the PR directly (`git push -u origin "$PR_BRANCH"` — never a throwaway task branch):
 
-**When rimba is available** (preferred):
 ```bash
-RIMBA_OUT=$(rimba add "pr:$PR" --task "address-feedback-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
-[ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
+git fetch origin "$PR_BRANCH" 2>/dev/null || true  # task-mode rimba add does not fetch; origin/$PR_BRANCH must be current
+WT=""
+if command -v rimba >/dev/null 2>&1; then
+  if git show-ref --verify --quiet "refs/heads/$PR_BRANCH"; then
+    # Local branch exists (kept by a prior run's Phase 7) — checkout preserves unpushed crash-recovery commits.
+    WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+    mkdir -p "$(dirname "$WT")"
+    git worktree add "$WT" "$PR_BRANCH"
+    rimba deps install "$PR_BRANCH" 2>/dev/null || echo "⚠ rimba deps install failed — install deps manually before running tests."
+  else
+    RIMBA_OUT=$(rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" 2>&1)
+    WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
+    if [ -n "$WT" ] && [ -d "$WT" ]; then
+      WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)
+      if [ "$WT_BRANCH" != "$PR_BRANCH" ]; then
+        # rimba re-prefixed a non-conventional name (feature/<name>) — wrong branch; tear down and fall through to git.
+        rimba remove "$WT_BRANCH" --force >/dev/null 2>&1
+        git worktree remove --force "$WT" >/dev/null 2>&1
+        git branch -D "$WT_BRANCH" >/dev/null 2>&1
+        WT=""
+      fi
+    else
+      echo "rimba add failed: $RIMBA_OUT"
+      WT=""
+    fi
+  fi
+fi
+if [ -z "$WT" ]; then
+  # rimba absent/failed/re-prefixed — create directly; || covers a local branch existing after teardown.
+  WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+  mkdir -p "$(dirname "$WT")"
+  git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH" 2>/dev/null || git worktree add "$WT" "$PR_BRANCH"
+fi
 ```
-**When rimba is absent** (fallback):
-```bash
-WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
-mkdir -p "$(dirname "$WT")"
-git fetch origin "${PR_BRANCH}"
-git worktree add "$WT" "${PR_BRANCH}"
-```
-This worktree is **disposable** — fixes are committed and pushed to the PR branch in Phase 4, so the work lives on the remote, not the worktree. Phase 7 removes it on every exit (success, Q-quit, or error). If removal fails, a fallback is attempted; see Phase 7 for details. If the skill exits with an unrecoverable error at any point after this phase, run Phase 7 before stopping.
+
+No `--skip-deps`/`--skip-hooks` anywhere on the create path — rimba installs dependencies and runs `post_create` hooks so the worktree is fully initialized with no separate repository-specific bootstrap step. Wait for `rimba add` to complete before running tests in the worktree.
+
+This worktree is **disposable but sits on the PR branch itself** — Phase 4 commits and pushes from it update the PR directly, so the work lives on the PR branch, not a throwaway task branch. Phase 7 removes the worktree on every exit (success, Q-quit, or error) but **keeps the local `$PR_BRANCH`**: it is the owner's actual PR head branch, and keeping it preserves unpushed commits if a prior run crashed mid-Phase-4 (the next run checks that branch out instead of re-creating it). Never delete `$PR_BRANCH` (e.g. via `git branch -D`). If removal fails, a fallback is attempted; see Phase 7 for details. If the skill exits with an unrecoverable error at any point after this phase, run Phase 7 before stopping.
 
 ### Phase 3 — Triage digest
 
@@ -229,9 +254,10 @@ Run on every exit that occurs after a worktree was **created** in Phase 2 (succe
 if [ "${REUSED_WT:-0}" = "1" ]; then
   echo "Reused existing worktree at $WT — skipping cleanup (nothing was created)."
 else
-  # positional arg matches the --task label set in Phase 2 ("address-feedback-$PR")
-  if rimba remove "address-feedback-$PR" --force 2>/dev/null; then
-    echo "Cleaned up worktree address-feedback-$PR."
+  # task = the PR branch (Phase 2 creates the worktree on $PR_BRANCH); --keep-branch
+  # preserves the local PR head branch — rimba remove deletes the branch without it.
+  if rimba remove "$PR_BRANCH" --force --keep-branch 2>/dev/null; then
+    echo "Cleaned up worktree for $PR_BRANCH (local branch kept)."
   else
     # $WT is set in Phase 2 (both rimba and fallback paths); do not re-assign here
     git worktree remove --force "$WT" 2>/dev/null; swe-workbench-clean-ephemeral "$WT" 2>/dev/null
@@ -254,13 +280,16 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 | Worktree removal fails (rimba absent or busy) | `rimba remove` non-zero | Attempt `git worktree remove --force` fallback; log warning; do not block. |
 | Reply REST fails (404 — comment deleted) | HTTP 404 | Skip that thread, log "skipped (comment deleted)". |
 | Resolve mutation fails | GraphQL error | Reply already posted — log "reply posted but resolve failed". Continue. Do not roll back the reply. |
+| rimba re-prefixes a non-conventional PR branch name (worktree on `feature/<name>` ≠ `$PR_BRANCH`) | Post-create branch verification mismatch | Remove the mis-branched worktree, fall back to `git worktree add -b "$PR_BRANCH" … "origin/$PR_BRANCH"`. |
+| Fork PR — branch exists only on the fork remote | `git fetch origin "$PR_BRANCH"` fails / `origin/$PR_BRANCH` missing | Out of scope (issue #643): add the fork remote manually (`git remote add gh-fork-<owner> …`) and check out the PR head by hand, then re-run. |
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
 | Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
-| Omit `--skip-deps --skip-hooks` on the rimba call | Always pass both flags — same as other worktree-creating skills. Deps can be installed manually in the worktree if needed. |
+| Pass `--skip-deps --skip-hooks` on the Phase 2 create | Never pass either flag — rimba must install deps and run hooks so the worktree is fully initialized with no separate bootstrap step (issue #643). |
+| Create the worktree on a throwaway task branch (`rimba add pr:$PR --task …`) | Use `rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"` so the worktree is on the PR branch itself — Phase 4 pushes then update the PR directly. |
 | Leave the worktree behind after skill exits | Phase 7 always removes it — skip Phase 7 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
 | Deleting `$PR_BRANCH` directly in Phase 7 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
