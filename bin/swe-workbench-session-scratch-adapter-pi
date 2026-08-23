@@ -9,11 +9,12 @@ note() {
 SESSION_ID="${PI_SESSION_ID:-}"
 [[ -n "$SESSION_ID" ]] || exit 3
 
-if [[ "$SESSION_ID" == *$'\r'* || "$SESSION_ID" == *$'\n'* ]] ||
-  LC_ALL=C printf '%s' "$SESSION_ID" | grep -q '[[:cntrl:]]'; then
-  note "PI_SESSION_ID contains control characters"
-  exit 4
-fi
+case "$SESSION_ID" in
+  *[[:cntrl:]]*)
+    note "PI_SESSION_ID contains control characters"
+    exit 4
+    ;;
+esac
 
 note "Pi exposes session metadata but no sanctioned session scratch path — skipping"
 exit 4

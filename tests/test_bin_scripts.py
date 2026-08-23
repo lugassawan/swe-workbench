@@ -1,6 +1,6 @@
 """Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is the sole home for these fifteen scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
 and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or

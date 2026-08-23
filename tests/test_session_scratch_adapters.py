@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import _CLEAN_ENV
+from conftest import _CLEAN_ENV, _clean_environment
 
 BIN = Path(__file__).parent.parent / "bin"
 CLAUDE_ADAPTER = BIN / "swe-workbench-session-scratch-adapter-claude"
@@ -93,9 +93,30 @@ def test_pi_adapter_is_active_but_unsupported() -> None:
     assert "no sanctioned session scratch path" in result.stderr
 
 
-@pytest.mark.parametrize("session_id", ["session\nidentifier", "session\x1fidentifier"])
-def test_pi_adapter_rejects_control_characters(session_id: str) -> None:
+@pytest.mark.parametrize("session_id", ["session\ridentifier", "session\nidentifier"])
+def test_pi_adapter_rejects_line_breaking_session_id(session_id: str) -> None:
     result = run_adapter(PI_ADAPTER, {"PI_SESSION_ID": session_id})
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert "PI_SESSION_ID contains control characters" in result.stderr
+
+
+def test_pi_adapter_rejects_leading_control_byte_before_large_payload(
+    tmp_path: Path,
+) -> None:
+    grep = tmp_path / "grep"
+    grep.write_text("#!/usr/bin/env bash\nIFS= read -r -n 1 _\n")
+    grep.chmod(0o755)
+    session_id = "\x1f" + "payload" * 16_384
+
+    result = run_adapter(
+        PI_ADAPTER,
+        {
+            "PATH": f"{tmp_path}:{_CLEAN_ENV['PATH']}",
+            "PI_SESSION_ID": session_id,
+        },
+    )
 
     assert result.returncode == 4
     assert result.stdout == ""
@@ -120,8 +141,15 @@ def test_pi_session_file_cannot_authorize_scratch(tmp_path: Path) -> None:
 
 
 def test_clean_environment_strips_native_session_markers() -> None:
-    assert "CLAUDE_CODE_SESSION_ID" not in _CLEAN_ENV
-    assert "PI_SESSION_ID" not in _CLEAN_ENV
+    clean_environment = _clean_environment(
+        {
+            "CLAUDE_CODE_SESSION_ID": "claude-session",
+            "PI_SESSION_ID": "pi-session",
+            "PRESERVED": "value",
+        }
+    )
+
+    assert clean_environment == {"PRESERVED": "value"}
 
 
 @pytest.mark.parametrize(

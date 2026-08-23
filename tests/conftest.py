@@ -1,5 +1,6 @@
 import os
 import subprocess
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final
 
@@ -37,16 +38,20 @@ import pytest
 # Usage:
 #   subprocess.run([...], env=_CLEAN_ENV, ...)
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
-_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
-    {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("GIT_")
-        and k != "GITHUB_STEP_SUMMARY"
-        and k != "CLAUDE_CODE_SESSION_ID"
-        and k != "PI_SESSION_ID"
-        and k != "SWE_WORKBENCH_PI_TOOLS"
+def _clean_environment(source: Mapping[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in source.items()
+        if not key.startswith("GIT_")
+        and key != "GITHUB_STEP_SUMMARY"
+        and key != "CLAUDE_CODE_SESSION_ID"
+        and key != "PI_SESSION_ID"
+        and key != "SWE_WORKBENCH_PI_TOOLS"
     }
+
+
+_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
+    _clean_environment(os.environ)
     | {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "T",
