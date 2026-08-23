@@ -248,7 +248,7 @@ def test_thread_matches_false_below_jaccard_threshold():
     assert prs.thread_matches("src.py", 12, "alpha bravo charlie", t) is False
 
 
-# ── Unit: blocking_threads (#644) ─────────────────────────────────────────────
+# ── Unit: blocking_threads ─────────────────────────────────────────────────────
 
 
 def test_blocking_threads_excludes_resolved():
@@ -309,7 +309,7 @@ def test_resolve_event_self_review_never_yields_approve():
     assert event == "COMMENT", "self-review must never submit APPROVE"
 
 
-# ── Unit: resolve_event — n_blocking_threads downgrade (#644) ─────────────────
+# ── Unit: resolve_event — n_blocking_threads downgrade ─────────────────────────
 
 
 def test_resolve_event_blocking_threads_downgrades_approve_to_comment():
@@ -1008,7 +1008,7 @@ def test_body_with_quotes_backslash_and_leading_at_survives_byte_identical(tmp_p
     assert payload["comments"][0]["body"] == hazardous_body
 
 
-# ── Behavioral: blocking-thread gate (#644) ───────────────────────────────────
+# ── Behavioral: blocking-thread gate ────────────────────────────────────────────
 
 
 def test_unresolved_non_outdated_thread_blocks_approve(tmp_path):

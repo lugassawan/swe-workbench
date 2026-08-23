@@ -10,7 +10,7 @@ orchestrator: true
 
 ## Mode resolution
 
-This skill runs in one of two modes, chosen by the caller: **first-pass** (a fresh review) or **followup** (a re-check after the owner has addressed feedback). `commands/review.md` sets `MODE=auto` for a bare `/swe-workbench:review <N>` invocation and `MODE=followup` for `--check-followup <N>`. `MODE=auto` self-resolves to `first-pass` or `followup` at the top of Step 1 (#644) — see below — before mode-table interpolation happens, so everything downstream only ever sees a concrete `first-pass`/`followup` value.
+This skill runs in one of two modes, chosen by the caller: **first-pass** (a fresh review) or **followup** (a re-check after the owner has addressed feedback). `commands/review.md` sets `MODE=auto` for a bare `/swe-workbench:review <N>` invocation and `MODE=followup` for `--check-followup <N>`. `MODE=auto` self-resolves to `first-pass` or `followup` at the top of Step 1 — see below — before mode-table interpolation happens, so everything downstream only ever sees a concrete `first-pass`/`followup` value.
 
 Four values are derived from `$MODE` once, up front, and interpolated into every downstream bash block below — evaluated, not applied by hand:
 

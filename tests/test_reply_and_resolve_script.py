@@ -58,7 +58,7 @@ def _gh_calls(log_file: Path) -> list[str]:
 
 def test_deferred_exits_zero_without_calling_gh(tmp_path):
     """Both args empty exits 0 immediately; gh is never invoked. This is still the shape a
-    DEFERRED PR comment uses (no thread to resolve) — #644 DEFERRED review threads no longer
+    DEFERRED PR comment uses (no thread to resolve) — DEFERRED review threads no longer
     take this path, since they now reply + resolve like ADDRESSED/CLARIFIED."""
     stub_dir = tmp_path / "stubs"
     log = tmp_path / "gh.log"
@@ -111,7 +111,7 @@ def test_addressed_calls_reply_then_resolve(tmp_path):
 
 def test_clarified_calls_reply_only(tmp_path):
     """REPLY_BODY set, THREAD_ID empty calls gh once — REST reply only. A caller's choice, not
-    this script's — #644 CLARIFIED review threads pass both args instead (reply + resolve)."""
+    this script's — CLARIFIED review threads pass both args instead (reply + resolve)."""
     stub_dir = tmp_path / "stubs"
     log = tmp_path / "gh.log"
     _make_recording_gh_stub(stub_dir, log)

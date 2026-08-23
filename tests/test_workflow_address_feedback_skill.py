@@ -151,27 +151,27 @@ def test_address_feedback_skill_binds_comment_databaseid():
 
 def test_address_feedback_skill_clarified_and_deferred_threads_now_resolve():
     """SKILL.md (and its reference/ files) must state that CLARIFIED and DEFERRED review
-    threads now reply AND resolve (#644) — replaces the old CLARIFIED-no-resolve assertion
+    threads now reply AND resolve — replaces the old CLARIFIED-no-resolve assertion
     with the opposite invariant, so a future regression is caught the same way this one was."""
     text = _skill_text_with_references()
     assert re.search(r"CLARIFIED.*resolve", text) or re.search(r"resolve.*CLARIFIED", text), (
         "SKILL.md (or its reference/ files) must state that CLARIFIED review threads "
-        "now resolve (#644) — reply + resolve, same as ADDRESSED"
+        "now resolve — reply + resolve, same as ADDRESSED"
     )
     assert re.search(r"DEFERRED.*resolve", text) or re.search(r"resolve.*DEFERRED", text), (
         "SKILL.md (or its reference/ files) must state that DEFERRED review threads "
-        "now resolve (#644) — reply + resolve, same as ADDRESSED/CLARIFIED"
+        "now resolve — reply + resolve, same as ADDRESSED/CLARIFIED"
     )
 
 
 def test_address_feedback_skill_pr_comments_still_have_no_thread_to_resolve():
-    """PR-level comments have no thread — the #644 review-thread resolve change must not
+    """PR-level comments have no thread — the review-thread resolve change must not
     be implied to apply to PR comments, which keep their existing A/C-reply-only, D-skip
     behavior."""
     text = SKILL_MD.read_text()
     assert "have no thread to resolve" in text, (
         "SKILL.md must still document that PR-level comments have no thread to resolve "
-        "— the #644 resolve change is scoped to review threads only"
+        "— the resolve change is scoped to review threads only"
     )
 
 

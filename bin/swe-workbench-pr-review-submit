@@ -109,7 +109,7 @@ def thread_matches(finding_path: str, finding_line: int, finding_body: str, thre
 
 
 def blocking_threads(threads: list[Thread]) -> list[Thread]:
-    """Unresolved, non-outdated threads block APPROVE (#644): any severity — GitHub
+    """Unresolved, non-outdated threads block APPROVE: any severity — GitHub
     review threads carry no severity field, and a reviewer's severity label isn't
     durable across runs. isResolved/isOutdated are the only release valves."""
     return [t for t in threads if not t.is_resolved and not t.is_outdated]
@@ -634,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
         if n_blocking > 0 and decision_without_gate == "APPROVE" and decision != "APPROVE":
             print(
                 f"[info] APPROVE downgraded to {decision} — {n_blocking} unresolved review "
-                "thread(s) still open, blocking approval (#644).",
+                "thread(s) still open, blocking approval.",
                 file=sys.stderr,
             )
         is_private = _repo_is_private(owner, repo)
