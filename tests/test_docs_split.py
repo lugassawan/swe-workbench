@@ -1,4 +1,4 @@
-"""Guard tests for issue #637: docs/ split into repo-governance vs skill-operational.
+"""Guard tests for the docs/ split: repo-governance vs skill-operational.
 
 docs/ is repo-governance only (never shipped — the npm `files` allowlist excludes it).
 Skill-operational-knowledge docs — gotcha material a skill's executor reads at runtime,

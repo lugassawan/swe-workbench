@@ -2,7 +2,7 @@
 
 Skill-operational reference docs — gotcha material a skill's executor needs at runtime —
 live in [`shared/docs/`](../shared/docs/), which ships with the plugin via the npm `files`
-allowlist (issue #637). This directory is repo-governance only and never ships.
+allowlist. This directory is repo-governance only and never ships.
 
 - [catalog.md](catalog.md) — commands, subagents, and skills (full tables).
 - [extending.md](extending.md) — how to add new skills; philosophy behind the design.

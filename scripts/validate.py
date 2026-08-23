@@ -2099,7 +2099,7 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
 
     docs/ and shared/docs/ are intentionally excluded from the scanned roots — the sibling doc
     page must show the bad pattern as a worked example without tripping this
-    guard (#549; shared/docs/ added by #637 when those pages relocated out of
+    guard (#549; extended when the worked-example pages relocated out of
     docs/). Known limitation: scans raw lines with no heredoc-body
     awareness, so a worked "here's the wrong way" example placed inside a
     heredoc (rather than behind a '#' comment, which the command-position
@@ -2119,7 +2119,7 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
             continue
         for md in sorted(base.rglob("*.md")):
             if md.is_relative_to(ROOT / "shared" / "docs"):
-                continue  # worked-example pages live here now (#637)
+                continue  # worked-example pages live here now
             if sub_cache is not None and md in sub_cache:
                 text = sub_cache[md]
                 if text is None:

@@ -2,8 +2,8 @@
 
 Docs a skill's *executor* needs while following that skill, on any harness — gotcha
 reference material, not contributor onboarding. Shipped to installed plugins via the
-npm `files` allowlist entry `shared`; `docs/` is repo-governance only and never ships
-(issue #637). The entry is deliberately the whole `shared/` tree, not `shared/docs`
+npm `files` allowlist entry `shared`; `docs/` is repo-governance only and never ships.
+The entry is deliberately the whole `shared/` tree, not `shared/docs`
 alone: `skills/workflow-development` operatively references
 `shared/agents/comment-scan.md` at runtime, so the agent/command fragment sources
 ship knowingly alongside these pages (their content also ships inlined into
