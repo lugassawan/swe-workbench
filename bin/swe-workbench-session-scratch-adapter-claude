@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# swe-workbench-session-scratch-adapter-claude
+# Resolve Claude Code's current-session scratchpad without removing it.
+
+set -euo pipefail
+
+note() {
+  printf 'session-scratch-adapter-claude: %s\n' "$*" >&2
+}
+
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+[[ -n "$SESSION_ID" ]] || exit 3
+
+if [[ "$SESSION_ID" == *$'\r'* || "$SESSION_ID" == *$'\n'* ]]; then
+  note "CLAUDE_CODE_SESSION_ID contains a line break"
+  exit 4
+fi
+
+if ! printf '%s' "$SESSION_ID" | grep -qE '^[0-9a-fA-F-]{36}$'; then
+  note "CLAUDE_CODE_SESSION_ID does not look like a session UUID"
+  exit 4
+fi
+
+ROOT="/tmp/claude-$(id -u)"
+shopt -s nullglob
+MATCHES=("$ROOT"/*/"$SESSION_ID"/scratchpad)
+shopt -u nullglob
+
+if [[ "${#MATCHES[@]}" -ne 1 ]]; then
+  note "expected exactly one scratchpad candidate"
+  exit 4
+fi
+
+RELATIVE=${MATCHES[0]#"$ROOT"/}
+printf 'SWB_SESSION_SCRATCH_V1\nclaude\n%s\n1\n%s\n' "$ROOT" "$RELATIVE"
