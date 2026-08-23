@@ -354,6 +354,16 @@ def test_address_feedback_skill_create_reconciles_stale_local_branch():
         'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
         "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
     )
+    assert 'git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH"' in text, (
+        "the diverged warning must be gated on the remote ref existing — a missing ref "
+        "(failed fetch / fork PR) must not be misreported as divergence"
+    )
+    fetch_idx = text.find('git fetch origin "$PR_BRANCH"')
+    guard_idx = text.find('CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)')
+    assert fetch_idx != -1 and guard_idx != -1 and fetch_idx < guard_idx, (
+        "the fetch must run before the reuse guards — guard-path reconcile compares against "
+        "origin/$PR_BRANCH and needs a current ref"
+    )
     assert "skip the create block below, run the shared reconcile block after it" in text, (
         "SKILL.md Phase 2 reuse guards must route through the shared reconcile — a crash-leftover "
         "worktree can be stale (PR advanced between runs) on reuse paths too"

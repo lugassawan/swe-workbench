@@ -92,7 +92,7 @@ If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-tria
 
 ### Phase 2 — Worktree
 
-First, check whether the current branch already matches the PR head — if so, reuse the current worktree instead of creating a new one:
+First refresh the remote ref — run `git fetch origin "$PR_BRANCH" || echo "⚠ fetch of $PR_BRANCH failed — fork PR? see Failure modes"` — every path below (the guards' reconcile, the create block's `--source`) needs a current `origin/$PR_BRANCH`. Then check whether the current branch already matches the PR head — if so, reuse the current worktree instead of creating a new one:
 ```bash
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" = "$PR_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
@@ -118,7 +118,6 @@ fi
 If `$WT` is set by either check above, skip the create block below, run the shared reconcile block after it, then proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree **on the PR branch itself** (`$PR_BRANCH`), so commits pushed in Phase 4 update the PR directly (`git push -u origin "$PR_BRANCH"` — never a throwaway task branch):
 
 ```bash
-git fetch origin "$PR_BRANCH" || echo "⚠ fetch of $PR_BRANCH failed — fork PR? see Failure modes"  # task-mode rimba add does not fetch; origin/$PR_BRANCH must be current
 WT=""
 if command -v rimba >/dev/null 2>&1; then
   if git show-ref --verify --quiet "refs/heads/$PR_BRANCH"; then
@@ -149,7 +148,7 @@ fi
 Shared reconcile for **every** Phase 2 path (reused crash-leftovers go stale; fresh creates are no-ops):
 ```bash
 if [ -n "$WT" ] && git merge-base --is-ancestor "$PR_BRANCH" "origin/$PR_BRANCH"; then git -C "$WT" merge --ff-only "origin/$PR_BRANCH" >/dev/null 2>&1 || echo "⚠ fast-forward of $PR_BRANCH failed"; fi
-[ -n "$WT" ] && ! git merge-base --is-ancestor "origin/$PR_BRANCH" "$PR_BRANCH" && echo "⚠ local $PR_BRANCH diverged from origin/$PR_BRANCH — rebase before Phase 4."
+[ -n "$WT" ] && git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH" && ! git merge-base --is-ancestor "origin/$PR_BRANCH" "$PR_BRANCH" && echo "⚠ local $PR_BRANCH diverged from origin/$PR_BRANCH — rebase before Phase 4."
 command -v rimba >/dev/null 2>&1 && rimba deps install "$PR_BRANCH" || echo "⚠ rimba deps install failed — install deps manually before running tests."
 ```
 
