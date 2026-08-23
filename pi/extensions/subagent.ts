@@ -29,11 +29,11 @@ import {
   translateToolTokens,
 } from "./agent-spec.ts";
 import { isKnownModelTier, type ModelCandidate, resolveModelForTier } from "./model-tier.ts";
+import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall } from "./task-call-line.ts";
 
-/** Single source of truth for the tool's registered name — consumed both by pi.registerTool()
- *  below and by the `--exclude-tools` argv builder, so a rename can't silently desync
- *  registration from the recursion guard. */
-export const TASK_TOOL_NAME = "task";
+// Re-exported so the behavioural pytest driver and index.ts (which import only this
+// module) keep a single import surface for the task tool — rendering and tool name included.
+export { composeTaskCallLine, renderTaskCall, TASK_TOOL_NAME } from "./task-call-line.ts";
 
 /** pi-subagents' own tool name (verified against its published source), excluded defensively
  *  alongside TASK_TOOL_NAME in case the user also has that package installed. */
@@ -121,12 +121,15 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
         "with the available list rather than guessing.",
     ],
     parameters: TASK_PARAMS_SCHEMA,
+    renderCall: taskRenderCall,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const { agent, prompt } = params as unknown as TaskParams;
 
       const available = listAgentNames(root);
       if (!available.includes(agent)) {
-        throw new Error(`task: unknown agent "${agent}" — available agents: ${available.join(", ")}`);
+        throw new Error(
+          `task: unknown agent "${sanitizeAgentId(agent)}" — available agents: ${available.join(", ")}`,
+        );
       }
 
       const spec = readAgentSpec(root, agent);
