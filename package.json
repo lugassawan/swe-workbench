@@ -15,6 +15,7 @@
     "bin/README.md",
     "skills",
     "commands",
+    "shared",
     "agents",
     "hooks/*.sh",
     "hooks/*.py",

@@ -45,7 +45,7 @@ This skill orchestrates; analysis is delegated to:
 - `swe-workbench:reviewer` subagent — produces `Severity | File:Line | Issue | Why | Fix` findings + a Review Decision footer (when instructed by this skill — see Step 4).
 - `swe-workbench:ticket-context` skill — prepended to the reviewer prompt when the PR body or commit messages reference a ticket key, atlassian/Confluence URL, or `#NNN` GitHub ref.
 - `swe-workbench:workflow-pr-review-post` skill — the shared posting core (Step 6): dedup, inline/PR-level posting, self-review gate + diff-scoping flip, submit, CTA, its own state reap.
-- **Checkpoint:** write the workflow state file (see `docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete the state file after Step 7.
+- **Checkpoint:** write the workflow state file (see `shared/docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete the state file after Step 7.
 
 ## 7-step flow
 
@@ -168,7 +168,7 @@ Worktree teardown stays backgrounded (slow); it no longer carries state-file cle
        swe-workbench-clean-ephemeral "$WT" 2>/dev/null; } ) &
 ```
 
-Delete the workflow-state checkpoint file (see `docs/workflow-state.md`) now that the flow has reached its terminal step.
+Delete the workflow-state checkpoint file (see `shared/docs/workflow-state.md`) now that the flow has reached its terminal step.
 
 ## Footer parsing contract
 

@@ -60,7 +60,7 @@ When Claude Code auto-compacts a long conversation, any in-progress `swe-workben
 resume preamble so the workflow continues at the correct phase — no manual restart needed.
 The hook fires on compaction as well as on plain session startup/resume, and also nudges a
 worktree re-anchor when the session's cwd has drifted from a linked worktree. See
-[docs/workflow-state.md](docs/workflow-state.md) for the schema, lifecycle table, and a
+[shared/docs/workflow-state.md](shared/docs/workflow-state.md) for the schema, lifecycle table, and a
 manual smoke test.
 
 `.claude/cache/` is this repo's ephemeral-state directory — add it to your own repo's

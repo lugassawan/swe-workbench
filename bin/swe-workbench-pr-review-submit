@@ -40,8 +40,8 @@ stringified indices ({"comments":{"0":{...}}}), not an array — GitHub's
 Reviews API requires an array and rejects the object shape outright. This
 module builds the payload as real Python data structures and serializes it
 once with json.dumps, which sidesteps that failure mode entirely (see
-docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
-docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
+shared/docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
+shared/docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
 neither applies here since no shell ever sees this payload as a string to
 re-interpret).
 
