@@ -354,6 +354,15 @@ def test_address_feedback_skill_create_reconciles_stale_local_branch():
         'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
         "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
     )
+    assert "skip the create block below, run the shared reconcile block after it" in text, (
+        "SKILL.md Phase 2 reuse guards must route through the shared reconcile — a crash-leftover "
+        "worktree can be stale (PR advanced between runs) on reuse paths too"
+    )
+    gate_idx = text.find('[ -e "$WT/.git" ]')
+    ff_idx = text.find('merge --ff-only')
+    assert gate_idx != -1 and ff_idx != -1 and gate_idx < ff_idx, (
+        "the shared reconcile (ff-only) must run after the create-flow existence gate"
+    )
 
 
 def test_address_feedback_skill_disposable_paragraph_on_pr_branch():
