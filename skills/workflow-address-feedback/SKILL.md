@@ -107,7 +107,7 @@ If `$WT` is not yet set, check whether a worktree for `$PR_BRANCH` already exist
 ```bash
 if [ -z "$WT" ]; then
   EXISTING_WT=$(git worktree list --porcelain \
-    | awk 'BEGIN{wt=""} /^worktree /{wt=$2} /^branch refs\/heads\/'"$PR_BRANCH"'/{print wt; exit}')
+    | awk -v b="refs/heads/$PR_BRANCH" 'BEGIN{wt=""} /^worktree /{wt=$2} $0 == "branch " b {print wt; exit}')
   if [ -n "$EXISTING_WT" ] && [ -d "$EXISTING_WT" ]; then
     WT="$EXISTING_WT"
     REUSED_WT=1
@@ -118,15 +118,18 @@ fi
 If `$WT` is set by either check above, skip the rest of Phase 2 and proceed to Phase 3 — when the tree was dirty (first guard only), a non-blocking warning was already emitted; the user may stash before Phase 4 commits. Otherwise create a new durable worktree **on the PR branch itself** (`$PR_BRANCH`), so commits pushed in Phase 4 update the PR directly (`git push -u origin "$PR_BRANCH"` — never a throwaway task branch):
 
 ```bash
-git fetch origin "$PR_BRANCH" 2>/dev/null || true  # task-mode rimba add does not fetch; origin/$PR_BRANCH must be current
+git fetch origin "$PR_BRANCH" || echo "⚠ fetch of $PR_BRANCH failed — fork PR? see Failure modes"  # task-mode rimba add does not fetch; origin/$PR_BRANCH must be current
 WT=""
 if command -v rimba >/dev/null 2>&1; then
   if git show-ref --verify --quiet "refs/heads/$PR_BRANCH"; then
     # Local branch exists (kept by a prior run's Phase 7) — checkout preserves unpushed crash-recovery commits.
     WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
     mkdir -p "$(dirname "$WT")"
-    git worktree add "$WT" "$PR_BRANCH"
-    rimba deps install "$PR_BRANCH" 2>/dev/null || echo "⚠ rimba deps install failed — install deps manually before running tests."
+    git worktree add "$WT" "$PR_BRANCH" || WT=""
+    # Reconcile vs origin: ff-only when strictly behind (PR advanced between runs); warn when diverged.
+    [ -n "$WT" ] && git merge-base --is-ancestor "$PR_BRANCH" "origin/$PR_BRANCH" && git -C "$WT" merge --ff-only "origin/$PR_BRANCH"
+    [ -n "$WT" ] && ! git merge-base --is-ancestor "origin/$PR_BRANCH" "$PR_BRANCH" && echo "⚠ local $PR_BRANCH diverged from origin/$PR_BRANCH — rebase before Phase 4."
+    rimba deps install "$PR_BRANCH" || echo "⚠ rimba deps install failed — install deps manually before running tests."
   else
     RIMBA_OUT=$(rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" 2>&1)
     WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
@@ -134,9 +137,7 @@ if command -v rimba >/dev/null 2>&1; then
       WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)
       if [ "$WT_BRANCH" != "$PR_BRANCH" ]; then
         # rimba re-prefixed a non-conventional name (feature/<name>) — wrong branch; tear down and fall through to git.
-        rimba remove "$WT_BRANCH" --force >/dev/null 2>&1
-        git worktree remove --force "$WT" >/dev/null 2>&1
-        git branch -D "$WT_BRANCH" >/dev/null 2>&1
+        rimba remove "$WT_BRANCH" --force >/dev/null 2>&1; git worktree remove --force "$WT" >/dev/null 2>&1
         WT=""
       fi
     else
@@ -145,12 +146,12 @@ if command -v rimba >/dev/null 2>&1; then
     fi
   fi
 fi
-if [ -z "$WT" ]; then
-  # rimba absent/failed/re-prefixed — create directly; || covers a local branch existing after teardown.
+if [ -z "$WT" ]; then  # rimba absent/failed/re-prefixed; || covers a local branch existing after teardown
   WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
   mkdir -p "$(dirname "$WT")"
   git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH" 2>/dev/null || git worktree add "$WT" "$PR_BRANCH"
 fi
+[ -e "$WT/.git" ] || { echo "worktree creation failed at $WT"; exit 1; }
 ```
 
 No `--skip-deps`/`--skip-hooks` anywhere on the create path — rimba installs dependencies and runs `post_create` hooks so the worktree is fully initialized with no separate repository-specific bootstrap step. Wait for `rimba add` to complete before running tests in the worktree.

@@ -270,7 +270,10 @@ def test_address_feedback_skill_create_uses_pr_branch_task_form():
         'SKILL.md Phase 2 must invoke: rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" — '
         "the task-form add names the branch after the PR branch itself"
     )
-    phase2 = text[text.find("### Phase 2") : text.find("### Phase 3")]
+    phase2_start = text.find("### Phase 2")
+    phase2_end = text.find("### Phase 3")
+    assert phase2_start != -1 and phase2_end != -1, "Phase 2/Phase 3 headings must exist"
+    phase2 = text[phase2_start:phase2_end]
     assert "pr:$PR" not in phase2, (
         "Phase 2 must not use the pr:<num> task form for worktree creation — it creates a "
         "throwaway branch off the PR head, so pushes never update the PR"
@@ -336,6 +339,23 @@ def test_address_feedback_skill_create_verifies_branch_and_falls_back():
     )
 
 
+def test_address_feedback_skill_create_reconciles_stale_local_branch():
+    """Existing-branch checkout must reconcile against origin — ff-only when behind, warn when diverged."""
+    text = _skill_text_with_references()
+    assert 'git -C "$WT" merge --ff-only "origin/$PR_BRANCH"' in text, (
+        "SKILL.md Phase 2 must fast-forward a strictly-behind local $PR_BRANCH — "
+        "otherwise Phase 4 pushes are rejected non-FF when the PR advanced between runs"
+    )
+    assert 'diverged from origin' in text, (
+        "SKILL.md Phase 2 must warn loudly when local $PR_BRANCH diverged from origin "
+        "(needs rebase before Phase 4)"
+    )
+    assert '[ -e "$WT/.git" ]' in text, (
+        'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
+        "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
+    )
+
+
 def test_address_feedback_skill_disposable_paragraph_on_pr_branch():
     """Prose must state the worktree sits on the PR branch; cleanup keeps the branch (crash recovery)."""
     text = _skill_text_with_references()
@@ -351,9 +371,9 @@ def test_address_feedback_skill_disposable_paragraph_on_pr_branch():
 def test_address_feedback_skill_failure_modes_fork_limitation():
     """Failure modes must carry the cross-fork limitation note (forks out of scope, issue #643)."""
     text = _skill_text_with_references()
-    assert re.search(r"fork", text, re.IGNORECASE), (
-        "SKILL.md Failure modes must note the cross-fork limitation — the create path "
-        "sources from origin; fork-only branches are out of scope"
+    assert "gh-fork-<owner>" in text, (
+        "SKILL.md Failure modes must note the cross-fork limitation (gh-fork-<owner> manual "
+        "workaround) — the create path sources from origin; fork-only branches are out of scope"
     )
 
 
@@ -437,10 +457,11 @@ def test_address_feedback_skill_reuses_existing_worktree_on_main():
         "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
         "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
     )
-    # Must look up the branch ref inside the porcelain output (awk escapes the slashes).
-    assert r"refs\/heads\/" in text, (
-        r"SKILL.md Phase 2 must match 'refs\/heads\/$PR_BRANCH' in the awk pattern "
-        "to locate the correct registered worktree in porcelain output"
+    # Must look up the branch ref inside the porcelain output (branch passed as an awk
+    # variable — a regex-interpolated branch name breaks on "/" in conventional names).
+    assert 'awk -v b="refs/heads/$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must pass the branch to awk via -v (exact $0 == "branch " b match) — '
+        "interpolating $PR_BRANCH into a regex literal dies on slashed branch names"
     )
     # Must set REUSED_WT=1 on a match, same as the first guard.
     assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
