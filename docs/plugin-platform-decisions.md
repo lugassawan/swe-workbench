@@ -332,7 +332,7 @@ golden-inventory ratchet standing in for the type safety a generation step would
   Tier-1 vocabulary prose (`tool-vocab.ts`) stays unconditional regardless of which Tier-2 tools
   actually register.
 
-**`skill_usage_record.sh`/`skill_usage_flush.sh`: `"deferred"` → `"n/a"` (#636).** The original
+**`skill_usage_record.sh`/`skill_usage_flush.sh`: `"deferred"` → `"n/a"`.** The original
 deferral rationale ("not wired yet because the Pi capability it needs (subagents) doesn't exist
 yet") went half-stale when the `task` subagent-dispatch tool shipped (`pi/extensions/subagent.ts`)
 — and re-examination showed the remaining gap is architectural, not a capability arrival away.
@@ -350,5 +350,5 @@ visibility into dispatched children, or this repo reversing the preload conventi
 child-side telemetry subsystem. None is a capability tick-box. The one genuine Pi-native
 skill-usage signal — a top-level `read` of `skills/*/SKILL.md`, visible as a `tool_call` — sits
 outside these hooks' measured population (they deliberately ignore the top-level orchestrator)
-and would be a different feature. This decision amends #636's wire-or-defer enumeration: neither
-branch was taken because the deferral premise had fired without enabling wiring.
+and would be a different feature. Neither branch of the wire-or-defer enumeration that framed
+this re-examination was taken: the deferral premise had fired without enabling wiring.
