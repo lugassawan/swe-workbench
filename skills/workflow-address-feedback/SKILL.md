@@ -280,14 +280,14 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 | Reply REST fails (404 — comment deleted) | HTTP 404 | Skip that thread, log "skipped (comment deleted)". |
 | Resolve mutation fails | GraphQL error | Reply already posted — log "reply posted but resolve failed". Continue. Do not roll back the reply. |
 | rimba re-prefixes a non-conventional PR branch name (worktree on `feature/<name>` ≠ `$PR_BRANCH`) | Post-create branch verification mismatch | Remove the mis-branched worktree, fall back to `git worktree add -b "$PR_BRANCH" … "origin/$PR_BRANCH"`. |
-| Fork PR — branch exists only on the fork remote | `git fetch origin "$PR_BRANCH"` fails / `origin/$PR_BRANCH` missing | Out of scope (issue #643): add the fork remote manually (`git remote add gh-fork-<owner> …`) and check out the PR head by hand, then re-run. |
+| Fork PR — branch exists only on the fork remote | `git fetch origin "$PR_BRANCH"` fails / `origin/$PR_BRANCH` missing | Out of scope: add the fork remote manually (`git remote add gh-fork-<owner> …`) and check out the PR head by hand, then re-run. |
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
 | Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
-| Pass `--skip-deps --skip-hooks` on the Phase 2 create | Never pass either flag — rimba must install deps and run hooks so the worktree is fully initialized with no separate bootstrap step (issue #643). |
+| Pass `--skip-deps --skip-hooks` on the Phase 2 create | Never pass either flag — rimba must install deps and run hooks so the worktree is fully initialized with no separate bootstrap step. |
 | Create the worktree on a throwaway task branch (`rimba add pr:$PR --task …`) | Use `rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"` so the worktree is on the PR branch itself — Phase 4 pushes update the PR directly. |
 | Leave the worktree behind after skill exits | Phase 7 always removes it — skip Phase 7 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
 | Deleting `$PR_BRANCH` directly in Phase 7 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
