@@ -769,6 +769,7 @@ def check_skill_skill_refs(cache=None):
 
 _BARE_ID_RE = re.compile(r'`([\w-]+)`')
 _PROSE_REF_EXEMPTION_MARKER = '<!-- validate: prose-ref -->'
+_LOCAL_PLANNING_ROOTS = (Path(".superpowers"), Path("docs/superpowers"))
 
 
 def _bare_actionable_id_set():
@@ -791,7 +792,8 @@ def check_bare_actionable_refs(cache=None):
     dispatch id (e.g. "Delegate to the `senior-engineer` subagent") is never
     validated and can silently drift from the namespaced form used for the
     identical construct elsewhere. This is a single flat rule with no
-    heuristic: every markdown file in the repo (outside tests/ and
+    heuristic: every markdown file in the repo (outside tests/, the
+    gitignored local planning roots .superpowers/ and docs/superpowers/, and
     _NEVER_SCAN_DIRS) is scanned, fenced code blocks are stripped first
     (_strip_fenced_code_blocks — preserves line numbers so messages stay
     accurate), and any bare id that resolves to a real skill or agent fails —
@@ -818,6 +820,8 @@ def check_bare_actionable_refs(cache=None):
     for md in sorted(ROOT.rglob("*.md")):
         rel = md.relative_to(ROOT)
         if rel.parts[0] == "tests":
+            continue
+        if any(rel.is_relative_to(planning_root) for planning_root in _LOCAL_PLANNING_ROOTS):
             continue
         if _NEVER_SCAN_DIRS & set(rel.parts):
             continue
