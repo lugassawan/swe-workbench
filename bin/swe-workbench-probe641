@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Throwaway CI probe for issue #641 — proves auto-discovery lints new bin/ scripts
+# with zero pr.yml edits. Deliberately contains an unused variable (SC2034).
+# NEVER MERGE THIS BRANCH.
+PROBE641_UNUSED_VARIABLE=1
+exit 0

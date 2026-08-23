@@ -9,3 +9,5 @@ if command -v rimba >/dev/null 2>&1; then
   fi
 fi
 # END RIMBA HOOK
+
+PROBE641_POST_MERGE_UNUSED=1
