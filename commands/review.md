@@ -83,7 +83,7 @@ Ground judgements in SOLID and Clean Architecture principles. Do not nitpick for
 
 ## PR mode
 
-**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=first-pass`, passing the resolved PR number.
+**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=auto`, passing the resolved PR number. The skill self-detects first-pass vs. followup by checking whether this reviewer already has a review on the PR and whether it's still open — `--check-followup <N>` below remains available as an explicit override that always forces `MODE=followup`.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `/tmp/swe-workbench-pr-review/<N>`, ticket-context chain, reviewer invocation with footer instruction, decision-footer parsing, GraphQL thread fetch + dedup + REST inline-comment post, `gh pr review --approve|--comment` submission, non-blocking cleanup. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and failure-mode handling.
 
