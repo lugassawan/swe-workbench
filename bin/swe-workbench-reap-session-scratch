@@ -26,15 +26,23 @@ shopt -s nullglob
 ADAPTERS=("$SCRIPT_DIR"/swe-workbench-session-scratch-adapter-*)
 shopt -u nullglob
 
-ACTIVE_OUTPUTS=()
+ACTIVE_OUTPUT=
+trap 'if [[ -n "${ACTIVE_OUTPUT:-}" ]]; then rm -f -- "$ACTIVE_OUTPUT"; fi' EXIT
+
 ACTIVE_COUNT=0
 for adapter in "${ADAPTERS[@]+"${ADAPTERS[@]}"}"; do
   [[ -f "$adapter" && -x "$adapter" ]] || reject "invalid packaged adapter: $adapter"
-  if output=$("$adapter"); then
-    ACTIVE_OUTPUTS[ACTIVE_COUNT]=$output
+  adapter_output=$(mktemp "${TMPDIR:-/tmp}/swe-workbench-session-scratch.XXXXXX") || reject "cannot preserve adapter output — skipping"
+  if "$adapter" > "$adapter_output"; then
+    if [[ "$ACTIVE_COUNT" -eq 0 ]]; then
+      ACTIVE_OUTPUT=$adapter_output
+    else
+      rm -f -- "$adapter_output"
+    fi
     ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
   else
     status=$?
+    rm -f -- "$adapter_output"
     [[ "$status" -eq 3 ]] || reject "adapter ${adapter##*/} could not resolve a safe target — skipping"
   fi
 done
@@ -43,9 +51,9 @@ done
 [[ "$ACTIVE_COUNT" -eq 1 ]] || reject "multiple active session scratch adapters — skipping"
 
 RECORDS=()
-while IFS= read -r record; do
+while IFS= read -r record || [[ -n "$record" ]]; do
   RECORDS[${#RECORDS[@]}]=$record
-done <<< "${ACTIVE_OUTPUTS[0]}"
+done < "$ACTIVE_OUTPUT"
 
 [[ "${#RECORDS[@]}" -ge 4 ]] || reject "adapter descriptor has too few records — skipping"
 [[ "${RECORDS[0]}" == "SWB_SESSION_SCRATCH_V1" ]] || reject "unsupported adapter descriptor version — skipping"
@@ -93,7 +101,9 @@ case "$CANON_TARGET/" in
   "$CANON_ROOT"/*) ;;
   *) reject "candidate escapes its authorized root — skipping" ;;
 esac
-[[ ! -e "$CANON_TARGET/.git" ]] || reject "refusing to touch session scratch containing .git — skipping"
+if [[ -e "$CANON_TARGET/.git" || -L "$CANON_TARGET/.git" ]]; then
+  reject "refusing to touch session scratch containing .git — skipping"
+fi
 
 [[ ! -L "$ROOT" ]] || reject "authorized root changed during validation — skipping"
 CANON_ROOT_NOW=$(cd "$ROOT" 2>/dev/null && pwd -P) || reject "authorized root vanished during validation — skipping"
@@ -111,7 +121,9 @@ case "$CANON_TARGET_NOW/" in
   "$CANON_ROOT_NOW"/*) ;;
   *) reject "candidate escapes its authorized root — skipping" ;;
 esac
-[[ ! -e "$CANON_TARGET_NOW/.git" ]] || reject "refusing to touch session scratch containing .git — skipping"
+if [[ -e "$CANON_TARGET_NOW/.git" || -L "$CANON_TARGET_NOW/.git" ]]; then
+  reject "refusing to touch session scratch containing .git — skipping"
+fi
 
 shopt -s nullglob dotglob
 for entry in "$CANON_TARGET_NOW"/*; do

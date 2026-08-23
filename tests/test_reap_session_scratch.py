@@ -154,6 +154,7 @@ def test_active_adapter_failure_is_noop(tmp_path: Path) -> None:
         ("SWB_SESSION_SCRATCH_V1", "fixture", "2", ["session/scratch"], None),
         ("SWB_SESSION_SCRATCH_V1", "fixture", "1", [], None),
         ("SWB_SESSION_SCRATCH_V1", "fixture", "1", ["session/scratch"], ["extra"]),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "1", ["session/scratch"], [""]),
     ],
 )
 def test_malformed_descriptor_is_noop(
@@ -177,6 +178,18 @@ def test_malformed_descriptor_is_noop(
         count=count,
         extra_records=extra_records,
     )
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+def test_zero_count_descriptor_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, [], count="0")
 
     result = run_reaper(script)
 
@@ -333,6 +346,19 @@ def test_target_containing_git_is_noop(tmp_path: Path) -> None:
     root, target = create_target(tmp_path)
     (target / "keep.txt").write_text("x")
     (target / ".git").mkdir()
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+def test_target_containing_dangling_git_symlink_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    (target / ".git").symlink_to(tmp_path / "missing-git")
     write_success_adapter(script, "fixture", root, ["session/scratch"])
 
     result = run_reaper(script)
