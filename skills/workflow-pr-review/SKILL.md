@@ -10,7 +10,7 @@ orchestrator: true
 
 ## Mode resolution
 
-This skill runs in one of two modes, chosen by the caller: **first-pass** (a fresh review) or **followup** (a re-check after the owner has addressed feedback). `commands/review.md` sets `MODE=first-pass` for a bare `/swe-workbench:review <N>` invocation and `MODE=followup` for `--check-followup <N>`.
+This skill runs in one of two modes, chosen by the caller: **first-pass** (a fresh review) or **followup** (a re-check after the owner has addressed feedback). `commands/review.md` sets `MODE=auto` for a bare `/swe-workbench:review <N>` invocation and `MODE=followup` for `--check-followup <N>`. `MODE=auto` self-resolves to `first-pass` or `followup` at the top of Step 1 (#644) — see below — before mode-table interpolation happens, so everything downstream only ever sees a concrete `first-pass`/`followup` value.
 
 Four values are derived from `$MODE` once, up front, and interpolated into every downstream bash block below — evaluated, not applied by hand:
 
@@ -56,10 +56,18 @@ command -v swe-workbench-preflight-pr >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+if [ "$MODE" = auto ]; then
+  gh auth status >/dev/null 2>&1 || { echo "gh not authenticated. Run 'gh auth login'." >&2; exit 1; }
+  CURRENT_USER=$(gh api /user -q .login)
+  MODE=$(gh pr view "$PR" --json state,reviews | jq -r --arg me "$CURRENT_USER" \
+    'if .state == "OPEN" and ([.reviews[] | select(.author.login == $me)] | length) > 0
+     then "followup" else "first-pass" end')
+  echo "Auto-detected mode: $MODE"
+fi
 case "$MODE" in
   first-pass) MODE_TAG=pr-review;    STATE_SUFFIX="";          CALLER_TAG=general;  BYLINE='_Reviewed by `reviewer`_' ;;
   followup)   MODE_TAG=pr-followup;  STATE_SUFFIX="-followup"; CALLER_TAG=followup; BYLINE='_Re-reviewed by `reviewer`_' ;;
-  *) echo "Unknown MODE: $MODE (expected first-pass or followup)" >&2; exit 1 ;;
+  *) echo "Unknown MODE: $MODE (expected auto, first-pass, or followup)" >&2; exit 1 ;;
 esac
 echo "Mode: $MODE"
 JSON="/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json"
@@ -198,7 +206,7 @@ See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup
 
 | Mistake | Fix |
 |---|---|
-| Invoke this skill without setting `$MODE` first | Every state-file path, worktree task name, byline, and caller tag is derived from `$MODE` via the mode-resolution table — an unset `$MODE` breaks every downstream interpolation. Callers must set `MODE=first-pass` or `MODE=followup` before Step 1. |
+| Invoke this skill without setting `$MODE` first | Every state-file path, worktree task name, byline, and caller tag is derived from `$MODE` via the mode-resolution table — an unset `$MODE` breaks every downstream interpolation. Callers must set `MODE=auto`, `MODE=first-pass`, or `MODE=followup` before Step 1. |
 | Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --task "${MODE_TAG}-$PR" --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |

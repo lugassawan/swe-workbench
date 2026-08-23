@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Reply to a PR review thread (REST) and optionally resolve it (GraphQL).
 # Usage: swe-workbench-reply-and-resolve <owner> <repo> <pr> <comment_databaseid> <thread_id> <reply_body> [kind]
-# Empty reply_body skips the reply (COMMENT_DATABASEID is then ignored); empty thread_id skips the resolve
-# (ADDRESSED -> both, CLARIFIED -> reply only, DEFERRED -> neither).
+# Empty reply_body skips the reply (COMMENT_DATABASEID is then ignored); empty thread_id skips the resolve.
+# Which args are empty is entirely the caller's choice, driven by its own triage disposition —
+# this script is disposition-agnostic and only reacts to whether each arg is empty or set.
 # kind (optional, default "review"): the existing thread-reply + resolve behavior above.
 # "issue" posts REPLY_BODY to the PR's top-level conversation (issues/{pr}/comments) instead — used
 # for PR-level comments, which have no thread to resolve. COMMENT_DATABASEID/THREAD_ID are ignored.
 set -euo pipefail
-# Fast-exit for DEFERRED: nothing to do when both reply and resolve are suppressed.
+# Fast-exit when both reply and resolve are suppressed (both args empty) — nothing to do.
 if [ -z "${6:-}" ] && [ -z "${5:-}" ]; then exit 0; fi
 OWNER="${1:?}"; REPO="${2:?}"; PR="${3:?}"
 COMMENT_DATABASEID="${4:-}"; THREAD_ID="${5:-}"; REPLY_BODY="${6:-}"

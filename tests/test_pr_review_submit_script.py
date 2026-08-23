@@ -127,9 +127,9 @@ def _threads_response(nodes: list[dict], *, has_next_page: bool = False, end_cur
     return {"stdout": json.dumps(body), "exit": 0}
 
 
-def _thread_node(*, id, path, line, is_resolved=False, body="", author="bob", reactor_logins=None):
+def _thread_node(*, id, path, line, is_resolved=False, is_outdated=False, body="", author="bob", reactor_logins=None):
     return {
-        "id": id, "isResolved": is_resolved, "path": path, "line": line, "startLine": None,
+        "id": id, "isResolved": is_resolved, "isOutdated": is_outdated, "path": path, "line": line, "startLine": None,
         "comments": {
             "nodes": [{
                 "id": f"{id}-c0", "databaseId": 1, "body": body,
@@ -248,6 +248,28 @@ def test_thread_matches_false_below_jaccard_threshold():
     assert prs.thread_matches("src.py", 12, "alpha bravo charlie", t) is False
 
 
+# ── Unit: blocking_threads (#644) ─────────────────────────────────────────────
+
+
+def test_blocking_threads_excludes_resolved():
+    threads = [_thread(id="T1", is_resolved=True)]
+    assert prs.blocking_threads(threads) == []
+
+
+def test_blocking_threads_excludes_outdated():
+    threads = [_thread(id="T1", is_outdated=True)]
+    assert prs.blocking_threads(threads) == []
+
+
+def test_blocking_threads_includes_plain_unresolved_non_outdated():
+    threads = [_thread(id="T1")]
+    assert prs.blocking_threads(threads) == threads
+
+
+def test_blocking_threads_empty_list_returns_empty():
+    assert prs.blocking_threads([]) == []
+
+
 # ── Unit: resolve_event — 24-case truth table ─────────────────────────────────
 
 _IDENTITY_CASES = [
@@ -285,6 +307,46 @@ def test_resolve_event_self_review_never_yields_approve():
     event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice")
     assert is_self is True
     assert event == "COMMENT", "self-review must never submit APPROVE"
+
+
+# ── Unit: resolve_event — n_blocking_threads downgrade (#644) ─────────────────
+
+
+def test_resolve_event_blocking_threads_downgrades_approve_to_comment():
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 1)
+    assert decision == "COMMENT"
+    assert event == "COMMENT"
+
+
+def test_resolve_event_zero_blocking_threads_leaves_approve_untouched():
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 0)
+    assert decision == "APPROVE"
+    assert event == "APPROVE"
+
+
+def test_resolve_event_default_n_blocking_threads_preserves_existing_truth_table():
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "bob")
+    assert decision == "APPROVE"
+    assert event == "APPROVE"
+
+
+def test_resolve_event_blocking_downgrade_wins_over_out_of_diff_upgrade():
+    """COMMENT + OUT-OF-DIFF-ONLY upgrades to APPROVE; blocking threads must downgrade it
+    back to COMMENT — the downgrade is applied after the upgrade (ordering)."""
+    event, decision, is_self, known = prs.resolve_event("COMMENT", "OUT-OF-DIFF-ONLY", "alice", "bob", 1)
+    assert decision == "COMMENT"
+    assert event == "COMMENT"
+
+
+def test_resolve_event_self_review_with_blocking_threads_downgrades_decision_too():
+    """Self-review already forces `event` to COMMENT regardless of `decision` — but the
+    blocking-threads downgrade must still apply to `decision` itself (not just `event`),
+    since callers (e.g. workflow-pr-review-post's CTA suppression) read `decision`, not
+    `event`, to decide whether there's anything left to address."""
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice", 1)
+    assert is_self is True
+    assert decision == "COMMENT", "decision must be downgraded even under self-review"
+    assert event == "COMMENT"
 
 
 # ── Unit: build_byline / build_summary ────────────────────────────────────────
@@ -944,6 +1006,102 @@ def test_body_with_quotes_backslash_and_leading_at_survives_byte_identical(tmp_p
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
     assert payload["comments"][0]["body"] == hazardous_body
+
+
+# ── Behavioral: blocking-thread gate (#644) ───────────────────────────────────
+
+
+def test_unresolved_non_outdated_thread_blocks_approve(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "EVENT=COMMENT" in result.stdout
+    assert "BLOCKED_BY_UNRESOLVED=1" in result.stdout
+    assert "APPROVE downgraded to COMMENT" in result.stderr
+    assert "1 unresolved review" in result.stderr
+
+
+def test_blocking_thread_with_decision_already_comment_prints_no_downgrade_message(tmp_path):
+    """When --decision is already COMMENT, blocking threads have nothing to downgrade —
+    the informational stderr message must only fire on an actual APPROVE->COMMENT
+    transition, not merely whenever blocking threads exist."""
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "COMMENT"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "BLOCKED_BY_UNRESOLVED=1" in result.stdout
+    assert "downgraded" not in result.stderr
+
+
+def test_resolved_thread_does_not_block_approve(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=True, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "EVENT=APPROVE" in result.stdout
+    assert "BLOCKED_BY_UNRESOLVED=0" in result.stdout
+
+
+def test_outdated_thread_does_not_block_approve(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=True)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "EVENT=APPROVE" in result.stdout
+    assert "BLOCKED_BY_UNRESOLVED=0" in result.stdout
 
 
 def test_n_zero_skips_atomic_post_entirely(tmp_path):

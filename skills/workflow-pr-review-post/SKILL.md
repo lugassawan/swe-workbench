@@ -74,8 +74,21 @@ the full rationale, and
 building the payload in Python sidesteps entirely.
 
 `eval` sets `POSTED_INLINE`, `POSTED_PR_LEVEL`, `DEDUPED`, `SUBMITTED`, `EVENT`, `DECISION`,
-`REVIEW_URL` — every value `printf %q`-quoted. Finding bodies are never echoed to stdout, so a
-body containing shell metacharacters can never inject into the `eval`.
+`REVIEW_URL`, `BLOCKED_BY_UNRESOLVED` — every value `printf %q`-quoted. Finding bodies are never
+echoed to stdout, so a body containing shell metacharacters can never inject into the `eval`.
+
+**Semantic shift (#644):** `DECISION=APPROVE` now means "no Critical/High in this run's findings
+**and** no open (unresolved, non-outdated) review threads on the PR" — not just the former. Any
+unresolved, non-outdated thread force-downgrades `APPROVE` to `COMMENT`, regardless of its
+severity (GitHub threads carry no severity field). This is deliberately severity-blind and
+orthogonal to the `swe-workbench:reviewer` agent's own footer, which still means "no Critical/High
+in this diff, this run" exactly as before — the two criteria can legitimately disagree.
+
+**Residual risk:** GitHub's `isOutdated` reflects diff-*position* staleness (the thread's anchored
+hunk no longer maps cleanly to HEAD), not whether the underlying concern was ever addressed — an
+unrelated edit elsewhere in the file can flip a still-valid, never-addressed thread to outdated,
+silently exempting it from the gate with no explicit action (unlike `isResolved`). Treat an
+outdated-but-unresolved thread as needing manual re-verification, not as settled.
 
 ## Step 5 — Address-feedback CTA (conditional)
 
@@ -105,6 +118,7 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 | Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
 | Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `EVENT=COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
 | All findings dedup-matched, or the pr-level batch post fails | `POSTED_INLINE=0` and `POSTED_PR_LEVEL=0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
+| Unresolved, non-outdated review thread(s) exist from a prior review | `BLOCKED_BY_UNRESOLVED > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design (#644). Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`. |
 
 ## Common mistakes
 
