@@ -1,7 +1,7 @@
 # Platform-Agnostic Session Scratch Cleanup Design
 
-**Issue:** [#647](https://github.com/lugassawan/swe-workbench/issues/647)  
-**Status:** Approved  
+**Issue:** [#647](https://github.com/lugassawan/swe-workbench/issues/647)
+**Status:** Approved
 **Date:** 2026-08-23
 
 ## Summary

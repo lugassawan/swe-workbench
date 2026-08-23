@@ -7,11 +7,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from conftest import _CLEAN_ENV
 
-SOURCE_SCRIPT = (
-    Path(__file__).parent.parent / "bin" / "swe-workbench-reap-session-scratch"
-)
+SOURCE_SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-reap-session-scratch"
 
 
 def isolated_reaper(tmp_path: Path) -> Path:
@@ -270,6 +269,7 @@ def test_symlinked_intermediate_component_is_noop(tmp_path: Path) -> None:
     assert (target / "keep.txt").exists()
 
 
+
 @pytest.mark.parametrize("root_kind", ["missing", "file", "filesystem-root"])
 def test_unsafe_authorized_root_is_noop(tmp_path: Path, root_kind: str) -> None:
     script = isolated_reaper(tmp_path)
@@ -367,9 +367,7 @@ def test_target_containing_dangling_git_symlink_is_noop(tmp_path: Path) -> None:
     assert (target / "keep.txt").exists()
 
 
-def test_happy_path_removes_top_level_entries_and_preserves_target(
-    tmp_path: Path,
-) -> None:
+def test_happy_path_removes_top_level_entries_and_preserves_target(tmp_path: Path) -> None:
     script = isolated_reaper(tmp_path)
     root, target = create_target(tmp_path)
     (target / "one.txt").write_text("x")
@@ -414,14 +412,12 @@ def test_partial_removal_counts_only_successful_entries(tmp_path: Path) -> None:
     fake_rm = fake_bin / "rm"
     fake_rm.write_text(
         "#!/usr/bin/env bash\n"
-        'if [[ "$*" == *protected.txt ]]; then exit 1; fi\n'
-        '/bin/rm "$@"\n'
+        "if [[ \"$*\" == *protected.txt ]]; then exit 1; fi\n"
+        "/bin/rm \"$@\"\n"
     )
     fake_rm.chmod(0o755)
 
-    result = run_reaper(
-        script, env_overrides={"PATH": f"{fake_bin}:{os.environ['PATH']}"}
-    )
+    result = run_reaper(script, env_overrides={"PATH": f"{fake_bin}:{os.environ['PATH']}"})
 
     assert result.returncode == 0
     assert swept_count(result.stdout) == 1

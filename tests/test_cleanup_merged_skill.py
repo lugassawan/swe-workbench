@@ -16,18 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
-TEMPLATE = (
-    ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
-)
-SWEEP_SCRIPT = (
-    ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sweep-residuals.sh"
-)
+TEMPLATE = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
+SWEEP_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sweep-residuals.sh"
 WORKTREE_REMOVAL_STRATEGIES_REF = (
-    ROOT
-    / "skills"
-    / "workflow-cleanup-merged"
-    / "reference"
-    / "worktree-removal-strategies.md"
+    ROOT / "skills" / "workflow-cleanup-merged" / "reference" / "worktree-removal-strategies.md"
 )
 
 
@@ -47,19 +39,17 @@ def test_cleanup_merged_step3_calls_exit_worktree_before_cwd_anchor():
     assert "**3a." in step3, "Step 3 must have a **3a. sub-section"
     assert "**3b." in step3, "Step 3 must have a **3b. sub-section"
     section_3a = step3.split("**3b.")[0]
-    assert (
-        "ExitWorktree" in section_3a
-    ), "ExitWorktree must be in sub-section 3a (before **3b.), not a later section"
-    assert (
-        "action=keep" in section_3a
-    ), "ExitWorktree action=keep must appear in sub-section 3a"
+    assert "ExitWorktree" in section_3a, (
+        "ExitWorktree must be in sub-section 3a (before **3b.), not a later section"
+    )
+    assert "action=keep" in section_3a, (
+        "ExitWorktree action=keep must appear in sub-section 3a"
+    )
 
     # Ordering check: MAIN_REPO= and git pull are in 3b/3c, after 3a
     section_3bc = step3.split("**3b.")[1]
     assert "MAIN_REPO=" in section_3bc, "MAIN_REPO= derivation must be in 3b or later"
-    assert (
-        "git pull" in section_3bc
-    ), "git pull must be in 3b or later (after ExitWorktree)"
+    assert "git pull" in section_3bc, "git pull must be in 3b or later (after ExitWorktree)"
 
 
 def test_cleanup_merged_step3_exit_worktree_is_no_op_when_not_entered():
@@ -68,11 +58,7 @@ def test_cleanup_merged_step3_exit_worktree_is_no_op_when_not_entered():
     body = SKILL.read_text()
     step3 = body.split("### Step 3")[1].split("### Step 4")[0]
 
-    assert (
-        "no-op" in step3.lower()
-        or "not entered" in step3.lower()
-        or "never called" in step3.lower()
-    ), (
+    assert "no-op" in step3.lower() or "not entered" in step3.lower() or "never called" in step3.lower(), (
         "Step 3 must clarify that ExitWorktree is a no-op when the session did not "
         "enter via EnterWorktree — agents must not abort if the tool is unavailable"
     )
@@ -93,10 +79,7 @@ def test_cleanup_merged_rimba_path_handles_partial_success():
     rimba_block = body.split("## rimba (MCP / binary)")[1].split("## shell fallback")[0]
 
     has_partial = "partial" in rimba_block.lower()
-    has_fallthrough = (
-        "fall through to Step 6" in rimba_block
-        or "fall through to step 6" in rimba_block.lower()
-    )
+    has_fallthrough = "fall through to Step 6" in rimba_block or "fall through to step 6" in rimba_block.lower()
 
     assert has_partial and has_fallthrough, (
         "rimba strategy Failure handling must mention both 'partial' (success) "
@@ -147,16 +130,8 @@ def test_phase1_template_rimba_is_primary_not_peer():
             f"(rimba at {rimba_idx}, using-git-worktrees at {superp_idx})"
         )
         # Verify using-git-worktrees is framed as a fallback (not a peer primary)
-        context_around = phase1[max(0, superp_idx - 80) : superp_idx + 80].lower()
-        fallback_keywords = [
-            "fallback",
-            "else",
-            "absent",
-            "without",
-            "only when",
-            "not found",
-            "unavailable",
-        ]
+        context_around = phase1[max(0, superp_idx - 80):superp_idx + 80].lower()
+        fallback_keywords = ["fallback", "else", "absent", "without", "only when", "not found", "unavailable"]
         assert any(kw in context_around for kw in fallback_keywords), (
             "using-git-worktrees in Phase 1 must be framed as a fallback "
             "(preceded by a conditional like 'else', 'fallback', 'absent', etc.), "
@@ -175,18 +150,16 @@ def test_cleanup_merged_documents_hook_interrupted_recovery():
     """
     body = SKILL.read_text()
 
-    assert (
-        "HOOK_INTERRUPTED" in body
-    ), "SKILL.md must mention the HOOK_INTERRUPTED stdout field"
+    assert "HOOK_INTERRUPTED" in body, (
+        "SKILL.md must mention the HOOK_INTERRUPTED stdout field"
+    )
 
     assert "## Failure Mode Table" in body, "Failure Mode Table section must exist"
-    failure_table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[
-        0
-    ]
+    failure_table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
 
-    assert (
-        "HOOK_INTERRUPTED=1" in failure_table
-    ), "Failure Mode Table must have a row keyed on HOOK_INTERRUPTED=1"
+    assert "HOOK_INTERRUPTED=1" in failure_table, (
+        "Failure Mode Table must have a row keyed on HOOK_INTERRUPTED=1"
+    )
     assert "git worktree prune" in failure_table, (
         "Failure Mode Table's partial-deletion row must name the recovery command "
         "git worktree prune"
@@ -207,22 +180,24 @@ def test_cleanup_merged_step6_delegates_to_delete_branches_script():
     """
     body = SKILL.read_text()
 
-    assert (
-        "### Step 6 — Delete Branches" in body
-    ), "Step 6 heading must be '### Step 6 — Delete Branches'"
-    assert "### Step 7 — Report" in body, "The Report step must stay at Step 7"
+    assert "### Step 6 — Delete Branches" in body, (
+        "Step 6 heading must be '### Step 6 — Delete Branches'"
+    )
+    assert "### Step 7 — Report" in body, (
+        "The Report step must stay at Step 7"
+    )
 
     step6_slice = body.split("### Step 6 — Delete Branches")[1].split("### Step 7")[0]
 
-    assert (
-        "delete-branches.sh" in step6_slice
-    ), "Step 6 slice must reference delete-branches.sh"
-    assert (
-        "LOCAL_DELETED" in step6_slice
-    ), "Step 6 slice must document LOCAL_DELETED output"
-    assert (
-        "REMOTE_DELETED" in step6_slice
-    ), "Step 6 slice must document REMOTE_DELETED output"
+    assert "delete-branches.sh" in step6_slice, (
+        "Step 6 slice must reference delete-branches.sh"
+    )
+    assert "LOCAL_DELETED" in step6_slice, (
+        "Step 6 slice must document LOCAL_DELETED output"
+    )
+    assert "REMOTE_DELETED" in step6_slice, (
+        "Step 6 slice must document REMOTE_DELETED output"
+    )
 
     # The old inline commands must not appear within Step 6 (they were extracted)
     assert "git branch -D <headRefName>" not in step6_slice, (
@@ -238,7 +213,6 @@ def test_cleanup_merged_step6_delegates_to_delete_branches_script():
 # ---------------------------------------------------------------------------
 # No-op ambiguity reframe (#497)
 # ---------------------------------------------------------------------------
-
 
 def test_step3_no_longer_claims_no_op_confirms_cd_entry():
     """Step 3a must not assert an ExitWorktree no-op as definitive proof of cd-entry.
@@ -257,9 +231,9 @@ def test_step3_no_longer_claims_no_op_confirms_cd_entry():
 def test_step3_names_compaction_as_alternative_cause():
     body = SKILL.read_text()
     step3 = body.split("### Step 3")[1].split("### Step 4")[0]
-    assert (
-        "compaction" in step3.lower()
-    ), "Step 3 must name compaction as an alternative cause of an ExitWorktree no-op."
+    assert "compaction" in step3.lower(), (
+        "Step 3 must name compaction as an alternative cause of an ExitWorktree no-op."
+    )
 
 
 def test_common_mistakes_no_op_row_reframed():
@@ -268,9 +242,7 @@ def test_common_mistakes_no_op_row_reframed():
     body = SKILL.read_text()
     assert "## Common Mistakes" in body, "Common Mistakes section must exist"
     mistakes = body.split("## Common Mistakes")[1]
-    assert (
-        "confirming cd-entry" not in mistakes and "confirms cd-entry" not in mistakes
-    ), (
+    assert "confirming cd-entry" not in mistakes and "confirms cd-entry" not in mistakes, (
         "Common Mistakes table must not assert an ExitWorktree no-op confirms "
         "cd-entry with certainty."
     )
@@ -284,7 +256,6 @@ def test_common_mistakes_no_op_row_reframed():
 # Step 5 — Residual Sweep (issue #535)
 # ---------------------------------------------------------------------------
 
-
 def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
     """Step 5 must delegate residual reaping to sweep-residuals.sh via eval.
 
@@ -294,20 +265,18 @@ def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
     """
     body = SKILL.read_text()
 
-    assert (
-        "### Step 5 — Residual Sweep" in body
-    ), "Step 5 heading must be '### Step 5 — Residual Sweep (PR-scoped)'"
-    assert (
-        "### Step 6 — Delete Branches" in body
-    ), "Step 6 heading must exist immediately after Step 5"
+    assert "### Step 5 — Residual Sweep" in body, (
+        "Step 5 heading must be '### Step 5 — Residual Sweep (PR-scoped)'"
+    )
+    assert "### Step 6 — Delete Branches" in body, (
+        "Step 6 heading must exist immediately after Step 5"
+    )
 
-    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split(
-        "### Step 6 — Delete Branches"
-    )[0]
+    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split("### Step 6 — Delete Branches")[0]
 
-    assert (
-        "sweep-residuals.sh" in step5_slice
-    ), "Step 5 slice must reference sweep-residuals.sh"
+    assert "sweep-residuals.sh" in step5_slice, (
+        "Step 5 slice must reference sweep-residuals.sh"
+    )
     assert "eval" in step5_slice, (
         "Step 5 slice must invoke sweep-residuals.sh through an eval block, "
         "matching the KEY=VALUE contract used by every other step's companion script"
@@ -342,9 +311,7 @@ def test_cleanup_merged_step5_documents_dirty_worktree_skip():
     interrupted-flow worktrees this backstop targets.
     """
     body = SKILL.read_text()
-    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split(
-        "### Step 6 — Delete Branches"
-    )[0]
+    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split("### Step 6 — Delete Branches")[0]
     assert "uncommitted" in step5_slice.lower(), (
         "Step 5 prose must document that worktrees with uncommitted changes are "
         "skipped rather than force-removed"
@@ -371,18 +338,18 @@ def test_sweep_residuals_script_never_touches_shared_parent_dirs():
         "sweep-residuals.sh must never call rmdir — it could remove a shared "
         "parent dir out from under a concurrent PR"
     )
-    assert (
-        'rm -rf "/tmp/swe-workbench-pr-review"' not in src
-    ), "sweep-residuals.sh must never bare-rm-rf the shared pr-review parent dir"
-    assert (
-        'rm -rf "/tmp/swe-workbench-address-feedback"' not in src
-    ), "sweep-residuals.sh must never bare-rm-rf the shared address-feedback parent dir"
-    assert (
-        "swe-workbench-clean-ephemeral" in src
-    ), "sweep-residuals.sh must route worktree removal through bin/swe-workbench-clean-ephemeral"
-    assert (
-        "swe-workbench-clean-state-files" in src
-    ), "sweep-residuals.sh must route state-file removal through bin/swe-workbench-clean-state-files"
+    assert 'rm -rf "/tmp/swe-workbench-pr-review"' not in src, (
+        "sweep-residuals.sh must never bare-rm-rf the shared pr-review parent dir"
+    )
+    assert 'rm -rf "/tmp/swe-workbench-address-feedback"' not in src, (
+        "sweep-residuals.sh must never bare-rm-rf the shared address-feedback parent dir"
+    )
+    assert "swe-workbench-clean-ephemeral" in src, (
+        "sweep-residuals.sh must route worktree removal through bin/swe-workbench-clean-ephemeral"
+    )
+    assert "swe-workbench-clean-state-files" in src, (
+        "sweep-residuals.sh must route state-file removal through bin/swe-workbench-clean-state-files"
+    )
 
 
 def test_sweep_residuals_script_never_force_deletes_address_feedback_branch():
@@ -402,9 +369,7 @@ def test_cleanup_merged_step7_report_includes_sweep_line():
     """Step 7's report block must document the residual sweep result."""
     body = SKILL.read_text()
     assert "### Step 7 — Report" in body, "Step 7 — Report heading must exist"
-    step7_slice = body.split("### Step 7 — Report")[1].split(
-        "## Worktree Removal Strategies"
-    )[0]
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
 
     assert "SWEPT_WORKTREES" in step7_slice or "Residual sweep" in step7_slice, (
         "Step 7's report block must include a line documenting the residual "
@@ -421,19 +386,17 @@ def test_cleanup_merged_step7_report_includes_session_residuals_line():
     so it silently passed regardless of whether this newer line was present, garbled, or dropped.
     """
     body = SKILL.read_text()
-    step7_slice = body.split("### Step 7 — Report")[1].split(
-        "## Worktree Removal Strategies"
-    )[0]
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
 
-    assert (
-        "Session residuals" in step7_slice
-    ), "Step 7's report block must include a 'Session residuals' line"
-    assert (
-        "SWEPT_SESSION_FILES" in step7_slice
-    ), "Step 7's report block must reference SWEPT_SESSION_FILES"
-    assert (
-        "SWEPT_RUN_DIRS" in step7_slice
-    ), "Step 7's report block must reference SWEPT_RUN_DIRS"
+    assert "Session residuals" in step7_slice, (
+        "Step 7's report block must include a 'Session residuals' line"
+    )
+    assert "SWEPT_SESSION_FILES" in step7_slice, (
+        "Step 7's report block must reference SWEPT_SESSION_FILES"
+    )
+    assert "SWEPT_RUN_DIRS" in step7_slice, (
+        "Step 7's report block must reference SWEPT_RUN_DIRS"
+    )
 
 
 def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
@@ -449,30 +412,26 @@ def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped()
     reusing the letter in Step 5's prose would be ambiguous within the same file.
     """
     body = SKILL.read_text()
-    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split(
-        "### Step 6 — Delete Branches"
-    )[0]
+    step5_slice = body.split("### Step 5 — Residual Sweep")[1].split("### Step 6 — Delete Branches")[0]
 
     assert "run-dir sweep" in step5_slice, "Step 5 must document the run-dir sweep"
-    assert (
-        "session-scratchpad sweep" in step5_slice
-    ), "Step 5 must document the session-scratchpad sweep"
-    assert (
-        "not" in step5_slice and "#<number>" in step5_slice
-    ), "Step 5 must explicitly note the session-scratchpad sweep is NOT scoped to #<number>"
-    assert (
-        "session id" in step5_slice or "CLAUDE_CODE_SESSION_ID" in step5_slice
-    ), "Step 5 must explain the scratchpad sweep is scoped structurally by session id"
-    assert (
-        "silent no-op" in step5_slice
-    ), "Step 5 must note that a guard failure degrades to a silent no-op rather than aborting"
+    assert "session-scratchpad sweep" in step5_slice, (
+        "Step 5 must document the session-scratchpad sweep"
+    )
+    assert "not" in step5_slice and "#<number>" in step5_slice, (
+        "Step 5 must explicitly note the session-scratchpad sweep is NOT scoped to #<number>"
+    )
+    assert "session id" in step5_slice or "CLAUDE_CODE_SESSION_ID" in step5_slice, (
+        "Step 5 must explain the scratchpad sweep is scoped structurally by session id"
+    )
+    assert "silent no-op" in step5_slice, (
+        "Step 5 must note that a guard failure degrades to a silent no-op rather than aborting"
+    )
 
 
 def test_session_scratch_cleanup_is_platform_neutral() -> None:
     text = SKILL.read_text()
-    section = text[
-        text.index("The session-scratchpad sweep") : text.index("The script emits")
-    ]
+    section = text[text.index("The session-scratchpad sweep"):text.index("The script emits")]
 
     assert "session scratch adapter" in section
     assert "multiple active" in section
