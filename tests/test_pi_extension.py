@@ -179,7 +179,7 @@ def test_package_json_values():
         "every consumer's tree for an import that is type-only and elided at runtime"
     )
 
-    # #646: pi-tui is type-only at compile time — pi resolves it at runtime via its jiti
+    # pi-tui is type-only at compile time — pi resolves it at runtime via its jiti
     # alias map. Pin lockstep with the SDK: a divergent pin typechecks a shape pi never loads.
     tui_dev_pin = data["devDependencies"]["@earendil-works/pi-tui"]
     assert re.fullmatch(r"\d+\.\d+\.\d+", tui_dev_pin), (
@@ -1184,7 +1184,7 @@ if (registered) {
   // output — same pre-validation threat model as the render path.
   out.notFoundPoisoned = await run("ev\\x1bil\\u202e", "hi");
 
-  // #646 renderCall probes. This driver runs under plain `node --experimental-strip-types`
+  // renderCall probes. This driver runs under plain `node --experimental-strip-types`
   // with no pi jiti alias map, so the module's dynamic pi-tui import is unsettled or
   // rejected at probe time — the registered renderCall takes the fallback-throw branch in
   // that state, which is Pi's framework-fallback contract (tool-execution.js catches and

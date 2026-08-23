@@ -1,5 +1,5 @@
 /**
- * The `task` call-line renderer (#646): renders `task · <agent>` so concurrent dispatched
+ * The `task` call-line renderer: renders `task · <agent>` so concurrent dispatched
  * agents are distinguishable at a glance. Split from subagent.ts (at the line cap).
  *
  * Stripper invariant: every `@earendil-works/*` import is type-only, so pytest runs under
@@ -54,7 +54,7 @@ export function composeTaskCallLine(agent: string, theme: CallLineTheme): string
 /** Renders the task call line. Throws — deliberately — when no agent name is present
  *  (partial mid-stream args, blank, or strips-to-empty) or Text is unresolved: Pi's
  *  ToolExecutionComponent catches renderer throws and swaps in its createCallFallback()
- *  heading, byte-identical to the pre-#646 display. Injectable ctor so the resolved path
+ *  heading, byte-identical to the pre-change display. Injectable ctor so the resolved path
  *  is testable without pi-tui. */
 export function renderTaskCall(args: unknown, theme: CallLineTheme, ctor: TextCtor | undefined): Text {
   // Narrowing (not casting) args from unknown — casts are forbidden here.
