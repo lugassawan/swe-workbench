@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from conftest import _CLEAN_ENV, _clean_environment
 
 BIN = Path(__file__).parent.parent / "bin"
@@ -54,9 +53,7 @@ def parse_descriptor(stdout: str) -> AdapterDescriptor:
     )
 
 
-def make_claude_scratchpad(
-    *, project: str = PROJECT, leaf: str = "scratchpad"
-) -> Path:
+def make_claude_scratchpad(*, project: str = PROJECT, leaf: str = "scratchpad") -> Path:
     target = CLAUDE_ROOT / project / CLAUDE_SESSION_ID / leaf
     target.mkdir(parents=True)
     return target
@@ -164,9 +161,7 @@ def test_claude_adapter_rejects_malformed_session_id(session_id: str) -> None:
 
 
 def test_claude_adapter_rejects_zero_scratchpad_candidates() -> None:
-    result = run_adapter(
-        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 4
     assert result.stdout == ""
@@ -176,9 +171,7 @@ def test_claude_adapter_rejects_multiple_project_candidates() -> None:
     make_claude_scratchpad()
     make_claude_scratchpad(project=SECOND_PROJECT)
 
-    result = run_adapter(
-        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 4
     assert result.stdout == ""
@@ -187,9 +180,7 @@ def test_claude_adapter_rejects_multiple_project_candidates() -> None:
 def test_claude_adapter_rejects_line_breaking_relative_candidate() -> None:
     make_claude_scratchpad(project=LINE_BREAKING_PROJECT)
 
-    result = run_adapter(
-        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 4
     assert result.stdout == ""
@@ -198,9 +189,7 @@ def test_claude_adapter_rejects_line_breaking_relative_candidate() -> None:
 def test_claude_adapter_rejects_differently_named_leaf() -> None:
     make_claude_scratchpad(leaf="not-scratchpad")
 
-    result = run_adapter(
-        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 4
     assert result.stdout == ""
@@ -209,9 +198,7 @@ def test_claude_adapter_rejects_differently_named_leaf() -> None:
 def test_claude_adapter_emits_relative_native_candidate() -> None:
     target = make_claude_scratchpad()
 
-    result = run_adapter(
-        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == [
@@ -233,9 +220,7 @@ def test_reaper_clears_current_claude_scratchpad_contents() -> None:
     target = make_claude_scratchpad()
     (target / "leftover.txt").write_text("x")
 
-    result = run_adapter(
-        CLAUDE_REAPER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
-    )
+    result = run_adapter(CLAUDE_REAPER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID})
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["SWEPT_SESSION_FILES=1"]
