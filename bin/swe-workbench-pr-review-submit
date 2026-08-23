@@ -95,6 +95,7 @@ class Thread:
     head_comment_id: str | None
     head_comment_body: str
     reactor_logins: set[str] = field(default_factory=set)
+    is_outdated: bool = False
 
 
 def thread_matches(finding_path: str, finding_line: int, finding_body: str, thread: Thread) -> bool:
@@ -105,6 +106,13 @@ def thread_matches(finding_path: str, finding_line: int, finding_body: str, thre
     if thread.line < 0 or abs(thread.line - finding_line) > LINE_FUZZ:
         return False
     return jaccard(finding_body, thread.head_comment_body) >= JACCARD_THRESHOLD
+
+
+def blocking_threads(threads: list[Thread]) -> list[Thread]:
+    """Unresolved, non-outdated threads block APPROVE: any severity — GitHub
+    review threads carry no severity field, and a reviewer's severity label isn't
+    durable across runs. isResolved/isOutdated are the only release valves."""
+    return [t for t in threads if not t.is_resolved and not t.is_outdated]
 
 
 def build_byline(byline: str, is_private: bool | None, n_inline: int, posted_pr_level: int, deduped: int) -> str:
@@ -118,12 +126,16 @@ def build_summary(decision: str, byline_full: str, is_self_review: bool) -> str:
     return f"**Review Decision: {decision}**\n\n{byline_full}\n"
 
 
-def resolve_event(decision: str, blocking_scope: str, current_user: str, author_login: str) -> tuple[str, str, bool, bool]:
+def resolve_event(
+    decision: str, blocking_scope: str, current_user: str, author_login: str, n_blocking_threads: int = 0
+) -> tuple[str, str, bool, bool]:
     """Returns (event, decision, is_self_review, identity_known)."""
     identity_known = bool(current_user) and bool(author_login)
     is_self_review = identity_known and current_user == author_login
     if decision == "COMMENT" and blocking_scope == "OUT-OF-DIFF-ONLY" and identity_known and not is_self_review:
         decision = "APPROVE"
+    if decision == "APPROVE" and n_blocking_threads > 0:
+        decision = "COMMENT"
     event = "COMMENT" if is_self_review else decision
     return event, decision, is_self_review, identity_known
 
@@ -185,7 +197,7 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
       reviewThreads(first: 100, after: $after) {
         pageInfo { endCursor hasNextPage }
         nodes {
-          id isResolved path line startLine
+          id isResolved isOutdated path line startLine
           comments(first: 10) {
             nodes {
               id databaseId body
@@ -223,6 +235,7 @@ def _thread_from_node(node: dict) -> Thread:
         head_comment_id=(head or {}).get("id"),
         head_comment_body=(head or {}).get("body") or "",
         reactor_logins=reactors,
+        is_outdated=bool(node.get("isOutdated")),
     )
 
 
@@ -611,9 +624,19 @@ def main(argv: list[str] | None = None) -> int:
 
         posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
 
+        n_blocking = len(blocking_threads(threads))
         event, decision, is_self_review, _identity_known = resolve_event(
+            args.decision, args.blocking_scope, args.current_user, args.author_login, n_blocking,
+        )
+        _, decision_without_gate, _, _ = resolve_event(
             args.decision, args.blocking_scope, args.current_user, args.author_login,
         )
+        if n_blocking > 0 and decision_without_gate == "APPROVE" and decision != "APPROVE":
+            print(
+                f"[info] APPROVE downgraded to {decision} — {n_blocking} unresolved review "
+                "thread(s) still open, blocking approval.",
+                file=sys.stderr,
+            )
         is_private = _repo_is_private(owner, repo)
 
         comments = [{"path": f["path"], "line": f["line"], "side": "RIGHT", "body": f["body"]} for f in in_diff]
@@ -646,6 +669,7 @@ def main(argv: list[str] | None = None) -> int:
     _emit("EVENT", event)
     _emit("DECISION", decision)
     _emit("REVIEW_URL", result.review_url)
+    _emit("BLOCKED_BY_UNRESOLVED", n_blocking)
     return 0
 
 

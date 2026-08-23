@@ -1,5 +1,5 @@
 ---
-description: Help the PR owner address review feedback — fetches open threads, presents a per-thread triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes, commits, posts per-thread replies, and resolves addressed threads.
+description: Help the PR owner address review feedback — fetches open threads, presents a per-thread triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes, commits, posts per-thread replies, and resolves review threads.
 argument-hint: "<PR number>"
 ---
 
