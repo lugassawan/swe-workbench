@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -117,6 +119,54 @@ def test_active_adapter_sweeps_authorized_target(tmp_path: Path) -> None:
     assert swept_count(result.stdout) == 1
     assert target.is_dir()
     assert list(target.iterdir()) == []
+
+
+def test_term_interrupt_removes_active_adapter_descriptor_temp(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    ready_file = tmp_path / "adapter-ready"
+    pid_file = tmp_path / "adapter-pid"
+    write_adapter(
+        script,
+        "blocking",
+        "\n".join(
+            [
+                f"printf '%s\\n' \"$$\" > {shlex.quote(str(pid_file))}",
+                f"touch {shlex.quote(str(ready_file))}",
+                "while :; do sleep 1; done",
+            ]
+        ),
+    )
+    env = dict(_CLEAN_ENV)
+    env["TMPDIR"] = str(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=script.parent,
+        env=env,
+    )
+
+    try:
+        for _ in range(100):
+            if ready_file.exists():
+                break
+            if process.poll() is not None:
+                pytest.fail("reaper exited before the adapter blocked")
+            time.sleep(0.01)
+        else:
+            pytest.fail("blocking adapter did not become ready")
+
+        process.terminate()
+        process.wait(timeout=5)
+
+        assert not list(tmp_path.glob("swe-workbench-session-scratch.*"))
+    finally:
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text().strip()), signal.SIGTERM)
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=5)
 
 
 def test_multiple_active_adapters_is_noop(tmp_path: Path) -> None:

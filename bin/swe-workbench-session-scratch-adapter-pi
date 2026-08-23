@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Pi authorizes no scratch target until a sanctioned contract exists; never derive one
+# from session JSONL.
 
 set -euo pipefail
 

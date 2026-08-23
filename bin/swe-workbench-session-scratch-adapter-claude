@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Claude authorizes only /tmp/claude-<uid>/<project>/<session>/scratchpad;
+# the core owns deletion after independently validating this descriptor.
 
 set -euo pipefail
 

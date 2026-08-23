@@ -27,22 +27,27 @@ ADAPTERS=("$SCRIPT_DIR"/swe-workbench-session-scratch-adapter-*)
 shopt -u nullglob
 
 ACTIVE_OUTPUT=
-trap 'if [[ -n "${ACTIVE_OUTPUT:-}" ]]; then rm -f -- "$ACTIVE_OUTPUT"; fi' EXIT
+CURRENT_OUTPUT=
+trap 'rm -f -- "${CURRENT_OUTPUT:-}" "${ACTIVE_OUTPUT:-}"' EXIT
 
 ACTIVE_COUNT=0
 for adapter in "${ADAPTERS[@]+"${ADAPTERS[@]}"}"; do
   [[ -f "$adapter" && -x "$adapter" ]] || reject "invalid packaged adapter: $adapter"
   adapter_output=$(mktemp "${TMPDIR:-/tmp}/swe-workbench-session-scratch.XXXXXX") || reject "cannot preserve adapter output — skipping"
+  CURRENT_OUTPUT=$adapter_output
   if "$adapter" > "$adapter_output"; then
     if [[ "$ACTIVE_COUNT" -eq 0 ]]; then
-      ACTIVE_OUTPUT=$adapter_output
+      ACTIVE_OUTPUT=$CURRENT_OUTPUT
+      CURRENT_OUTPUT=
     else
-      rm -f -- "$adapter_output"
+      rm -f -- "$CURRENT_OUTPUT"
+      CURRENT_OUTPUT=
     fi
     ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
   else
     status=$?
-    rm -f -- "$adapter_output"
+    rm -f -- "$CURRENT_OUTPUT"
+    CURRENT_OUTPUT=
     [[ "$status" -eq 3 ]] || reject "adapter ${adapter##*/} could not resolve a safe target — skipping"
   fi
 done
