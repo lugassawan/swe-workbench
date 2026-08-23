@@ -125,8 +125,9 @@ is no prompt surface for a `tool_call` handler to target, so a port would have n
 permission *for*.
 
 Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
-— distinct from `"deferred"` (`skill_usage_record.sh`/`skill_usage_flush.sh`, unwired only until
-`Skill`/subagents exist on Pi). `"n/a"` never graduates to `"wired"`.
+— as are `skill_usage_record.sh`/`skill_usage_flush.sh` (§10 records why their concept, runtime
+Skill invocation by a dispatched subagent, has no Pi counterpart either). `"n/a"` never
+graduates to `"wired"`.
 
 ## 7. `EnterWorktree`/`ExitWorktree` have no Pi equivalent — documented N/A, not deferred
 
@@ -331,10 +332,21 @@ golden-inventory ratchet standing in for the type safety a generation step would
   Tier-1 vocabulary prose (`tool-vocab.ts`) stays unconditional regardless of which Tier-2 tools
   actually register.
 
-**`HOOK_PI_STATUS`'s `"deferred"` rationale is now half-stale.** `tests/test_pi_contract.py`'s
-inventory marks `skill_usage_record.sh`/`skill_usage_flush.sh` `"deferred"`, with the comment
-"not wired yet because the Pi capability it needs (subagents) doesn't exist yet." The `task`
-subagent-dispatch tool has since shipped (`pi/extensions/subagent.ts`) — the trigger condition is
-now half-true, not fully unmet. Whether to wire these two hooks up now that subagents exist is a
-real question, not resolved here — filed as a post-merge follow-up rather than decided or
-implemented in this docs pass.
+**`skill_usage_record.sh`/`skill_usage_flush.sh`: `"deferred"` → `"n/a"` (#636).** The original
+deferral rationale ("not wired yet because the Pi capability it needs (subagents) doesn't exist
+yet") went half-stale when the `task` subagent-dispatch tool shipped (`pi/extensions/subagent.ts`)
+— and re-examination showed the remaining gap is architectural, not a capability arrival away.
+The hooks measure *runtime Skill invocations inside a dispatched subagent*; on Pi there is no
+`Skill` tool in any process, dispatched children receive skill bodies preloaded into their system
+prompt (`pi/extensions/agent-spec.ts`, per `docs/skill-preload.md`), and children run as separate
+`pi.exec` processes whose events never reach the parent's extension instance. The observable is
+structurally zero, so wiring would register handlers that can never carry real data: `record` has
+no trigger event carrying `tool_input.skill`, and `flush` — whose trigger *is* synthesizable after
+`pi.exec` resolves — would read input buffers that are never written, emitting a permanent `{}`
+no-op while implying telemetry exists. Graduation to `"wired"` would require Pi to ship on-demand
+skills plus cross-process event visibility, or this repo to reverse the preload convention with a
+child-side telemetry subsystem — not a capability tick-box. The one genuine Pi-native
+skill-usage signal — a top-level `read` of `skills/*/SKILL.md`, visible as a `tool_call` — sits
+outside these hooks' measured population (they deliberately ignore the top-level orchestrator)
+and would be a different feature. This decision amends #636's wire-or-defer enumeration: neither
+branch was taken because the deferral premise had fired without enabling wiring.
