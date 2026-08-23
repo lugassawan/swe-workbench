@@ -619,16 +619,16 @@ def test_referenced_fields_actually_appear_in_hook_source():
 
 # hooks/*.sh|py -> Pi wiring status. "wired": translated by guards.ts this phase. "n/a": the
 # concept the hook manipulates does not exist on Pi (documented in
-# docs/plugin-platform-decisions.md §6). "deferred": not wired yet because the Pi capability it
-# needs (subagents) doesn't exist yet — tracked on the follow-up issue, not here.
+# docs/plugin-platform-decisions.md §6). "deferred": not wired, but the missing Pi capability
+# is expected to arrive and unblock wiring — currently no rows sit in this bucket.
 HOOK_PI_STATUS = {
     "bash_guard.sh": "wired",
     "secret_guard.py": "wired",
     "workflow_resume_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",
-    "skill_usage_record.sh": "deferred",
-    "skill_usage_flush.sh": "deferred",
+    "skill_usage_record.sh": "n/a",
+    "skill_usage_flush.sh": "n/a",
 }
 
 
@@ -646,6 +646,18 @@ def test_worktree_permission_grant_is_explicitly_not_applicable():
         "worktree_permission_grant.sh's PreToolUse permissionDecision output has no target on "
         "Pi (README.md: 'No permission popups') — this must stay an explicit N/A, not silently "
         "absent from the inventory"
+    )
+
+
+@pytest.mark.parametrize("hook", ["skill_usage_record.sh", "skill_usage_flush.sh"])
+def test_skill_usage_hooks_are_explicitly_not_applicable(hook):
+    assert HOOK_PI_STATUS[hook] == "n/a", (
+        f"{hook} measures runtime Skill invocations inside a dispatched subagent — an observable "
+        "Pi structurally lacks: no Skill tool exists in any Pi process, dispatched children get "
+        "skill bodies preloaded into their system prompt (pi/extensions/agent-spec.ts), and "
+        "child pi.exec processes expose no events to the parent. This must stay an explicit "
+        "N/A row (docs/plugin-platform-decisions.md §6, §10), not silently re-deferred on a "
+        "capability-arrival rationale"
     )
 
 
