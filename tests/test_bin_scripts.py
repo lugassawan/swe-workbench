@@ -35,6 +35,8 @@ SCRIPTS = {
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-session-scratch-adapter-claude": "bash",
+    "swe-workbench-session-scratch-adapter-pi": "bash",
     "swe-workbench-skill-script": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }

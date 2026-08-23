@@ -12,6 +12,7 @@ from conftest import _CLEAN_ENV
 
 BIN = Path(__file__).parent.parent / "bin"
 CLAUDE_ADAPTER = BIN / "swe-workbench-session-scratch-adapter-claude"
+PI_ADAPTER = BIN / "swe-workbench-session-scratch-adapter-pi"
 CLAUDE_REAPER = BIN / "swe-workbench-reap-session-scratch"
 CLAUDE_ROOT = Path(f"/tmp/claude-{os.getuid()}")
 CLAUDE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -75,6 +76,52 @@ def test_claude_adapter_is_inactive_without_session_id() -> None:
 
     assert result.returncode == 3
     assert result.stdout == ""
+
+
+def test_pi_adapter_is_inactive_without_session_id() -> None:
+    result = run_adapter(PI_ADAPTER)
+
+    assert result.returncode == 3
+    assert result.stdout == ""
+
+
+def test_pi_adapter_is_active_but_unsupported() -> None:
+    result = run_adapter(PI_ADAPTER, {"PI_SESSION_ID": "0198f6b8-example"})
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert "no sanctioned session scratch path" in result.stderr
+
+
+@pytest.mark.parametrize("session_id", ["session\nidentifier", "session\x1fidentifier"])
+def test_pi_adapter_rejects_control_characters(session_id: str) -> None:
+    result = run_adapter(PI_ADAPTER, {"PI_SESSION_ID": session_id})
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert "PI_SESSION_ID contains control characters" in result.stderr
+
+
+def test_pi_session_file_cannot_authorize_scratch(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    session_file.write_text("{}\n")
+    scratch = tmp_path / "scratchpad"
+    scratch.mkdir()
+    (scratch / "keep.txt").write_text("x")
+
+    result = run_adapter(
+        PI_ADAPTER,
+        {"PI_SESSION_ID": "0198f6b8-example", "PI_SESSION_FILE": str(session_file)},
+    )
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert (scratch / "keep.txt").exists()
+
+
+def test_clean_environment_strips_native_session_markers() -> None:
+    assert "CLAUDE_CODE_SESSION_ID" not in _CLEAN_ENV
+    assert "PI_SESSION_ID" not in _CLEAN_ENV
 
 
 @pytest.mark.parametrize(
