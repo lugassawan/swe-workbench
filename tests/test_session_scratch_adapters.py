@@ -17,6 +17,7 @@ CLAUDE_ROOT = Path(f"/tmp/claude-{os.getuid()}")
 CLAUDE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 PROJECT = "pytest-session-scratch-adapter"
 SECOND_PROJECT = "pytest-session-scratch-adapter-second"
+LINE_BREAKING_PROJECT = "pytest-session-scratch-adapter\nline-break"
 
 
 @dataclass(frozen=True)
@@ -62,10 +63,10 @@ def make_claude_scratchpad(
 
 @pytest.fixture(autouse=True)
 def clean_claude_scratchpad_projects() -> None:
-    for project in (PROJECT, SECOND_PROJECT):
+    for project in (PROJECT, SECOND_PROJECT, LINE_BREAKING_PROJECT):
         shutil.rmtree(CLAUDE_ROOT / project, ignore_errors=True)
     yield
-    for project in (PROJECT, SECOND_PROJECT):
+    for project in (PROJECT, SECOND_PROJECT, LINE_BREAKING_PROJECT):
         shutil.rmtree(CLAUDE_ROOT / project, ignore_errors=True)
 
 
@@ -99,6 +100,17 @@ def test_claude_adapter_rejects_zero_scratchpad_candidates() -> None:
 def test_claude_adapter_rejects_multiple_project_candidates() -> None:
     make_claude_scratchpad()
     make_claude_scratchpad(project=SECOND_PROJECT)
+
+    result = run_adapter(
+        CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}
+    )
+
+    assert result.returncode == 4
+    assert result.stdout == ""
+
+
+def test_claude_adapter_rejects_line_breaking_relative_candidate() -> None:
+    make_claude_scratchpad(project=LINE_BREAKING_PROJECT)
 
     result = run_adapter(
         CLAUDE_ADAPTER, {"CLAUDE_CODE_SESSION_ID": CLAUDE_SESSION_ID}

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# swe-workbench-session-scratch-adapter-claude
-# Resolve Claude Code's current-session scratchpad without removing it.
 
 set -euo pipefail
 
@@ -32,4 +30,9 @@ if [[ "${#MATCHES[@]}" -ne 1 ]]; then
 fi
 
 RELATIVE=${MATCHES[0]#"$ROOT"/}
+if [[ "$RELATIVE" == *$'\r'* || "$RELATIVE" == *$'\n'* ]]; then
+  note "scratchpad candidate contains a line break"
+  exit 4
+fi
+
 printf 'SWB_SESSION_SCRATCH_V1\nclaude\n%s\n1\n%s\n' "$ROOT" "$RELATIVE"
