@@ -1,127 +1,93 @@
-# Platform-Agnostic Session Scratch Cleanup Design
+# Session Scratch Cleanup
 
-**Issue:** [#647](https://github.com/lugassawan/swe-workbench/issues/647)
-**Status:** Approved
-**Date:** 2026-08-23
+Session scratch cleanup clears the current harness session's scratchpad — temp files an
+agent improvised during review or implementation work (a diff, a PR-body draft) and never
+committed. It runs as the session-scoped block of `swe-workbench:workflow-cleanup-merged`'s
+residual sweep, via `swe-workbench-reap-session-scratch`.
 
-## Summary
+Cleanup is split into a **platform-neutral core** and small **platform adapters**:
 
-Replace the Claude-specific session scratch reaper with a platform-neutral cleanup core and separately packaged platform adapters. The core discovers adapters, consumes a strict descriptor, enforces one shared fail-closed deletion policy, clears a verified target's contents, and preserves the target directory. Platform-specific environment variables, session-ID grammars, filesystem layouts, and candidate discovery remain outside the core.
+- The core (`bin/swe-workbench-reap-session-scratch`) owns adapter discovery, descriptor
+  parsing, every destructive-operation guard, and the sweep itself. It contains no platform
+  names, native environment variables, native session-ID formats, or native filesystem
+  layouts.
+- Each adapter (`bin/swe-workbench-session-scratch-adapter-<platform>`) owns exactly one
+  platform's knowledge: which environment variable marks an active session, what that
+  platform's session IDs look like, and where its sanctioned scratch directory lives.
 
-The initial Claude adapter preserves current behavior. The initial Pi adapter detects Pi but returns no target because Pi 0.84.2 documents session metadata and JSONL storage, not a sanctioned session scratch directory. It must not infer a path from `PI_SESSION_FILE`, borrow Claude's layout, or authorize arbitrary `/tmp` paths. Functional Pi sweeping can be added by changing only the Pi adapter when a sanctioned path contract exists.
+The split is deliberate. Scratch layouts are version-fragile harness internals — the
+platform-specific half changes when a harness changes, while the deletion policy must not.
+An adapter chooses what may be *considered*; the core alone decides whether anything is
+safe enough to *remove*. Every unprovable case — unknown platform, ambiguous environment,
+malformed descriptor, unsafe path — degrades to a zero-count no-op that still exits 0, so a
+drifted harness layout can never abort a cleanup flow whose other steps already ran.
 
-## Goals
+## The cleanup core
 
-- Keep `swe-workbench-reap-session-scratch` free of platform names, native environment variables, native ID formats, and native path layouts.
-- Add a platform by shipping one adapter without changing cleanup-core logic or the cleanup workflow.
-- Preserve content-only removal, top-level entry counting, idempotence, exit-zero behavior, and `SWEPT_SESSION_FILES=0` on every unresolved or unsafe case.
-- Keep platform discovery and path authority explicit and reviewable.
-- Prevent an adapter's malformed output from widening the deletion boundary.
-- Test the generic safety policy independently from native harness behavior.
-
-## Non-goals
-
-- Creating a scratch directory for Pi or changing where agents write temporary files.
-- Treating `PI_SESSION_FILE` or Pi's configurable JSONL session directory as scratch storage.
-- Supporting runtime installation of third-party adapters outside the packaged plugin.
-- Designing a general plugin framework or configuration language.
-- Making recursive deletion atomic; portable Bash cannot eliminate all validation-to-removal races.
-- Cleaning scratch from inactive or previous sessions.
-
-## Architecture
-
-### Components
-
-#### Platform-neutral cleanup core
-
-`bin/swe-workbench-reap-session-scratch` is the stable policy owner. It:
+`bin/swe-workbench-reap-session-scratch` takes no path argument. It:
 
 1. Locates its own `bin/` directory.
 2. Discovers packaged executable siblings named `swe-workbench-session-scratch-adapter-*`.
-3. Invokes every adapter under a controlled, versioned protocol.
-4. Requires exactly one active, valid adapter and exactly one candidate.
-5. Validates the adapter's authorized root and relative candidate using platform-neutral invariants.
-6. Clears the target's contents while preserving the target directory.
-7. Emits `SWEPT_SESSION_FILES=<n>` and exits zero.
+3. Invokes every adapter under a versioned protocol, treating adapter output as untrusted data.
+4. Requires exactly one active, valid adapter and exactly one candidate target.
+5. Validates the adapter's authorized root and relative candidate with platform-neutral
+   invariants (see [Safety policy](#safety-policy)).
+6. Clears the target's *contents* while preserving the target directory — a later merge
+   round in the same session may still write to it.
+7. Emits exactly one `SWEPT_SESSION_FILES=<n>` assignment (a top-level entry count, not a
+   recursive file count) and exits zero.
 
-The core must not contain `CLAUDE_*`, `PI_*`, `claude`, `pi`, native ID regexes, or native filesystem roots.
+`swe-workbench-reap-session-scratch` is invoked by
+`skills/workflow-cleanup-merged/scripts/sweep-residuals.sh`; neither that script nor
+`skills/workflow-cleanup-merged/SKILL.md` detects platforms or calls adapters directly.
+Adding a platform never touches the cleanup workflow.
 
-#### Platform adapters
+## Adapter discovery
 
-Initial adapters are:
-
-```text
-bin/swe-workbench-session-scratch-adapter-claude
-bin/swe-workbench-session-scratch-adapter-pi
-```
-
-An adapter owns:
-
-- Detection of its native session environment.
-- Validation of its native session identifier.
-- Selection of an explicitly sanctioned root.
-- Native path-shape checks and candidate discovery.
-- Rejection of dynamic values containing line breaks.
-- Platform-specific diagnostics.
-
-An adapter never removes files. It can authorize only targets beneath the root it reports; the core independently verifies that boundary.
-
-#### Cleanup workflow
-
-`skills/workflow-cleanup-merged/SKILL.md` and `sweep-residuals.sh` continue to invoke only `swe-workbench-reap-session-scratch`. They do not detect platforms or call adapters directly.
-
-### Dependency direction
-
-The cleanup workflow depends on the platform-neutral reaper contract. The reaper depends on the adapter protocol, not on Claude or Pi behavior. Native adapters depend on their harness environments and implement the outward-facing protocol.
-
-This is proportional Clean Architecture: the safety policy points toward a stable descriptor contract, while environment-specific details remain adapters at the boundary. Separate packages, dependency-injection frameworks, and a general registry would add ceremony without improving this Bash utility.
-
-DDD does not apply because this is a technical utility without a complex business domain, aggregates, or bounded contexts.
-
-## Adapter Discovery
-
-The core discovers only sibling files whose names match:
+The core discovers only sibling files matching:
 
 ```text
 swe-workbench-session-scratch-adapter-*
 ```
 
-This location is deliberate:
+Discovery is sibling-relative by design: `package.json` already ships `bin/swe-workbench-*`,
+runtime scripts already resolve siblings from their own location, and no user-controlled
+search path or adapter directory is ever consulted. The reaper resolves adapters from its
+own directory — not `PATH`, not the current working directory, not an environment override,
+not `$CLAUDE_PLUGIN_ROOT`.
 
-- `package.json` already ships `bin/swe-workbench-*`.
-- Runtime scripts already resolve siblings relative to their own location.
-- No user-controlled search path or adapter directory is consulted.
-- Adding an adapter changes packaging inventory and adapter-specific tests, but not reaper logic.
+| Discovery outcome | Core behavior |
+|---|---|
+| No adapters packaged | Safe no-op |
+| No adapter active | Safe no-op |
+| Exactly one active, valid adapter | Validate its candidate |
+| More than one active adapter | Ambiguous environment — safe no-op |
+| Active adapter emits malformed/unsafe output | Safe no-op |
 
-Discovery results:
+There is no platform precedence. A nested environment that exposes multiple harness session
+markers (a Claude session dispatching a Pi subagent, say) is ambiguous, not a license to
+pick a winner.
 
-- No adapters: safe no-op.
-- No active adapters: safe no-op.
-- Exactly one active, valid adapter: validate its candidate.
-- More than one active adapter: ambiguous environment; safe no-op.
-- Any active adapter emits malformed or unsafe output: safe no-op.
+## Adapter protocol
 
-The core never applies platform precedence. A nested environment exposing multiple harness session markers is ambiguous rather than permission to choose one.
+### Invocation and exit statuses
 
-## Adapter Protocol
-
-### Invocation
-
-The core executes each adapter with no arguments. Adapters are trusted packaged code, but their output is treated as untrusted data because bugs in path construction must fail closed.
-
-### Exit statuses
+The core executes each adapter with no arguments. Adapters are trusted packaged code, but
+their output is parsed as untrusted data — a bug in an adapter's path construction must
+fail closed, not widen the deletion boundary.
 
 | Status | Meaning | Core behavior |
 |---|---|---|
-| `0` | Active adapter; descriptor emitted | Parse and consider descriptor |
-| `3` | Adapter is inactive | Ignore adapter |
-| Any other status | Active state is invalid or resolution failed | Emit diagnostic and no-op the entire sweep |
+| `0` | Active adapter; descriptor emitted | Parse and consider the descriptor |
+| `3` | Adapter is inactive (not this platform) | Ignore the adapter |
+| Any other | Active platform, but no provably safe target | Diagnostic + zero-count no-op for the entire sweep |
 
-An adapter that recognizes its native marker but finds a missing, malformed, ambiguous, or unsupported scratch target returns a non-zero status other than `3`. This distinguishes "not this platform" from "this platform, but cleanup cannot be proven safe."
+Status `3` versus other non-zero is the load-bearing distinction: "not this platform" is
+routine, while "this platform, but cleanup cannot be proven safe" is always surfaced.
 
 ### Descriptor format
 
-A successful adapter emits UTF-8 text with one field per line:
+A successful adapter emits UTF-8 text, one record per line:
 
 ```text
 SWB_SESSION_SCRATCH_V1
@@ -132,151 +98,127 @@ SWB_SESSION_SCRATCH_V1
 ...
 ```
 
-Rules:
-
-- The protocol marker must match exactly.
+- The protocol marker must match exactly; the marker is versioned so a future incompatible
+  format never silently reinterprets old output.
 - Adapter IDs match `^[a-z0-9][a-z0-9-]*$` and are diagnostic only.
 - The authorized root is absolute.
-- Candidate count is a non-negative decimal integer and equals the number of following records.
-- Candidate paths are relative and contain neither empty, `.` nor `..` components.
-- Dynamic fields containing carriage return or newline are rejected by the adapter before emission.
-- The core parses records as data. It never uses `eval`, `source`, or shell expansion on descriptor content.
-- Extra or missing records invalidate the entire descriptor.
+- The candidate count is a non-negative decimal integer equal to the number of records
+  that follow; exactly one candidate survives validation.
+- Candidate paths are relative, with no empty, `.` or `..` components.
+- Adapters reject dynamic values containing carriage return or newline before emission;
+  newline-containing POSIX paths are unsupported by design and produce a safe no-op. The
+  limitation keeps the protocol auditable in plain Bash.
+- The core parses records as data — never `eval`, never `source`. Extra or missing records
+  invalidate the whole descriptor.
 
-Newline-containing POSIX paths are unsupported and produce a safe no-op. This explicit limitation keeps the Bash protocol auditable without introducing encoded payloads or a second parser dependency.
+## Safety policy
 
-## Generic Safety Policy
+After one descriptor and one candidate survive the protocol checks, the core applies all
+of the following. Any failure is a zero-count no-op that leaves the target untouched.
 
-After selecting one descriptor and one relative candidate, the core applies all checks below.
+**Authorized root**
 
-### Authorized root
+- Absolute, not `/`, an existing directory, not a symlink, owned by the current effective
+  user, and canonicalizable.
 
-- Must be absolute.
-- Must not be `/`.
-- Must exist and be a directory.
-- Must not itself be a symlink.
-- Must be owned by the current effective user.
-- Must canonicalize successfully.
+**Relative candidate**
 
-### Relative candidate
+- At least two path components — the authorized root or its immediate child can never
+  become the sweep target.
+- No leading `/`; no empty, `.`, or `..` components.
+- Every existing component from the root through the target is a real directory, not a
+  symlink — an escape planted at *any* depth is rejected.
 
-- Must contain at least two path components so the authorized root itself or its immediate child can never become the sweep target.
-- Must not start with `/`.
-- Must not contain empty, `.` or `..` components.
-- Must resolve from the authorized root without shell evaluation.
-- Every existing component from the authorized root through the target must not be a symlink.
+**Canonical target**
 
-### Canonical target
+- Canonicalizes to a strict descendant of the canonical authorized root (re-checked
+  immediately before removal begins — the check-to-delete window is minimized, though
+  portable Bash cannot close it entirely).
+- Exists, is a directory, is not a symlink, is owned by the current user.
+- Contains no top-level `.git` entry — keeping scratch and worktree domains disjoint by
+  construction.
 
-- Must canonicalize successfully.
-- Must remain a strict descendant of the canonical authorized root.
-- Must exist and be a directory.
-- Must not be a symlink.
-- Must be owned by the current effective user.
-- Must not contain a top-level `.git` entry.
-- Must still satisfy the same canonical-root relationship immediately before removal begins.
+**Removal**
 
-### Removal
+- `nullglob` and `dotglob` are enabled only around enumeration and removal, so hidden
+  entries are swept and counted like any other.
+- Each top-level entry is removed with `rm -rf --`; `SWEPT_SESSION_FILES` increments only
+  on success. A failed removal warns on stderr and leaves the entry in place.
+- The target directory itself is never removed.
 
-- Enable `nullglob` and `dotglob` only around candidate enumeration and removal as needed.
-- Remove each top-level entry with `rm -rf --`.
-- Increment `SWEPT_SESSION_FILES` only after an entry is removed successfully.
-- Warn and leave an entry in place when its removal fails.
-- Never remove the target directory.
-- Always emit exactly one `SWEPT_SESSION_FILES=<n>` assignment and exit zero.
-
-The adapter chooses what may be considered; the core decides whether it is safe enough to remove.
-
-## Initial Adapters
+## Packaged adapters
 
 ### Claude Code
 
-The Claude adapter preserves the current contract:
+`bin/swe-workbench-session-scratch-adapter-claude` preserves the historical contract:
 
 - Active marker: non-empty `CLAUDE_CODE_SESSION_ID`.
-- Session-ID grammar: current 36-character hexadecimal-and-hyphen validation, unchanged for compatibility.
-- Authorized root: `/tmp/claude-<uid>`, accounting for the platform's canonical `/tmp` spelling.
-- Native candidate shape: `<project>/<session-id>/scratchpad`.
-- Exactly one glob match is required.
-- The adapter reports the candidate relative to the authorized root.
-
-Claude-specific tests retain zero-hit, multiple-hit, malformed-ID, decoy-name, and native path-shape coverage. Generic symlink, ownership, `.git`, count, preservation, and idempotence cases move to core contract tests.
+- Session-ID grammar: 36-character hex-and-hyphen UUID shape.
+- Authorized root: `/tmp/claude-<uid>` (tolerant of the platform's canonical `/tmp`
+  spelling).
+- Candidate shape: `<project>/<session-id>/scratchpad`, matched by glob; exactly one match
+  is required, reported relative to the root.
 
 ### Pi Coding Agent
 
-The Pi adapter:
+`bin/swe-workbench-session-scratch-adapter-pi` detects Pi and deliberately resolves
+nothing:
 
-- Detects `PI_SESSION_ID` as the native session marker.
-- Validates that the marker is non-empty and contains no control characters.
-- Does not infer a scratch target from `PI_SESSION_FILE`, `PI_CODING_AGENT_SESSION_DIR`, `--session-dir`, or the documented JSONL session location.
-- Does not reuse Claude's `/tmp/claude-<uid>` namespace.
-- Reports an unsupported-resolution diagnostic and returns a failing active-adapter status, causing `SWEPT_SESSION_FILES=0`.
+- Active marker: non-empty `PI_SESSION_ID`; the marker is rejected if it contains control
+  characters.
+- Pi (through 0.84.2) documents session metadata (`PI_SESSION_ID`, optional
+  `PI_SESSION_FILE`, configurable session storage) and JSONL session files — but no
+  sanctioned session scratch directory. The adapter therefore returns its
+  active-but-unsupported status and cleanup reports `SWEPT_SESSION_FILES=0`.
+- It never infers a target from `PI_SESSION_FILE`, `PI_CODING_AGENT_SESSION_DIR`,
+  `--session-dir`, or the JSONL session location, and never borrows Claude's
+  `/tmp/claude-<uid>` namespace. Retention is the only safe behavior without a sanctioned
+  path contract.
 
-Pi 0.84.2 documents `PI_SESSION_ID`, optional `PI_SESSION_FILE`, configurable session storage, and JSONL session files. It does not document or create a sanctioned session scratch directory. Retention is therefore the only safe initial behavior.
+When Pi grows a sanctioned scratch contract — or swe-workbench adopts its own
+scratch-writing lifecycle — only the Pi adapter, its tests, and this page change. The
+core and the cleanup workflow stay untouched; that is the point of the boundary.
 
-When Pi introduces a sanctioned scratch contract, or swe-workbench separately adopts an owned scratch-writing lifecycle, only the Pi adapter and its adapter tests/documentation change. The core and cleanup workflow remain unchanged.
+## Failure behavior
 
-## Error Handling
-
-The script remains best-effort cleanup and always exits zero. Diagnostics go to stderr; the machine-readable count goes to stdout.
+Diagnostics go to stderr; the machine-readable count goes to stdout; exit is always 0.
 
 | Condition | Result |
 |---|---|
 | No active platform | Zero-count no-op |
 | Multiple active platforms | Zero-count no-op with ambiguity diagnostic |
 | Invalid native session ID | Zero-count no-op |
-| Unsupported native scratch contract | Zero-count no-op |
+| Platform has no sanctioned scratch contract | Zero-count no-op |
 | Malformed adapter descriptor | Zero-count no-op |
 | Zero or multiple candidates | Zero-count no-op |
 | Unsafe root or target | Zero-count no-op |
 | Target disappears before removal | Zero-count no-op |
-| One entry fails removal | Continue with remaining entries; count only successes |
+| One entry fails removal | Continue with the rest; count only successes |
 
-No adapter failure may abort `swe-workbench:workflow-cleanup-merged` or suppress the required count assignment.
+No adapter failure can abort `swe-workbench:workflow-cleanup-merged` or suppress the
+count assignment.
 
-## Testing Strategy
+## Testing
 
-### Core contract tests
+- `tests/test_reap_session_scratch.py` — core contract. Runs a copy of the reaper from an
+  isolated temp `bin/` containing only explicit fake adapters, with neutral names and
+  paths. Covers discovery/ambiguity, protocol and descriptor validation, every safety
+  guard (symlinks at each depth, root escape, ownership, `.git`, disappearance), hidden
+  entries, top-level counting, directory preservation, idempotence, partial-removal
+  counting, signal interruption, and the exactly-one-assignment/exit-zero contract.
+  Subprocesses are invoked with argument lists and explicit environments — never
+  `shell=True`.
+- `tests/test_session_scratch_adapters.py` — adapter contracts. Per platform: active and
+  inactive detection, native ID grammar, native root and candidate shape, zero and
+  ambiguous candidates, line-breaking value rejection, descriptor compliance, and (for
+  Pi) proof that `PI_SESSION_FILE` cannot authorize a target.
+- `tests/conftest.py` — `_CLEAN_ENV` strips *both* `CLAUDE_CODE_SESSION_ID` and
+  `PI_SESSION_ID`, so a suite run inside a live session can never resolve and wipe that
+  session's real scratchpad. Tests opt in with fake marker values.
+- `tests/test_bin_scripts.py` — closed-world bin inventory: both adapters are tracked as
+  Bash executables with the mandatory shebang and syntax checks.
 
-Refactor `tests/test_reap_session_scratch.py` to execute a copied core from an isolated temporary `bin/` containing explicit fake adapters. These tests use neutral names and paths and cover:
-
-- No adapters, inactive adapters, and one active adapter.
-- Multiple active adapters.
-- Adapter failure and malformed descriptors.
-- Descriptor version, field count, candidate count, absolute-root, and relative-path validation.
-- Zero and multiple candidates.
-- Root, intermediate-component, and target symlinks.
-- Root escape and canonical-root mismatch.
-- Missing, non-directory, and foreign-owned targets.
-- Top-level `.git` rejection.
-- Hidden entries, top-level counting, directory preservation, and idempotence.
-- Partial removal failure counting.
-- Exactly one output assignment and exit-zero behavior.
-
-Use pytest fixtures and parameterization for repeated malformed-input cases. Invoke subprocesses with argument lists and explicit environments; never use `shell=True`.
-
-### Adapter tests
-
-Add a separate test module for adapter contracts. Each platform receives focused tests for:
-
-- Active and inactive detection.
-- Native ID grammar.
-- Native root and relative candidate shape.
-- Zero and ambiguous candidates.
-- Rejection of line-breaking values.
-- Descriptor protocol compliance.
-
-The Claude adapter gets a successful-resolution fixture. The Pi adapter verifies active-but-unsupported behavior and confirms that `PI_SESSION_FILE` cannot authorize a target.
-
-### Environment isolation
-
-`tests/conftest.py` strips both `CLAUDE_CODE_SESSION_ID` and `PI_SESSION_ID` from `_CLEAN_ENV`. Core tests additionally isolate adapter discovery by copying only explicitly selected fake adapters beside the copied core. Tests that need a native session marker opt in with a fake value.
-
-A future adapter must add its native marker to the clean-environment denylist and its own adapter tests. That is adapter integration work, not a cleanup-core change.
-
-### Regression commands
-
-Implementation verification will include:
+Verification commands:
 
 ```bash
 python3 -m pytest tests/test_reap_session_scratch.py tests/test_session_scratch_adapters.py -q
@@ -284,33 +226,39 @@ python3 -m pytest -q
 bash -n bin/swe-workbench-reap-session-scratch bin/swe-workbench-session-scratch-adapter-*
 ```
 
-If available, run ShellCheck against the changed Bash scripts.
+## Adding an adapter
 
-## Documentation Changes
+Adding a platform is adapter work only — the core, the workflow, and every existing test
+stay untouched:
 
-- `bin/README.md`: describe the platform-neutral core, adapter naming convention, and fail-closed protocol.
-- `skills/workflow-cleanup-merged/SKILL.md`: replace Claude-specific resolution wording with the generic adapter contract and document ambiguous/unsupported platform behavior.
-- Pi documentation notes: state that Pi provides session metadata but no sanctioned scratch target in the supported version.
-- Script headers: keep the reaper header platform-neutral; place native path details in each adapter header.
+1. Create `bin/swe-workbench-session-scratch-adapter-<id>` — executable, Bash, with a
+   short native-contract header stating the authorized layout (or, for an unsupported
+   platform, that no target is authorized and why).
+2. Implement the protocol: `exit 3` when inactive, `exit 4` (or any non-zero ≠ 3) when
+   active-but-unresolvable, otherwise emit the `SWB_SESSION_SCRATCH_V1` descriptor.
+3. Add the platform's native session marker to the `_CLEAN_ENV` denylist in
+   `tests/conftest.py` — this is the live-session safety net, not optional hygiene.
+4. Add the command to `tests/test_bin_scripts.py`'s `SCRIPTS` inventory.
+5. Add adapter-contract tests alongside the existing ones, including a fixture that
+   proves the marker's absence/presence drives the right exit status.
+6. Document the platform in this page's [Packaged adapters](#packaged-adapters) section.
 
-## Packaging and Validation
+Removing an adapter disables that platform and nothing else. Keep adapters small; there
+is deliberately no registry, plugin loader, or configuration language — executable
+sibling discovery is the whole mechanism, and a third functional adapter is the bar at
+which introducing one should even be reconsidered.
 
-The existing npm package includes `bin/swe-workbench-*`, so sibling adapter executables are shipped without a new directory glob. Update the repository's bin inventory tests for the two new commands and require executable Bash shebangs and syntax checks.
+## Operational notes
 
-The reaper resolves adapters from its own directory, not `PATH`, the current working directory, a user-controlled environment override, or `$CLAUDE_PLUGIN_ROOT`.
-
-## Reversibility
-
-- Removing a platform adapter disables that platform without changing the core.
-- Replacing a native path contract changes only one adapter.
-- The Claude adapter can be rolled back to the original inline logic if adapter discovery causes an unforeseen packaging issue.
-- The protocol is versioned so an incompatible descriptor change can be introduced without silently reinterpreting old output.
-
-## Risks and Signals
-
-- **Pi remains a no-op:** expected until a sanctioned scratch contract exists. Watch Pi release notes and extension APIs for an explicit scratch location.
-- **Multiple ambient harness markers:** the reaper intentionally no-ops. Watch ambiguity diagnostics in nested-agent environments.
-- **Adapter path drift:** watch zero-candidate diagnostics and adapter contract tests after harness upgrades.
-- **Over-broad adapter root:** generic ownership, strict-descendant, component-depth, symlink, and canonicalization checks limit blast radius; review adapter roots as security-sensitive constants.
-- **TOCTOU replacement:** keep roots user-owned and narrow; investigate intermittent removal failures rather than weakening checks.
-- **Adapter proliferation:** retain executable discovery while adapters remain small. Do not add a registry or framework until concrete duplication from at least a third functional adapter justifies it.
+- **Pi reports zero swept files** until a sanctioned Pi scratch path exists — that is the
+  adapter working as designed, not a malfunction. Watch Pi release notes and extension
+  APIs for an explicit scratch location.
+- **Ambiguity diagnostics** in nested-agent environments mean multiple harness markers
+  were ambient; the reaper no-ops there on purpose.
+- **Zero-candidate diagnostics after a harness upgrade** usually mean path drift: check
+  the adapter's native layout against the new harness version.
+- **Adapter roots are security-sensitive constants.** An overly broad root is the one
+  mistake the core's downstream guards cannot fully undo; review them first in any
+  adapter change.
+- **Intermittent partial-removal failures** warrant investigation (TOCTOU replacement is
+  the classic cause) — never a weakening of the guards to make the symptom disappear.
