@@ -127,8 +127,6 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
 
       const available = listAgentNames(root);
       if (!available.includes(agent)) {
-        // Sanitized echo: this message becomes tool-output content that pi renders unescaped,
-        // so a control/bidi payload in the rejected id must not reach the terminal verbatim.
         throw new Error(
           `task: unknown agent "${sanitizeAgentId(agent)}" — available agents: ${available.join(", ")}`,
         );
