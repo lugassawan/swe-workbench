@@ -236,11 +236,14 @@ def test_address_feedback_skill_phase6_preserves_trailer():
 # --- Cleanup (Phase 7) tests — AC#1, AC#2, AC#3 from issue #291 ---
 
 def test_address_feedback_skill_cleans_up_worktree():
-    """Phase 7 must include rimba remove "address-feedback-$PR" --force (AC#1)."""
+    """Phase 7 must remove the worktree via rimba but KEEP the PR branch (issue #643)."""
     text = SKILL_MD.read_text()
-    assert re.search(r'rimba remove ["\']?address-feedback-\$PR["\']? --force', text), (
-        'SKILL.md Phase 7 must include: rimba remove "address-feedback-$PR" --force — '
-        "the worktree is disposable; fixes are on the remote branch after Phase 4"
+    assert re.search(
+        r'rimba remove ["\']?\$PR_BRANCH["\']? --force --keep-branch', text
+    ), (
+        'SKILL.md Phase 7 must include: rimba remove "$PR_BRANCH" --force --keep-branch — '
+        "the worktree is disposable but the local PR head branch must be preserved "
+        "(rimba remove deletes the branch without --keep-branch)"
     )
 
 
@@ -255,6 +258,141 @@ def test_address_feedback_skill_cleanup_failure_tolerant():
         text, re.IGNORECASE
     ), (
         "SKILL.md Phase 7 must state that cleanup failure is non-blocking (warn, do not block, continue)"
+    )
+
+
+# --- Worktree create-path contract — issue #643 ---
+
+def test_address_feedback_skill_create_uses_pr_branch_task_form():
+    """Phase 2 must create the worktree from the PR branch name, not the pr:<num> task form (AC#1)."""
+    text = _skill_text_with_references()
+    assert 'rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must invoke: rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" — '
+        "the task-form add names the branch after the PR branch itself"
+    )
+    phase2_start = text.find("### Phase 2")
+    phase2_end = text.find("### Phase 3")
+    assert phase2_start != -1 and phase2_end != -1, "Phase 2/Phase 3 headings must exist"
+    phase2 = text[phase2_start:phase2_end]
+    assert "pr:$PR" not in phase2, (
+        "Phase 2 must not use the pr:<num> task form for worktree creation — it creates a "
+        "throwaway branch off the PR head, so pushes never update the PR"
+    )
+    assert '--task "address-feedback-$PR"' not in text, (
+        "SKILL.md must not pass --task address-feedback-$PR — the worktree must land on "
+        "the PR branch itself"
+    )
+
+
+def test_address_feedback_skill_create_omits_skip_flags():
+    """Phase 2 create must let rimba fully initialize — no --skip-deps/--skip-hooks (AC#2/#3)."""
+    text = _skill_text_with_references()
+    # No rimba add invocation may carry either skip flag.
+    for m in re.finditer(r"rimba add[^\n]*", text):
+        assert "--skip-deps" not in m.group(0), (
+            f"rimba add must not pass --skip-deps: {m.group(0)!r}"
+        )
+        assert "--skip-hooks" not in m.group(0), (
+            f"rimba add must not pass --skip-hooks: {m.group(0)!r}"
+        )
+    assert re.search(r"Never pass either flag|must not pass either", text), (
+        "Common-mistakes table must forbid skip flags on the Phase 2 create so rimba "
+        "installs deps and runs hooks with no separate bootstrap step"
+    )
+
+
+def test_address_feedback_skill_create_fetches_pr_branch_first():
+    """Task-form rimba add does not fetch — Phase 2 must fetch origin/$PR_BRANCH itself."""
+    text = _skill_text_with_references()
+    assert 'git fetch origin "$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must run: git fetch origin "$PR_BRANCH" before rimba add — '
+        "task-mode add never fetches, and --source origin/$PR_BRANCH must be current"
+    )
+
+
+def test_address_feedback_skill_create_handles_existing_local_branch():
+    """Local branch already present → git worktree add checkout + rimba deps install (no re-add error)."""
+    text = _skill_text_with_references()
+    assert 'git show-ref --verify --quiet "refs/heads/$PR_BRANCH"' in text, (
+        "SKILL.md Phase 2 must probe refs/heads/$PR_BRANCH — rimba add hard-errors "
+        "'branch already exists' when the local PR branch is present"
+    )
+    assert 'git worktree add "$WT" "$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must check out the existing local branch: git worktree add "$WT" "$PR_BRANCH"'
+    )
+    assert 'rimba deps install "$PR_BRANCH"' in text, (
+        "SKILL.md Phase 2 must run rimba deps install on the existing-branch path so it "
+        "still gets dependency installation without a separate bootstrap step"
+    )
+
+
+def test_address_feedback_skill_create_verifies_branch_and_falls_back():
+    """Post-create verification: worktree branch must equal $PR_BRANCH; mismatch → git fallback."""
+    text = _skill_text_with_references()
+    assert 'WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)' in text, (
+        "SKILL.md Phase 2 must verify the checked-out branch after rimba add — rimba "
+        "re-prefixes non-conventional branch names (DefaultPrefixType is feature/)"
+    )
+    assert 'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 fallback must create the branch directly: '
+        'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"'
+    )
+
+
+def test_address_feedback_skill_create_reconciles_stale_local_branch():
+    """Existing-branch checkout must reconcile against origin — ff-only when behind, warn when diverged."""
+    text = _skill_text_with_references()
+    assert 'git -C "$WT" merge --ff-only "origin/$PR_BRANCH"' in text, (
+        "SKILL.md Phase 2 must fast-forward a strictly-behind local $PR_BRANCH — "
+        "otherwise Phase 4 pushes are rejected non-FF when the PR advanced between runs"
+    )
+    assert 'diverged from origin' in text, (
+        "SKILL.md Phase 2 must warn loudly when local $PR_BRANCH diverged from origin "
+        "(needs rebase before Phase 4)"
+    )
+    assert '[ -e "$WT/.git" ]' in text, (
+        'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
+        "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
+    )
+    assert 'git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH"' in text, (
+        "the diverged warning must be gated on the remote ref existing — a missing ref "
+        "(failed fetch / fork PR) must not be misreported as divergence"
+    )
+    fetch_idx = text.find('git fetch origin "$PR_BRANCH"')
+    guard_idx = text.find('CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)')
+    assert fetch_idx != -1 and guard_idx != -1 and fetch_idx < guard_idx, (
+        "the fetch must run before the reuse guards — guard-path reconcile compares against "
+        "origin/$PR_BRANCH and needs a current ref"
+    )
+    assert "skip the create block below, run the shared reconcile block after it" in text, (
+        "SKILL.md Phase 2 reuse guards must route through the shared reconcile — a crash-leftover "
+        "worktree can be stale (PR advanced between runs) on reuse paths too"
+    )
+    gate_idx = text.find('[ -e "$WT/.git" ]')
+    ff_idx = text.find('merge --ff-only')
+    assert gate_idx != -1 and ff_idx != -1 and gate_idx < ff_idx, (
+        "the shared reconcile (ff-only) must run after the create-flow existence gate"
+    )
+
+
+def test_address_feedback_skill_disposable_paragraph_on_pr_branch():
+    """Prose must state the worktree sits on the PR branch; cleanup keeps the branch (crash recovery)."""
+    text = _skill_text_with_references()
+    assert "on the PR branch itself" in text, (
+        "SKILL.md must explain the worktree is on the PR branch itself — pushes update the PR directly"
+    )
+    assert "keeps the local" in text and "$PR_BRANCH" in text, (
+        "SKILL.md must state cleanup keeps the local $PR_BRANCH (unpushed commits from a "
+        "crashed run survive; the branch is the owner's PR head)"
+    )
+
+
+def test_address_feedback_skill_failure_modes_fork_limitation():
+    """Failure modes must carry the cross-fork limitation note (forks out of scope, issue #643)."""
+    text = _skill_text_with_references()
+    assert "gh-fork-<owner>" in text, (
+        "SKILL.md Failure modes must note the cross-fork limitation (gh-fork-<owner> manual "
+        "workaround) — the create path sources from origin; fork-only branches are out of scope"
     )
 
 
@@ -338,10 +476,11 @@ def test_address_feedback_skill_reuses_existing_worktree_on_main():
         "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
         "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
     )
-    # Must look up the branch ref inside the porcelain output (awk escapes the slashes).
-    assert r"refs\/heads\/" in text, (
-        r"SKILL.md Phase 2 must match 'refs\/heads\/$PR_BRANCH' in the awk pattern "
-        "to locate the correct registered worktree in porcelain output"
+    # Must look up the branch ref inside the porcelain output (branch passed as an awk
+    # variable — a regex-interpolated branch name breaks on "/" in conventional names).
+    assert 'awk -v b="refs/heads/$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must pass the branch to awk via -v (exact $0 == "branch " b match) — '
+        "interpolating $PR_BRANCH into a regex literal dies on slashed branch names"
     )
     # Must set REUSED_WT=1 on a match, same as the first guard.
     assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
