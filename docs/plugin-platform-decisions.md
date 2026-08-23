@@ -343,9 +343,11 @@ prompt (`pi/extensions/agent-spec.ts`, per `docs/skill-preload.md`), and childre
 structurally zero, so wiring would register handlers that can never carry real data: `record` has
 no trigger event carrying `tool_input.skill`, and `flush` — whose trigger *is* synthesizable after
 `pi.exec` resolves — would read input buffers that are never written, emitting a permanent `{}`
-no-op while implying telemetry exists. Graduation to `"wired"` would require Pi to ship on-demand
-skills plus cross-process event visibility, or this repo to reverse the preload convention with a
-child-side telemetry subsystem — not a capability tick-box. The one genuine Pi-native
+no-op while implying telemetry exists. Graduation to `"wired"` would require Pi to gain a runtime
+Skill-invocation observable — a model-invocable tool whose call event carries the skill id,
+which Pi's on-demand `read`-based skill loading does not provide — plus cross-process event
+visibility into dispatched children, or this repo reversing the preload convention with a
+child-side telemetry subsystem. None is a capability tick-box. The one genuine Pi-native
 skill-usage signal — a top-level `read` of `skills/*/SKILL.md`, visible as a `tool_call` — sits
 outside these hooks' measured population (they deliberately ignore the top-level orchestrator)
 and would be a different feature. This decision amends #636's wire-or-defer enumeration: neither
