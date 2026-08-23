@@ -179,6 +179,26 @@ def test_package_json_values():
         "every consumer's tree for an import that is type-only and elided at runtime"
     )
 
+    # pi-tui is type-only at compile time — pi resolves it at runtime via its jiti
+    # alias map. Pin lockstep with the SDK: a divergent pin typechecks a shape pi never loads.
+    tui_dev_pin = data["devDependencies"]["@earendil-works/pi-tui"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", tui_dev_pin), (
+        f"pi-tui devDependencies pin must be an exact X.Y.Z version, got {tui_dev_pin!r}"
+    )
+    assert tui_dev_pin == dev_pin, (
+        f"pi-tui dev pin ({tui_dev_pin!r}) must equal the pi-coding-agent pin ({dev_pin!r}) — "
+        "pi nests and publishes them lockstep; a divergent pin typechecks against a shape the "
+        "host never provides"
+    )
+    assert data["peerDependencies"]["@earendil-works/pi-tui"] == peer_range, (
+        "pi-tui peer range must mirror the pi-coding-agent entry — same compatibility envelope, "
+        "same anti-untested-major ceiling"
+    )
+    assert data["peerDependenciesMeta"]["@earendil-works/pi-tui"]["optional"] is True, (
+        "pi resolves pi-tui for extensions itself (jiti alias map); an npm auto-install into "
+        "consumers would be redundant payload for a specifier npm never needs to resolve"
+    )
+
 
 def test_package_json_has_no_forbidden_pi_keys():
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
@@ -360,6 +380,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "ask-user.ts",
         "agent-spec.ts",
         "model-tier.ts",
+        "task-call-line.ts",
         "subagent.ts",
     ):
         (synthetic_index.parent / helper).write_text(
@@ -1159,6 +1180,47 @@ async function run(agent, prompt, model, availableModels, scopedModels) {
 
 if (registered) {
   out.notFound = await run("does-not-exist", "hi");
+  // execute()'s unknown-agent error must strip the id before interpolating it into tool
+  // output — same pre-validation threat model as the render path.
+  out.notFoundPoisoned = await run("ev\\x1bil\\u202e", "hi");
+
+  // renderCall probes. This driver runs under plain `node --experimental-strip-types`
+  // with no pi jiti alias map, so the module's dynamic pi-tui import is unsettled or
+  // rejected at probe time — the registered renderCall takes the fallback-throw branch in
+  // that state, which is Pi's framework-fallback contract (tool-execution.js catches and
+  // swaps in createCallFallback). The resolved path is proven through the exported pure
+  // renderer with an injected fake Text ctor instead.
+  const stubTheme = {
+    fg: (token, s) => `<${token}>${s}</${token}>`,
+    bold: (s) => `**${s}**`,
+  };
+  out.composedLine = typeof mod.composeTaskCallLine === "function"
+    ? mod.composeTaskCallLine("reviewer", stubTheme)
+    : null;
+  // Mid-stream args reach renderCall BEFORE execute() validates the agent id, so the
+  // formatter itself must neutralize control and bidi/format chars (ESC/OSC/newline, RLO,
+  // ZWSP) — the row is already on screen by the time an invalid id would be rejected.
+  out.composedLineStripped = typeof mod.composeTaskCallLine === "function"
+    ? mod.composeTaskCallLine("rev\\x1biewer\\u202e\\u061c\\u200b\\u0007\\n", stubTheme)
+    : null;
+  class FakeText {
+    constructor(text, paddingX, paddingY) { this.text = text; this.px = paddingX; this.py = paddingY; }
+  }
+  out.hasRenderCall = typeof registered.renderCall === "function";
+  const probe = (fn) => {
+    try { return { threw: false, value: fn() }; } catch (err) { return { threw: true, message: String(err && err.message) }; }
+  };
+  // A control-only agent id strips to an empty segment — the enriched line would degrade
+  // to "task \u00b7 " with a dangling separator, so the renderer must fall back instead.
+  out.renderControlOnlyAgent = probe(() => mod.renderTaskCall({ agent: "\\x1b" }, stubTheme, FakeText));
+  out.renderNamedNoCtor = probe(() => registered.renderCall({ agent: "reviewer", prompt: "hi" }, stubTheme));
+  out.renderUnnamed = probe(() => registered.renderCall({ prompt: "hi" }, stubTheme));
+  out.renderBlankAgent = probe(() => registered.renderCall({ agent: "   ", prompt: "hi" }, stubTheme));
+  out.renderTaskCallMissingCtor = probe(() => mod.renderTaskCall({ agent: "reviewer" }, stubTheme, undefined));
+  out.renderTaskCallResolved = probe(() => {
+    const c = mod.renderTaskCall({ agent: "code-impl" }, stubTheme, FakeText);
+    return { text: c.text, px: c.px, py: c.py };
+  });
 
   out.emptyTools = await run("empty-tools-agent", "hi");
 
@@ -1302,12 +1364,99 @@ def test_subagent_kill_switch_skips_registration(subagent_root, tmp_path_factory
 
 
 @requires_node
+def test_task_call_line_composes_tool_title_and_agent_identity(subagent_root, tmp_path_factory):
+    """Assert composeTaskCallLine reproduces Pi's createCallFallback() toolTitle segment
+    plus a muted agent suffix."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["composedLine"] == "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+    assert result["hasRenderCall"] is True, "task must register a renderCall override"
+
+
+@requires_node
+def test_task_call_line_strips_control_chars_from_unvalidated_agent_arg(subagent_root, tmp_path_factory):
+    """Assert the composed line neutralizes control and bidi/format chars in the agent id.
+
+    renderCall fires on mid-stream args before execute() validation, so ESC/OSC/newline and
+    RLO/ZWSP injection must be stripped in the formatter itself (screen-clear, title, and
+    visual-reorder spoofing guard).
+    """
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["composedLineStripped"] == "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+
+
+@requires_node
+def test_task_render_call_falls_back_when_agent_strips_to_empty(subagent_root, tmp_path_factory):
+    """Assert a control-only agent id falls back rather than rendering a dangling separator."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderControlOnlyAgent"]["threw"] is True
+    assert "task" in result["renderControlOnlyAgent"]["message"]
+
+
+@requires_node
+def test_task_render_call_throws_to_framework_fallback_without_pi_tui(subagent_root, tmp_path_factory):
+    """Assert the degrade contract: with no Text constructor, renderCall throws so Pi swaps
+    in its own fallback heading."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["hasRenderCall"] is True
+    # Explicit-undefined ctor is environment-independent: must always throw with a message
+    # naming the tool (Pi's fallback swaps in the plain heading; the message is ours).
+    assert result["renderTaskCallMissingCtor"]["threw"] is True
+    assert "task" in result["renderTaskCallMissingCtor"]["message"]
+    # The registered renderCall races the pi-tui import: nodeless CI must take the throw
+    # (fallback) branch; where pi-tui resolved, it must return the enriched component instead.
+    named = result["renderNamedNoCtor"]
+    if named["threw"]:
+        assert "task" in named["message"]
+    else:
+        assert named["value"] is not None, "resolved path must return a component, not undefined"
+
+
+@requires_node
+def test_task_render_call_throws_for_missing_or_blank_agent(subagent_root, tmp_path_factory):
+    """Assert renderCall falls back (throws) for absent, partial, or blank agent args."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["hasRenderCall"] is True
+    assert result["renderUnnamed"]["threw"] is True
+    assert "task" in result["renderUnnamed"]["message"], (
+        "must be the renderer's deliberate fallback throw, not a TypeError from a missing function"
+    )
+    assert result["renderBlankAgent"]["threw"] is True
+    assert "task" in result["renderBlankAgent"]["message"]
+
+
+@requires_node
+def test_task_render_task_call_builds_text_with_composed_line_and_zero_padding(subagent_root, tmp_path_factory):
+    """Assert the resolved path builds a Text with the composed line and (0, 0) padding."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderTaskCallResolved"]
+    assert outcome["threw"] is False
+    resolved = outcome["value"]
+    assert resolved["text"] == "<toolTitle>**task**</toolTitle><muted> · code-impl</muted>"
+    assert [resolved["px"], resolved["py"]] == [0, 0]
+
+
+@requires_node
 def test_subagent_unknown_agent_reports_available_list(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory)
     assert result["notFound"]["ok"] is False
     assert "does-not-exist" in result["notFound"]["message"]
     assert "empty-tools-agent" in result["notFound"]["message"]
     assert "real-agent" in result["notFound"]["message"]
+
+
+@requires_node
+def test_subagent_unknown_agent_error_strips_poisoned_id(subagent_root, tmp_path_factory):
+    """Assert the unknown-agent error strips control/format chars before interpolation.
+
+    The message becomes tool-output content rendered unescaped, so a raw ESC/RLO in the
+    echoed id would spoof the terminal through the result row.
+    """
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    poisoned = result["notFoundPoisoned"]
+    assert poisoned["ok"] is False
+    assert "\x1b" not in poisoned["message"]
+    assert "\u202e" not in poisoned["message"]
+    assert '"evil"' in poisoned["message"], "stripped id must remain identifiable"
 
 
 @requires_node
