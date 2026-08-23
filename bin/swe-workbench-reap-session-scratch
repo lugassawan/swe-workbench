@@ -1,42 +1,6 @@
 #!/usr/bin/env bash
 # swe-workbench-reap-session-scratch
-#
-# Clear the CURRENT harness session's scratchpad contents, but only after proving the
-# target is a sanctioned artifact — same earn-the-unattended-rm-rf discipline as
-# swe-workbench-reap-run-dir, adapted to a self-derived (not caller-supplied) target.
-#
-# Unlike swe-workbench-reap-run-dir, this script takes no path argument: it derives its own
-# target from $CLAUDE_CODE_SESSION_ID plus a filesystem glob, and any guard failure is a
-# silent no-op (stderr note, always exit 0) rather than exit 1 — a version-fragile,
-# undocumented harness path layout should degrade to "did nothing" on drift, never abort
-# a cleanup flow whose other steps have already run.
-#
-# Resolution (structural, not derived from cwd — a session may have started inside a
-# worktree, so any project slug guessed from cwd would be wrong; the session id alone is
-# unique across projects, so the wildcard project segment cannot over-match):
-#   $CLAUDE_CODE_SESSION_ID must be set and match ^[0-9a-fA-F-]{36}$
-#   glob: /tmp/claude-$(id -u)/*/${CLAUDE_CODE_SESSION_ID}/scratchpad
-#   Exactly one match is required — zero or multiple hits is a no-op.
-#
-# Guards (ALL must pass; mirrors swe-workbench-reap-run-dir):
-#   1. Basename is exactly "scratchpad".
-#   2. Canonicalized parent directory's basename equals $CLAUDE_CODE_SESSION_ID — this
-#      also catches a session-id path segment that is itself a symlink resolving
-#      somewhere with a different final name.
-#   3. That canonicalized parent's grandparent is /tmp/claude-<uid> (canonical or raw
-#      /tmp spelling) — catches a symlink escaping the uid root entirely.
-#   4. Target is a directory, not a symlink, owned by the current user ([ -O ]).
-#   5. No .git entry at depth 1 inside the target — keeps scratch and worktree domains
-#      disjoint by construction.
-#
-# Behaviour: deletes the directory's CONTENTS, never the directory itself — cleanup-merged
-# can run mid-session (Mode C orchestration, once per merge round), so later writes in the
-# same session must still land in a directory that still exists. Prints
-# SWEPT_SESSION_FILES=<n>, a top-level entry count (not a recursive file count). Always
-# exits 0.
-#
-# Call form:
-#   eval "$(swe-workbench-reap-session-scratch)"
+# Clear a verified current-session scratch target without removing the target directory.
 
 set -euo pipefail
 
@@ -56,58 +20,101 @@ reject() {
   emit
 }
 
-SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
-
-[ -n "$SESSION_ID" ] || reject "CLAUDE_CODE_SESSION_ID is not set — skipping"
-
-if ! printf '%s' "$SESSION_ID" | grep -qE '^[0-9a-fA-F-]{36}$'; then
-  reject "CLAUDE_CODE_SESSION_ID does not look like a session UUID — skipping"
-fi
-
-UID_N="$(id -u)"
-RAW_UID_ROOT="/tmp/claude-${UID_N}"
-CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
-UID_ROOT="${CANON_TMP}/claude-${UID_N}"
-
-is_uid_root() {
-  [ "$1" = "$UID_ROOT" ] || [ "$1" = "$RAW_UID_ROOT" ]
-}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || reject "cannot resolve runtime directory — skipping"
 
 shopt -s nullglob
-MATCHES=("$RAW_UID_ROOT"/*/"$SESSION_ID"/scratchpad)
+ADAPTERS=("$SCRIPT_DIR"/swe-workbench-session-scratch-adapter-*)
 shopt -u nullglob
 
-[ "${#MATCHES[@]}" -gt 0 ] || reject "no scratchpad directory found for this session — skipping"
-[ "${#MATCHES[@]}" -eq 1 ] || reject "multiple scratchpad directories matched for this session — skipping"
+ACTIVE_OUTPUTS=()
+ACTIVE_COUNT=0
+for adapter in "${ADAPTERS[@]+"${ADAPTERS[@]}"}"; do
+  [[ -f "$adapter" && -x "$adapter" ]] || reject "invalid packaged adapter: $adapter"
+  if output=$("$adapter"); then
+    ACTIVE_OUTPUTS[ACTIVE_COUNT]=$output
+    ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
+  else
+    status=$?
+    [[ "$status" -eq 3 ]] || reject "adapter ${adapter##*/} could not resolve a safe target — skipping"
+  fi
+done
 
-TARGET="${MATCHES[0]}"
-base="$(basename "$TARGET")"
-# Defensive, not load-bearing: the glob's trailing segment is the literal "scratchpad",
-# so this can never actually fail — kept for symmetry with swe-workbench-reap-run-dir.
-[ "$base" = "scratchpad" ] || reject "unexpected basename: $base"
+[[ "$ACTIVE_COUNT" -gt 0 ]] || reject "no active session scratch adapter — skipping"
+[[ "$ACTIVE_COUNT" -eq 1 ]] || reject "multiple active session scratch adapters — skipping"
 
-parent="$(dirname "$TARGET")"
-canon_parent=$(cd "$parent" 2>/dev/null && pwd -P) || canon_parent="$parent"
-canon_target="${canon_parent}/${base}"
+RECORDS=()
+while IFS= read -r record; do
+  RECORDS[${#RECORDS[@]}]=$record
+done <<< "${ACTIVE_OUTPUTS[0]}"
 
-parent_base="$(basename "$canon_parent")"
-[ "$parent_base" = "$SESSION_ID" ] || reject "scratchpad parent does not resolve to the session id: $parent_base"
+[[ "${#RECORDS[@]}" -ge 4 ]] || reject "adapter descriptor has too few records — skipping"
+[[ "${RECORDS[0]}" == "SWB_SESSION_SCRATCH_V1" ]] || reject "unsupported adapter descriptor version — skipping"
+[[ "${RECORDS[1]}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || reject "invalid adapter identifier — skipping"
 
-canon_grandparent="$(dirname "$canon_parent")"
-canon_ggparent="$(dirname "$canon_grandparent")"
-is_uid_root "$canon_ggparent" || reject "scratchpad does not resolve under $RAW_UID_ROOT: $canon_ggparent"
+ROOT=${RECORDS[2]}
+COUNT=${RECORDS[3]}
+[[ "$ROOT" == /* && "$ROOT" != "/" ]] || reject "authorized root is not an absolute non-root directory — skipping"
+[[ "$COUNT" =~ ^[0-9]+$ ]] || reject "adapter candidate count is not decimal — skipping"
 
-if [ ! -e "$canon_target" ] && [ ! -L "$canon_target" ]; then
-  reject "scratchpad directory vanished before removal — skipping"
-fi
+NORMALIZED_COUNT=$COUNT
+while [[ ${#NORMALIZED_COUNT} -gt 1 && "${NORMALIZED_COUNT:0:1}" == "0" ]]; do
+  NORMALIZED_COUNT=${NORMALIZED_COUNT#0}
+done
 
-[ ! -L "$canon_target" ] || reject "scratchpad path is a symlink: $canon_target"
-[ -d "$canon_target" ] || reject "scratchpad path is not a directory: $canon_target"
-[ -O "$canon_target" ] || reject "scratchpad is not owned by the current user: $canon_target"
-[ ! -e "$canon_target/.git" ] || reject "refusing to touch a scratchpad containing .git: $canon_target"
+RECORD_COUNT=$(( ${#RECORDS[@]} - 4 ))
+[[ "$NORMALIZED_COUNT" == "$RECORD_COUNT" ]] || reject "adapter candidate count does not match records — skipping"
+[[ "$RECORD_COUNT" -eq 1 ]] || reject "adapter must report exactly one candidate — skipping"
+
+CANDIDATE=${RECORDS[4]}
+[[ "$CANDIDATE" != /* && "$CANDIDATE" != */ && "$CANDIDATE" != *//* ]] || reject "candidate is not a relative path — skipping"
+
+CANDIDATE_PARTS=()
+IFS=/ read -r -a CANDIDATE_PARTS <<< "$CANDIDATE"
+[[ "${#CANDIDATE_PARTS[@]}" -ge 2 ]] || reject "candidate is too shallow — skipping"
+for component in "${CANDIDATE_PARTS[@]}"; do
+  [[ -n "$component" && "$component" != "." && "$component" != ".." ]] || reject "candidate has an unsafe component — skipping"
+done
+
+[[ ! -L "$ROOT" ]] || reject "authorized root is a symlink — skipping"
+[[ -d "$ROOT" ]] || reject "authorized root is not a directory — skipping"
+[[ -O "$ROOT" ]] || reject "authorized root is not owned by the current user — skipping"
+CANON_ROOT=$(cd "$ROOT" 2>/dev/null && pwd -P) || reject "cannot canonicalize authorized root — skipping"
+
+TARGET=$ROOT
+for component in "${CANDIDATE_PARTS[@]}"; do
+  TARGET="${TARGET}/${component}"
+  [[ ! -L "$TARGET" ]] || reject "candidate contains a symlink — skipping"
+done
+
+[[ -d "$TARGET" ]] || reject "session scratch target is not a directory — skipping"
+[[ -O "$TARGET" ]] || reject "session scratch target is not owned by the current user — skipping"
+CANON_TARGET=$(cd "$TARGET" 2>/dev/null && pwd -P) || reject "cannot canonicalize session scratch target — skipping"
+case "$CANON_TARGET/" in
+  "$CANON_ROOT"/*) ;;
+  *) reject "candidate escapes its authorized root — skipping" ;;
+esac
+[[ ! -e "$CANON_TARGET/.git" ]] || reject "refusing to touch session scratch containing .git — skipping"
+
+[[ ! -L "$ROOT" ]] || reject "authorized root changed during validation — skipping"
+CANON_ROOT_NOW=$(cd "$ROOT" 2>/dev/null && pwd -P) || reject "authorized root vanished during validation — skipping"
+[[ "$CANON_ROOT_NOW" == "$CANON_ROOT" ]] || reject "authorized root changed during validation — skipping"
+
+TARGET=$ROOT
+for component in "${CANDIDATE_PARTS[@]}"; do
+  TARGET="${TARGET}/${component}"
+  [[ ! -L "$TARGET" ]] || reject "candidate changed to a symlink — skipping"
+done
+[[ -d "$TARGET" && -O "$TARGET" ]] || reject "session scratch target changed during validation — skipping"
+CANON_TARGET_NOW=$(cd "$TARGET" 2>/dev/null && pwd -P) || reject "session scratch target vanished during validation — skipping"
+[[ "$CANON_TARGET_NOW" == "$CANON_TARGET" ]] || reject "session scratch target changed during validation — skipping"
+case "$CANON_TARGET_NOW/" in
+  "$CANON_ROOT_NOW"/*) ;;
+  *) reject "candidate escapes its authorized root — skipping" ;;
+esac
+[[ ! -e "$CANON_TARGET_NOW/.git" ]] || reject "refusing to touch session scratch containing .git — skipping"
 
 shopt -s nullglob dotglob
-for entry in "$canon_target"/*; do
+for entry in "$CANON_TARGET_NOW"/*; do
   if rm -rf -- "$entry" 2>/dev/null; then
     SWEPT=$((SWEPT + 1))
   else
