@@ -130,7 +130,7 @@ Two cross-round artifacts, both scoped to this run:
   the convergence predicate for being outside the branch diff — kept distinct from `unfounded[]`
   (see Phase 1b) since the two are different claims about a finding.
 - `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>.json` — the Tier-4
-  checkpoint (see `docs/workflow-state.md`), written at every round boundary so the round count
+  checkpoint (see `shared/docs/workflow-state.md`), written at every round boundary so the round count
   survives compaction. Use `skill: converge`, `phase: round-<N>-review` (or `-fix`, `-verify`),
   `context.notes: run_dir=<RUN_DIR>; cap=<CAP>; floor=Medium; fixed=<n>; rejected=<n>`. Deleted in
   Phase 6.

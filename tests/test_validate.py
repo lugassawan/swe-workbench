@@ -3952,7 +3952,7 @@ class TestPhase4DispatchesBothReviewers:
 class TestCheckNoEchoVarHazard:
     """zsh (the user's likely login shell) expands backslash escapes in echo's
     argument, corrupting embedded JSON piped or redirected through it (#549).
-    See docs/shell-echo-vs-printf.md."""
+    See shared/docs/shell-echo-vs-printf.md."""
 
     def _skill_with_block(self, root, name, block_lines):
         skill_dir = root / "skills" / name

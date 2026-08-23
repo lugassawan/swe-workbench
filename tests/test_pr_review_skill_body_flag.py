@@ -16,7 +16,7 @@ depending on the call site:
    free-form body into a JSON literal would let a body containing `"` or `\\`
    break the JSON or inject fields. The script builds it as a real Python
    dict and serializes once with json.dumps, which has the same raw-string
-   safety `jq --arg` gave the old bash version (see docs/gh-api-field-flags.md).
+   safety `jq --arg` gave the old bash version (see shared/docs/gh-api-field-flags.md).
 
 These are behavioral properties of the running script, not its source text —
 each test below drives the script through a stubbed `gh` and inspects the

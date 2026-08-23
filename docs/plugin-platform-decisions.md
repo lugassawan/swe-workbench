@@ -13,7 +13,7 @@ Some plugin runtimes expose a `CLAUDE_PLUGIN_DATA` directory for a plugin's own 
 state. swe-workbench's workflow-state feature doesn't use it.
 
 State lives at `<git-toplevel>/.claude/cache/workflow-state/<branch>.json` (see
-`docs/workflow-state.md`) — per-repo and per-branch by construction, because the path is
+`shared/docs/workflow-state.md`) — per-repo and per-branch by construction, because the path is
 derived from `git rev-parse --show-toplevel` and the current branch name. `CLAUDE_PLUGIN_DATA`
 is global-per-plugin: adopting it would require hashing the repo path (and branch) into the
 filename to avoid collisions across repos and branches — added complexity for no win over the

@@ -1,7 +1,8 @@
 """Content assertions for workflow-state checkpoint instructions (issue #286).
 
 These tests verify that the three wired workflow skills contain the checkpoint-write
-instruction and the delete-on-terminal instruction, both referencing docs/workflow-state.md.
+instruction and the delete-on-terminal instruction, both referencing
+shared/docs/workflow-state.md.
 """
 
 from pathlib import Path
@@ -16,7 +17,7 @@ _SKILLS = {
     "workflow-pr-review": ROOT / "skills" / "workflow-pr-review" / "SKILL.md",
 }
 
-_DOC_PATH = "docs/workflow-state.md"
+_DOC_PATH = "shared/docs/workflow-state.md"
 
 
 @pytest.mark.parametrize("skill_name,skill_path", list(_SKILLS.items()))
@@ -52,7 +53,7 @@ class TestCheckpointInstructions:
 class TestDocPresence:
     """The workflow-state doc must exist and contain required sections."""
 
-    DOC = ROOT / "docs" / "workflow-state.md"
+    DOC = ROOT / "shared" / "docs" / "workflow-state.md"
 
     def test_doc_exists(self):
         assert self.DOC.exists(), f"Missing {self.DOC}"
@@ -84,7 +85,7 @@ class TestDocPresence:
 
 
 class TestReadmeEntries:
-    """README.md and docs/README.md must reference workflow state persistence."""
+    """README.md and shared/docs/README.md must reference workflow state persistence."""
 
     def test_readme_mentions_workflow_state(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -92,8 +93,8 @@ class TestReadmeEntries:
             "README.md missing workflow state persistence section"
         )
 
-    def test_docs_readme_indexes_workflow_state_doc(self):
-        docs_readme = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
-        assert "workflow-state" in docs_readme, (
-            "docs/README.md missing index entry for workflow-state.md"
+    def test_shared_docs_readme_indexes_workflow_state_doc(self):
+        shared_readme = (ROOT / "shared" / "docs" / "README.md").read_text(encoding="utf-8")
+        assert "workflow-state" in shared_readme, (
+            "shared/docs/README.md missing index entry for workflow-state.md"
         )
