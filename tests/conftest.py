@@ -1,5 +1,6 @@
 import os
 import subprocess
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final
 
@@ -22,14 +23,8 @@ import pytest
 # runs in CI. Tests that want to exercise that write path opt back in via
 # env={**_CLEAN_ENV, "GITHUB_STEP_SUMMARY": str(tmp_file)}.
 #
-# CLAUDE_CODE_SESSION_ID is also stripped: when this suite runs inside a live
-# Claude Code session (e.g. a developer running pytest by hand), the real
-# value is exported and inherited by subprocess children. bin/swe-workbench-reap-session-scratch
-# resolves ITS target from this exact var — inheriting the real session id would
-# make any test that shells out to sweep-residuals.sh (or the reaper directly)
-# a live risk of wiping the actual session's real scratchpad contents.
-# Tests that want to exercise the session-scratchpad path opt in explicitly via
-# env={**_CLEAN_ENV, "CLAUDE_CODE_SESSION_ID": "<fake-uuid>"}.
+# CLAUDE_CODE_SESSION_ID and PI_SESSION_ID are stripped so inherited markers cannot
+# authorize session-scratch cleanup; tests opt in with a fake native marker.
 #
 # SWE_WORKBENCH_PI_TOOLS is also stripped: it's the pi/extensions/ask-user.ts kill switch. If a
 # developer or CI shell happens to export it (plausible while testing the kill switch itself),
@@ -43,15 +38,20 @@ import pytest
 # Usage:
 #   subprocess.run([...], env=_CLEAN_ENV, ...)
 #   subprocess.run([...], env={**_CLEAN_ENV, "KEY": "val"}, ...)
-_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
-    {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("GIT_")
-        and k != "GITHUB_STEP_SUMMARY"
-        and k != "CLAUDE_CODE_SESSION_ID"
-        and k != "SWE_WORKBENCH_PI_TOOLS"
+def _clean_environment(source: Mapping[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in source.items()
+        if not key.startswith("GIT_")
+        and key != "GITHUB_STEP_SUMMARY"
+        and key != "CLAUDE_CODE_SESSION_ID"
+        and key != "PI_SESSION_ID"
+        and key != "SWE_WORKBENCH_PI_TOOLS"
     }
+
+
+_CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
+    _clean_environment(os.environ)
     | {
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "T",

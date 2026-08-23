@@ -10,6 +10,7 @@ allowlist. This directory is repo-governance only and never ships.
 - [cost-audit.md](cost-audit.md) — point-in-time model-tier audits: initial snapshot at #160, re-tier pass at #612.
 - [cost-tiers.md](cost-tiers.md) — forward-looking convention for assigning model tiers to new agents.
 - [secret-detection.md](secret-detection.md) — PreToolUse hook that blocks hardcoded secrets before Write/Edit writes the file.
+- [session-scratch-adapters.md](session-scratch-adapters.md) — platform-neutral session scratch cleanup: core reaper, adapter discovery/protocol, safety invariants, the Claude and Pi adapters, and how to add a new platform adapter.
 - [skill-usage-telemetry.md](skill-usage-telemetry.md) — how subagent skill invocations are surfaced in the transcript.
 - [worktree-permission-grant.md](worktree-permission-grant.md) — automatic permission grants for isolated worktree agents.
 - [skill-preload.md](skill-preload.md) — `skills:` frontmatter preloads unconditional principle skills at dispatch; the silent-no-op trap and manual verification runbook.

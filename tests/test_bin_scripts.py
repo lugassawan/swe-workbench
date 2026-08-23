@@ -1,6 +1,6 @@
 """Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is the sole home for these fifteen scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
 and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
@@ -35,6 +35,8 @@ SCRIPTS = {
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-session-scratch-adapter-claude": "bash",
+    "swe-workbench-session-scratch-adapter-pi": "bash",
     "swe-workbench-skill-script": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Pi authorizes no scratch target until a sanctioned contract exists; never derive one
+# from session JSONL.
+
+set -euo pipefail
+
+note() {
+  printf 'session-scratch-adapter-pi: %s\n' "$*" >&2
+}
+
+SESSION_ID="${PI_SESSION_ID:-}"
+[[ -n "$SESSION_ID" ]] || exit 3
+
+case "$SESSION_ID" in
+  *[[:cntrl:]]*)
+    note "PI_SESSION_ID contains control characters"
+    exit 4
+    ;;
+esac
+
+note "Pi exposes session metadata but no sanctioned session scratch path — skipping"
+exit 4

@@ -1,299 +1,476 @@
-"""Tests for bin/swe-workbench-reap-session-scratch — session scratchpad content removal.
-
-Mirrors tests/test_reap_run_dir.py, with one structural difference: this script takes no
-path argument. It derives its own target from $CLAUDE_CODE_SESSION_ID and a filesystem glob,
-and any guard failure is a silent no-op (stderr note, always exit 0) rather than exit 1 —
-a version-fragile harness path layout should degrade to "did nothing", never abort the
-caller's cleanup flow. Every test therefore asserts exit 0 and inspects SWEPT_SESSION_FILES
-on stdout plus filesystem side effects, never a non-zero exit code.
-
-Tests operate against the real /tmp/claude-<uid>/ tree (mirrors test_reap_run_dir.py's use of
-the real /tmp/swe-workbench-run/), scoped under a dedicated fake project slug and a session id
-that can never collide with a live session, and always pass CLAUDE_CODE_SESSION_ID explicitly
-so a test never touches this actual session's real scratchpad.
-"""
+from __future__ import annotations
 
 import os
+import shlex
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-reap-session-scratch"
-REPO_ROOT = Path(__file__).parent.parent
-
-UID_ROOT = Path(f"/tmp/claude-{os.getuid()}")
-FAKE_PROJECT = "pytest-reap-session-scratch-fixture"
-FAKE_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+SOURCE_SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-reap-session-scratch"
 
 
-def run_script(*, env_overrides=None):
-    merged_env = dict(_CLEAN_ENV)
-    if env_overrides:
-        for k, v in env_overrides.items():
-            if v is None:
-                merged_env.pop(k, None)
-            else:
-                merged_env[k] = v
+def isolated_reaper(tmp_path: Path) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / SOURCE_SCRIPT.name
+    shutil.copy2(SOURCE_SCRIPT, script)
+    script.chmod(0o755)
+    return script
+
+
+def write_adapter(script: Path, name: str, body: str) -> Path:
+    adapter = script.parent / f"swe-workbench-session-scratch-adapter-{name}"
+    adapter.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{body}\n")
+    adapter.chmod(0o755)
+    return adapter
+
+
+def write_success_adapter(
+    script: Path,
+    name: str,
+    root: Path | str,
+    candidates: list[str],
+    *,
+    protocol: str = "SWB_SESSION_SCRATCH_V1",
+    adapter_id: str | None = None,
+    count: str | None = None,
+    extra_records: list[str] | None = None,
+) -> Path:
+    records = [
+        protocol,
+        adapter_id or name,
+        str(root),
+        count if count is not None else str(len(candidates)),
+        *candidates,
+        *(extra_records or []),
+    ]
+    body = "printf '%s\\n' " + " ".join(shlex.quote(record) for record in records)
+    return write_adapter(script, name, body)
+
+
+def run_reaper(
+    script: Path, *, env_overrides: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    env = dict(_CLEAN_ENV)
+    env.update(env_overrides or {})
     return subprocess.run(
-        ["bash", str(SCRIPT)],
-        capture_output=True, text=True,
-        cwd=str(REPO_ROOT),
-        env=merged_env,
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        cwd=script.parent,
+        env=env,
     )
 
 
 def swept_count(stdout: str) -> int:
-    for line in stdout.splitlines():
-        if line.startswith("SWEPT_SESSION_FILES="):
-            return int(line.split("=", 1)[1])
-    raise AssertionError(f"SWEPT_SESSION_FILES not found in stdout: {stdout!r}")
+    assignments = [
+        line for line in stdout.splitlines() if line.startswith("SWEPT_SESSION_FILES=")
+    ]
+    assert len(assignments) == 1
+    return int(assignments[0].split("=", 1)[1])
 
 
-def make_scratchpad(session_id: str = FAKE_SESSION_ID, project: str = FAKE_PROJECT) -> Path:
-    d = UID_ROOT / project / session_id / "scratchpad"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def create_target(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path / "authorized"
+    target = root / "session" / "scratch"
+    target.mkdir(parents=True)
+    return root, target
 
 
-@pytest.fixture(autouse=True)
-def _clean_fake_session_tree():
-    # Per project_auto_reap_552_pr573's lesson: an idempotent-on-absent test must rm -rf its
-    # own target first rather than inherit ambient state left by an earlier test's mkdir.
-    shutil.rmtree(UID_ROOT / FAKE_PROJECT, ignore_errors=True)
-    yield
-    shutil.rmtree(UID_ROOT / FAKE_PROJECT, ignore_errors=True)
-
-
-# ──────────────────────────────────────────────────────
-# Script existence
-# ──────────────────────────────────────────────────────
-
-def test_script_exists_and_is_executable():
-    assert SCRIPT.exists(), f"missing {SCRIPT}"
-    assert os.access(SCRIPT, os.X_OK), f"{SCRIPT} must be executable"
-
-
-# ──────────────────────────────────────────────────────
-# Resolution guards
-# ──────────────────────────────────────────────────────
-
-def test_missing_session_id_env_is_noop():
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": None})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
+def assert_noop(result: subprocess.CompletedProcess[str]) -> None:
+    assert result.returncode == 0
     assert swept_count(result.stdout) == 0
 
 
-@pytest.mark.parametrize("bad_id", [
-    "",
-    "not-a-uuid",
-    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-extra",
-    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee",  # 35 chars, one short
-    "gggggggg-bbbb-cccc-dddd-eeeeeeeeeeee",  # non-hex char
-    "aaaaaaaa bbbb cccc dddd eeeeeeeeeeee",  # spaces instead of hyphens
-])
-def test_malformed_session_id_is_noop(bad_id):
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": bad_id})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 0
+def test_no_packaged_adapters_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert "no active" in result.stderr
 
 
-def test_zero_glob_hits_is_noop():
-    """A well-formed session id with no matching scratchpad on disk is a no-op."""
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 0
+def test_inactive_adapter_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    write_adapter(script, "inactive", "exit 3")
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert "no active" in result.stderr
 
 
-def test_only_literal_scratchpad_dirname_matches():
-    """A differently-named directory at the session-id level is never picked up."""
-    d = UID_ROOT / FAKE_PROJECT / FAKE_SESSION_ID / "not-scratchpad"
-    d.mkdir(parents=True)
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 0
-    assert d.exists(), "unrelated directory must be untouched"
+def test_active_adapter_sweeps_authorized_target(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "leftover.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert result.returncode == 0
+    assert swept_count(result.stdout) == 1
+    assert target.is_dir()
+    assert list(target.iterdir()) == []
 
 
-def test_multiple_glob_hits_is_noop():
-    """Two projects both matching the same session id: ambiguous, so no-op — both untouched."""
-    d1 = make_scratchpad(project=f"{FAKE_PROJECT}-a")
-    d2 = make_scratchpad(project=f"{FAKE_PROJECT}-b")
-    (d1 / "leftover.diff").write_text("x")
-    (d2 / "leftover.diff").write_text("x")
+def test_term_interrupt_removes_active_adapter_descriptor_temp(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    ready_file = tmp_path / "adapter-ready"
+    pid_file = tmp_path / "adapter-pid"
+    write_adapter(
+        script,
+        "blocking",
+        "\n".join(
+            [
+                f"printf '%s\\n' \"$$\" > {shlex.quote(str(pid_file))}",
+                f"touch {shlex.quote(str(ready_file))}",
+                "while :; do sleep 1; done",
+            ]
+        ),
+    )
+    env = dict(_CLEAN_ENV)
+    env["TMPDIR"] = str(tmp_path)
+    process = subprocess.Popen(
+        ["bash", str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=script.parent,
+        env=env,
+    )
+
     try:
-        result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-        assert result.returncode == 0, f"stderr: {result.stderr!r}"
-        assert swept_count(result.stdout) == 0
-        assert (d1 / "leftover.diff").exists()
-        assert (d2 / "leftover.diff").exists()
+        for _ in range(100):
+            if ready_file.exists():
+                break
+            if process.poll() is not None:
+                pytest.fail("reaper exited before the adapter blocked")
+            time.sleep(0.01)
+        else:
+            pytest.fail("blocking adapter did not become ready")
+
+        process.terminate()
+        process.wait(timeout=5)
+
+        assert not list(tmp_path.glob("swe-workbench-session-scratch.*"))
     finally:
-        shutil.rmtree(UID_ROOT / f"{FAKE_PROJECT}-a", ignore_errors=True)
-        shutil.rmtree(UID_ROOT / f"{FAKE_PROJECT}-b", ignore_errors=True)
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text().strip()), signal.SIGTERM)
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=5)
 
 
-# ──────────────────────────────────────────────────────
-# Rejection — structural checks
-# ──────────────────────────────────────────────────────
+def test_multiple_active_adapters_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(script, "first", root, ["session/scratch"])
+    write_success_adapter(script, "second", root, ["session/scratch"])
 
-def test_refuses_symlinked_scratchpad():
-    """A symlink at the exact scratchpad location is rejected, not followed."""
-    session_dir = UID_ROOT / FAKE_PROJECT / FAKE_SESSION_ID
-    session_dir.mkdir(parents=True)
-    real_target = Path("/tmp") / "reap-session-scratch-symlink-target"
-    real_target.mkdir(exist_ok=True)
-    link = session_dir / "scratchpad"
-    link.symlink_to(real_target)
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+    assert "multiple active" in result.stderr
+
+
+def test_active_adapter_failure_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    write_adapter(script, "broken", "exit 1")
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert "could not resolve" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("protocol", "adapter_id", "count", "candidates", "extra_records"),
+    [
+        ("SWB_SESSION_SCRATCH_V2", "fixture", None, ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "bad_id", None, ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "Fixture", None, ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "one", ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "0", ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "2", ["session/scratch"], None),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "1", [], None),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "1", ["session/scratch"], ["extra"]),
+        ("SWB_SESSION_SCRATCH_V1", "fixture", "1", ["session/scratch"], [""]),
+    ],
+)
+def test_malformed_descriptor_is_noop(
+    tmp_path: Path,
+    protocol: str,
+    adapter_id: str,
+    count: str | None,
+    candidates: list[str],
+    extra_records: list[str] | None,
+) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(
+        script,
+        "fixture",
+        root,
+        candidates,
+        protocol=protocol,
+        adapter_id=adapter_id,
+        count=count,
+        extra_records=extra_records,
+    )
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+def test_zero_count_descriptor_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, [], count="0")
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "/absolute/scratch",
+        "scratch",
+        "session/../scratch",
+        "session/./scratch",
+        "session//scratch",
+        "session/scratch/",
+    ],
+)
+def test_invalid_relative_candidate_is_noop(tmp_path: Path, candidate: str) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, [candidate])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+def test_root_symlink_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    actual_root, target = create_target(tmp_path)
+    root_link = tmp_path / "authorized-link"
+    root_link.symlink_to(actual_root, target_is_directory=True)
+    (target / "keep.txt").write_text("x")
+    write_success_adapter(script, "fixture", root_link, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+def test_target_symlink_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root = tmp_path / "authorized"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("x")
+    session = root / "session"
+    session.mkdir()
+    (session / "scratch").symlink_to(outside, target_is_directory=True)
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (outside / "keep.txt").exists()
+
+
+def test_symlinked_intermediate_component_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root = tmp_path / "authorized"
+    outside = tmp_path / "outside"
+    target = outside / "scratch"
+    target.mkdir(parents=True)
+    (target / "keep.txt").write_text("x")
+    root.mkdir()
+    (root / "session").symlink_to(outside, target_is_directory=True)
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+
+@pytest.mark.parametrize("root_kind", ["missing", "file", "filesystem-root"])
+def test_unsafe_authorized_root_is_noop(tmp_path: Path, root_kind: str) -> None:
+    script = isolated_reaper(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("x")
+    if root_kind == "missing":
+        root: Path | str = tmp_path / "missing"
+    elif root_kind == "file":
+        root = tmp_path / "not-a-directory"
+        root.write_text("x")
+    else:
+        root = "/"
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
+
+
+@pytest.mark.parametrize("target_kind", ["missing", "file"])
+def test_missing_or_non_directory_target_is_noop(
+    tmp_path: Path, target_kind: str
+) -> None:
+    script = isolated_reaper(tmp_path)
+    root = tmp_path / "authorized"
+    root.mkdir()
+    target = root / "session" / "scratch"
+    target.parent.mkdir()
+    if target_kind == "file":
+        target.write_text("x")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    if target_kind == "file":
+        assert target.exists()
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="requires root to fabricate ownership")
+@pytest.mark.parametrize("foreign_path", ["root", "target"])
+def test_foreign_owned_path_is_noop(tmp_path: Path, foreign_path: str) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    path = root if foreign_path == "root" else target
+    os.chown(path, 1, 1)
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
     try:
-        result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-        assert result.returncode == 0, f"stderr: {result.stderr!r}"
-        assert swept_count(result.stdout) == 0
-        assert link.is_symlink(), "symlink must NOT be removed when rejected"
-        assert real_target.exists(), "symlink target must NOT be touched"
+        result = run_reaper(script)
+
+        assert_noop(result)
+        assert (target / "keep.txt").exists()
     finally:
-        real_target.rmdir()
+        os.chown(path, os.getuid(), os.getgid())
 
 
-def test_refuses_scratchpad_escaping_via_symlinked_session_dir():
-    """The session-id directory itself resolving (via symlink) outside of
-    /tmp/claude-<uid>/ must be rejected — this is the 'grandparent's parent
-    must be the uid root' guard, exercised via a path-escape attempt."""
-    evil_root = Path("/tmp") / "reap-session-scratch-evil-root"
-    evil_scratchpad = evil_root / "scratchpad"
-    evil_scratchpad.mkdir(parents=True, exist_ok=True)
-    (evil_scratchpad / "should-not-be-touched.txt").write_text("x")
+def test_target_disappearing_before_removal_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root = tmp_path / "authorized"
+    (root / "session").mkdir(parents=True)
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
 
-    project_dir = UID_ROOT / FAKE_PROJECT
-    project_dir.mkdir(parents=True, exist_ok=True)
-    session_link = project_dir / FAKE_SESSION_ID
-    session_link.symlink_to(evil_root)
-    try:
-        result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-        assert result.returncode == 0, f"stderr: {result.stderr!r}"
-        assert swept_count(result.stdout) == 0
-        assert (evil_scratchpad / "should-not-be-touched.txt").exists(), (
-            "escaped target must NOT be touched"
-        )
-    finally:
-        shutil.rmtree(evil_root, ignore_errors=True)
+    result = run_reaper(script)
+
+    assert_noop(result)
 
 
-def test_refuses_scratchpad_escaping_via_symlinked_project_slug():
-    """The project-slug directory (one level above the session-id dir) resolving
-    via symlink outside /tmp/claude-<uid>/ must also be rejected — the guard must
-    catch an escape at ANY path segment, not just the session-id level."""
-    evil_root = Path("/tmp") / "reap-session-scratch-evil-root-slug"
-    evil_scratchpad = evil_root / FAKE_SESSION_ID / "scratchpad"
-    evil_scratchpad.mkdir(parents=True, exist_ok=True)
-    (evil_scratchpad / "should-not-be-touched.txt").write_text("x")
+def test_target_containing_git_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    (target / ".git").mkdir()
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
 
-    project_link = UID_ROOT / FAKE_PROJECT
-    UID_ROOT.mkdir(parents=True, exist_ok=True)
-    project_link.symlink_to(evil_root)
-    try:
-        result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-        assert result.returncode == 0, f"stderr: {result.stderr!r}"
-        assert swept_count(result.stdout) == 0
-        assert (evil_scratchpad / "should-not-be-touched.txt").exists(), (
-            "escaped target must NOT be touched"
-        )
-    finally:
-        project_link.unlink()
-        shutil.rmtree(evil_root, ignore_errors=True)
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
 
 
-def test_hidden_files_are_swept_as_top_level_entries():
-    """dotglob is enabled for the sweep loop — a hidden file must be counted and
-    removed alongside regular files, not silently left behind."""
-    d = make_scratchpad()
-    (d / "a.txt").write_text("x")
-    (d / ".env").write_text("SECRET=x")
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 2, "hidden file must be counted alongside 'a.txt'"
-    assert list(d.iterdir()) == [], "hidden file must actually be removed, not left behind"
+def test_target_containing_dangling_git_symlink_is_noop(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "keep.txt").write_text("x")
+    (target / ".git").symlink_to(tmp_path / "missing-git")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert_noop(result)
+    assert (target / "keep.txt").exists()
 
 
-def test_refuses_dir_containing_git():
-    """A scratchpad directory containing a .git entry is refused — keeps scratch
-    and worktree domains disjoint by construction."""
-    d = make_scratchpad()
-    (d / "leftover.diff").write_text("x")
-    (d / ".git").mkdir()
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 0
-    assert (d / "leftover.diff").exists(), "contents must NOT be removed when rejected"
+def test_happy_path_removes_top_level_entries_and_preserves_target(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "one.txt").write_text("x")
+    (target / ".hidden").write_text("x")
+    nested = target / "nested"
+    nested.mkdir()
+    (nested / "two.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+
+    result = run_reaper(script)
+
+    assert result.returncode == 0
+    assert swept_count(result.stdout) == 3
+    assert target.is_dir()
+    assert list(target.iterdir()) == []
 
 
-def test_refuses_non_directory_target():
-    """A regular file at the exact scratchpad path is rejected (not a directory)."""
-    session_dir = UID_ROOT / FAKE_PROJECT / FAKE_SESSION_ID
-    session_dir.mkdir(parents=True)
-    f = session_dir / "scratchpad"
-    f.write_text("not a directory")
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 0
-    assert f.exists()
+def test_idempotent_rerun_preserves_empty_target(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    (target / "one.txt").write_text("x")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
 
+    first = run_reaper(script)
+    second = run_reaper(script)
 
-def test_refuses_dir_owned_by_another_uid():
-    """A scratchpad owned by a different UID must be refused. Only runnable as root
-    (need CAP_CHOWN to fabricate another owner), so skip otherwise with a marker."""
-    if os.geteuid() != 0:
-        pytest.skip("requires root to chown a directory to another UID")
-    d = make_scratchpad()
-    (d / "leftover.diff").write_text("x")
-    try:
-        os.chown(d, 1, 1)  # arbitrary non-current UID
-        result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-        assert result.returncode == 0, f"stderr: {result.stderr!r}"
-        assert swept_count(result.stdout) == 0
-    finally:
-        os.chown(d, os.getuid(), os.getgid())
-
-
-# ──────────────────────────────────────────────────────
-# Happy path
-# ──────────────────────────────────────────────────────
-
-def test_happy_path_clears_contents_but_preserves_directory():
-    d = make_scratchpad()
-    (d / "existing_commit.diff").write_text("x")
-    (d / "pr_body.md").write_text("x")
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 2
-    assert d.exists(), "the scratchpad directory itself must survive"
-    assert list(d.iterdir()) == [], "all contents must be removed"
-
-
-def test_top_level_entry_count_not_recursive():
-    """SWEPT_SESSION_FILES counts top-level entries, not files inside subdirectories."""
-    d = make_scratchpad()
-    (d / "a.txt").write_text("x")
-    sub = d / "subdir"
-    sub.mkdir()
-    for i in range(5):
-        (sub / f"nested-{i}.txt").write_text("x")
-    result = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert result.returncode == 0, f"stderr: {result.stderr!r}"
-    assert swept_count(result.stdout) == 2, "must count 'a.txt' + 'subdir' as 2, not 6"
-    assert list(d.iterdir()) == []
-
-
-def test_idempotent_rerun_reports_zero():
-    d = make_scratchpad()
-    (d / "leftover.diff").write_text("x")
-    first = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert first.returncode == 0
     assert swept_count(first.stdout) == 1
-
-    second = run_script(env_overrides={"CLAUDE_CODE_SESSION_ID": FAKE_SESSION_ID})
-    assert second.returncode == 0, f"stderr: {second.stderr!r}"
     assert swept_count(second.stdout) == 0
-    assert d.exists(), "directory must still exist after a clean re-run"
+    assert target.is_dir()
+
+
+def test_partial_removal_counts_only_successful_entries(tmp_path: Path) -> None:
+    script = isolated_reaper(tmp_path)
+    root, target = create_target(tmp_path)
+    removable = target / "remove.txt"
+    protected = target / "protected.txt"
+    removable.write_text("x")
+    protected.write_text("x")
+    write_success_adapter(script, "fixture", root, ["session/scratch"])
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_rm = fake_bin / "rm"
+    fake_rm.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *protected.txt ]]; then exit 1; fi\n"
+        "/bin/rm \"$@\"\n"
+    )
+    fake_rm.chmod(0o755)
+
+    result = run_reaper(script, env_overrides={"PATH": f"{fake_bin}:{os.environ['PATH']}"})
+
+    assert result.returncode == 0
+    assert swept_count(result.stdout) == 1
+    assert not removable.exists()
+    assert protected.exists()
+    assert "failed to remove" in result.stderr

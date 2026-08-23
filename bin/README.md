@@ -28,7 +28,9 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `swe-workbench-new-run-dir` | Allocate a mode-0700 run-scoped scratch dir under `/tmp/swe-workbench-run/` (`mktemp -d`, explicit template); also runs the age-gated (24h) orphan sweep at allocation time |
 | `swe-workbench-pr-review-submit` | Posting mechanism for workflow-pr-review-post's `## Post` section: fetch review threads (paginated), Jaccard dedup + 👍 reactions, diff-line pre-validate, pr-level batching, self-review/diff-scoping decision flip, atomic Reviews-API submit with a bounded 422 retry and a per-comment fallback. `--findings-json <path\|->` in; `printf %q`-quoted `KEY=VALUE` lines out |
 | `swe-workbench-reap-run-dir` | Safe `rm -rf` for a single run-scoped scratch dir allocated by `swe-workbench-new-run-dir` (depth-exactly-one, name-shape, ownership, and `.git`-absence checks) |
-| `swe-workbench-reap-session-scratch` | Safe content-clear (directory preserved) for the current harness session's scratchpad, resolved via `$CLAUDE_CODE_SESSION_ID` and a filesystem glob — no path argument; any guard failure is a silent no-op |
+| `swe-workbench-reap-session-scratch` | Platform-neutral content-clear (directory preserved) for a verified current-session scratch target, authorized by exactly one packaged session scratch adapter; ambiguous or unsafe resolution is a zero-count no-op |
+| `swe-workbench-session-scratch-adapter-claude` | Claude Code session scratch adapter |
+| `swe-workbench-session-scratch-adapter-pi` | Pi Coding Agent session scratch adapter |
 | `swe-workbench-reply-and-resolve` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
 | `swe-workbench-skill-script` | Invoke a skill-local `scripts/<name>.sh` helper (`swe-workbench-skill-script <skill> <script> [args...]`) — rejects traversal, resolves the plugin root itself so no skill has to |
 | `swe-workbench-sync-pr-metadata` | Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync) |

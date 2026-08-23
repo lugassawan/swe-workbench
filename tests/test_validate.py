@@ -1923,6 +1923,25 @@ class TestCheckBareActionableRefs:
         validate.check_bare_actionable_refs()
         assert any("foo" in f for f in validate.FAILURES)
 
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".superpowers/sdd/brief.md"),
+            Path("docs/superpowers/plans/brief.md"),
+        ],
+    )
+    def test_ignored_local_planning_roots_are_excluded(self, reset_validate, relative_path):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        planning_file = root / relative_path
+        planning_file.parent.mkdir(parents=True)
+        planning_file.write_text("Invoke `foo` skill.\n", encoding="utf-8")
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
+
     def test_bare_id_in_readme_fails(self, reset_validate):
         root = reset_validate
         make_plugin_tree(

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Claude authorizes only /tmp/claude-<uid>/<project>/<session>/scratchpad;
+# the core owns deletion after independently validating this descriptor.
+
+set -euo pipefail
+
+note() {
+  printf 'session-scratch-adapter-claude: %s\n' "$*" >&2
+}
+
+SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+[[ -n "$SESSION_ID" ]] || exit 3
+
+if [[ "$SESSION_ID" == *$'\r'* || "$SESSION_ID" == *$'\n'* ]]; then
+  note "CLAUDE_CODE_SESSION_ID contains a line break"
+  exit 4
+fi
+
+if ! printf '%s' "$SESSION_ID" | grep -qE '^[0-9a-fA-F-]{36}$'; then
+  note "CLAUDE_CODE_SESSION_ID does not look like a session UUID"
+  exit 4
+fi
+
+ROOT="/tmp/claude-$(id -u)"
+shopt -s nullglob
+MATCHES=("$ROOT"/*/"$SESSION_ID"/scratchpad)
+shopt -u nullglob
+
+if [[ "${#MATCHES[@]}" -ne 1 ]]; then
+  note "expected exactly one scratchpad candidate"
+  exit 4
+fi
+
+RELATIVE=${MATCHES[0]#"$ROOT"/}
+if [[ "$RELATIVE" == *$'\r'* || "$RELATIVE" == *$'\n'* ]]; then
+  note "scratchpad candidate contains a line break"
+  exit 4
+fi
+
+printf 'SWB_SESSION_SCRATCH_V1\nclaude\n%s\n1\n%s\n' "$ROOT" "$RELATIVE"

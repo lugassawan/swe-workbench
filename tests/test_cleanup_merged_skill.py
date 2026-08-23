@@ -427,3 +427,14 @@ def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped()
     assert "silent no-op" in step5_slice, (
         "Step 5 must note that a guard failure degrades to a silent no-op rather than aborting"
     )
+
+
+def test_session_scratch_cleanup_is_platform_neutral() -> None:
+    text = SKILL.read_text()
+    section = text[text.index("The session-scratchpad sweep"):text.index("The script emits")]
+
+    assert "session scratch adapter" in section
+    assert "multiple active" in section
+    assert "SWEPT_SESSION_FILES=0" in section
+    assert "CLAUDE_CODE_SESSION_ID" not in section
+    assert "/tmp/claude-" not in section
