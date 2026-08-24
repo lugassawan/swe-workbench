@@ -33,6 +33,7 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `swe-workbench-session-scratch-adapter-pi` | Pi Coding Agent session scratch adapter |
 | `swe-workbench-reply-and-resolve` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
 | `swe-workbench-skill-script` | Invoke a skill-local `scripts/<name>.sh` helper (`swe-workbench-skill-script <skill> <script> [args...]`) — rejects traversal, resolves the plugin root itself so no skill has to |
+| `swe-workbench-sweep-residuals` | PR-scoped residual-artifact backstop for `swe-workbench:workflow-cleanup-merged` Step 5 — force-removes leftover worktrees, state files, run dirs, and session-scratch entries for a merged PR number |
 | `swe-workbench-sync-pr-metadata` | Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync) |
 
 `swe-workbench-comment-scan`, `swe-workbench-lsp`, and `swe-workbench-pr-review-submit` are the
@@ -75,4 +76,8 @@ never constructs a path to them either. It invokes `swe-workbench-skill-script <
 [docs/plugin-platform-decisions.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/plugin-platform-decisions.md) for why this replaced the doctor-anchor `_RT=` derivation that
 briefly stood in for it. The dispatcher always execs the target via `bash` (mirroring
 `swe-workbench-fetch-pr`'s sibling-call form) rather than relying on the target's own shebang, so
-every skill-local `scripts/*.sh` helper is assumed to be bash.
+every skill-local `scripts/*.sh` helper is assumed to be bash. A `bin/` script itself reaches a
+skill-local helper the same way — `swe-workbench-sweep-residuals` resolves
+`swe-workbench:workflow-cleanup-merged`'s `resolve-rimba.sh` via `"$SCRIPT_DIR/swe-workbench-skill-script"
+workflow-cleanup-merged resolve-rimba.sh`, since that helper has another consumer inside the skill
+itself and stays skill-local rather than being promoted alongside its caller.

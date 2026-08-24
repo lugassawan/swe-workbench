@@ -10,7 +10,7 @@
 # design (resume points) and stay reaped by name via swe-workbench-clean-state-files.
 #
 # Prints RUN_DIR=<path> on stdout, for `eval` in the caller (matches the
-# KEY=VALUE convention in skills/workflow-cleanup-merged/scripts/sweep-residuals.sh).
+# KEY=VALUE convention in bin/swe-workbench-sweep-residuals).
 #
 # Usage:
 #   eval "$(swe-workbench-new-run-dir pr-review 42)"

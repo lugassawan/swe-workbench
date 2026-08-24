@@ -38,6 +38,7 @@ SCRIPTS = {
     "swe-workbench-session-scratch-adapter-claude": "bash",
     "swe-workbench-session-scratch-adapter-pi": "bash",
     "swe-workbench-skill-script": "bash",
+    "swe-workbench-sweep-residuals": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }
 
@@ -48,6 +49,13 @@ SIBLING_CALLERS = {
     "swe-workbench-preflight-pr": ["swe-workbench-gh-timeout", "swe-workbench-fetch-pr"],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
+    "swe-workbench-sweep-residuals": [
+        "swe-workbench-skill-script",
+        "swe-workbench-clean-state-files",
+        "swe-workbench-clean-ephemeral",
+        "swe-workbench-reap-run-dir",
+        "swe-workbench-reap-session-scratch",
+    ],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }
 
