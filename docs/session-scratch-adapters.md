@@ -38,7 +38,7 @@ drifted harness layout can never abort a cleanup flow whose other steps already 
    recursive file count) and exits zero.
 
 `swe-workbench-reap-session-scratch` is invoked by
-`skills/workflow-cleanup-merged/scripts/sweep-residuals.sh`; neither that script nor
+`bin/swe-workbench-sweep-residuals`; neither that script nor
 `skills/workflow-cleanup-merged/SKILL.md` detects platforms or calls adapters directly.
 Adding a platform never touches the cleanup workflow.
 
