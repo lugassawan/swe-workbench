@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Applies a user-intent conflict resolution to one file, translating the
+# mine/main side into git's --ours/--theirs — inverted under rebase, where
+# --ours is the rebase target (default branch) and --theirs is the replayed
+# commit (your branch), the opposite of merge.
+#
+# Validates every precondition before any worktree/index mutation: inside a
+# git work tree, an operation is actually in progress, the declared
+# --operation matches the detected one, and --file is an unmerged path in
+# that operation. A caller that gets any of these wrong (in particular,
+# declaring the wrong --operation) must fail loudly rather than silently
+# stage the opposite side of the user's decision.
+#
+# Handles delete/modify conflicts: if the chosen side deleted the file, there
+# is no blob for `git checkout --ours/--theirs` to check out ("does not have
+# our/their version") — resolve that case as `git rm` instead, which is the
+# correct outcome for having chosen the side that deleted the file.
+#
+# Usage: swe-workbench-apply-conflict-resolution --file <path> --intent <mine|main> --operation <merge|rebase>
+# Stdout contract (four KEY=VALUE lines):
+#   INTENT=mine|main
+#   OPERATION=merge|rebase
+#   GIT_SIDE=ours|theirs
+#   ACTION=checkout|remove
+# Exit non-zero, with no mutation, on: bad/missing/duplicate/unknown flags,
+# not inside a git work tree, no merge/rebase in progress, a declared
+# --operation that does not match the one actually in progress, --file not
+# an unmerged path, or a checkout failure unrelated to a missing blob.
+set -euo pipefail
+
+usage() {
+  echo "Usage: swe-workbench-apply-conflict-resolution --file <path> --intent <mine|main> --operation <merge|rebase>" >&2
+  exit 1
+}
+
+FILE=""
+INTENT=""
+OPERATION=""
+_FILE_SET=0
+_INTENT_SET=0
+_OPERATION_SET=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --file)
+      [ $# -ge 2 ] || usage
+      [ "$_FILE_SET" -eq 0 ] || usage
+      FILE=$2
+      _FILE_SET=1
+      shift 2
+      ;;
+    --intent)
+      [ $# -ge 2 ] || usage
+      [ "$_INTENT_SET" -eq 0 ] || usage
+      INTENT=$2
+      _INTENT_SET=1
+      shift 2
+      ;;
+    --operation)
+      [ $# -ge 2 ] || usage
+      [ "$_OPERATION_SET" -eq 0 ] || usage
+      OPERATION=$2
+      _OPERATION_SET=1
+      shift 2
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
+[ "$_FILE_SET" -eq 1 ] || usage
+[ "$_INTENT_SET" -eq 1 ] || usage
+[ "$_OPERATION_SET" -eq 1 ] || usage
+[ -n "$FILE" ] || usage
+
+# Strip leading "./" segments so a caller-supplied relative path (e.g.
+# "./shared.txt") still exact-matches the unmerged list below, which git
+# reports without any "./" prefix.
+while [ "${FILE#./}" != "$FILE" ]; do
+  FILE="${FILE#./}"
+done
+
+case "$INTENT" in
+  mine|main) ;;
+  *)
+    echo "swe-workbench-apply-conflict-resolution: --intent must be 'mine' or 'main', got '$INTENT'" >&2
+    exit 1
+    ;;
+esac
+
+case "$OPERATION" in
+  merge|rebase) ;;
+  *)
+    echo "swe-workbench-apply-conflict-resolution: --operation must be 'merge' or 'rebase', got '$OPERATION'" >&2
+    exit 1
+    ;;
+esac
+
+_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null) \
+  || { echo "swe-workbench-apply-conflict-resolution: not inside a git work tree" >&2; exit 1; }
+
+if [ -f "$_GIT_DIR/MERGE_HEAD" ]; then
+  _DETECTED=merge
+elif [ -d "$_GIT_DIR/rebase-merge" ] || [ -d "$_GIT_DIR/rebase-apply" ]; then
+  _DETECTED=rebase
+else
+  _DETECTED=none
+fi
+
+if [ "$_DETECTED" = "none" ]; then
+  echo "swe-workbench-apply-conflict-resolution: no merge or rebase currently in progress" >&2
+  exit 1
+fi
+
+if [ "$_DETECTED" != "$OPERATION" ]; then
+  echo "swe-workbench-apply-conflict-resolution: declared --operation '$OPERATION' does not match the in-progress operation '$_DETECTED'" >&2
+  exit 1
+fi
+
+_PREFIX=$(git rev-parse --show-prefix)
+_REPO_RELATIVE="${_PREFIX}${FILE}"
+
+_UNMERGED_MATCH=0
+while IFS= read -r -d '' _u; do
+  if [ "$_u" = "$_REPO_RELATIVE" ]; then
+    _UNMERGED_MATCH=1
+    break
+  fi
+done < <(git diff --name-only --diff-filter=U -z)
+
+if [ "$_UNMERGED_MATCH" -eq 0 ]; then
+  echo "swe-workbench-apply-conflict-resolution: '$FILE' is not an unmerged path in the current $OPERATION" >&2
+  exit 1
+fi
+
+if [ "$OPERATION" = "merge" ]; then
+  if [ "$INTENT" = "mine" ]; then GIT_SIDE=ours; else GIT_SIDE=theirs; fi
+else
+  if [ "$INTENT" = "mine" ]; then GIT_SIDE=theirs; else GIT_SIDE=ours; fi
+fi
+
+if _CHECKOUT_ERR=$(git checkout "--$GIT_SIDE" -- ":(literal)$FILE" 2>&1); then
+  git add -- ":(literal)$FILE"
+  ACTION=checkout
+else
+  case "$_CHECKOUT_ERR" in
+    *"does not have our version"*|*"does not have their version"*)
+      git rm -- ":(literal)$FILE" >/dev/null
+      ACTION=remove
+      ;;
+    *)
+      echo "swe-workbench-apply-conflict-resolution: $_CHECKOUT_ERR" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+printf 'INTENT=%s\n' "$INTENT"
+printf 'OPERATION=%s\n' "$OPERATION"
+printf 'GIT_SIDE=%s\n' "$GIT_SIDE"
+printf 'ACTION=%s\n' "$ACTION"

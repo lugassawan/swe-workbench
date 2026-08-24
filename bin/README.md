@@ -17,6 +17,7 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 
 | Script | Purpose |
 |--------|---------|
+| `swe-workbench-apply-conflict-resolution` | Apply a keep-mine/keep-main conflict resolution to one file — validates a merge/rebase is in progress, the declared `--operation` matches it, and the path is unmerged, then translates intent to git's `--ours`/`--theirs` (inverted under rebase vs merge) and stages the result |
 | `swe-workbench-clean-ephemeral` | Safe `rm -rf` for ephemeral git worktrees (sanity-checked before removal) |
 | `swe-workbench-clean-state-files` | Safe `rm -f` for per-invocation `/tmp` state files |
 | `swe-workbench-comment-scan` | Advisory comment-quality scanner — reads a unified diff on stdin, prints findings + a footer; never exits non-zero |
