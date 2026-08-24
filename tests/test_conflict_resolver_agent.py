@@ -93,5 +93,5 @@ def test_references_version_control_principle():
 
 def test_never_calls_ours_theirs_directly():
     body = _read()
-    assert "apply-resolution.sh" in body
+    assert "swe-workbench-apply-conflict-resolution" in body
     assert "never edit" in body.lower() or "never applies" in body.lower() or "you never" in body.lower()
