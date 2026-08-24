@@ -11,6 +11,7 @@ AGENTS_DIR = ROOT / "agents"
 COST_AUDIT = ROOT / "docs" / "cost-audit.md"
 
 VALID_TIERS = {"haiku", "sonnet", "opus"}
+VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 # Encodes the #612 keep/bump pass; rationale lives in docs/cost-audit.md's
 # re-tier section. Bumped to opus: architect, migrator, security-auditor, senior-engineer.
@@ -38,6 +39,11 @@ EXPECTED_TIERS = {
     "test-reviewer": "sonnet",
     "test-writer": "haiku",
 }
+
+# Mirrors pi/extensions/model-policy.ts's DEFAULT_TIER_EFFORT — every agent's `effort:` value is
+# the default for its `model:` tier (opus -> high, sonnet -> xhigh, haiku -> high). A future
+# agent-specific exception is a reviewed frontmatter edit to this map, not a silent drift.
+EXPECTED_EFFORTS = {name: {"opus": "high", "sonnet": "xhigh", "haiku": "high"}[tier] for name, tier in EXPECTED_TIERS.items()}
 
 
 def _agent_files():
@@ -73,6 +79,38 @@ def test_expected_tiers_matches_agents_directory():
         "agents/ directory and EXPECTED_TIERS have diverged — "
         f"only on disk: {sorted(on_disk - expected)}, "
         f"only in EXPECTED_TIERS: {sorted(expected - on_disk)}"
+    )
+
+
+def test_every_agent_effort_is_a_known_effort():
+    for path in _agent_files():
+        fm = validate.parse_frontmatter(path)
+        assert fm is not None, f"{path} has no parseable frontmatter"
+        effort = fm.get("effort")
+        assert effort in VALID_EFFORTS, (
+            f"{path.name}: effort '{effort}' is not one of {sorted(VALID_EFFORTS)}"
+        )
+
+
+@pytest.mark.parametrize("agent_name", sorted(EXPECTED_EFFORTS))
+def test_agent_effort_matches_expected_default(agent_name):
+    path = AGENTS_DIR / f"{agent_name}.md"
+    assert path.exists(), f"agents/{agent_name}.md must exist"
+    fm = validate.parse_frontmatter(path)
+    assert fm is not None, f"{path.name} has no parseable frontmatter"
+    assert fm.get("effort") == EXPECTED_EFFORTS[agent_name], (
+        f"{agent_name}: expected effort '{EXPECTED_EFFORTS[agent_name]}', "
+        f"got '{fm.get('effort')}'"
+    )
+
+
+def test_expected_efforts_matches_agents_directory():
+    on_disk = {path.stem for path in _agent_files()}
+    expected = set(EXPECTED_EFFORTS)
+    assert on_disk == expected, (
+        "agents/ directory and EXPECTED_EFFORTS have diverged — "
+        f"only on disk: {sorted(on_disk - expected)}, "
+        f"only in EXPECTED_EFFORTS: {sorted(expected - on_disk)}"
     )
 
 

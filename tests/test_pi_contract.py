@@ -97,12 +97,18 @@ PI_SUBSTITUTE_ARGS_RE = re.compile(
 
 # The complete key vocabulary agents/*.md frontmatter uses today. A new key (e.g. a future
 # Phase 7 `pi:` override block) must be added here deliberately, not discovered by CI red.
-FRONTMATTER_KEYS = {"name", "description", "model", "tools", "skills"}
+FRONTMATTER_KEYS = {"name", "description", "model", "effort", "tools", "skills"}
 
-# Union of every agents/*.md `model:` value. Mirrors model-tier.ts's KNOWN_MODEL_TIERS — a new
-# tier value on disk not also added to that module's MODEL_TIER_TABLE would resolve to nothing
+# Union of every agents/*.md `model:` value. Mirrors model-policy.ts's KNOWN_MODEL_TIERS — a new
+# tier value on disk not also added to that module's MODEL_POLICY would resolve to nothing
 # for every provider, silently falling back to the parent's model with zero signal.
 MODEL_TIERS = {"haiku", "sonnet", "opus"}
+
+# Union of every agents/*.md `effort:` value — not the full KNOWN_EFFORTS type space, just what's
+# actually on disk today (every agent uses its tier's DEFAULT_TIER_EFFORT). Mirrors MODEL_TIERS:
+# a new effort value on disk not also covered by MODEL_POLICY's exhaustive per-cell map would be
+# unreachable, since every cell already covers all 5 known efforts by construction.
+EFFORTS = {"high", "xhigh"}
 
 # Union of every comma-separated token across all agents/*.md `tools:` lines. Grows only
 # when an agent's frontmatter is edited to grant a new tool — not on every agent edit.
@@ -384,8 +390,25 @@ def test_model_tiers_are_inventoried():
         "agents/*.md model tiers have drifted from the inventory — "
         f"only on disk: {sorted(tiers - MODEL_TIERS)}, "
         f"only in MODEL_TIERS: {sorted(MODEL_TIERS - tiers)}. A new tier value must also be "
-        "added to model-tier.ts's KNOWN_MODEL_TIERS and MODEL_TIER_TABLE, or it silently "
+        "added to model-policy.ts's KNOWN_MODEL_TIERS and MODEL_POLICY, or it silently "
         "resolves to nothing for every provider."
+    )
+
+
+def test_efforts_are_inventoried():
+    efforts = set()
+    for path in sorted(AGENTS_DIR.glob("*.md")):
+        fm = validate.parse_frontmatter(path)
+        assert fm is not None, f"{path} has no parseable frontmatter"
+        effort = fm.get("effort")
+        if effort:
+            efforts.add(effort)
+    assert efforts == EFFORTS, (
+        "agents/*.md efforts have drifted from the inventory — "
+        f"only on disk: {sorted(efforts - EFFORTS)}, "
+        f"only in EFFORTS: {sorted(EFFORTS - efforts)}. A new effort value must also be "
+        "added to model-policy.ts's KNOWN_EFFORTS, or it silently resolves to nothing for "
+        "every provider."
     )
 
 
@@ -771,7 +794,7 @@ def test_ask_user_ts_has_no_typebox_import():
 # ---------------------------------------------------------------------------
 
 AGENT_SPEC_TS = EXTENSIONS_DIR / "agent-spec.ts"
-MODEL_TIER_TS = EXTENSIONS_DIR / "model-tier.ts"
+MODEL_POLICY_TS = EXTENSIONS_DIR / "model-policy.ts"
 SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
 
 
@@ -786,14 +809,14 @@ def test_agent_spec_ts_never_references_pi():
     assert "node:child_process" not in text, "agent-spec.ts must not spawn processes — that is subagent.ts's job"
 
 
-def test_model_tier_ts_never_references_pi():
-    """model-tier.ts is the domain layer for tier->model resolution: pure data and pure
+def test_model_policy_ts_never_references_pi():
+    """model-policy.ts is the domain layer for dispatch-policy resolution: pure data and pure
     functions, no Pi SDK reference and no process spawning — subagent.ts owns querying
     ctx.modelRegistry and everything else that touches Pi. Same posture, same test shape, as
     test_agent_spec_ts_never_references_pi above."""
-    text = MODEL_TIER_TS.read_text(encoding="utf-8")
-    assert "pi-coding-agent" not in text, "model-tier.ts must not reference the Pi SDK at all"
-    assert "node:child_process" not in text, "model-tier.ts must not spawn processes — that is subagent.ts's job"
+    text = MODEL_POLICY_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "model-policy.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "model-policy.ts must not spawn processes — that is subagent.ts's job"
 
 
 _TRANSLATION_TABLE_DRIVER = """
@@ -889,47 +912,244 @@ def test_real_agents_parse_and_translate_without_throwing():
     assert not failures, f"real agents/*.md files failed to parse/translate via the TS parser: {failures}"
 
 
-_MODEL_TIER_TABLE_DUMP_DRIVER = """
+_FULL_KNOWN_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+
+_MODEL_POLICY_DUMP_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);
 console.log(JSON.stringify({
   knownTiers: mod.KNOWN_MODEL_TIERS,
-  tableTiersByProvider: Object.fromEntries(
-    Object.entries(mod.MODEL_TIER_TABLE).map(([provider, row]) => [provider, Object.keys(row)]),
-  ),
+  knownEfforts: mod.KNOWN_EFFORTS,
+  supportedProviders: mod.SUPPORTED_PROVIDERS,
+  defaultTierEffort: mod.DEFAULT_TIER_EFFORT,
+  policy: mod.MODEL_POLICY,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def model_policy_dump(tmp_path_factory):
+    if _NODE_TOO_OLD:
+        pytest.skip("requires Node >= 22")
+    driver = tmp_path_factory.mktemp("pi-model-policy-dump") / "dump.mjs"
+    driver.write_text(_MODEL_POLICY_DUMP_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(MODEL_POLICY_TS)],
+        capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+@requires_node
+def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_dump):
+    """model-policy.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet,
+    KNOWN_EFFORTS must equal the full 5-value portable-effort vocabulary, and MODEL_POLICY must
+    cover all 3 providers x 3 tiers x 5 efforts with no gap — an uncovered cell would silently
+    resolve to undefined (parent-model fallback) for that cell only, which is easy to miss
+    without an exhaustiveness check."""
+    assert set(model_policy_dump["knownTiers"]) == MODEL_TIERS, (
+        f"model-policy.ts's KNOWN_MODEL_TIERS ({sorted(model_policy_dump['knownTiers'])}) has "
+        f"drifted from the live agents/*.md inventory ({sorted(MODEL_TIERS)})"
+    )
+    assert set(model_policy_dump["knownEfforts"]) == _FULL_KNOWN_EFFORTS, (
+        f"model-policy.ts's KNOWN_EFFORTS ({sorted(model_policy_dump['knownEfforts'])}) has "
+        f"drifted from the full portable-effort vocabulary ({sorted(_FULL_KNOWN_EFFORTS)})"
+    )
+    assert set(model_policy_dump["supportedProviders"]) == set(PROVIDER_DATA_FILES), (
+        f"model-policy.ts's SUPPORTED_PROVIDERS ({sorted(model_policy_dump['supportedProviders'])}) "
+        f"has drifted from this test's PROVIDER_DATA_FILES inventory ({sorted(PROVIDER_DATA_FILES)})"
+    )
+    for provider, tiers in model_policy_dump["policy"].items():
+        assert set(tiers) == MODEL_TIERS, (
+            f"MODEL_POLICY[{provider!r}] covers {sorted(tiers)}, missing "
+            f"{sorted(MODEL_TIERS - set(tiers))} — an uncovered tier silently falls back to the "
+            "parent's model for that provider only"
+        )
+        for tier, cell in tiers.items():
+            thinking_keys = set(cell["thinking"])
+            assert thinking_keys == _FULL_KNOWN_EFFORTS, (
+                f"MODEL_POLICY[{provider!r}][{tier!r}].thinking covers {sorted(thinking_keys)}, "
+                f"missing {sorted(_FULL_KNOWN_EFFORTS - thinking_keys)} — an uncovered effort "
+                "silently resolves to undefined thinking for that cell only"
+            )
+
+
+# The ticket's 3x3 default matrix (docs/cost-tiers.md's "On the Pi Coding Agent" table),
+# reproduced by feeding DEFAULT_TIER_EFFORT[tier] through MODEL_POLICY[provider][tier].thinking —
+# this is the one source of truth the matrix is asserted against, not a second hand-copied table.
+_TICKET_DEFAULT_MATRIX = {
+    "anthropic": {
+        "opus": ("claude-opus-5", "high"),
+        "sonnet": ("claude-sonnet-5", "xhigh"),
+        "haiku": ("claude-haiku-4-5", "high"),
+    },
+    "openai-codex": {
+        "opus": ("gpt-5.6-sol", "high"),
+        "sonnet": ("gpt-5.6-terra", "xhigh"),
+        "haiku": ("gpt-5.6-luna", "high"),
+    },
+    "zai": {
+        "opus": ("glm-5.3", "max"),
+        "sonnet": ("glm-5.3", "high"),
+        "haiku": ("glm-5.2-highspeed", "high"),
+    },
+}
+
+
+@requires_node
+def test_default_tier_effort_reproduces_ticket_matrix(model_policy_dump):
+    default_effort = model_policy_dump["defaultTierEffort"]
+    for provider, tiers in _TICKET_DEFAULT_MATRIX.items():
+        for tier, (model_id, thinking) in tiers.items():
+            cell = model_policy_dump["policy"][provider][tier]
+            effort = default_effort[tier]
+            assert cell["model"] == model_id, (
+                f"MODEL_POLICY[{provider!r}][{tier!r}].model: expected {model_id!r}, got {cell['model']!r}"
+            )
+            assert cell["thinking"][effort] == thinking, (
+                f"MODEL_POLICY[{provider!r}][{tier!r}].thinking[{effort!r}]: expected {thinking!r}, "
+                f"got {cell['thinking'][effort]!r}"
+            )
+
+
+@requires_node
+def test_zai_thinking_tables_are_monotone_and_gapless_across_all_efforts(model_policy_dump):
+    """Full-table pin for all three zai cells, not just the two ticket-pinned default-effort
+    points test_default_tier_effort_reproduces_ticket_matrix already covers. opus shifts every
+    effort up by 2 rungs (clamped at max); sonnet shifts every effort down by 1 rung (clamped at
+    low), on the [low, medium, high, xhigh, max] ladder — haiku is a distinct model
+    (glm-5.2-highspeed) so it stays identity. This is the strongest single guarantee that opus
+    stays strictly deeper than sonnet for every possible nominal effort, not just the defaults
+    agents/*.md happens to declare today."""
+    assert model_policy_dump["policy"]["zai"]["opus"]["thinking"] == {
+        "low": "high", "medium": "xhigh", "high": "max", "xhigh": "max", "max": "max",
+    }
+    assert model_policy_dump["policy"]["zai"]["sonnet"]["thinking"] == {
+        "low": "low", "medium": "low", "high": "medium", "xhigh": "high", "max": "xhigh",
+    }
+    assert model_policy_dump["policy"]["zai"]["haiku"]["thinking"] == {
+        "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max",
+    }
+
+
+# Verbatim filenames from the bundled Pi SDK's own provider-data directory (see
+# _pi_ai_provider_data_dir below) — the file each SUPPORTED_PROVIDERS entry's catalog lives in.
+PROVIDER_DATA_FILES = {
+    "anthropic": "anthropic.json",
+    "openai-codex": "openai-codex.json",
+    "zai": "zai.json",
+}
+
+
+def _pi_ai_provider_data_dir():
+    """Locates the bundled `@earendil-works/pi-ai` package's provider-data directory — the
+    installed peer's own catalog, pinned to this repo's package.json devDependency. Tries the
+    nested path npm produces when pi-ai is NOT independently hoisted to top-level node_modules
+    (pi-coding-agent's own nested node_modules) first, then a top-level hoisted path as a
+    fallback for an npm resolution that hoists it instead — same two-path posture as any other
+    npm install topology this repo doesn't control."""
+    nested = (
+        ROOT / "node_modules" / "@earendil-works" / "pi-coding-agent" / "node_modules"
+        / "@earendil-works" / "pi-ai" / "dist" / "providers" / "data"
+    )
+    if nested.is_dir():
+        return nested
+    hoisted = ROOT / "node_modules" / "@earendil-works" / "pi-ai" / "dist" / "providers" / "data"
+    if hoisted.is_dir():
+        return hoisted
+    return None
+
+
+_PI_AI_DATA_DIR = _pi_ai_provider_data_dir()
+
+if _PI_AI_DATA_DIR is None and os.environ.get("CI"):
+    pytest.fail(
+        "the pinned Pi catalog (node_modules/@earendil-works/pi-coding-agent's nested "
+        "@earendil-works/pi-ai, or a hoisted install) was not found in CI — the pytest job must "
+        "run `npm ci` before this test can verify MODEL_POLICY's exact ids against the real "
+        "catalog; check the pytest job's npm ci step",
+        pytrace=False,
+    )
+
+requires_pi_ai_catalog = pytest.mark.skipif(
+    _PI_AI_DATA_DIR is None, reason="requires `npm ci` (node_modules/@earendil-works/pi-ai's bundled provider data)"
+)
+
+
+@requires_node
+@requires_pi_ai_catalog
+def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
+    """Every MODEL_POLICY cell names an exact id — this asserts each one actually exists in the
+    bundled Pi SDK's own catalog data, not just that it looks plausible. A typo or a removed
+    model here would otherwise only surface the first time a real dispatch tried to use it."""
+    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
+    for provider, tiers in model_policy_dump["policy"].items():
+        data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES[provider]
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+        api = next(iter(data))
+        ids_on_catalog = set(data[api].keys())
+        for tier, cell in tiers.items():
+            assert cell["model"] in ids_on_catalog, (
+                f"MODEL_POLICY[{provider!r}][{tier!r}].model {cell['model']!r} not found in the "
+                f"pinned catalog ({data_path.relative_to(ROOT)}) — ids: {sorted(ids_on_catalog)}"
+            )
+
+
+_ZAI_CLAMP_DRIVER = """
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [, , modelsJsPath, zaiDataPath] = process.argv;
+const mod = await import(pathToFileURL(modelsJsPath).href);
+const zaiData = JSON.parse(readFileSync(zaiDataPath, "utf8"));
+const api = Object.keys(zaiData)[0];
+const model = zaiData[api]["glm-5.3"];
+console.log(JSON.stringify({
+  supported: mod.getSupportedThinkingLevels(model),
+  clampedMax: mod.clampThinkingLevel(model, "max"),
+  clampedHigh: mod.clampThinkingLevel(model, "high"),
 }));
 """
 
 
 @requires_node
-def test_model_tier_table_is_exhaustive_over_known_tiers():
-    """model-tier.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet, and every
-    provider row in MODEL_TIER_TABLE must cover all three tiers — a provider entry missing a
-    tier would silently resolve to undefined (parent-model fallback) for that tier only, which
-    is easy to miss without an exhaustiveness check."""
-    import tempfile
-
+@requires_pi_ai_catalog
+def test_zai_glm_5_3_clamps_nominal_max_to_high_in_pinned_catalog():
+    """Pins the Z.AI clamp this repo's MODEL_POLICY deliberately ships ahead of: `glm-5.3`
+    declares no `thinkingLevelMap` today, so the installed SDK's own `clampThinkingLevel` (dist/
+    models.js, @earendil-works/pi-coding-agent@0.84.2's bundled pi-ai) reduces
+    MODEL_POLICY.zai.opus's nominal "max" down to "high" at dispatch time — identical to
+    zai.sonnet's nominal "high". This drives the REAL SDK clamp function against the REAL pinned
+    catalog data, not a reimplementation of its logic. When a future catalog bump adds xhigh/max
+    support to glm-5.3, this test fails loudly — the signal that the opus/sonnet thinking-level
+    split on Z.AI has become real and worth revisiting docs/cost-tiers.md's Z.AI clamp caveat
+    over, not a silent behavior change to discover later."""
     node = shutil.which("node")
     assert node is not None
+    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
+    models_js = _PI_AI_DATA_DIR.parent.parent / "models.js"
+    assert models_js.exists(), f"expected {models_js} alongside the pinned provider data"
+    zai_data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES["zai"]
+    import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
-        driver = Path(tmp) / "model-tier-table-dump.mjs"
-        driver.write_text(_MODEL_TIER_TABLE_DUMP_DRIVER, encoding="utf-8")
+        driver = Path(tmp) / "zai-clamp-dump.mjs"
+        driver.write_text(_ZAI_CLAMP_DRIVER, encoding="utf-8")
         result = subprocess.run(
-            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "model-tier.ts")],
+            [node, "--experimental-strip-types", str(driver), str(models_js), str(zai_data_path)],
             capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
-    assert set(dumped["knownTiers"]) == MODEL_TIERS, (
-        f"model-tier.ts's KNOWN_MODEL_TIERS ({sorted(dumped['knownTiers'])}) has drifted from "
-        f"the live agents/*.md inventory ({sorted(MODEL_TIERS)})"
+    assert "xhigh" not in dumped["supported"] and "max" not in dumped["supported"], (
+        f"glm-5.3 now declares xhigh/max support ({dumped['supported']}) in the pinned catalog — "
+        "the zai opus/sonnet thinking-level split in MODEL_POLICY is no longer purely nominal; "
+        "revisit docs/cost-tiers.md's Z.AI clamp caveat and this test"
     )
-    for provider, tiers in dumped["tableTiersByProvider"].items():
-        assert set(tiers) == MODEL_TIERS, (
-            f"MODEL_TIER_TABLE[{provider!r}] covers {sorted(tiers)}, missing "
-            f"{sorted(MODEL_TIERS - set(tiers))} — an uncovered tier silently falls back to the "
-            "parent's model for that provider only"
-        )
+    assert dumped["clampedMax"] == "high"
+    assert dumped["clampedHigh"] == "high"
 
 
 _TASK_SCHEMA_DRIVER = """

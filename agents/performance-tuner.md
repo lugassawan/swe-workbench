@@ -2,6 +2,7 @@
 name: performance-tuner
 description: Performance triage specialist — profile-driven hotspot analysis for confirmed bottlenecks. Refuses speculative optimization requests by demanding profiling evidence first. Invoke when you have a profile (flame graph, allocation report, query log, benchmark) and need a ranked hotspot read with optimization recommendations, not when you "feel" something is slow.
 model: sonnet
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-performance

@@ -2,6 +2,7 @@
 name: migrator
 description: Migration specialist — executes schema, framework, runtime, API, and event-schema migrations through expand → backfill → switch → contract phases, each independently deployable and reversible. Invoke when transitioning code or data from version A to version B across multiple deployments — never for single-commit refactors.
 model: opus
+effort: high
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-api-design

@@ -138,4 +138,5 @@ silently.
 **On the Pi Coding Agent:** this audit's tier assignments (the `model:` frontmatter values
 themselves) are harness-agnostic — they apply to Pi the same as Claude Code. How a tier resolves
 to an actual model differs, though: see `cost-tiers.md`'s "On the Pi Coding Agent" section for
-`pi/extensions/model-tier.ts`'s name-based (not cost-based) resolution and its 3-provider scope.
+`pi/extensions/model-policy.ts`'s exact-id (not cost-based) resolution, its 3-provider scope, and
+the portable `effort:` frontmatter it also resolves into a thinking level.

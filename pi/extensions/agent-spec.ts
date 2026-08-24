@@ -5,8 +5,9 @@
  * not even as a type — only node:fs/node:path, plus a relative import of RENAME_TABLE from
  * ./tool-vocab.ts (also SDK-free). subagent.ts owns everything that touches Pi itself.
  *
- * agents/*.md frontmatter is a fixed, uniform 5-key shape across all 22 files today (name,
- * description, model, tools, skills) — `tools:` is always one comma-separated inline string,
+ * agents/*.md frontmatter is a fixed, uniform 6-key shape across all 22 files today (name,
+ * description, model, effort, tools, skills) — `tools:` is always one comma-separated inline
+ * string,
  * `skills:` is always a YAML block sequence of `swe-workbench:<id>` entries. This is a small
  * purpose-built extractor for exactly that shape, not a general YAML parser — it mirrors
  * scripts/validate.py's parse_frontmatter() key/item regexes so the two hand-rolled parsers
@@ -20,9 +21,13 @@ export interface AgentSpec {
   readonly name: string;
   readonly description: string;
   /** Raw `model:` frontmatter value, e.g. "haiku"/"sonnet"/"opus" — not validated against
-   *  KNOWN_MODEL_TIERS (model-tier.ts) here; callers use isKnownModelTier() before acting on
+   *  KNOWN_MODEL_TIERS (model-policy.ts) here; callers use isKnownModelTier() before acting on
    *  it. Undefined when the agent has no `model:` key. */
   readonly model: string | undefined;
+  /** Raw `effort:` frontmatter value, e.g. "low"/"medium"/"high"/"xhigh"/"max" — not validated
+   *  against KNOWN_EFFORTS (model-policy.ts) here; callers use isKnownEffort() before acting on
+   *  it. Undefined when the agent has no `effort:` key. */
+  readonly effort: string | undefined;
   readonly tools: readonly string[];
   readonly skillIds: readonly string[];
   readonly body: string;
@@ -105,8 +110,9 @@ export function parseAgentSpec(text: string): AgentSpec {
     : [];
   const skillIds = lists.skills ?? [];
   const model = scalars.model;
+  const effort = scalars.effort;
 
-  return { name, description, model, tools, skillIds, body };
+  return { name, description, model, effort, tools, skillIds, body };
 }
 
 /** Translates Claude Code tool tokens (as found in an agent's `tools:` frontmatter) into Pi

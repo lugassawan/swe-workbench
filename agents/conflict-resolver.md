@@ -2,6 +2,7 @@
 name: conflict-resolver
 description: Conflict-resolution advisor — reads both sides of a merge/rebase conflict, reasons per-hunk, and recommends keep-mine/keep-main/manual with rationale. Invoke per conflicting file from workflow-branch-sync; never applies a resolution itself.
 model: sonnet
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-version-control

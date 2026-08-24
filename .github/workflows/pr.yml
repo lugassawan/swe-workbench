@@ -144,6 +144,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '22'
+      # Installs node_modules so tests/test_pi_contract.py's pinned-catalog tests can verify
+      # MODEL_POLICY's exact ids against the bundled @earendil-works/pi-ai provider data — CI=true
+      # makes their requires_pi_ai_catalog gate fail loudly (not skip) if this step is removed.
+      - run: npm ci
       - run: pip install --require-hashes -r tests/requirements.lock
       - run: pytest tests/ -v
 

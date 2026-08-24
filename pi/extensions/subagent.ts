@@ -7,20 +7,19 @@
  * Exists because pi-subagents' `skills:` field only makes a skill *available* (an XML manifest
  * read on demand via its own `read` tool) — it never preloads skill body into context, which
  * this repo's agents/*.md convention requires (docs/skill-preload.md). See
- * docs/plugin-platform-decisions.md §9 for the full rationale, the model-tier-mapping safety
+ * docs/plugin-platform-decisions.md §9 for the full rationale, the model-dispatch-policy safety
  * posture, and how the `bash`-escape-hatch recursion gap is closed (in hooks/bash_guard.sh, not
  * here).
  *
  * Everything that touches Pi itself (argv construction, pi.exec, temp-file lifecycle, tool
- * registration, model-registry queries) lives here. agent-spec.ts and model-tier.ts stay
- * SDK-free — see their own file headers.
+ * registration, model-registry queries) lives here or in dispatch-resolver.ts (split off at the
+ * line cap). agent-spec.ts and model-policy.ts stay SDK-free — see their own file headers.
  */
 import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
-  type AgentSpec,
   composeSystemPrompt,
   listAgentNames,
   readAgentSpec,
@@ -28,7 +27,7 @@ import {
   skillDir,
   translateToolTokens,
 } from "./agent-spec.ts";
-import { isKnownModelTier, type ModelCandidate, resolveModelForTier } from "./model-tier.ts";
+import { resolveTargetDispatch } from "./dispatch-resolver.ts";
 import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall } from "./task-call-line.ts";
 
 // Re-exported so the behavioural pytest driver and index.ts (which import only this
@@ -76,30 +75,6 @@ const TASK_PARAMS_SCHEMA = {
   required: ["agent", "prompt"],
   additionalProperties: false,
 } as ToolDefinition["parameters"];
-
-/** Decides which model to dispatch the child with. Undefined `ctx.model` -> undefined (today's
- *  omit-the-flag fallback). Otherwise: an unrecognized/missing `spec.model` tier, a provider with
- *  no MODEL_TIER_TABLE row, or no available candidate matching the row's pattern(s) all degrade
- *  to the parent's own active model unchanged — this function never throws and never reaches for
- *  a provider other than `ctx.model.provider`. Candidates come from `ctx.scopedModels` when the
- *  session is scoped (`--models`/`enabledModels`) — an explicit session-level restriction that
- *  tier resolution must respect, not bypass — and fall back to the full
- *  `ctx.modelRegistry.getAvailable()` catalog only when no scoping is configured (`scopedModels`
- *  is documented as empty in that case). */
-function resolveTargetModel(
-  ctx: ExtensionContext,
-  spec: Pick<AgentSpec, "model">,
-): { provider: string; id: string } | undefined {
-  if (!ctx.model) return undefined;
-  const parent = { provider: ctx.model.provider, id: ctx.model.id };
-  if (!isKnownModelTier(spec.model)) return parent;
-
-  const pool = ctx.scopedModels.length > 0 ? ctx.scopedModels.map((sm) => sm.model) : ctx.modelRegistry.getAvailable();
-  const candidates: ModelCandidate[] = pool
-    .filter((m) => m.provider === parent.provider)
-    .map((m) => ({ provider: m.provider, id: m.id }));
-  return resolveModelForTier(parent.provider, spec.model, candidates) ?? parent;
-}
 
 export function registerSubagent(pi: ExtensionAPI, root: string): void {
   // Same Tier-2 kill switch as ask-user.ts's registerAskUser — an immutable config read at
@@ -159,23 +134,40 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           `${TASK_TOOL_NAME},${PI_SUBAGENTS_TOOL_NAME}`,
           "--no-session",
         ];
-        const targetModel = resolveTargetModel(ctx, spec);
-        if (targetModel) {
-          args.push("--model", `${targetModel.provider}/${targetModel.id}`);
+        const dispatch = resolveTargetDispatch(ctx, agent, spec);
+        if (dispatch.model) {
+          args.push("--model", `${dispatch.model.provider}/${dispatch.model.id}`);
         }
+        if (dispatch.thinking) {
+          args.push("--thinking", dispatch.thinking);
+        }
+
+        // Print mode has no UI to catch ctx.ui.notify — the warning must also land in the tool
+        // result content below so a degraded dispatch is visible headless, not just in a TUI.
+        if (dispatch.warning && ctx.hasUI) ctx.ui.notify(dispatch.warning, "warning");
 
         const result = await pi.exec("pi", args, { cwd: ctx.cwd, timeout: TASK_TIMEOUT_MS, signal });
 
         if (result.code !== 0) {
           const stderr = capOutput(result.stderr.trim()) || "(no stderr)";
+          // A degraded dispatch that then also fails is exactly when the caller most needs the
+          // fallback context — never drop it just because the child errored for an unrelated
+          // reason (bad args, timeout, crash).
+          const warningSuffix = dispatch.warning ? ` (${dispatch.warning})` : "";
           throw new Error(
-            `task: dispatched agent "${agent}" exited ${result.code}${result.killed ? " (killed)" : ""} — ${stderr}`,
+            `task: dispatched agent "${agent}" exited ${result.code}` +
+              `${result.killed ? " (killed)" : ""}${warningSuffix} — ${stderr}`,
           );
         }
 
+        const content = [
+          ...(dispatch.warning ? [{ type: "text" as const, text: `[swe-workbench] ${dispatch.warning}` }] : []),
+          { type: "text" as const, text: capOutput(result.stdout) },
+        ];
+
         return {
-          content: [{ type: "text" as const, text: capOutput(result.stdout) }],
-          details: { code: result.code, killed: result.killed },
+          content,
+          details: { code: result.code, killed: result.killed, ...dispatch.details },
         };
       } finally {
         // Unlink then rmdir AFTER pi.exec() resolves, never before — a missing file at read
