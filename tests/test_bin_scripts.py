@@ -21,6 +21,7 @@ BIN = ROOT / "bin"
 
 # bare command name -> interpreter
 SCRIPTS = {
+    "swe-workbench-apply-conflict-resolution": "bash",
     "swe-workbench-clean-ephemeral": "bash",
     "swe-workbench-clean-state-files": "bash",
     "swe-workbench-comment-scan": "python3",
