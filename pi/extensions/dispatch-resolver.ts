@@ -1,9 +1,7 @@
 /**
- * Composes model-policy.ts's resolveDispatch with the real Pi ExtensionContext: picks the
- * candidate pool (ctx.scopedModels when scoped, else ctx.modelRegistry.getAvailable()), builds
- * the parent-fallback shape, and formats the resulting warning/details for subagent.ts's `task`
- * tool. Split from subagent.ts at the line cap (same reason task-call-line.ts was split earlier)
- * — see that file's header for the layering this repo uses.
+ * Composes model-policy.ts's resolveDispatch with the real Pi ExtensionContext for subagent.ts's
+ * `task` tool. Split from subagent.ts at the line cap (same reason task-call-line.ts was split
+ * earlier) — see that file's header for the layering this repo uses.
  *
  * Type-only Pi SDK reference (ExtensionContext), consistent with every other adapter file's
  * stripper-safe posture — see docs/plugin-platform-decisions.md §9.

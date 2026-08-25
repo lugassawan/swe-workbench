@@ -284,9 +284,11 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   so the map shifts effort toward `max` for `opus` and toward `low` for `sonnet`, clamped at each
   end, to keep the two tiers distinguishable on the one axis left once the model id itself can't
   disambiguate them. See `docs/cost-tiers.md`'s "On the Pi Coding Agent" section for the full
-  matrix, the Z.AI clamp caveat (the installed SDK further clamps an unsupported nominal thinking
-  level per the target model's own declared support — verified, not reimplemented, in
-  `tests/test_pi_contract.py`'s pinned-catalog test), and the four fallback reasons.
+  matrix, the Z.AI clamp caveat (the installed SDK further clamps a nominal thinking level per
+  what its own bundled catalog *declares* the target model supports — a limitation of that
+  pinned catalog data today, not of `glm-5.3` itself, which per Z.AI's own spec genuinely
+  supports `max` — verified, not reimplemented, in `tests/test_pi_contract.py`'s pinned-catalog
+  test), and the four fallback reasons.
 
 `tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
 exhaustiveness check over `MODEL_POLICY`'s 3 providers x 3 tiers x 5 efforts ratchet the tier and

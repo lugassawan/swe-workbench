@@ -1117,15 +1117,17 @@ console.log(JSON.stringify({
 @requires_node
 @requires_pi_ai_catalog
 def test_zai_glm_5_3_clamps_nominal_max_to_high_in_pinned_catalog():
-    """Pins the Z.AI clamp this repo's MODEL_POLICY deliberately ships ahead of: `glm-5.3`
-    declares no `thinkingLevelMap` today, so the installed SDK's own `clampThinkingLevel` (dist/
-    models.js, @earendil-works/pi-coding-agent@0.84.2's bundled pi-ai) reduces
-    MODEL_POLICY.zai.opus's nominal "max" down to "high" at dispatch time — identical to
-    zai.sonnet's nominal "high". This drives the REAL SDK clamp function against the REAL pinned
-    catalog data, not a reimplementation of its logic. When a future catalog bump adds xhigh/max
-    support to glm-5.3, this test fails loudly — the signal that the opus/sonnet thinking-level
-    split on Z.AI has become real and worth revisiting docs/cost-tiers.md's Z.AI clamp caveat
-    over, not a silent behavior change to discover later."""
+    """Pins the Z.AI clamp this repo's MODEL_POLICY deliberately ships ahead of: the pinned Pi
+    SDK's bundled catalog *entry* for `glm-5.3` declares no `thinkingLevelMap` today (a gap in
+    that dependency's data, not in glm-5.3 itself — per Z.AI's own spec the model always reasons
+    and genuinely supports "max" as one of its three real effort levels: low/high/max), so the
+    installed SDK's own `clampThinkingLevel` (dist/models.js, @earendil-works/pi-coding-agent@
+    0.84.2's bundled pi-ai) reduces MODEL_POLICY.zai.opus's nominal "max" down to "high" at
+    dispatch time — identical to zai.sonnet's nominal "high". This drives the REAL SDK clamp
+    function against the REAL pinned catalog data, not a reimplementation of its logic. When a
+    future catalog bump adds a proper thinkingLevelMap for glm-5.3, this test fails loudly — the
+    signal that the opus/sonnet thinking-level split on Z.AI has become real and worth revisiting
+    docs/cost-tiers.md's Z.AI clamp caveat over, not a silent behavior change to discover later."""
     node = shutil.which("node")
     assert node is not None
     assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this

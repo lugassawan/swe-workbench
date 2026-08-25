@@ -47,12 +47,11 @@ export function isSupportedProvider(value: string): value is SupportedProvider {
  *  portable `effort:` maps to either. */
 export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
-/** The parent session's own thinking level as Pi reports it — the full 7-value vocabulary, not
- *  just this policy's 5-value ThinkingLevel subset. A fallback path forwards this verbatim
- *  (never pattern-matches or looks it up), so `off`/`minimal` are real, reachable values here
- *  even though resolveDispatch's own success path never produces them. Kept distinct from
- *  ThinkingLevel so the parent's raw value never needs an unchecked narrowing cast at the call
- *  site (dispatch-resolver.ts). */
+/** The parent session's own thinking level as Pi reports it — the full 7-value vocabulary
+ *  (ThinkingLevel is this policy's narrower 5-value subset). Forwarded verbatim on every
+ *  fallback path, never pattern-matched, so `off`/`minimal` are real, reachable values here.
+ *  Kept distinct from ThinkingLevel so dispatch-resolver.ts's call site never needs an
+ *  unchecked narrowing cast. */
 export type ParentThinkingLevel = ThinkingLevel | "off" | "minimal";
 
 /** Structurally shaped like the Pi SDK's `Model<Api>` (provider/id) but NOT imported from it —
@@ -78,10 +77,13 @@ const IDENTITY: Readonly<Record<Effort, ThinkingLevel>> = {
  *  table shifts every effort UP by two rungs on the `[low, medium, high, xhigh, max]` ladder,
  *  clamped at `max` — reproducing the ticket-pinned `high -> max` translation (opus's default
  *  effort per DEFAULT_TIER_EFFORT is "high") while staying monotone and gapless over all five
- *  efforts. `max` is the only value this table ever emits for `high`/`xhigh`/`max` input, since
- *  `glm-5.3` cannot represent anything between them today (see the pinned-catalog test in
- *  tests/test_pi_contract.py) — nominal-vs-effective divergence is expected and doesn't need
- *  runtime handling here (see this file's header). */
+ *  efforts. Per Z.AI's own spec, `glm-5.3` always reasons and genuinely supports `max` as one of
+ *  its three real effort levels (`low`/`high`/`max`) — the currently-pinned Pi SDK's bundled
+ *  catalog entry for it just has no `thinkingLevelMap` yet, so *that dependency's* clamp logic
+ *  (not a limitation of the model itself) reduces `high`/`xhigh`/`max` all down to `high` at
+ *  dispatch time today (see the pinned-catalog test in tests/test_pi_contract.py) —
+ *  nominal-vs-effective divergence is expected and doesn't need runtime handling here (see this
+ *  file's header). */
 const ZAI_OPUS_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "high",
   medium: "xhigh",
@@ -108,11 +110,9 @@ interface TierPolicy {
   readonly thinking: Readonly<Record<Effort, ThinkingLevel>>;
 }
 
-/** One cell per (provider, tier). Z.AI's `glm-5.3` serves both the opus and sonnet tier — see
- *  this file's header and docs/cost-tiers.md's "On the Pi Coding Agent" section for the
- *  thinking-level-as-tier-disambiguation rationale, and this repo's zai-clamp pinned test
- *  (tests/test_pi_contract.py) for why `zai.opus`'s nominal `max` is clamped to `high` by the
- *  installed Pi SDK today. */
+/** One cell per (provider, tier). See ZAI_OPUS_THINKING/ZAI_SONNET_THINKING above for why zai's
+ *  two rows diverge, and docs/cost-tiers.md's "On the Pi Coding Agent" section for the full 3x3
+ *  matrix. */
 export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<ModelTier, TierPolicy>>>> = {
   anthropic: {
     opus: { model: "claude-opus-5", thinking: IDENTITY },

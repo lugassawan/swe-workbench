@@ -1227,6 +1227,54 @@ if (registered) {
     return { text: c.text, px: c.px, py: c.py };
   });
 
+  // renderResult probes — same nodeless-throws-to-fallback posture as renderCall above.
+  out.hasRenderResult = typeof registered.renderResult === "function";
+  out.composedResultHeader = typeof mod.composeTaskResultHeader === "function"
+    ? mod.composeTaskResultHeader("reviewer", stubTheme, "high")
+    : null;
+  out.renderResultNoThinking = probe(() =>
+    mod.renderTaskResult({ content: [{ type: "text", text: "hi" }], details: {} }, stubTheme, FakeText, "reviewer", false));
+  out.renderResultUnknownThinking = probe(() =>
+    mod.renderTaskResult({ content: [], details: { thinking: "bogus" } }, stubTheme, FakeText, "reviewer", false));
+  out.renderResultMissingCtor = probe(() =>
+    mod.renderTaskResult({ content: [], details: { thinking: "high" } }, stubTheme, undefined, "reviewer", false));
+  out.renderResultResolved = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: "agent output" }], details: { thinking: "xhigh" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text, px: c.px, py: c.py };
+  });
+  const longBody = Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join("\\n");
+  out.renderResultLongBodyCollapsed = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text };
+  });
+  out.renderResultLongBodyExpanded = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", true,
+    );
+    return { text: c.text };
+  });
+  out.renderResultNoBody = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text };
+  });
+  out.registeredRenderResultViaContext = probe(() =>
+    registered.renderResult(
+      { content: [{ type: "text", text: "agent output" }], details: { thinking: "max" } },
+      { expanded: false, isPartial: false },
+      stubTheme,
+      { args: { agent: "reviewer", prompt: "hi" } },
+    ));
+
   out.emptyTools = await run("empty-tools-agent", "hi");
 
   execCalls.length = 0;
@@ -1498,6 +1546,107 @@ def test_task_render_task_call_builds_text_with_composed_line_and_zero_padding(s
     resolved = outcome["value"]
     assert resolved["text"] == "<toolTitle>**task**</toolTitle><muted> · code-impl</muted>"
     assert [resolved["px"], resolved["py"]] == [0, 0]
+
+
+@requires_node
+def test_task_registers_a_render_result_override(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["hasRenderResult"] is True
+
+
+@requires_node
+def test_compose_task_result_header_appends_colored_thinking_level(subagent_root, tmp_path_factory):
+    """The result header is the call line plus the thinking level in its own semantic
+    `thinking<Level>` theme token — the same token family Pi's own UI uses elsewhere."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["composedResultHeader"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    )
+
+
+@requires_node
+def test_render_task_result_falls_back_when_no_thinking_level_resolved(subagent_root, tmp_path_factory):
+    """No thinking level (e.g. ctx.model was undefined, or a fallback preserved an undefined
+    parent thinking level) means nothing extra to show — must throw so Pi's own default result
+    rendering (a plain text preview with truncation/expand) takes over unchanged."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultNoThinking"]["threw"] is True
+    assert "task" in result["renderResultNoThinking"]["message"]
+
+
+@requires_node
+def test_render_task_result_falls_back_on_unrecognized_thinking_value(subagent_root, tmp_path_factory):
+    """A thinking value outside the known 7-level vocabulary (never expected in practice, but
+    not structurally impossible) must degrade to the framework fallback, not throw a raw
+    "undefined color token" error from deep inside the theme call."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultUnknownThinking"]["threw"] is True
+    assert "task" in result["renderResultUnknownThinking"]["message"]
+
+
+@requires_node
+def test_render_task_result_throws_to_framework_fallback_without_pi_tui(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultMissingCtor"]["threw"] is True
+    assert "task" in result["renderResultMissingCtor"]["message"]
+    # Same pi-tui-import race posture as the renderCall equivalent test above.
+    registered = result["registeredRenderResultViaContext"]
+    if registered["threw"]:
+        assert "task" in registered["message"]
+    else:
+        assert registered["value"] is not None, "resolved path must return a component, not undefined"
+
+
+@requires_node
+def test_render_task_result_builds_header_plus_body_text(subagent_root, tmp_path_factory):
+    """Assert the resolved path builds a single Text combining the colored header and the
+    agent's own output text, with (0, 0) padding matching the call-line renderer."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultResolved"]
+    assert outcome["threw"] is False
+    resolved = outcome["value"]
+    assert resolved["text"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingXhigh>(xhigh)</thinkingXhigh>"
+        "\n\n<toolOutput>agent output</toolOutput>"
+    )
+    assert [resolved["px"], resolved["py"]] == [0, 0]
+
+
+@requires_node
+def test_render_task_result_collapses_long_body_to_preview_lines_by_default(subagent_root, tmp_path_factory):
+    """A dispatch's output must collapse by default, matching Pi's own createResultFallback()
+    contract (every other tool row truncates to a preview when not expanded) — this was a real
+    regression found in review: a naive first cut always dumped the full, possibly-huge output
+    unconditionally, unlike every other tool result in the TUI."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultLongBodyCollapsed"]
+    assert outcome["threw"] is False
+    text = outcome["value"]["text"]
+    shown_lines = [f"<toolOutput>line {i}</toolOutput>" for i in range(1, 11)]
+    assert text.endswith("\n\n" + "\n".join(shown_lines) + "<muted>\n... (5 more lines — expand to see all)</muted>")
+    assert "line 11" not in text
+
+
+@requires_node
+def test_render_task_result_shows_full_body_when_expanded(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultLongBodyExpanded"]
+    assert outcome["threw"] is False
+    text = outcome["value"]["text"]
+    assert "line 15" in text
+    assert "more lines" not in text
+
+
+@requires_node
+def test_render_task_result_with_no_body_shows_only_the_header(subagent_root, tmp_path_factory):
+    """No content text (an edge case, not a real dispatch shape today) must render just the
+    header, not a dangling separator or an empty truncation marker."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultNoBody"]
+    assert outcome["threw"] is False
+    assert outcome["value"]["text"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    )
 
 
 @requires_node

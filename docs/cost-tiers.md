@@ -123,14 +123,17 @@ this translation is the identity (portable effort passes straight through). For 
 shifts effort up toward `max`, `sonnet`'s shifts it down toward `low`, both clamped at their end.
 
 **Z.AI clamp caveat.** The effective thinking level `MODEL_POLICY` emits is *nominal* — the
-installed Pi SDK clamps it further per the target model's own declared thinking-level support.
-`glm-5.3` (the catalog pin as of `@earendil-works/pi-coding-agent` 0.84.2) declares no
-`xhigh`/`max` support, so the nominal `zai.opus` value of `max` is clamped down to `high` at
-dispatch time — identical, today, to `zai.sonnet`'s nominal (and already-supported) `high`. This
-is expected, not a bug: `MODEL_POLICY` encodes the forward-looking policy, and
-`tests/test_pi_contract.py` pins the current clamp directly against the bundled catalog data, so a
-future catalog bump that adds `xhigh`/`max` support to `glm-5.3` fails that test loudly — the
-signal to revisit, not silently drift past.
+installed Pi SDK clamps it further per what its own bundled catalog *declares* the target model
+supports, which is not the same thing as what the model actually supports. Per Z.AI's own spec,
+`glm-5.3` always reasons and genuinely supports `max` as one of its three real effort levels
+(`low`/`high`/`max`) — but the catalog pin as of `@earendil-works/pi-coding-agent` 0.84.2 carries
+no `thinkingLevelMap` for it at all, so *that dependency's* clamp logic reduces the nominal
+`zai.opus` value of `max` down to `high` at dispatch time — identical, today, to `zai.sonnet`'s
+nominal (and already-recognized) `high`. This is a limitation of the pinned catalog data, not of
+`glm-5.3` itself, and it's expected, not a bug: `MODEL_POLICY` encodes the forward-looking policy,
+and `tests/test_pi_contract.py` pins the current clamp directly against the bundled catalog data,
+so a future catalog bump that adds a proper `thinkingLevelMap` for `glm-5.3` fails that test
+loudly — the signal to revisit, not silently drift past.
 
 **Fallback.** For any provider outside the three above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
