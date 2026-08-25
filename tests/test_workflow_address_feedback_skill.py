@@ -870,6 +870,102 @@ def test_pr_comments_jq_filter_manual_reply_dedup():
     )
 
 
+# --- Reap-on-reject ordering + Phase 7 run-scoped reap ---
+
+def test_address_feedback_skill_state_gate_precedes_run_dir_allocation():
+    """Phase 1's OPEN-state gate must be hoisted above swe-workbench-new-run-dir
+    allocation — a rejected PR must never allocate $RUN_DIR at all, rather than
+    allocating and then leaking it."""
+    text = SKILL_MD.read_text()
+    gate_idx = text.find('[ "$STATE" = "OPEN" ] ||')
+    run_dir_idx = text.find('swe-workbench-new-run-dir address-feedback "$PR"')
+    assert gate_idx != -1, "SKILL.md Phase 1 must contain the OPEN-state gate"
+    assert run_dir_idx != -1, "SKILL.md Phase 1 must contain the swe-workbench-new-run-dir call"
+    assert gate_idx < run_dir_idx, (
+        "the OPEN-state gate must precede swe-workbench-new-run-dir allocation — "
+        "otherwise a rejected PR leaks $RUN_DIR"
+    )
+
+
+def test_address_feedback_skill_state_gate_reject_reaps_json():
+    """The OPEN-state gate's reject branch must reap $JSON before exiting."""
+    text = SKILL_MD.read_text()
+    line = next(
+        (ln for ln in text.splitlines() if ln.strip().startswith('[ "$STATE" = "OPEN" ] ||')),
+        None,
+    )
+    assert line is not None, "SKILL.md Phase 1 must contain the OPEN-state gate line"
+    assert 'swe-workbench-clean-state-files "$JSON"' in line, (
+        'the OPEN-state gate reject branch must call swe-workbench-clean-state-files "$JSON" '
+        "before exiting, to avoid leaking the PR-keyed state file"
+    )
+
+
+def test_address_feedback_skill_phase7_reaps_run_scoped_files():
+    """Phase 7 must reap all three run-scoped state files and guard the run-dir
+    reap — the ownership-decline and no-open-threads early exits now route
+    through Phase 7 before ever creating a worktree, so $RUN_DIR is guarded
+    for the one exit (the OPEN-state gate) that precedes its allocation."""
+    text = SKILL_MD.read_text()
+    phase7_idx = text.find("### Phase 7")
+    assert phase7_idx != -1, "SKILL.md must have a ### Phase 7 section"
+    next_section = re.search(r'\n## ', text[phase7_idx:])
+    phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
+    for suffix in ["", "-threads", "-pr-comments"]:
+        path = f"/tmp/swe-workbench-address-feedback/${{PR}}{suffix}.json"
+        assert path in phase7_text, (
+            f"Phase 7 must reap {path} — run-scoped state files are reaped on every exit"
+        )
+    assert "${RUN_DIR:-}" in phase7_text, (
+        "Phase 7 must guard the run-dir reap with ${RUN_DIR:-} — $RUN_DIR is unset on "
+        "the Phase 1 OPEN-state gate reject path, which never reaches Phase 7"
+    )
+
+
+def test_address_feedback_skill_phase7_worktree_removal_guards_on_wt_unset():
+    """Phase 7's worktree-removal block must skip entirely when $WT was never set.
+
+    A Phase-1-only exit (ownership decline, no-open-threads) leaves $WT unset since
+    Phase 2 never ran. Without a guard, the block falls into its else branch and
+    unconditionally runs `rimba remove "$PR_BRANCH"` — keyed by branch name alone,
+    not by this run's own $WT — which could force-remove a different, concurrently
+    active session's live worktree on the same PR branch.
+    """
+    text = SKILL_MD.read_text()
+    phase7_idx = text.find("### Phase 7")
+    assert phase7_idx != -1, "SKILL.md must have a ### Phase 7 section"
+    next_section = re.search(r'\n## ', text[phase7_idx:])
+    phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
+    match = re.search(
+        r'if \[ -z "\$\{WT:-\}" \]; then\n.*?\nelif \[ "\$\{REUSED_WT:-0\}" = "1" \]; then',
+        phase7_text, re.DOTALL,
+    )
+    assert match, (
+        'Phase 7\'s worktree-removal block must open with `if [ -z "${WT:-}" ]; then` '
+        "before the REUSED_WT branch — otherwise a Phase-1-only exit falls into the "
+        'else branch and unconditionally runs rimba remove "$PR_BRANCH"'
+    )
+
+
+def test_address_feedback_skill_early_exits_name_phase7():
+    """Both the ownership-decline and no-open-threads Phase 1 exits must route
+    through Phase 7 — otherwise they leak $JSON, the threads/pr-comments state
+    files, and $RUN_DIR."""
+    text = SKILL_MD.read_text()
+    decline_idx = text.find("Wait for confirmation before continuing.")
+    assert decline_idx != -1, "SKILL.md must contain the ownership-decline confirmation prose"
+    decline_window = text[decline_idx: decline_idx + 200]
+    assert "Phase 7" in decline_window, (
+        "the ownership-decline path must state that it runs Phase 7 — Cleanup before exiting"
+    )
+    no_threads_idx = text.find("No open threads — nothing to address")
+    assert no_threads_idx != -1, "SKILL.md must contain the no-open-threads exit message"
+    no_threads_window = text[no_threads_idx: no_threads_idx + 200]
+    assert "Phase 7" in no_threads_window, (
+        "the no-open-threads exit must state that it runs Phase 7 — Cleanup before exiting"
+    )
+
+
 @pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
 def test_pr_comments_jq_filter_own_marker_replies_excluded_from_manual_heuristic():
     """A prior marker-bearing tool reply must not itself count as a 'manual reply' that

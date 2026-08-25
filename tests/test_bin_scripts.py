@@ -48,7 +48,11 @@ SCRIPTS = {
 SIBLING_CALLERS = {
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
-    "swe-workbench-preflight-pr": ["swe-workbench-gh-timeout", "swe-workbench-fetch-pr"],
+    "swe-workbench-preflight-pr": [
+        "swe-workbench-gh-timeout",
+        "swe-workbench-fetch-pr",
+        "swe-workbench-clean-state-files",
+    ],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sweep-residuals": [

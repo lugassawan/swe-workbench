@@ -35,19 +35,16 @@ command -v swe-workbench-preflight-pr >/dev/null 2>&1 || {
 }
 JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
 eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
+[ "$STATE" = "OPEN" ] || { swe-workbench-clean-state-files "$JSON"; echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
 PR_BRANCH=$(jq -r .headRefName "$JSON"); eval "$(swe-workbench-new-run-dir address-feedback "$PR")"
 ```
-`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2). `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files below (including `${PR}-triage.json`, which is a cross-invocation resume point and must never move here).
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the preflight fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2). `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files below (including `${PR}-triage.json`, which is a cross-invocation resume point and must never move here).
 
-Check that the PR is open before proceeding:
-```bash
-[ "$STATE" = "OPEN" ] || { echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
-```
 If `CURRENT_USER != AUTHOR_LOGIN`, warn:
 > "You are not the PR author (PR author: @AUTHOR_LOGIN, you: @CURRENT_USER). Address-feedback flows are typically owner-side. Continue anyway? Reply `yes` to proceed."
 
-Wait for confirmation before continuing.
+Wait for confirmation before continuing. If the user declines, run **Phase 7 — Cleanup** and exit.
 
 Fetch outstanding review threads via GraphQL:
 ```bash
@@ -86,7 +83,7 @@ SKIPPED_PR_COMMENTS=$(jq '[.[] | select(.eligible | not)] | length' "/tmp/swe-wo
 ```
 If all threads are resolved (or no threads exist) **and** `$ELIGIBLE_PR_COMMENTS` is zero, print:
 > "No open threads — nothing to address."
-Then exit cleanly.
+Then run **Phase 7 — Cleanup** and exit.
 
 If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, offer to resume from it.
 
@@ -226,19 +223,12 @@ After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/swe-workbench:review --check-followup <N>`."
 
-On the Phase 5 success path, delete the address-feedback state files. The reap runs foreground; failures surface (no `2>/dev/null`):
+On the Phase 5 success path, delete the triage resume-point file. The three run-scoped state files (`${PR}.json`, `${PR}-threads.json`, `${PR}-pr-comments.json`) are reaped by **Phase 7** on every exit instead — `${PR}-triage.json` is reaped here specifically, because completion is what makes the resume point spent, and Phase 7 must never touch it (see Phase 7). The reap runs foreground; failures surface (no `2>/dev/null`):
 ```bash
-swe-workbench-clean-state-files \
-  "/tmp/swe-workbench-address-feedback/${PR}.json" \
-  "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
-  "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" \
-  "/tmp/swe-workbench-address-feedback/${PR}-triage.json"
-for f in "/tmp/swe-workbench-address-feedback/${PR}.json" \
-         "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
-         "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" \
-         "/tmp/swe-workbench-address-feedback/${PR}-triage.json"; do
-  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
-done
+swe-workbench-clean-state-files "/tmp/swe-workbench-address-feedback/${PR}-triage.json"
+[ -e "/tmp/swe-workbench-address-feedback/${PR}-triage.json" ] \
+  && echo "⚠ state file NOT reaped: /tmp/swe-workbench-address-feedback/${PR}-triage.json" >&2 \
+  || echo "✓ state file reaped: /tmp/swe-workbench-address-feedback/${PR}-triage.json"
 ```
 Then run **Phase 6 — Sync PR metadata**.
 
@@ -248,9 +238,11 @@ Skipped when `$FIX_SHA` is unset (no fixes committed in Phase 4). Otherwise fetc
 
 ### Phase 7 — Cleanup (always)
 
-Run on every exit that occurs after a worktree was **created** in Phase 2 (success, Q-quit, or error). Skip the worktree-removal block on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove.
+Run on every exit after the Phase 1 preflight line. Skip the worktree-removal block on Phase 1 early-exits (before any worktree exists) and when the reuse-guard fired (`REUSED_WT=1`) — the reuse path sets `$WT` to an existing checkout, never creates a worktree, so there is nothing to remove. The `${WT:-}` check specifically guards against a Phase-1-only exit falling into the `rimba remove "$PR_BRANCH"` branch below: that command is keyed by branch name alone, not by this run's own `$WT`, so without the guard it could force-remove a different, concurrently-active session's live worktree on the same PR branch.
 ```bash
-if [ "${REUSED_WT:-0}" = "1" ]; then
+if [ -z "${WT:-}" ]; then
+  echo "No worktree was created this run — skipping worktree cleanup."
+elif [ "${REUSED_WT:-0}" = "1" ]; then
   echo "Reused existing worktree at $WT — skipping cleanup (nothing was created)."
 else
   # task = the PR branch (Phase 2 creates the worktree on $PR_BRANCH); --keep-branch
@@ -263,9 +255,18 @@ else
     echo "⚠ rimba remove failed (rimba absent or worktree busy); attempted git-worktree fallback on $WT."
   fi
 fi
-swe-workbench-reap-run-dir "$RUN_DIR"; [ -e "$RUN_DIR" ] && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 || echo "✓ run dir reaped: $RUN_DIR"
+[ -n "${RUN_DIR:-}" ] && { swe-workbench-reap-run-dir "$RUN_DIR"; [ -e "$RUN_DIR" ] && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 || echo "✓ run dir reaped: $RUN_DIR"; }
+swe-workbench-clean-state-files \
+  "/tmp/swe-workbench-address-feedback/${PR}.json" \
+  "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
+  "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json"
+for f in "/tmp/swe-workbench-address-feedback/${PR}.json" \
+         "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
+         "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json"; do
+  [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
+done
 ```
-Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a warning and do not block completion. The fallback removes only the worktree directory — never delete `$PR_BRANCH` directly (e.g. via `git branch -D`), which would destroy the owner's actual PR head branch. `$RUN_DIR` is reaped unconditionally in this phase, independent of the `REUSED_WT` branch above — it was allocated in Phase 1 regardless of whether Phase 2 later reused an existing worktree. A Phase 1 early-exit (before Phase 7 runs at all) leaves `$RUN_DIR` for the age-gated orphan sweep in `new-run-dir.sh` to reap on a later invocation — bounded to 24h, not indefinite.
+Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a warning and do not block completion. The fallback removes only the worktree directory — never delete `$PR_BRANCH` directly (e.g. via `git branch -D`), which would destroy the owner's actual PR head branch. `$RUN_DIR` is reaped unconditionally whenever it exists, independent of the `REUSED_WT` branch above — it was allocated in Phase 1 regardless of whether Phase 2 later reused an existing worktree. It is guarded with `${RUN_DIR:-}` because the Phase 1 `STATE`-gate rejection is the one exit that precedes `$RUN_DIR`'s allocation entirely — that path reaps `$JSON` inline instead of routing through this phase (see Phase 1) and never reaches this guard. The three run-scoped state files reaped above (`${PR}.json`, `${PR}-threads.json`, `${PR}-pr-comments.json`) are the ones whose lifetime ends with the run itself; the resume-point file created on Q-quit is reaped separately, on completion, in Phase 5 — never here, since a Q-quit into this phase must leave it intact for the next invocation to resume from.
 
 ## Failure modes
 
@@ -289,7 +290,7 @@ Cleanup is **failure-tolerant**: if both rimba and the git fallback fail, log a 
 | Create a new worktree when already on the PR branch or when one already exists | Phase 2 runs two guards before `rimba add`: (1) compares `git rev-parse --abbrev-ref HEAD` against `$PR_BRANCH` — match reuses `$(pwd)`; (2) scans `git worktree list --porcelain` for a registered worktree on `$PR_BRANCH` — match reuses that path. Only fall through to creation when both checks find nothing. |
 | Pass `--skip-deps --skip-hooks` on the Phase 2 create | Never pass either flag — rimba must install deps and run hooks so the worktree is fully initialized with no separate bootstrap step. |
 | Create the worktree on a throwaway task branch (`rimba add pr:$PR --task …`) | Use `rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"` so the worktree is on the PR branch itself — Phase 4 pushes update the PR directly. |
-| Leave the worktree behind after skill exits | Phase 7 always removes it — skip Phase 7 only when exiting before Phase 2 (no worktree created yet) or when the reuse-guard fired (`REUSED_WT=1`, nothing was created). |
+| Leave the worktree behind after skill exits | Phase 7 runs on every exit past the Phase 1 preflight line — including exits before Phase 2 ever ran — but its worktree-removal block only fires when `$WT` is actually set; a Phase 1 early exit (`$WT` unset) or the reuse-guard (`REUSED_WT=1`) both skip removal since there is nothing this run created. |
 | Deleting `$PR_BRANCH` directly in Phase 7 fallback cleanup | Only remove the worktree directory — `$PR_BRANCH` is the real PR head branch; deleting it via `git branch -D` would destroy the owner's PR. |
 | Post the reply before the commit | Always commit first (Phase 4) so `$FIX_SHA` is available for the ADDRESSED reply template. |
 | Leave a CLARIFIED/DEFERRED **thread** open after reply | All three review-thread dispositions now resolve — an open thread blocks `/swe-workbench:review`'s approval gate. PR comments are unaffected (no thread to resolve). |
