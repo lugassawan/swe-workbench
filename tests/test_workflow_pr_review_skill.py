@@ -61,7 +61,7 @@ def test_pr_review_skill_has_owner_repo_guard_clause():
 # --- Cleanup call-site assertions (guard bypass fix) ---
 
 def test_pr_review_skill_cleanup_uses_pr_review_worktree_script():
-    """Since issue #666, worktree acquire/release (including the clean-ephemeral
+    """Worktree acquire/release (including the clean-ephemeral
     delegation and the collision-safe self-heal) live in
     bin/swe-workbench-pr-review-worktree, not inline SKILL.md prose. Step 2/7 must
     delegate to it rather than reimplementing rimba add / git worktree add / rm -rf."""

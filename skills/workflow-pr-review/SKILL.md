@@ -86,7 +86,7 @@ RUN_DIR=$(swe-workbench-new-run-dir "$MODE_TAG" "$PR")
 ### Step 2 — Ephemeral worktree
 
 `swe-workbench-pr-review-worktree` owns the acquire/release/naming contract for this ephemeral
-worktree (issue #666) — the underlying rimba-vs-git provider choice, the collision-safe naming
+worktree — the underlying rimba-vs-git provider choice, the collision-safe naming
 (`pr-review-$PR` for first-pass, `pr-followup-$PR` for followup), and the stale/dirty self-heal
 logic all live there, not in this skill's prose. `$MODE` is passed through as-is (`first-pass` or
 `followup` — the exact vocabulary the mode table above already produces):
@@ -214,5 +214,5 @@ See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup
 | Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `swe-workbench-pr-review-worktree acquire --mode "$MODE" --pr "$PR"` instead — it owns the rimba-vs-git provider choice and the collision-safe naming. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
-| Assume worktree teardown still backgrounds `(... ) &` | Since #666, `release` runs foregrounded — its `eval "$(...)"` output must be read directly, and removal is fast (`--skip-deps --skip-hooks` worktrees have no dependency tree to clean up). |
+| Assume worktree teardown still backgrounds `(... ) &` | `release` runs foregrounded — its `eval "$(...)"` output must be read directly, and removal is fast (`--skip-deps --skip-hooks` worktrees have no dependency tree to clean up). |
 | Reuse the core's own dedup/CTA/flip logic inline instead of invoking it | Duplicating that mechanism here is exactly the drift this skill was folded to remove — always delegate Step 6 to `swe-workbench:workflow-pr-review-post`. |

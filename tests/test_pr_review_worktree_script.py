@@ -1,4 +1,4 @@
-"""Tests for bin/swe-workbench-pr-review-worktree (issue #666).
+"""Tests for bin/swe-workbench-pr-review-worktree.
 
 Single source of the ephemeral PR-review worktree naming/lifecycle contract shared by
 workflow-pr-review (first-pass + followup) and the PR-mode specialist sub-flow in
@@ -385,8 +385,8 @@ def test_names_matches_sweep_residuals_worktree_contract():
     """Golden-ratchet, not a runtime dependency (see the script's own header comment
     for why sweep-residuals must never shell out to this command at runtime). The
     `names` output, unioned with one explicit address-feedback-<N> row (owned by
-    sibling issue #662, not this command -- workflow-address-feedback's worktree has
-    the opposite branch-deletion invariant), must equal sweep-residuals' own
+    workflow-address-feedback's own worktree lifecycle, not this command -- its
+    worktree has the opposite branch-deletion invariant), must equal sweep-residuals' own
     hardcoded triples for the same PR number. The union is asserted explicitly here,
     not silently -- deleting this line would not make the test pass."""
     n = _unique_n()

@@ -3,7 +3,7 @@
 #
 # Single source of the ephemeral PR-review worktree naming/lifecycle contract shared by
 # workflow-pr-review (first-pass + followup modes) and the PR-mode specialist sub-flow in
-# commands/review.md (issue #666). Replaces three copies of the same acquire/teardown prose
+# commands/review.md. Replaces three copies of the same acquire/teardown prose
 # that had drifted into inconsistent label/PR/mode orderings across one shared
 # /tmp/swe-workbench-pr-review/ namespace.
 #
