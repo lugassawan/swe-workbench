@@ -2,6 +2,7 @@
 name: debugger
 description: Bug-fix specialist — root-cause via systematic-debugging, then a minimal behavior-changing fix with a regression test. Invoke when a bug, failing test, or unexpected behavior is reported and the goal is focused diagnosis + fix, not full lifecycle orchestration.
 model: sonnet
+effort: xhigh
 tools: Read, Edit, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-solid

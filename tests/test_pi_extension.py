@@ -379,8 +379,9 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "tool-vocab.ts",
         "ask-user.ts",
         "agent-spec.ts",
-        "model-tier.ts",
+        "model-policy.ts",
         "task-call-line.ts",
+        "dispatch-resolver.ts",
         "subagent.ts",
     ):
         (synthetic_index.parent / helper).write_text(
@@ -1118,7 +1119,7 @@ def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
 
 SUBAGENT_TS = ROOT / "pi" / "extensions" / "subagent.ts"
 AGENT_SPEC_TS = ROOT / "pi" / "extensions" / "agent-spec.ts"
-MODEL_TIER_TS = ROOT / "pi" / "extensions" / "model-tier.ts"
+MODEL_POLICY_TS = ROOT / "pi" / "extensions" / "model-policy.ts"
 
 _SUBAGENT_DRIVER = """
 import { existsSync, readFileSync } from "node:fs";
@@ -1130,6 +1131,7 @@ const mod = await import(pathToFileURL(modPath).href);
 
 const execCalls = [];
 const modelRegistryCalls = [];
+const notifyCalls = [];
 const stubPi = {
   registerTool(tool) { this._registered = tool; },
   async exec(command, args, options) {
@@ -1158,10 +1160,13 @@ function lastPromptFile() {
   return last.args[idx + 1];
 }
 
-async function run(agent, prompt, model, availableModels, scopedModels) {
+async function run(agent, prompt, model, availableModels, scopedModels, thinkingLevel, hasUI) {
   const ctx = {
     cwd: config.cwd,
     model,
+    thinkingLevel,
+    hasUI: hasUI === undefined ? true : hasUI,
+    ui: { notify: (message, level) => notifyCalls.push({ message, level }) },
     scopedModels: scopedModels || [],
     modelRegistry: {
       getAvailable() {
@@ -1222,6 +1227,54 @@ if (registered) {
     return { text: c.text, px: c.px, py: c.py };
   });
 
+  // renderResult probes — same nodeless-throws-to-fallback posture as renderCall above.
+  out.hasRenderResult = typeof registered.renderResult === "function";
+  out.composedResultHeader = typeof mod.composeTaskResultHeader === "function"
+    ? mod.composeTaskResultHeader("reviewer", stubTheme, "high")
+    : null;
+  out.renderResultNoThinking = probe(() =>
+    mod.renderTaskResult({ content: [{ type: "text", text: "hi" }], details: {} }, stubTheme, FakeText, "reviewer", false));
+  out.renderResultUnknownThinking = probe(() =>
+    mod.renderTaskResult({ content: [], details: { thinking: "bogus" } }, stubTheme, FakeText, "reviewer", false));
+  out.renderResultMissingCtor = probe(() =>
+    mod.renderTaskResult({ content: [], details: { thinking: "high" } }, stubTheme, undefined, "reviewer", false));
+  out.renderResultResolved = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: "agent output" }], details: { thinking: "xhigh" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text, px: c.px, py: c.py };
+  });
+  const longBody = Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join("\\n");
+  out.renderResultLongBodyCollapsed = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text };
+  });
+  out.renderResultLongBodyExpanded = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", true,
+    );
+    return { text: c.text };
+  });
+  out.renderResultNoBody = probe(() => {
+    const c = mod.renderTaskResult(
+      { content: [], details: { thinking: "high" } },
+      stubTheme, FakeText, "reviewer", false,
+    );
+    return { text: c.text };
+  });
+  out.registeredRenderResultViaContext = probe(() =>
+    registered.renderResult(
+      { content: [{ type: "text", text: "agent output" }], details: { thinking: "max" } },
+      { expanded: false, isPartial: false },
+      stubTheme,
+      { args: { agent: "reviewer", prompt: "hi" } },
+    ));
+
   out.emptyTools = await run("empty-tools-agent", "hi");
 
   execCalls.length = 0;
@@ -1230,8 +1283,10 @@ if (registered) {
   out.promptFileGoneAfterSuccess = !existsSync(lastPromptFile());
 
   execCalls.length = 0;
+  notifyCalls.length = 0;
   out.withModel = await run("real-agent", "hi", { provider: "anthropic", id: "claude-x" });
   out.withModelExecCalls = execCalls.slice();
+  out.withModelNotifyCalls = notifyCalls.slice();
 
   execCalls.length = 0;
   out.execThrows = await run("real-agent", "hi");
@@ -1249,6 +1304,7 @@ if (registered) {
     ...anthropicCandidates,
     { provider: "openai-codex", id: "gpt-5.6-luna" },
   ];
+  const noHaikuCandidates = anthropicCandidates.filter((c) => c.id !== "claude-haiku-4-5");
 
   execCalls.length = 0;
   out.tieredAgentResolvesHaiku = await run(
@@ -1262,11 +1318,57 @@ if (registered) {
   );
   out.tieredAgentIgnoresOtherProviderExecCalls = execCalls.slice();
 
+  // Parent's own thinking level (ctx.thinkingLevel) must survive unchanged on a fallback path
+  // when present — this run passes "high" explicitly.
   execCalls.length = 0;
+  notifyCalls.length = 0;
   out.untieredAgentFallsBackToParentModel = await run(
-    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates, undefined, "high",
   );
   out.untieredAgentFallsBackExecCalls = execCalls.slice();
+  out.untieredAgentFallsBackNotifyCalls = notifyCalls.slice();
+
+  // Same fallback, but with no parent thinking level at all — --thinking must be omitted, not
+  // sent as some default.
+  execCalls.length = 0;
+  out.untieredAgentNoParentThinking = await run(
+    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.untieredAgentNoParentThinkingExecCalls = execCalls.slice();
+
+  execCalls.length = 0;
+  notifyCalls.length = 0;
+  out.effortUnknownFallback = await run(
+    "tiered-no-effort-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+  );
+  out.effortUnknownExecCalls = execCalls.slice();
+  out.effortUnknownNotifyCalls = notifyCalls.slice();
+
+  execCalls.length = 0;
+  notifyCalls.length = 0;
+  out.providerUnsupportedFallback = await run(
+    "tiered-agent", "hi", { provider: "google", id: "gemini-x" }, [],
+  );
+  out.providerUnsupportedExecCalls = execCalls.slice();
+  out.providerUnsupportedNotifyCalls = notifyCalls.slice();
+
+  execCalls.length = 0;
+  notifyCalls.length = 0;
+  out.modelUnavailableFallback = await run(
+    "tiered-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, noHaikuCandidates,
+  );
+  out.modelUnavailableExecCalls = execCalls.slice();
+  out.modelUnavailableNotifyCalls = notifyCalls.slice();
+
+  // hasUI:false (print mode) must still surface the fallback in the tool result content, but
+  // must never call ctx.ui.notify (there is no UI to receive it).
+  execCalls.length = 0;
+  notifyCalls.length = 0;
+  out.fallbackHeadless = await run(
+    "real-agent", "hi", { provider: "anthropic", id: "claude-sonnet-5" }, anthropicCandidates,
+    undefined, undefined, false,
+  );
+  out.fallbackHeadlessNotifyCalls = notifyCalls.slice();
 
   // ctx.scopedModels restricts the session to only claude-sonnet-5 — the haiku-tier candidate
   // exists in the full modelRegistry catalog but is NOT in scope, so resolution must respect
@@ -1312,11 +1414,22 @@ def _write_synthetic_agents_root(tmp_path_factory):
     (agents / "tiered-agent.md").write_text(
         "---\n"
         "name: tiered-agent\n"
-        "description: test agent with a known model tier\n"
+        "description: test agent with a known model tier and effort\n"
         "model: haiku\n"
+        "effort: high\n"
         "tools: Read\n"
         "---\n\n"
         "Tiered agent body.\n",
+        encoding="utf-8",
+    )
+    (agents / "tiered-no-effort-agent.md").write_text(
+        "---\n"
+        "name: tiered-no-effort-agent\n"
+        "description: test agent with a known model tier but no effort\n"
+        "model: sonnet\n"
+        "tools: Read\n"
+        "---\n\n"
+        "Tiered no-effort agent body.\n",
         encoding="utf-8",
     )
     skill_dir = root / "skills" / "fake-skill"
@@ -1436,6 +1549,107 @@ def test_task_render_task_call_builds_text_with_composed_line_and_zero_padding(s
 
 
 @requires_node
+def test_task_registers_a_render_result_override(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["hasRenderResult"] is True
+
+
+@requires_node
+def test_compose_task_result_header_appends_colored_thinking_level(subagent_root, tmp_path_factory):
+    """The result header is the call line plus the thinking level in its own semantic
+    `thinking<Level>` theme token — the same token family Pi's own UI uses elsewhere."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["composedResultHeader"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    )
+
+
+@requires_node
+def test_render_task_result_falls_back_when_no_thinking_level_resolved(subagent_root, tmp_path_factory):
+    """No thinking level (e.g. ctx.model was undefined, or a fallback preserved an undefined
+    parent thinking level) means nothing extra to show — must throw so Pi's own default result
+    rendering (a plain text preview with truncation/expand) takes over unchanged."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultNoThinking"]["threw"] is True
+    assert "task" in result["renderResultNoThinking"]["message"]
+
+
+@requires_node
+def test_render_task_result_falls_back_on_unrecognized_thinking_value(subagent_root, tmp_path_factory):
+    """A thinking value outside the known 7-level vocabulary (never expected in practice, but
+    not structurally impossible) must degrade to the framework fallback, not throw a raw
+    "undefined color token" error from deep inside the theme call."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultUnknownThinking"]["threw"] is True
+    assert "task" in result["renderResultUnknownThinking"]["message"]
+
+
+@requires_node
+def test_render_task_result_throws_to_framework_fallback_without_pi_tui(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["renderResultMissingCtor"]["threw"] is True
+    assert "task" in result["renderResultMissingCtor"]["message"]
+    # Same pi-tui-import race posture as the renderCall equivalent test above.
+    registered = result["registeredRenderResultViaContext"]
+    if registered["threw"]:
+        assert "task" in registered["message"]
+    else:
+        assert registered["value"] is not None, "resolved path must return a component, not undefined"
+
+
+@requires_node
+def test_render_task_result_builds_header_plus_body_text(subagent_root, tmp_path_factory):
+    """Assert the resolved path builds a single Text combining the colored header and the
+    agent's own output text, with (0, 0) padding matching the call-line renderer."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultResolved"]
+    assert outcome["threw"] is False
+    resolved = outcome["value"]
+    assert resolved["text"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingXhigh>(xhigh)</thinkingXhigh>"
+        "\n\n<toolOutput>agent output</toolOutput>"
+    )
+    assert [resolved["px"], resolved["py"]] == [0, 0]
+
+
+@requires_node
+def test_render_task_result_collapses_long_body_to_preview_lines_by_default(subagent_root, tmp_path_factory):
+    """A dispatch's output must collapse by default, matching Pi's own createResultFallback()
+    contract (every other tool row truncates to a preview when not expanded) — this was a real
+    regression found in review: a naive first cut always dumped the full, possibly-huge output
+    unconditionally, unlike every other tool result in the TUI."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultLongBodyCollapsed"]
+    assert outcome["threw"] is False
+    text = outcome["value"]["text"]
+    shown_lines = [f"<toolOutput>line {i}</toolOutput>" for i in range(1, 11)]
+    assert text.endswith("\n\n" + "\n".join(shown_lines) + "<muted>\n... (5 more lines — expand to see all)</muted>")
+    assert "line 11" not in text
+
+
+@requires_node
+def test_render_task_result_shows_full_body_when_expanded(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultLongBodyExpanded"]
+    assert outcome["threw"] is False
+    text = outcome["value"]["text"]
+    assert "line 15" in text
+    assert "more lines" not in text
+
+
+@requires_node
+def test_render_task_result_with_no_body_shows_only_the_header(subagent_root, tmp_path_factory):
+    """No content text (an edge case, not a real dispatch shape today) must render just the
+    header, not a dangling separator or an empty truncation marker."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderResultNoBody"]
+    assert outcome["threw"] is False
+    assert outcome["value"]["text"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    )
+
+
+@requires_node
 def test_subagent_unknown_agent_reports_available_list(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory)
     assert result["notFound"]["ok"] is False
@@ -1486,6 +1700,7 @@ def test_subagent_success_builds_expected_argv_and_cleans_up_temp_file(subagent_
     assert args[exclude_idx + 1] == "task,subagent"
     assert "--no-session" in args
     assert "--model" not in args, "no --model flag when ctx.model is undefined"
+    assert "--thinking" not in args, "no --thinking flag when ctx.model is undefined"
 
     assert result["promptFileGoneAfterSuccess"] is True
 
@@ -1506,13 +1721,33 @@ def test_subagent_composed_prompt_contains_agent_body_and_preloaded_skill_conten
 
 @requires_node
 def test_subagent_passes_model_when_ctx_model_defined(subagent_root, tmp_path_factory):
-    """real-agent has no `model:` frontmatter tier, so this exercises the fallback path:
-    ctx.model is passed through to --model unchanged. The tier-resolution path is covered
-    separately below (tiered-agent)."""
+    """real-agent has no `model:` frontmatter tier, so this exercises the `tier-unknown`
+    fallback path: ctx.model is passed through to --model unchanged, no --thinking (no parent
+    thinking level was passed), and the fallback is surfaced as a UI warning plus a
+    `[swe-workbench] ...` content line. The tier-resolution success path is covered separately
+    below (tiered-agent)."""
     result = _subagent_result(subagent_root, tmp_path_factory)
     args = result["withModelExecCalls"][0]["args"]
     model_idx = args.index("--model")
     assert args[model_idx + 1] == "anthropic/claude-x"
+    assert "--thinking" not in args
+
+    run = result["withModel"]
+    assert run["ok"] is True
+    details = run["result"]["details"]
+    assert details["agent"] == "real-agent"
+    assert details["model"] == "anthropic/claude-x"
+    assert details["fallbackReason"] == "tier-unknown"
+    assert details["policySource"] == "parent-fallback"
+    assert details.get("tier") is None
+    content = run["result"]["content"]
+    assert len(content) == 2, "a fallback warning line must be prepended to the stdout text"
+    assert content[0]["text"].startswith("[swe-workbench] ")
+    assert "tier-unknown" in content[0]["text"]
+    assert content[1] == {"type": "text", "text": "agent output"}
+
+    assert len(result["withModelNotifyCalls"]) == 1
+    assert result["withModelNotifyCalls"][0]["level"] == "warning"
 
 
 @requires_node
@@ -1528,6 +1763,20 @@ def test_subagent_nonzero_exit_surfaces_stderr(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="failure")
     assert result["execFails"]["ok"] is False
     assert "boom" in result["execFails"]["message"]
+
+
+@requires_node
+def test_subagent_nonzero_exit_includes_fallback_warning_when_dispatch_degraded(subagent_root, tmp_path_factory):
+    """A dispatch that already fell back to the parent model (real-agent has no `model:` tier,
+    so this is a tier-unknown fallback) and then ALSO exits non-zero must surface both signals —
+    losing the fallback context on a failure is exactly when a caller most needs to know the
+    dispatched model wasn't the intended one."""
+    result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="failure")
+    run = result["withModel"]
+    assert run["ok"] is False
+    assert "exited 1" in run["message"]
+    assert "boom" in run["message"]
+    assert "tier-unknown" in run["message"]
 
 
 _CAP_OUTPUT_DRIVER = """
@@ -1574,19 +1823,32 @@ def test_cap_output_does_not_split_a_surrogate_pair_at_the_boundary(tmp_path_fac
 
 @requires_node
 def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_path_factory):
-    """End-to-end: tiered-agent's `model: haiku` frontmatter, combined with ctx.model on
-    anthropic and a fabricated ctx.modelRegistry.getAvailable() candidate list, must resolve to
-    the haiku-tier candidate — not the parent's own (sonnet) model."""
+    """End-to-end: tiered-agent's `model: haiku`/`effort: high` frontmatter, combined with
+    ctx.model on anthropic and a fabricated ctx.modelRegistry.getAvailable() candidate list, must
+    resolve to the haiku-tier candidate and its policy thinking level — not the parent's own
+    (sonnet) model, and no fallback warning."""
     result = _subagent_result(subagent_root, tmp_path_factory)
-    assert result["tieredAgentResolvesHaiku"]["ok"] is True
+    run = result["tieredAgentResolvesHaiku"]
+    assert run["ok"] is True
     args = result["tieredAgentExecCalls"][0]["args"]
     model_idx = args.index("--model")
     assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+    thinking_idx = args.index("--thinking")
+    assert args[thinking_idx + 1] == "high"
+
+    details = run["result"]["details"]
+    assert details["tier"] == "haiku"
+    assert details["portableEffort"] == "high"
+    assert details["policySource"] == "model-policy"
+    assert details.get("fallbackReason") is None
+    assert run["result"]["content"] == [{"type": "text", "text": "agent output"}], (
+        "no fallback warning line on the success path"
+    )
 
 
 @requires_node
 def test_subagent_tiered_agent_ignores_other_provider_candidates(subagent_root, tmp_path_factory):
-    """The candidate list handed to resolveModelForTier must already be filtered to
+    """The candidate list handed to resolveDispatch must already be filtered to
     ctx.model.provider — an openai-codex candidate must never leak into an anthropic
     resolution, even when both are present in ctx.modelRegistry.getAvailable()'s raw result."""
     result = _subagent_result(subagent_root, tmp_path_factory)
@@ -1594,34 +1856,131 @@ def test_subagent_tiered_agent_ignores_other_provider_candidates(subagent_root, 
     args = result["tieredAgentIgnoresOtherProviderExecCalls"][0]["args"]
     model_idx = args.index("--model")
     assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+    thinking_idx = args.index("--thinking")
+    assert args[thinking_idx + 1] == "high"
 
 
 @requires_node
 def test_subagent_untiered_agent_falls_back_to_parent_model(subagent_root, tmp_path_factory):
     """real-agent has no `model:` tier — even with a populated modelRegistry available, the
-    resolved model must be the parent's own (ctx.model) unchanged, not something derived from
-    the tier table."""
+    resolved model must be the parent's own (ctx.model) unchanged, not something derived from the
+    policy table, and the parent's own thinking level ("high", passed as ctx.thinkingLevel) must
+    survive unchanged onto --thinking."""
     result = _subagent_result(subagent_root, tmp_path_factory)
-    assert result["untieredAgentFallsBackToParentModel"]["ok"] is True
+    run = result["untieredAgentFallsBackToParentModel"]
+    assert run["ok"] is True
     args = result["untieredAgentFallsBackExecCalls"][0]["args"]
     model_idx = args.index("--model")
     assert args[model_idx + 1] == "anthropic/claude-sonnet-5"
+    thinking_idx = args.index("--thinking")
+    assert args[thinking_idx + 1] == "high"
+
+    details = run["result"]["details"]
+    assert details["fallbackReason"] == "tier-unknown"
+    assert details["policySource"] == "parent-fallback"
+    assert len(result["untieredAgentFallsBackNotifyCalls"]) == 1
+
+
+@requires_node
+def test_subagent_fallback_omits_thinking_when_parent_has_none(subagent_root, tmp_path_factory):
+    """The same tier-unknown fallback, but with no ctx.thinkingLevel at all — --thinking must be
+    omitted entirely, never sent with some default value."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    assert result["untieredAgentNoParentThinking"]["ok"] is True
+    args = result["untieredAgentNoParentThinkingExecCalls"][0]["args"]
+    assert "--model" in args
+    assert "--thinking" not in args
+
+
+@requires_node
+def test_subagent_effort_unknown_falls_back_to_parent_model(subagent_root, tmp_path_factory):
+    """tiered-no-effort-agent has a known `model: sonnet` tier but no `effort:` — resolution must
+    still fall back to the parent's own model/thinking (never a partially-resolved policy id),
+    with fallbackReason "effort-unknown" and the known tier still reported."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    run = result["effortUnknownFallback"]
+    assert run["ok"] is True
+    args = result["effortUnknownExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5"
+    assert "--thinking" not in args
+
+    details = run["result"]["details"]
+    assert details["fallbackReason"] == "effort-unknown"
+    assert details["policySource"] == "parent-fallback"
+    assert details["tier"] == "sonnet"
+    assert details.get("portableEffort") is None
+    assert len(result["effortUnknownNotifyCalls"]) == 1
+
+
+@requires_node
+def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root, tmp_path_factory):
+    """tiered-agent's tier is known, but ctx.model.provider ("google") has no MODEL_POLICY row —
+    resolution must fall back to the parent's own model unchanged with fallbackReason
+    "provider-unsupported", even though the tier itself is recognized."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    run = result["providerUnsupportedFallback"]
+    assert run["ok"] is True
+    args = result["providerUnsupportedExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "google/gemini-x"
+    assert "--thinking" not in args
+
+    details = run["result"]["details"]
+    assert details["fallbackReason"] == "provider-unsupported"
+    assert details["policySource"] == "parent-fallback"
+    assert len(result["providerUnsupportedNotifyCalls"]) == 1
+
+
+@requires_node
+def test_subagent_model_unavailable_falls_back_to_parent_model(subagent_root, tmp_path_factory):
+    """tiered-agent's tier/effort resolve via policy to claude-haiku-4-5, but the candidate pool
+    doesn't carry that exact id — resolution must fall back to the parent's own model unchanged
+    with fallbackReason "model-unavailable", never a substring or nearby-id match."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    run = result["modelUnavailableFallback"]
+    assert run["ok"] is True
+    args = result["modelUnavailableExecCalls"][0]["args"]
+    model_idx = args.index("--model")
+    assert args[model_idx + 1] == "anthropic/claude-sonnet-5"
+
+    details = run["result"]["details"]
+    assert details["fallbackReason"] == "model-unavailable"
+    assert details["policySource"] == "parent-fallback"
+    assert details["tier"] == "haiku"
+    assert details["portableEffort"] == "high"
+    assert len(result["modelUnavailableNotifyCalls"]) == 1
+
+
+@requires_node
+def test_subagent_fallback_headless_skips_notify_but_still_warns_in_content(subagent_root, tmp_path_factory):
+    """hasUI:false (print mode, the real shape for every dispatched child) must never call
+    ctx.ui.notify — there's no UI to receive it — but the warning must still land in the tool
+    result content, since that's the only place a headless caller can see it."""
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    run = result["fallbackHeadless"]
+    assert run["ok"] is True
+    assert result["fallbackHeadlessNotifyCalls"] == []
+    content = run["result"]["content"]
+    assert content[0]["text"].startswith("[swe-workbench] ")
 
 
 @requires_node
 def test_subagent_respects_scoped_models_over_full_registry(subagent_root, tmp_path_factory):
     """A session-scoped model list (ctx.scopedModels, from --models/enabledModels) must win over
     the full ctx.modelRegistry.getAvailable() catalog — a haiku candidate that exists in the full
-    catalog but was never scoped into this session must not be reachable, and resolveTargetModel
+    catalog but was never scoped into this session must not be reachable, and resolveTargetDispatch
     must not even query the full registry when scoping is configured."""
     result = _subagent_result(subagent_root, tmp_path_factory)
-    assert result["scopedModelsRestrictsResolution"]["ok"] is True
+    run = result["scopedModelsRestrictsResolution"]
+    assert run["ok"] is True
     args = result["scopedModelsExecCalls"][0]["args"]
     model_idx = args.index("--model")
     assert args[model_idx + 1] == "anthropic/claude-sonnet-5", (
         "haiku isn't in scope, so resolution must fall back to the parent's (sonnet) model"
     )
     assert result["scopedModelsBypassedModelRegistry"] is True
+    assert run["result"]["details"]["fallbackReason"] == "model-unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -1769,10 +2128,10 @@ def test_compose_system_prompt_states_each_skills_resolvable_directory(agent_spe
 
 
 # ---------------------------------------------------------------------------
-# Behavioural: model-tier.ts's pure functions directly. No stub `pi`/`ctx` needed.
+# Behavioural: model-policy.ts's pure functions directly. No stub `pi`/`ctx` needed.
 # ---------------------------------------------------------------------------
 
-_MODEL_TIER_DRIVER = """
+_MODEL_POLICY_DRIVER = """
 import { pathToFileURL } from "node:url";
 
 const [, , modPath, configJson] = process.argv;
@@ -1787,125 +2146,204 @@ const out = {
     other: mod.isKnownModelTier("gpt-5"),
     undef: mod.isKnownModelTier(undefined),
   },
+  knownEfforts: {
+    low: mod.isKnownEffort("low"),
+    medium: mod.isKnownEffort("medium"),
+    high: mod.isKnownEffort("high"),
+    xhigh: mod.isKnownEffort("xhigh"),
+    max: mod.isKnownEffort("max"),
+    other: mod.isKnownEffort("ultra"),
+    undef: mod.isKnownEffort(undefined),
+  },
 };
-for (const [label, { provider, tier, candidates }] of Object.entries(config.cases)) {
-  out[label] = mod.resolveModelForTier(provider, tier, candidates) ?? null;
+for (const [label, c] of Object.entries(config.cases)) {
+  out[label] = mod.resolveDispatch({ parent: c.parent, tier: c.tier, effort: c.effort, candidates: c.candidates });
 }
 console.log(JSON.stringify(out));
 """
 
 
-def _model_tier_result(tmp_path_factory):
-    # Verbatim id list + order from the installed SDK's bundled Anthropic catalog
-    # (node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
-    # providers/data/anthropic.json) — NOT a clean one-id-per-tier fixture. This is deliberate:
-    # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the
-    # bare flagship id), in catalog order, not chronological or shortest-first order. A resolver
-    # that just took the first substring match would silently pick a stale snapshot here — this
-    # fixture is what actually caught that bug during review.
-    anthropic_candidates = [
-        {"provider": "anthropic", "id": "claude-fable-5"},
-        {"provider": "anthropic", "id": "claude-haiku-4-5"},
-        {"provider": "anthropic", "id": "claude-haiku-4-5-20251001"},
-        {"provider": "anthropic", "id": "claude-opus-4-5"},
-        {"provider": "anthropic", "id": "claude-opus-4-5-20251101"},
-        {"provider": "anthropic", "id": "claude-opus-4-6"},
-        {"provider": "anthropic", "id": "claude-opus-4-7"},
-        {"provider": "anthropic", "id": "claude-opus-4-8"},
-        {"provider": "anthropic", "id": "claude-opus-5"},
-        {"provider": "anthropic", "id": "claude-sonnet-4-5"},
-        {"provider": "anthropic", "id": "claude-sonnet-4-5-20250929"},
-        {"provider": "anthropic", "id": "claude-sonnet-4-6"},
-        {"provider": "anthropic", "id": "claude-sonnet-5"},
-    ]
-    codex_candidates = [
-        {"provider": "openai-codex", "id": "gpt-5.6-luna"},
-        {"provider": "openai-codex", "id": "gpt-5.6-sol"},
-        {"provider": "openai-codex", "id": "gpt-5.6-terra"},
-        {"provider": "openai-codex", "id": "gpt-5.4-mini"},
-    ]
-    zai_full_candidates = [
-        {"provider": "zai", "id": "glm-5.3"},
-        {"provider": "zai", "id": "glm-5.2"},
-        {"provider": "zai", "id": "glm-5.2-highspeed"},
-    ]
-    zai_no_highspeed_candidates = [
-        {"provider": "zai", "id": "glm-5.3"},
-        {"provider": "zai", "id": "glm-5.2"},
-    ]
-    config = {
-        "cases": {
-            "anthropicOpus": {"provider": "anthropic", "tier": "opus", "candidates": anthropic_candidates},
-            "anthropicSonnet": {"provider": "anthropic", "tier": "sonnet", "candidates": anthropic_candidates},
-            "anthropicHaiku": {"provider": "anthropic", "tier": "haiku", "candidates": anthropic_candidates},
-            "codexOpus": {"provider": "openai-codex", "tier": "opus", "candidates": codex_candidates},
-            "codexSonnet": {"provider": "openai-codex", "tier": "sonnet", "candidates": codex_candidates},
-            "codexHaiku": {"provider": "openai-codex", "tier": "haiku", "candidates": codex_candidates},
-            "zaiOpus": {"provider": "zai", "tier": "opus", "candidates": zai_full_candidates},
-            "zaiSonnet": {"provider": "zai", "tier": "sonnet", "candidates": zai_full_candidates},
-            "zaiHaikuPrefersHighspeed": {"provider": "zai", "tier": "haiku", "candidates": zai_full_candidates},
-            "zaiHaikuFallsBackWithoutHighspeed": {
-                "provider": "zai",
-                "tier": "haiku",
-                "candidates": zai_no_highspeed_candidates,
-            },
-            "unknownProvider": {"provider": "google", "tier": "haiku", "candidates": []},
-            "noMatchingCandidate": {"provider": "anthropic", "tier": "haiku", "candidates": []},
-        },
+# Verbatim id list + order from the installed SDK's bundled Anthropic catalog
+# (node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/
+# providers/data/anthropic.json) — NOT a clean one-id-per-tier fixture. This is deliberate:
+# multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the bare
+# flagship id). resolveDispatch's exact-id matching must pick precisely the bare flagship id
+# despite these lookalikes sharing the pool, never a substring/nearby match.
+_ANTHROPIC_CANDIDATES = [
+    {"provider": "anthropic", "id": "claude-fable-5"},
+    {"provider": "anthropic", "id": "claude-haiku-4-5"},
+    {"provider": "anthropic", "id": "claude-haiku-4-5-20251001"},
+    {"provider": "anthropic", "id": "claude-opus-4-5"},
+    {"provider": "anthropic", "id": "claude-opus-4-5-20251101"},
+    {"provider": "anthropic", "id": "claude-opus-4-6"},
+    {"provider": "anthropic", "id": "claude-opus-4-7"},
+    {"provider": "anthropic", "id": "claude-opus-4-8"},
+    {"provider": "anthropic", "id": "claude-opus-5"},
+    {"provider": "anthropic", "id": "claude-sonnet-4-5"},
+    {"provider": "anthropic", "id": "claude-sonnet-4-5-20250929"},
+    {"provider": "anthropic", "id": "claude-sonnet-4-6"},
+    {"provider": "anthropic", "id": "claude-sonnet-5"},
+]
+_CODEX_CANDIDATES = [
+    {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+    {"provider": "openai-codex", "id": "gpt-5.6-sol"},
+    {"provider": "openai-codex", "id": "gpt-5.6-terra"},
+    {"provider": "openai-codex", "id": "gpt-5.4-mini"},
+]
+_ZAI_CANDIDATES = [
+    {"provider": "zai", "id": "glm-5.3"},
+    {"provider": "zai", "id": "glm-5.2"},
+    {"provider": "zai", "id": "glm-5.2-highspeed"},
+]
+_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES}
+_PARENT_BY_PROVIDER = {
+    "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
+    "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
+    "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
+}
+_DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
+
+# The ticket's 3x3 default matrix, expected (model id, thinking) per (provider, tier), fed
+# through DEFAULT_TIER_EFFORT — same source of truth as test_pi_contract.py's
+# _TICKET_DEFAULT_MATRIX, exercised here via the real resolveDispatch() call site instead of a
+# raw MODEL_POLICY table dump.
+_EXPECTED_DEFAULT_CELL = {
+    "anthropic": {
+        "opus": ("claude-opus-5", "high"),
+        "sonnet": ("claude-sonnet-5", "xhigh"),
+        "haiku": ("claude-haiku-4-5", "high"),
+    },
+    "openai-codex": {
+        "opus": ("gpt-5.6-sol", "high"),
+        "sonnet": ("gpt-5.6-terra", "xhigh"),
+        "haiku": ("gpt-5.6-luna", "high"),
+    },
+    "zai": {
+        "opus": ("glm-5.3", "max"),
+        "sonnet": ("glm-5.3", "high"),
+        "haiku": ("glm-5.2-highspeed", "high"),
+    },
+}
+
+
+def _model_policy_result(tmp_path_factory):
+    cases = {}
+    for provider, tiers in _EXPECTED_DEFAULT_CELL.items():
+        for tier in tiers:
+            cases[f"default_{provider}_{tier}"] = {
+                "parent": _PARENT_BY_PROVIDER[provider],
+                "tier": tier,
+                "effort": _DEFAULT_TIER_EFFORT[tier],
+                "candidates": _CANDIDATES_BY_PROVIDER[provider],
+            }
+
+    # Non-default zai efforts, to prove the shifted tables aren't just correct at their one
+    # ticket-pinned point each.
+    cases["zai_opus_low"] = {
+        "parent": _PARENT_BY_PROVIDER["zai"], "tier": "opus", "effort": "low", "candidates": _ZAI_CANDIDATES,
     }
+    cases["zai_sonnet_max"] = {
+        "parent": _PARENT_BY_PROVIDER["zai"], "tier": "sonnet", "effort": "max", "candidates": _ZAI_CANDIDATES,
+    }
+
+    # One case per FallbackReason.
+    cases["fallback_provider_unsupported"] = {
+        "parent": {"provider": "google", "id": "gemini-x", "thinking": "medium"},
+        "tier": "opus", "effort": "high", "candidates": [],
+    }
+    cases["fallback_tier_unknown"] = {
+        "parent": _PARENT_BY_PROVIDER["anthropic"], "tier": "unknown-tier", "effort": "high",
+        "candidates": _ANTHROPIC_CANDIDATES,
+    }
+    cases["fallback_effort_unknown"] = {
+        "parent": _PARENT_BY_PROVIDER["anthropic"], "tier": "opus", "effort": "unknown-effort",
+        "candidates": _ANTHROPIC_CANDIDATES,
+    }
+    cases["fallback_model_unavailable"] = {
+        "parent": _PARENT_BY_PROVIDER["anthropic"], "tier": "opus", "effort": "high",
+        "candidates": [c for c in _ANTHROPIC_CANDIDATES if c["id"] != "claude-opus-5"],
+    }
+
     return _run_node(
-        _MODEL_TIER_DRIVER, [str(MODEL_TIER_TS), json.dumps(config)], tmp_path_factory, label="pi-model-tier-driver"
+        _MODEL_POLICY_DRIVER, [str(MODEL_POLICY_TS), json.dumps({"cases": cases})], tmp_path_factory,
+        label="pi-model-policy-driver",
     )
 
 
 @requires_node
-def test_is_known_model_tier(tmp_path_factory):
-    result = _model_tier_result(tmp_path_factory)
-    assert result["knownTiers"] == {
-        "haiku": True,
-        "sonnet": True,
-        "opus": True,
-        "other": False,
-        "undef": False,
+def test_is_known_model_tier_and_effort(tmp_path_factory):
+    result = _model_policy_result(tmp_path_factory)
+    assert result["knownTiers"] == {"haiku": True, "sonnet": True, "opus": True, "other": False, "undef": False}
+    assert result["knownEfforts"] == {
+        "low": True, "medium": True, "high": True, "xhigh": True, "max": True, "other": False, "undef": False,
     }
 
 
 @requires_node
-def test_resolve_model_for_tier_anthropic(tmp_path_factory):
-    """anthropic_candidates carries the real bundled catalog's dated/versioned siblings
-    (claude-opus-4-5..4-8 alongside claude-opus-5, etc.) — this must still resolve to the bare
-    flagship id via shortestMatch, not whichever same-substring id happens to appear first in
-    catalog order."""
-    result = _model_tier_result(tmp_path_factory)
-    assert result["anthropicOpus"]["id"] == "claude-opus-5"
-    assert result["anthropicSonnet"]["id"] == "claude-sonnet-5"
-    assert result["anthropicHaiku"]["id"] == "claude-haiku-4-5"
+@pytest.mark.parametrize(
+    "provider,tier",
+    [(p, t) for p, tiers in _EXPECTED_DEFAULT_CELL.items() for t in tiers],
+)
+def test_resolve_dispatch_default_cell(tmp_path_factory, provider, tier):
+    """Every (provider, tier) cell at its tier's default effort resolves to the ticket's 3x3
+    matrix — exact model id, exact effective thinking level, policySource "model-policy", no
+    fallbackReason."""
+    result = _model_policy_result(tmp_path_factory)
+    expected_model, expected_thinking = _EXPECTED_DEFAULT_CELL[provider][tier]
+    cell = result[f"default_{provider}_{tier}"]
+    assert cell["model"] == {"provider": provider, "id": expected_model}
+    assert cell["thinking"] == expected_thinking
+    assert cell["tier"] == tier
+    assert cell["portableEffort"] == _DEFAULT_TIER_EFFORT[tier]
+    assert cell["policySource"] == "model-policy"
+    assert cell.get("fallbackReason") is None
 
 
 @requires_node
-def test_resolve_model_for_tier_openai_codex(tmp_path_factory):
-    result = _model_tier_result(tmp_path_factory)
-    assert result["codexOpus"]["id"] == "gpt-5.6-sol"
-    assert result["codexSonnet"]["id"] == "gpt-5.6-terra"
-    assert result["codexHaiku"]["id"] == "gpt-5.6-luna"
+def test_resolve_dispatch_zai_thinking_table_beyond_the_default_cell(tmp_path_factory):
+    """Z.AI's shifted tables must hold at more than their one ticket-pinned default point —
+    opus shifts every effort up toward max, sonnet shifts every effort down toward low."""
+    result = _model_policy_result(tmp_path_factory)
+    assert result["zai_opus_low"]["thinking"] == "high"
+    assert result["zai_sonnet_max"]["thinking"] == "xhigh"
 
 
 @requires_node
-def test_resolve_model_for_tier_zai_haiku_prefers_highspeed_then_falls_back(tmp_path_factory):
-    """zai's haiku row lists two patterns in priority order — glm-5.2-highspeed first, plain
-    glm-5.2 as the fallback when the faster variant isn't actually available."""
-    result = _model_tier_result(tmp_path_factory)
-    assert result["zaiOpus"]["id"] == "glm-5.3"
-    assert result["zaiSonnet"]["id"] == "glm-5.3"
-    assert result["zaiHaikuPrefersHighspeed"]["id"] == "glm-5.2-highspeed"
-    assert result["zaiHaikuFallsBackWithoutHighspeed"]["id"] == "glm-5.2"
+def test_resolve_dispatch_exact_id_ignores_lookalike_candidates(tmp_path_factory):
+    """The anthropic candidate pool carries dated/versioned siblings of the flagship ids
+    (claude-opus-4-5..4-8 alongside claude-opus-5, etc.) — exact-id equality must resolve to
+    precisely the policy's own id, never a lookalike, regardless of how many siblings share the
+    pool or what order they appear in."""
+    result = _model_policy_result(tmp_path_factory)
+    assert result["default_anthropic_opus"]["model"]["id"] == "claude-opus-5"
+    assert result["default_anthropic_sonnet"]["model"]["id"] == "claude-sonnet-5"
+    assert result["default_anthropic_haiku"]["model"]["id"] == "claude-haiku-4-5"
 
 
 @requires_node
-def test_resolve_model_for_tier_degrades_to_undefined_when_unresolvable(tmp_path_factory):
-    """An unknown provider (no MODEL_TIER_TABLE row) and a known provider with no matching
-    candidate both return undefined — subagent.ts's resolveTargetModel treats undefined as
-    'fall back to the parent's current model unchanged', never as an error."""
-    result = _model_tier_result(tmp_path_factory)
-    assert result["unknownProvider"] is None
-    assert result["noMatchingCandidate"] is None
+@pytest.mark.parametrize(
+    "label,reason",
+    [
+        ("fallback_provider_unsupported", "provider-unsupported"),
+        ("fallback_tier_unknown", "tier-unknown"),
+        ("fallback_effort_unknown", "effort-unknown"),
+        ("fallback_model_unavailable", "model-unavailable"),
+    ],
+)
+def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
+    """Every FallbackReason returns the parent's own model/thinking unchanged, with
+    policySource "parent-fallback" and the structured reason set — never a throw, never a
+    partially-resolved id."""
+    result = _model_policy_result(tmp_path_factory)
+    cell = result[label]
+    parent = cell["model"]
+    case_parent = {
+        "fallback_provider_unsupported": {"provider": "google", "id": "gemini-x"},
+        "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
+        "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
+        "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5"},
+    }[label]
+    assert parent == case_parent
+    assert cell["thinking"] == "medium", "the parent's own ctx.thinkingLevel must survive unchanged"
+    assert cell["policySource"] == "parent-fallback"
+    assert cell["fallbackReason"] == reason

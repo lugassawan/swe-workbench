@@ -2,6 +2,7 @@
 name: auditor
 description: Cold-start codebase audit specialist — readonly multi-domain sweep across security, performance, reliability, tooling, and testing. Surfaces ranked findings with root-cause reasoning chains and counter-evidence calibration. Invoke when you want a time-boxed audit of an unfamiliar codebase, not a single-domain depth-first pass.
 model: sonnet
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-code-review

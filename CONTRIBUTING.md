@@ -133,7 +133,7 @@ hardcoded version literal is caught well before the release script ever runs.
 npm install
 ```
 
-**Develop:** edit `pi/extensions/*.ts`. Most of the adapter (`agent-spec.ts`, `model-tier.ts`, `tool-vocab.ts`) is deliberately SDK-free — it imports `@earendil-works/*` only as elided types, never at runtime — so most changes need no `pi` CLI installed to exercise.
+**Develop:** edit `pi/extensions/*.ts`. Most of the adapter (`agent-spec.ts`, `model-policy.ts`, `tool-vocab.ts`) is deliberately SDK-free — it imports `@earendil-works/*` only as elided types, never at runtime — so most changes need no `pi` CLI installed to exercise.
 
 **Typecheck:**
 

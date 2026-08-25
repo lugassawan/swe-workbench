@@ -2,6 +2,7 @@
 name: security-auditor
 description: Security audit specialist — depth-first review of a diff or file for OWASP Top 10, secret leakage, insecure-by-default APIs, and language-specific foot-guns. Invoke when you want a focused security report, not a holistic code review.
 model: opus
+effort: high
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-security

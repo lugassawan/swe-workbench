@@ -240,40 +240,61 @@ this dispatcher is unaffected — it is not a `bash` tool call, so the real disp
 touches this guard. Non-recursive `pi` subcommands (`pi --version`, `pi list`, `pi auth check`)
 stay allowed.
 
-**Model-tier mapping: an agent's `model: haiku|sonnet|opus` frontmatter picks a real model, by
-name, from a table hardcoded in `pi/extensions/model-tier.ts`.** An earlier iteration of this
-decision cut model-tier mapping entirely, on the grounds that a project-committed `.pi/settings.json`
+**Model-dispatch policy: an agent's `model: haiku|sonnet|opus` tier plus its `effort:
+low|medium|high|xhigh|max` frontmatter resolve to an exact model id and effective thinking level,
+from a table hardcoded in `pi/extensions/model-policy.ts`.** An earlier iteration of this decision
+cut model-tier mapping entirely, on the grounds that a project-committed `.pi/settings.json`
 reading a `modelTiers` block would be a real exfiltration primitive — redirecting subagent traffic
 to an attacker-chosen provider/endpoint via a config surface outside normal code review. That
 concern is real, but it is a property of *where the mapping lives and what it can point at*, not
-of model-tier mapping itself, and the actual implementation avoids it entirely:
+of model-dispatch mapping itself, and the actual implementation avoids it entirely:
 
-- The table (`MODEL_TIER_TABLE`) is code shipped in this plugin's own reviewed source tree
+- The table (`MODEL_POLICY`) is code shipped in this plugin's own reviewed source tree
   (`pi/extensions/`) — the same trust boundary as every guard script path and tool-token mapping
   already hardcoded elsewhere in this file group, not an independently-editable runtime settings
-  file.
+  file. There is no runtime, user-global, or project-local override surface for it.
 - Resolution is scoped to `ctx.model.provider` — whichever provider the parent session is already
   on — and only ever selects among `ctx.scopedModels` (when the session is scoped via
   `--models`/`enabledModels`) or, when unscoped, `ctx.modelRegistry.getAvailable()` results
   (models the user has already configured credentials for). It never introduces a new provider,
-  baseUrl, or apiKey; a stale or missing table entry degrades to the parent's own current model
-  unchanged, never to something else.
-- Matching is by substring against `Model.id` (e.g. `"opus"` matches `claude-opus-5`, `"sol"`
-  matches `gpt-5.6-sol`), not exact-version pinning, so a provider's routine model-id version bumps
-  don't silently break the mapping. Substring matching alone is ambiguous, though: the bundled
-  Anthropic catalog carries dated/versioned siblings of a bare flagship id (`claude-opus-4-5`,
-  `claude-opus-4-5-20251101`, `claude-opus-4-6`... alongside `claude-opus-5`, all containing
-  `"opus"`), in catalog order rather than recency order — a plain first-match would silently
-  resolve to a stale snapshot. Resolution picks the *shortest* matching id instead: a
-  dated/versioned sibling is always the bare id plus extra suffix characters, so it can never be
-  shorter, making this a reliable, provider-catalog-agnostic tiebreak rather than a
-  version-pinning hack. `tests/test_pi_extension.py`'s anthropic fixture reproduces the real
-  bundled catalog's ambiguity verbatim to lock this in.
+  baseUrl, or apiKey; a stale or missing table entry, or a tier/effort the table has no row for,
+  degrades to the parent's own current model and thinking level unchanged, never to something
+  else.
+- Matching is **exact id equality** against the candidate pool, not a substring or shortest-match
+  heuristic. An earlier version of this design matched by substring against `Model.id` (e.g.
+  `"opus"` matches `claude-opus-5`) to survive routine model-id version bumps without an edit here
+  — but substring matching alone is ambiguous: the bundled Anthropic catalog carries dated/versioned
+  siblings of a bare flagship id (`claude-opus-4-5`, `claude-opus-4-5-20251101`, `claude-opus-4-6`...
+  alongside `claude-opus-5`, all containing `"opus"`), in catalog order rather than recency order,
+  so a plain first-match would silently resolve to a stale snapshot. A shortest-match tiebreak
+  patched that specific ambiguity, but it was still a heuristic riding on the assumption that the
+  intended id is always the shortest match — a catalog reshuffle, a new sibling id, or a provider
+  shipping a shorter-named model could silently re-point a tier at the wrong model, with no
+  signal. Exact id equality removes the heuristic entirely: `MODEL_POLICY` names precisely which id
+  each (provider, tier) cell resolves to, and a name no longer present in the candidate pool is a
+  `model-unavailable` fallback — loud (a structured reason, a UI warning when available, and a
+  `[swe-workbench] …` line in the tool result content even headless) rather than a silent
+  wrong-model resolution. This strengthens the trust boundary above rather than weakening it: the
+  set of models `task` can ever dispatch to is now a fixed, reviewable list of exact ids, not
+  whatever a substring happens to match in the parent's authenticated catalog at run time.
+- Reasoning depth is resolved the same way, not left to the parent session's own `--thinking`
+  setting: each (provider, tier) cell also carries an exhaustive portable-effort ->
+  effective-thinking-level map. For `anthropic` and `openai-codex` this is the identity (portable
+  effort passes straight through); for `zai`, `glm-5.3` serves both the `opus` and `sonnet` tier,
+  so the map shifts effort toward `max` for `opus` and toward `low` for `sonnet`, clamped at each
+  end, to keep the two tiers distinguishable on the one axis left once the model id itself can't
+  disambiguate them. See `docs/cost-tiers.md`'s "On the Pi Coding Agent" section for the full
+  matrix, the Z.AI clamp caveat (the installed SDK further clamps a nominal thinking level per
+  what its own bundled catalog *declares* the target model supports — a limitation of that
+  pinned catalog data today, not of `glm-5.3` itself, which per Z.AI's own spec genuinely
+  supports `max` — verified, not reimplemented, in `tests/test_pi_contract.py`'s pinned-catalog
+  test), and the four fallback reasons.
 
-`tests/test_pi_contract.py::test_model_tiers_are_inventoried` and
-`test_model_tier_table_is_exhaustive_over_known_tiers` ratchet the tier vocabulary and each
-provider row against the live `agents/*.md` inventory, the same pattern §2 already uses for tool
-tokens and skill ids.
+`tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
+exhaustiveness check over `MODEL_POLICY`'s 3 providers x 3 tiers x 5 efforts ratchet the tier and
+effort vocabulary against the live `agents/*.md` inventory, the same pattern §2 already uses for
+tool tokens and skill ids — plus a pinned-catalog test asserting every cell's exact model id
+actually exists in the bundled Pi SDK's provider data.
 
 **Preloaded skills state their own resolvable directory.** A skill's body sometimes points at its
 own `examples/` subdirectory ("see `examples/` for a worked implementation..." —
@@ -323,8 +344,10 @@ golden-inventory ratchet standing in for the type safety a generation step would
 
 - **Model-tier settings design reversed.** An earlier iteration planned a project-committed
   `.pi/settings.json` `modelTiers` block; §9 above records why that was reversed in favor of a
-  hardcoded `MODEL_TIER_TABLE` in reviewed source (`pi/extensions/model-tier.ts`) — a real
-  exfiltration primitive avoided, not the design that originally shipped.
+  hardcoded `MODEL_POLICY` table in reviewed source (`pi/extensions/model-policy.ts`) — a real
+  exfiltration primitive avoided, not the design that originally shipped. That table itself later
+  moved from substring/shortest-match resolution to exact-id resolution, and gained a portable
+  `effort:` -> effective-thinking-level axis — §9 above has the current design.
 - **Tier-2 tool set landed as 2 of 5 originally promised.** Only `ask_user_question`
   (`ask-user.ts`) and `task` (`subagent.ts`) are registered Pi tools today. A Pi-registered `LSP`
   tool was one of the tools scoped and then dropped — §8 above records why (the capability moved
