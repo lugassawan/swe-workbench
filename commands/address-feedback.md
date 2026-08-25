@@ -21,15 +21,17 @@ Inspect `$ARGUMENTS` plus `git rev-parse --abbrev-ref HEAD` and `git log --oneli
 
 Invoke `swe-workbench:workflow-address-feedback` with the resolved PR number and any ticket-context prelude from Step 2.
 
-The skill owns: pre-flight (`gh auth`, `gh pr view`), owner-identity check, thread fetch via GraphQL `reviewThreads`, per-thread A/C/D triage, Edit-tool fix application,
+The skill owns: pre-flight + fetch (via `swe-workbench-address-feedback-fetch`), owner-identity check, per-thread A/C/D triage, Edit-tool fix application,
 `swe-workbench:workflow-commit-and-pr` for committing, REST reply posting, GraphQL
-`resolveReviewThread` for resolved threads, and PR-metadata drift sync (Phase 6).
+`resolveReviewThread` for review threads (all three dispositions — ADDRESSED, CLARIFIED, DEFERRED —
+resolve; PR-level comments have no thread to resolve), and PR-metadata drift sync (Phase 6).
 
 Worktree handling belongs to the skill, not this command:
 
-- **Setup (Phase 2)** — reuses the current checkout when it is already on the PR head branch, or
-  an existing worktree registered for that branch; otherwise creates one **on the PR branch
-  itself** via `rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"` (plain `git worktree add`
-  fallback), so Phase 4 commits push straight to the PR.
-- **Cleanup (Phase 7)** — always removes a worktree it created, on success, `Q`-quit, or error,
-  while keeping the local PR head branch. Skipped when Phase 2 reused an existing checkout.
+- **Setup (Phase 2)** — via `swe-workbench-address-feedback-worktree acquire`, which reuses the
+  current checkout when it is already on the PR head branch, or an existing worktree registered
+  for that branch; otherwise creates one **on the PR branch itself**, so Phase 4 commits push
+  straight to the PR.
+- **Cleanup (Phase 7)** — via `swe-workbench-address-feedback-worktree release`, which always
+  removes a worktree it created, on success, `Q`-quit, or error, while keeping the local PR head
+  branch. No-ops when Phase 2 reused an existing checkout.

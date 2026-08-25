@@ -109,9 +109,14 @@ def test_address_feedback_command_cites_current_worktree_phases():
 
 
 def test_address_feedback_command_describes_pr_branch_worktree():
-    """commands/address-feedback.md must pin the current PR-branch worktree create form."""
+    """commands/address-feedback.md must name the worktree runtime command and
+    still describe worktree creation on the PR branch itself."""
     text = ADDRESS_FEEDBACK_CMD.read_text()
-    assert 'rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"' in text, (
+    assert "swe-workbench-address-feedback-worktree acquire" in text, (
+        "address-feedback.md must name swe-workbench-address-feedback-worktree acquire as "
+        "the Phase 2 worktree-setup mechanism"
+    )
+    assert "on the PR branch itself" in text, (
         "address-feedback.md must describe worktree creation on the PR branch itself"
     )
 

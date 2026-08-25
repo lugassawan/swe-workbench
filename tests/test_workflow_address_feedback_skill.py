@@ -2,16 +2,10 @@
 
 """Tests for the workflow-address-feedback skill (closes #218)."""
 
-import json
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
-import pytest
-
 import validate
-from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SKILL_DIR = ROOT / "skills" / "workflow-address-feedback"
@@ -253,22 +247,24 @@ def test_address_feedback_skill_phase6_preserves_trailer():
 # --- Cleanup (Phase 7) tests — AC#1, AC#2, AC#3 from issue #291 ---
 
 def test_address_feedback_skill_cleans_up_worktree():
-    """Phase 7 must remove the worktree via rimba but KEEP the PR branch (issue #643)."""
+    """Phase 7 must release the worktree via the runtime command but KEEP the PR branch."""
     text = SKILL_MD.read_text()
     assert re.search(
-        r'rimba remove ["\']?\$PR_BRANCH["\']? --force --keep-branch', text
+        r'swe-workbench-address-feedback-worktree release\s*\\\s*\n\s*--pr "\$PR" --path "\$WT" --branch "\$PR_BRANCH" --created "\$CREATED_WT"',
+        text,
     ), (
-        'SKILL.md Phase 7 must include: rimba remove "$PR_BRANCH" --force --keep-branch — '
+        'SKILL.md Phase 7 must call: swe-workbench-address-feedback-worktree release '
+        '--pr "$PR" --path "$WT" --branch "$PR_BRANCH" --created "$CREATED_WT" — '
         "the worktree is disposable but the local PR head branch must be preserved "
-        "(rimba remove deletes the branch without --keep-branch)"
+        "(release is path-keyed and never issues a branch-deleting command)"
     )
 
 
 def test_address_feedback_skill_cleanup_failure_tolerant():
-    """Phase 7 cleanup must include a git-worktree fallback and must not block on failure (AC#2)."""
+    """Phase 7 cleanup must delegate to the release runtime command and must not block on failure (AC#2)."""
     text = SKILL_MD.read_text()
-    assert "git worktree remove" in text, (
-        "SKILL.md Phase 7 must include a 'git worktree remove' fallback for when rimba is absent"
+    assert "swe-workbench-address-feedback-worktree release" in text, (
+        "SKILL.md Phase 7 must delegate worktree teardown to swe-workbench-address-feedback-worktree release"
     )
     assert re.search(
         r"warn|do not block|never block|not block|continue|non.blocking|emit.*notice",
@@ -278,14 +274,14 @@ def test_address_feedback_skill_cleanup_failure_tolerant():
     )
 
 
-# --- Worktree create-path contract — issue #643 ---
+# --- Worktree create-path contract ---
 
 def test_address_feedback_skill_create_uses_pr_branch_task_form():
-    """Phase 2 must create the worktree from the PR branch name, not the pr:<num> task form (AC#1)."""
+    """Phase 2 must acquire the worktree via the runtime command, not the retired pr:<num> task form (AC#1)."""
     text = _skill_text_with_references()
-    assert 'rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must invoke: rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" — '
-        "the task-form add names the branch after the PR branch itself"
+    assert 'swe-workbench-address-feedback-worktree acquire --pr "$PR" --branch "$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must invoke: swe-workbench-address-feedback-worktree acquire '
+        '--pr "$PR" --branch "$PR_BRANCH" — the worktree always lands on the PR branch itself'
     )
     phase2_start = text.find("### Phase 2")
     phase2_end = text.find("### Phase 3")
@@ -298,97 +294,6 @@ def test_address_feedback_skill_create_uses_pr_branch_task_form():
     assert '--task "address-feedback-$PR"' not in text, (
         "SKILL.md must not pass --task address-feedback-$PR — the worktree must land on "
         "the PR branch itself"
-    )
-
-
-def test_address_feedback_skill_create_omits_skip_flags():
-    """Phase 2 create must let rimba fully initialize — no --skip-deps/--skip-hooks (AC#2/#3)."""
-    text = _skill_text_with_references()
-    # No rimba add invocation may carry either skip flag.
-    for m in re.finditer(r"rimba add[^\n]*", text):
-        assert "--skip-deps" not in m.group(0), (
-            f"rimba add must not pass --skip-deps: {m.group(0)!r}"
-        )
-        assert "--skip-hooks" not in m.group(0), (
-            f"rimba add must not pass --skip-hooks: {m.group(0)!r}"
-        )
-    assert re.search(r"Never pass either flag|must not pass either", text), (
-        "Common-mistakes table must forbid skip flags on the Phase 2 create so rimba "
-        "installs deps and runs hooks with no separate bootstrap step"
-    )
-
-
-def test_address_feedback_skill_create_fetches_pr_branch_first():
-    """Task-form rimba add does not fetch — Phase 2 must fetch origin/$PR_BRANCH itself."""
-    text = _skill_text_with_references()
-    assert 'git fetch origin "$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must run: git fetch origin "$PR_BRANCH" before rimba add — '
-        "task-mode add never fetches, and --source origin/$PR_BRANCH must be current"
-    )
-
-
-def test_address_feedback_skill_create_handles_existing_local_branch():
-    """Local branch already present → git worktree add checkout + rimba deps install (no re-add error)."""
-    text = _skill_text_with_references()
-    assert 'git show-ref --verify --quiet "refs/heads/$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must probe refs/heads/$PR_BRANCH — rimba add hard-errors "
-        "'branch already exists' when the local PR branch is present"
-    )
-    assert 'git worktree add "$WT" "$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must check out the existing local branch: git worktree add "$WT" "$PR_BRANCH"'
-    )
-    assert 'rimba deps install "$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must run rimba deps install on the existing-branch path so it "
-        "still gets dependency installation without a separate bootstrap step"
-    )
-
-
-def test_address_feedback_skill_create_verifies_branch_and_falls_back():
-    """Post-create verification: worktree branch must equal $PR_BRANCH; mismatch → git fallback."""
-    text = _skill_text_with_references()
-    assert 'WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)' in text, (
-        "SKILL.md Phase 2 must verify the checked-out branch after rimba add — rimba "
-        "re-prefixes non-conventional branch names (DefaultPrefixType is feature/)"
-    )
-    assert 'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 fallback must create the branch directly: '
-        'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"'
-    )
-
-
-def test_address_feedback_skill_create_reconciles_stale_local_branch():
-    """Existing-branch checkout must reconcile against origin — ff-only when behind, warn when diverged."""
-    text = _skill_text_with_references()
-    assert 'git -C "$WT" merge --ff-only "origin/$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must fast-forward a strictly-behind local $PR_BRANCH — "
-        "otherwise Phase 4 pushes are rejected non-FF when the PR advanced between runs"
-    )
-    assert 'diverged from origin' in text, (
-        "SKILL.md Phase 2 must warn loudly when local $PR_BRANCH diverged from origin "
-        "(needs rebase before Phase 4)"
-    )
-    assert '[ -e "$WT/.git" ]' in text, (
-        'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
-        "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
-    )
-    assert 'git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH"' in text, (
-        "the diverged warning must be gated on the remote ref existing — a missing ref "
-        "(failed fetch / fork PR) must not be misreported as divergence"
-    )
-    fetch_idx = text.find('git fetch origin "$PR_BRANCH"')
-    guard_idx = text.find('CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)')
-    assert fetch_idx != -1 and guard_idx != -1 and fetch_idx < guard_idx, (
-        "the fetch must run before the reuse guards — guard-path reconcile compares against "
-        "origin/$PR_BRANCH and needs a current ref"
-    )
-    assert "skip the create block below, run the shared reconcile block after it" in text, (
-        "SKILL.md Phase 2 reuse guards must route through the shared reconcile — a crash-leftover "
-        "worktree can be stale (PR advanced between runs) on reuse paths too"
-    )
-    gate_idx = text.find('[ -e "$WT/.git" ]')
-    ff_idx = text.find('merge --ff-only')
-    assert gate_idx != -1 and ff_idx != -1 and gate_idx < ff_idx, (
-        "the shared reconcile (ff-only) must run after the create-flow existence gate"
     )
 
 
@@ -453,56 +358,32 @@ def test_address_feedback_skill_cleanup_uses_existing_wt():
     )
 
 
-def test_address_feedback_skill_reuses_worktree_when_on_pr_branch():
-    """Phase 2 must reuse the current worktree when the branch matches the PR head (closes #295)."""
+def test_address_feedback_skill_phase2_derives_created_wt_from_acquire_result():
+    """Phase 2 must derive $CREATED_WT (inverse of the acquire envelope's reused field) and
+    pass $WT/$CREATED_WT through to Phase 7 — replaces the old skill-level reuse-detection
+    (CURRENT_BRANCH/WT=$(pwd)/git worktree list --porcelain scan), now internal to `acquire`
+    and covered executably by tests/test_address_feedback_worktree_script.py's
+    TestAcquireReuseCurrent/TestAcquireReuseExisting."""
     text = SKILL_MD.read_text()
-    # Assignment line must exist in the code block.
-    assert "CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" in text, (
-        "SKILL.md Phase 2 must assign: CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+    assert 'WT=$(printf \'%s\' "$RESULT" | jq -r \'.data.path\')' in text, (
+        "SKILL.md Phase 2 must extract $WT from the acquire envelope's .data.path"
     )
-    # Comparison must test $CURRENT_BRANCH against $PR_BRANCH in the if-condition.
-    assert re.search(r'"\$CURRENT_BRANCH"\s*=\s*"\$PR_BRANCH"', text), (
-        "SKILL.md Phase 2 must compare $CURRENT_BRANCH against $PR_BRANCH in the if-condition"
-    )
-    # Skip path: reuse the current directory instead of creating a worktree.
-    assert "WT=$(pwd)" in text, (
-        "SKILL.md Phase 2 must set WT=$(pwd) to reuse the current worktree when "
-        "already on the PR branch, skipping 'rimba add'"
+    assert 'CREATED_WT=$(printf \'%s\' "$RESULT" | jq -r \'if .data.reused then "false" else "true" end\')' in text, (
+        "SKILL.md Phase 2 must derive $CREATED_WT as the inverse of the acquire envelope's .data.reused"
     )
 
 
-def test_address_feedback_skill_phase6_skips_cleanup_on_reuse():
-    """Phase 7 must not run git worktree remove / rm -rf when the worktree was reused (closes #295)."""
+def test_address_feedback_skill_phase7_release_passes_created_wt():
+    """Phase 7 must pass $CREATED_WT to release — release itself no-ops for a reused worktree,
+    replacing the old skill-level REUSED_WT guard."""
     text = SKILL_MD.read_text()
     phase7_idx = text.find("### Phase 7")
     assert phase7_idx != -1, "Phase 7 section must exist"
     phase7_text = text[phase7_idx:]
-    # Phase 7 must reference REUSED_WT so the cleanup is skipped for the reuse path.
-    assert "REUSED_WT" in phase7_text, (
-        "SKILL.md Phase 7 must guard cleanup with REUSED_WT — when the reuse-guard "
-        "fires (WT=$(pwd)), rimba remove will fail for an unregistered task, causing "
-        "git worktree remove --force / rm -rf to run against the user's live checkout"
-    )
-
-
-def test_address_feedback_skill_reuses_existing_worktree_on_main():
-    """Phase 2 must find and reuse an existing worktree for PR_BRANCH when session is not on that branch."""
-    text = SKILL_MD.read_text()
-    # Must use git worktree list --porcelain to locate an existing worktree for the branch.
-    assert "git worktree list --porcelain" in text, (
-        "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
-        "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
-    )
-    # Must look up the branch ref inside the porcelain output (branch passed as an awk
-    # variable — a regex-interpolated branch name breaks on "/" in conventional names).
-    assert 'awk -v b="refs/heads/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must pass the branch to awk via -v (exact $0 == "branch " b match) — '
-        "interpolating $PR_BRANCH into a regex literal dies on slashed branch names"
-    )
-    # Must set REUSED_WT=1 on a match, same as the first guard.
-    assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
-        "SKILL.md Phase 2 must set REUSED_WT=1 when an existing worktree is found via "
-        "git worktree list, so Phase 6 skips the destructive cleanup"
+    assert '--created "$CREATED_WT"' in phase7_text, (
+        "SKILL.md Phase 7 must pass --created \"$CREATED_WT\" to "
+        "swe-workbench-address-feedback-worktree release — the runtime command's own "
+        "--created flag now carries the reuse-vs-created distinction, not a skill-level REUSED_WT variable"
     )
 
 
@@ -536,15 +417,6 @@ def test_address_feedback_skill_skips_already_clarified_threads():
 
 # --- Cleanup call-site assertions (guard bypass fix) ---
 
-def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
-    """Phase 6 fallback must invoke swe-workbench-clean-ephemeral, not bare rm -rf "$WT"."""
-    text = SKILL_MD.read_text()
-    assert "swe-workbench-clean-ephemeral" in text, (
-        "SKILL.md Phase 6 fallback must use swe-workbench-clean-ephemeral — "
-        "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
-    )
-
-
 def test_address_feedback_skill_no_bare_rm_rf_wt():
     """Phase 6 must not contain a bare 'rm -rf \"$WT\"' that the bash guard would block."""
     text = SKILL_MD.read_text()
@@ -563,16 +435,16 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_address_feedback_skill_deletes_three_state_files():
-    """Phase 5 success path must invoke swe-workbench-clean-state-files with all three state files."""
+    """Phase 7 must invoke swe-workbench-clean-state-files with the fetch-envelope-sourced
+    $JSON/$THREADS_PATH/$PR_COMMENTS_PATH manifest — not re-hardcoded literals —
+    and Phase 5 must still reap the literal triage resume-point path."""
     text = SKILL_MD.read_text()
     assert "swe-workbench-clean-state-files" in text, (
         "SKILL.md must call swe-workbench-clean-state-files to remove address-feedback state files"
     )
-    assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to swe-workbench-clean-state-files"
-    )
-    assert "/tmp/swe-workbench-address-feedback/${PR}-threads.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to swe-workbench-clean-state-files"
+    assert 'swe-workbench-clean-state-files "$JSON" "$THREADS_PATH" "$PR_COMMENTS_PATH"' in text, (
+        "SKILL.md Phase 7 must reap $JSON/$THREADS_PATH/$PR_COMMENTS_PATH — the paths the "
+        "Phase 1 fetch envelope named, not re-hardcoded literals"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}-triage.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to swe-workbench-clean-state-files"
@@ -653,19 +525,6 @@ def test_address_feedback_skill_phase5_reap_has_post_check():
 # --- PR-level conversation comments (issue #473) ---
 
 
-def test_address_feedback_skill_fetches_pr_comments_paginated():
-    """Phase 1 must fetch PR-level conversation comments via the paginated issues comments endpoint."""
-    text = SKILL_MD.read_text()
-    assert "issues/${PR}/comments" in text, (
-        "SKILL.md Phase 1 must fetch repos/{owner}/{repo}/issues/${PR}/comments "
-        "(PR-level conversation comments, distinct from review-thread comments)"
-    )
-    assert "--paginate" in text, (
-        "SKILL.md Phase 1 must paginate the issues/comments fetch (--paginate) — "
-        "a PR can have more than one page of conversation comments"
-    )
-
-
 def test_address_feedback_skill_early_exit_accounts_for_pr_comments():
     """Phase 1 early-exit must also gate on eligible PR comments, not just unresolved threads."""
     text = SKILL_MD.read_text()
@@ -679,19 +538,6 @@ def test_address_feedback_skill_early_exit_accounts_for_pr_comments():
     assert "ELIGIBLE_PR_COMMENTS" in preceding[-600:], (
         "SKILL.md early-exit gate must reference $ELIGIBLE_PR_COMMENTS just before "
         "the 'No open threads — nothing to address' message"
-    )
-
-
-def test_address_feedback_skill_excludes_bots_and_author_from_pr_comments():
-    """Phase 1's PR-comment filter must exclude bot comments and the PR author's own comments."""
-    text = SKILL_MD.read_text()
-    assert "Bot" in text and "[bot]" in text, (
-        "SKILL.md must describe excluding bot comments (user.type == Bot or a "
-        "login ending in [bot]) from PR-level comment triage"
-    )
-    assert "AUTHOR_LOGIN" in text and "eligible" in text, (
-        "SKILL.md must describe excluding the PR author's own comments "
-        "(user.login == $AUTHOR_LOGIN) via the eligible filter"
     )
 
 
@@ -741,16 +587,13 @@ def test_address_feedback_skill_reply_body_embeds_handled_marker():
 
 
 def test_address_feedback_skill_pr_comments_state_file_in_reap():
-    """Phase 5 reap must include ${PR}-pr-comments.json in both the swe-workbench-clean-state-files call and the report loop."""
+    """Phase 7 reap must include $PR_COMMENTS_PATH in both the swe-workbench-clean-state-files
+    call and the report loop — sourced from the fetch envelope, not a re-hardcoded literal."""
     text = SKILL_MD.read_text()
-    assert "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" in text, (
-        "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-pr-comments.json "
-        "for state-file cleanup"
-    )
-    lines_with_path = [ln for ln in text.splitlines() if "${PR}-pr-comments.json" in ln]
-    assert len(lines_with_path) >= 2, (
-        "SKILL.md must reference ${PR}-pr-comments.json at least twice — once in the "
-        "swe-workbench-clean-state-files call and once in the post-reap report loop"
+    lines_with_path = [ln for ln in text.splitlines() if "PR_COMMENTS_PATH" in ln]
+    assert len(lines_with_path) >= 3, (
+        "SKILL.md must reference $PR_COMMENTS_PATH at least three times — the Phase 1 "
+        "assignment, the swe-workbench-clean-state-files call, and the post-reap report loop"
     )
 
 
@@ -761,112 +604,6 @@ def test_address_feedback_skill_pr_comment_skipped_transparency_note():
         "SKILL.md Phase 3 must emit a transparency note like "
         "'(N PR comment(s) skipped — already handled.)' since the marker/manual-reply "
         "dedup is lossy by construction"
-    )
-
-
-# --- Executable coverage of the embedded Phase 1 jq filter (issue #473) ---
-#
-# The filter's exclusion/dedup logic lives inside a jq program embedded in SKILL.md
-# prose, not in a standalone script. Regex assertions on the surrounding text can't
-# catch a logic bug inside that program (e.g. an unanchored substring match). These
-# tests extract the actual program text and run it through real jq, so a regression
-# in the embedded logic fails here instead of shipping silently.
-
-_JQ_AVAILABLE = shutil.which("jq") is not None
-
-
-def _extract_pr_comments_jq_program() -> str:
-    text = SKILL_MD.read_text()
-    block = re.search(r"```bash\ngh api --paginate.*?\n```", text, re.DOTALL)
-    assert block, "Phase 1 PR-comments fetch code block not found in SKILL.md"
-    program = re.search(r'--arg me "\$CURRENT_USER" \'\n(.*?)\n  \' >', block.group(0), re.DOTALL)
-    assert program, "jq program not found within the Phase 1 fetch code block"
-    return program.group(1)
-
-
-def _run_pr_comments_filter(comments: list[dict], author: str, me: str) -> list[dict]:
-    program = _extract_pr_comments_jq_program()
-    result = subprocess.run(
-        ["jq", "--arg", "author", author, "--arg", "me", me, program],
-        input=json.dumps(comments), capture_output=True, text=True,
-        env=dict(_CLEAN_ENV),
-    )
-    assert result.returncode == 0, f"jq filter failed: {result.stderr}"
-    return json.loads(result.stdout)
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_drops_bots_and_author():
-    comments = [
-        {"id": 1, "user": {"login": "some-bot", "type": "Bot"}, "body": "lgtm", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 2, "user": {"login": "renovate[bot]", "type": "User"}, "body": "bump", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 3, "user": {"login": "pr-author", "type": "User"}, "body": "self note", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 4, "user": {"login": "reviewer1", "type": "User"}, "body": "please fix X", "created_at": "2026-01-01T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
-    ids = {c["id"] for c in result}
-    assert ids == {4}, f"bot/[bot]/author comments must be dropped entirely; got ids {ids}"
-    assert result[0]["eligible"] is True
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_drops_current_user_on_non_author_run():
-    """Regression test: on a non-author run, the runner's own past marker-bearing
-    reply must not resurface as a fresh triage candidate (duplicate-reply spam)."""
-    comments = [
-        {"id": 20, "user": {"login": "reviewer6", "type": "User"}, "body": "please fix V", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done <!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="maintainer-x")
-    by_id = {c["id"]: c for c in result}
-    assert 21 not in by_id, (
-        "comment 21 was authored by $me (the non-author runner) and must be dropped "
-        "as a candidate entirely, not resurface with eligible: false"
-    )
-    assert by_id[20]["eligible"] is False, (
-        "comment 20 must still be marker-deduped via owner comment 21's marker"
-    )
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_marker_dedup():
-    comments = [
-        {"id": 5, "user": {"login": "reviewer2", "type": "User"}, "body": "please fix Y", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
-    by_id = {c["id"]: c for c in result}
-    assert by_id[5]["eligible"] is False, "a comment whose own marker is present must be ineligible"
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_marker_match_is_anchored():
-    """Regression test: a marker for id 1234 must not dedup-suppress unrelated id 123
-    via an unanchored substring match (id 123 is a numeric prefix of 1234)."""
-    comments = [
-        {"id": 123, "user": {"login": "reviewer3", "type": "User"}, "body": "please fix Z", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
-    by_id = {c["id"]: c for c in result}
-    assert by_id[123]["eligible"] is True, (
-        "comment 123 must stay eligible — the owner's marker is for a different "
-        "comment (1234) that merely shares a numeric prefix; an unanchored "
-        "contains() match would incorrectly suppress it"
-    )
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_manual_reply_dedup():
-    comments = [
-        {"id": 7, "user": {"login": "reviewer4", "type": "User"}, "body": "please fix W", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 8, "user": {"login": "pr-author", "type": "User"}, "body": "thanks, will look", "created_at": "2026-01-02T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
-    by_id = {c["id"]: c for c in result}
-    assert by_id[7]["eligible"] is False, (
-        "a marker-less owner comment posted after the reviewer comment counts as a "
-        "manual reply and must dedup-suppress it"
     )
 
 
@@ -911,10 +648,9 @@ def test_address_feedback_skill_phase7_reaps_run_scoped_files():
     assert phase7_idx != -1, "SKILL.md must have a ### Phase 7 section"
     next_section = re.search(r'\n## ', text[phase7_idx:])
     phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
-    for suffix in ["", "-threads", "-pr-comments"]:
-        path = f"/tmp/swe-workbench-address-feedback/${{PR}}{suffix}.json"
-        assert path in phase7_text, (
-            f"Phase 7 must reap {path} — run-scoped state files are reaped on every exit"
+    for var in ["$JSON", "$THREADS_PATH", "$PR_COMMENTS_PATH"]:
+        assert var in phase7_text, (
+            f"Phase 7 must reap {var} — run-scoped state files are reaped on every exit"
         )
     assert "${RUN_DIR:-}" in phase7_text, (
         "Phase 7 must guard the run-dir reap with ${RUN_DIR:-} — $RUN_DIR is unset on "
@@ -926,10 +662,8 @@ def test_address_feedback_skill_phase7_worktree_removal_guards_on_wt_unset():
     """Phase 7's worktree-removal block must skip entirely when $WT was never set.
 
     A Phase-1-only exit (ownership decline, no-open-threads) leaves $WT unset since
-    Phase 2 never ran. Without a guard, the block falls into its else branch and
-    unconditionally runs `rimba remove "$PR_BRANCH"` — keyed by branch name alone,
-    not by this run's own $WT — which could force-remove a different, concurrently
-    active session's live worktree on the same PR branch.
+    Phase 2 never ran. Without a guard, the block falls into its else branch and calls
+    release with an empty --path, which is not a safe input to hand the runtime command.
     """
     text = SKILL_MD.read_text()
     phase7_idx = text.find("### Phase 7")
@@ -937,13 +671,13 @@ def test_address_feedback_skill_phase7_worktree_removal_guards_on_wt_unset():
     next_section = re.search(r'\n## ', text[phase7_idx:])
     phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
     match = re.search(
-        r'if \[ -z "\$\{WT:-\}" \]; then\n.*?\nelif \[ "\$\{REUSED_WT:-0\}" = "1" \]; then',
+        r'if \[ -z "\$\{WT:-\}" \]; then\n.*?\nelse\n.*?swe-workbench-address-feedback-worktree release',
         phase7_text, re.DOTALL,
     )
     assert match, (
         'Phase 7\'s worktree-removal block must open with `if [ -z "${WT:-}" ]; then` '
-        "before the REUSED_WT branch — otherwise a Phase-1-only exit falls into the "
-        'else branch and unconditionally runs rimba remove "$PR_BRANCH"'
+        "before the else branch that calls swe-workbench-address-feedback-worktree release — "
+        "otherwise a Phase-1-only exit would call release with an unset --path"
     )
 
 
@@ -963,23 +697,4 @@ def test_address_feedback_skill_early_exits_name_phase7():
     no_threads_window = text[no_threads_idx: no_threads_idx + 200]
     assert "Phase 7" in no_threads_window, (
         "the no-open-threads exit must state that it runs Phase 7 — Cleanup before exiting"
-    )
-
-
-@pytest.mark.skipif(not _JQ_AVAILABLE, reason="jq binary not available")
-def test_pr_comments_jq_filter_own_marker_replies_excluded_from_manual_heuristic():
-    """A prior marker-bearing tool reply must not itself count as a 'manual reply' that
-    over-suppresses a different, still-open reviewer comment posted before it."""
-    comments = [
-        {"id": 9, "user": {"login": "reviewer5", "type": "User"}, "body": "issue A", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 10, "user": {"login": "reviewer5", "type": "User"}, "body": "issue B", "created_at": "2026-01-01T01:00:00Z"},
-        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
-    ]
-    result = _run_pr_comments_filter(comments, author="pr-author", me="pr-author")
-    by_id = {c["id"]: c for c in result}
-    assert by_id[10]["eligible"] is False, "comment 10's own marker must dedup-suppress it"
-    assert by_id[9]["eligible"] is True, (
-        "comment 9 must stay eligible — the only later owner comment is a "
-        "marker-bearing tool reply for a different comment, which the manual-reply "
-        "heuristic must ignore (it only counts marker-less owner comments)"
     )
