@@ -363,6 +363,34 @@ class TestAcquireForkPrFetchFails:
             _run("git", "branch", "-D", fork_branch, cwd=clone)
 
 
+class TestAcquireBothCreatePathsFail:
+    def test_no_local_branch_and_no_origin_ref_fails_loudly_not_silently(self, tmp_path):
+        """Regression test: when the branch exists neither locally nor on origin (a
+        typo'd branch name, or a fork PR whose branch was force-deleted upstream
+        mid-flow), BOTH create-path attempts — `git worktree add -b ... "origin/$PR_BRANCH"`
+        and the bare `git worktree add "$WT" "$PR_BRANCH"` fallback — fail. Under
+        set -e, a command that is the last member of an `if`'s then-block is not
+        exempt from errexit, so an unguarded second attempt would abort the whole
+        script silently instead of reaching the documented `[ -e "$WT/.git" ]`
+        diagnostic — this must still exit 1 with a loud stderr message."""
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+        nonexistent_branch = f"never-existed-{pr}"
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        result = _run_acquire(clone, pr, nonexistent_branch, env)
+        assert result.returncode == 1, (
+            f"expected a loud exit 1, got {result.returncode} "
+            f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
+        )
+        assert result.stdout == "", "a hard failure must never emit a (possibly stale) envelope on stdout"
+        assert result.stderr.strip() != "", (
+            "a hard failure must print an actionable diagnostic to stderr, not fail silently"
+        )
+        assert "worktree creation failed" in result.stderr
+
+
 # ── acquire: divergent local vs origin ────────────────────────────────────────
 
 
@@ -579,19 +607,61 @@ class TestReleaseCreatedTrueRemoves:
             _cleanup_worktree(clone, Path(wt_path), branch)
 
 
+class TestReleaseAgainstAlreadyGoneWorktree:
+    def test_release_succeeds_when_path_already_removed_out_of_band(self, tmp_path):
+        """Regression test: a $WPATH that no longer exists at release time (e.g. a
+        duplicate/second release call, or removed by something other than this
+        script) must not turn the exists_after branch-existence check into a false
+        "not a git repository" failure — which would misreport $PR_BRANCH as
+        destroyed and abort with a FATAL that has nothing to do with reality."""
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        acquire_result = _run_acquire(clone, pr, branch, env)
+        assert acquire_result.returncode == 0, acquire_result.stderr
+        wt_path = Path(json.loads(acquire_result.stdout)["data"]["path"])
+
+        # Remove the worktree out-of-band (not via this script) so its git-common-dir
+        # can no longer be resolved from $WPATH, forcing _main_repo_root_for to fail
+        # and release onto the SAFE_DIR fallback path this test exists to cover.
+        shutil.rmtree(wt_path, ignore_errors=True)
+
+        try:
+            result = _run_release(clone, pr, str(wt_path), branch, "true", env)
+            assert result.returncode == 0, result.stderr
+            payload = json.loads(result.stdout)
+            assert payload["data"]["branch_preserved"] is True
+            assert _branch_exists(clone, branch), (
+                "the branch must still exist — it was never touched, only the "
+                "already-gone worktree directory was 'released'"
+            )
+        finally:
+            _cleanup_state_files(pr)
+            _cleanup_worktree(clone, wt_path, branch)
+
+
 def _write_git_worktree_remove_fails_stub(bin_dir: Path, *, real_git: str) -> Path:
     """A stub `git` that fails only `worktree remove ...` invocations (both the
-    single- and double---force retry), delegating every other subcommand — branch
-    checks, show-ref, rev-parse, git-common-dir resolution — to the real git
-    unchanged. Isolates the release chain's fallback to swe-workbench-clean-ephemeral
-    without needing to corrupt real worktree/repo state (which entangles with the
-    branch-verification and receipt checks that must still pass normally)."""
+    single- and double---force retry, and both with and without a leading
+    `-C <dir>` — do_release always passes an explicit -C), delegating every other
+    subcommand — branch checks, show-ref, rev-parse, git-common-dir resolution — to
+    the real git unchanged. Isolates the release chain's fallback to
+    swe-workbench-clean-ephemeral without needing to corrupt real worktree/repo
+    state (which entangles with the branch-verification and receipt checks that
+    must still pass normally)."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     stub = bin_dir / "git"
     script = (
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "remove" ]; then\n'
+        "args=(\"$@\")\n"
+        # Strip a leading -C <dir> pair, if present, before checking the subcommand.
+        'if [ "${args[0]:-}" = "-C" ]; then\n'
+        "  args=(\"${args[@]:2}\")\n"
+        "fi\n"
+        'if [ "${args[0]:-}" = "worktree" ] && [ "${args[1]:-}" = "remove" ]; then\n'
         "  exit 1\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n'

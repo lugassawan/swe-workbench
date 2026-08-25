@@ -251,7 +251,12 @@ def fetch_pr_comments_raw(owner: str, repo: str, pr: str, script_dir: Path) -> l
 
 
 def _atomic_write_json(path: Path, data) -> None:
+    # mkdir's mode is a no-op on an already-existing directory (it never chmods) —
+    # by this point bin/swe-workbench-fetch-pr's own `mkdir -p` has typically already
+    # created STATE_DIR with default (not 0700) permissions, so the explicit chmod
+    # is what actually makes this tightening effective, not the mkdir call alone.
     path.parent.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(path.parent, 0o700)
     tmp = path.parent / f".{path.name}.tmp-{os.getpid()}"
     tmp.write_text(json.dumps(data, ensure_ascii=True))
     os.replace(tmp, path)

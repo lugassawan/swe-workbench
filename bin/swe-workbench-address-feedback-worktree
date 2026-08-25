@@ -67,7 +67,8 @@
 #     data.branch_preserved   (bool) — always true on a normal return (see step 5 above)
 #     data.method             (str)  — skipped-not-created | git-worktree-remove | clean-ephemeral | failed
 #   warnings codes: receipt-mismatch, branch-mismatch, removal-failed
-#   Always exits 0 (see point 6 above).
+#   Exits 0 on every path except the point-5 FATAL branch-loss invariant violation
+#   (prints to stderr, exits 1, no stdout) — otherwise always 0 (see point 6 above).
 
 set -euo pipefail
 
@@ -190,8 +191,13 @@ do_acquire() {
     fi
     if [ -z "$WT" ]; then
       WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+      # `|| true` on the fallback attempt: under set -e, a command that is the last
+      # member of an `if`'s then-block is NOT exempt from errexit (only the `if`'s
+      # own condition is) — an unguarded failure here would abort the whole script
+      # silently instead of reaching the [ -e "$WT/.git" ] diagnostic below, which
+      # is the actual error-reporting path this failure is supposed to reach.
       if ! git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH" >/dev/null 2>&1; then
-        git worktree add "$WT" "$PR_BRANCH" >/dev/null 2>&1
+        git worktree add "$WT" "$PR_BRANCH" >/dev/null 2>&1 || true
       fi
       REUSE_REASON="created-git"
     fi
@@ -250,6 +256,14 @@ _main_repo_root_for() {
 do_release() {
   local WARNINGS=()
   local REMOVED=false BRANCH_PRESERVED=true METHOD="skipped-not-created"
+  # Captured before anything else runs — the caller's own cwd, which the whole
+  # acquire/release flow already assumes is inside this git repository. Used as
+  # the safe-directory fallback below instead of $HOME (not a git repo), so a
+  # $WPATH that's already gone (e.g. a second/duplicate release call) can't turn
+  # the exists_after check's `git show-ref` into a spurious "not a git repository"
+  # failure — which would otherwise misreport $PR_BRANCH as destroyed.
+  local ORIG_PWD
+  ORIG_PWD=$(pwd)
 
   if [ "$CREATED" != "true" ]; then
     emit_release_envelope
@@ -290,23 +304,24 @@ do_release() {
   local existed_before=false
   git show-ref --verify --quiet "refs/heads/$PR_BRANCH" && existed_before=true
 
-  # Hop to a directory outside $WPATH before attempting removal — the caller (the
-  # skill) may still be cwd'd inside the worktree being released, and once removal
-  # succeeds a cwd left pointing at the deleted directory breaks every subsequent
-  # bare `git` command in this function (including the exists_after check below),
-  # not just the removal call itself. Best-effort: $HOME is a stable fallback when
-  # the worktree's own git-common-dir can't be resolved (e.g. it is already gone).
-  local MAIN_ROOT=""
+  # Every git call from here on is explicitly -C'd against a proven-safe directory —
+  # never an ambient `cd` — because the caller (the skill) may still be cwd'd inside
+  # $WPATH itself, and $WPATH may not even exist any more (e.g. a second/duplicate
+  # release call). SAFE_DIR falls back to $ORIG_PWD (proven to be inside this repo,
+  # captured at function entry) rather than $HOME when $WPATH's own git-common-dir
+  # can't be resolved, so the exists_after check below can never spuriously read as
+  # "not a git repository" and misreport $PR_BRANCH as destroyed.
+  local MAIN_ROOT="" SAFE_DIR
   MAIN_ROOT=$(_main_repo_root_for "$WPATH") || MAIN_ROOT=""
   if [ -n "$MAIN_ROOT" ] && [ -d "$MAIN_ROOT" ]; then
-    cd "$MAIN_ROOT" 2>/dev/null || true
+    SAFE_DIR="$MAIN_ROOT"
   else
-    cd "${HOME:-/}" 2>/dev/null || true
+    SAFE_DIR="$ORIG_PWD"
   fi
 
   local removed_ok=1
-  if git worktree remove --force "$WPATH" >/dev/null 2>&1 \
-    || git worktree remove --force --force "$WPATH" >/dev/null 2>&1; then
+  if git -C "$SAFE_DIR" worktree remove --force "$WPATH" >/dev/null 2>&1 \
+    || git -C "$SAFE_DIR" worktree remove --force --force "$WPATH" >/dev/null 2>&1; then
     removed_ok=0
   fi
 
@@ -316,7 +331,7 @@ do_release() {
     "$SCRIPT_DIR/swe-workbench-clean-ephemeral" "$WPATH" >/dev/null 2>&1 || true
     if [ ! -e "$WPATH" ]; then
       METHOD="clean-ephemeral"
-      git worktree prune >/dev/null 2>&1 || true
+      git -C "$SAFE_DIR" worktree prune >/dev/null 2>&1 || true
     fi
   fi
 
@@ -328,7 +343,7 @@ do_release() {
   fi
 
   local exists_after=false
-  git show-ref --verify --quiet "refs/heads/$PR_BRANCH" && exists_after=true
+  git -C "$SAFE_DIR" show-ref --verify --quiet "refs/heads/$PR_BRANCH" && exists_after=true
 
   if [ "$existed_before" = "true" ] && [ "$exists_after" != "true" ]; then
     echo "swe-workbench-address-feedback-worktree: FATAL — $PR_BRANCH no longer exists after release, but this script never deletes branches. This indicates external interference; aborting." >&2
