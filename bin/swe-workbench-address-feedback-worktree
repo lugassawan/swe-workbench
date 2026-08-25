@@ -4,7 +4,7 @@
 #
 # Worktree acquire/reconcile/release lifecycle for workflow-address-feedback's Phase 2
 # (create) and Phase 7 (teardown) — extracted from skills/workflow-address-feedback/SKILL.md
-# so the lifecycle is directly testable instead of living as executable prose (issue #662).
+# so the lifecycle is directly testable instead of living as executable prose.
 #
 # `acquire` preserves the reuse/create/reconcile semantics the SKILL.md prose used to own,
 # fixing three defects found while extracting it:

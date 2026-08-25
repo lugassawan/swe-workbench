@@ -1,4 +1,4 @@
-"""Tests for bin/swe-workbench-address-feedback-fetch (issue #667).
+"""Tests for bin/swe-workbench-address-feedback-fetch.
 
 Unit tests import the pure eligibility helpers directly (SourceFileLoader, mirroring
 test_result_check_script.py's precedent for a python bin/ module). Behavioral tests

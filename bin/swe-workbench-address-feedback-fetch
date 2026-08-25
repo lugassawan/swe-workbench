@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch + eligibility projection for workflow-address-feedback's Phase 1 (issue #667).
+"""Fetch + eligibility projection for workflow-address-feedback's Phase 1.
 
 Usage: swe-workbench-address-feedback-fetch --pr <N>
 

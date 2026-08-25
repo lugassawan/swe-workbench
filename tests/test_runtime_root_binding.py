@@ -196,7 +196,7 @@ def test_preflight_pr_referenced_in_pr_review_followup_mode():
 
 def test_preflight_pr_referenced_in_address_feedback_skill():
     """workflow-address-feedback SKILL.md Phase 1 must reach swe-workbench-preflight-pr
-    (now transitively, via swe-workbench-address-feedback-fetch — issue #667) and consume
+    (now transitively, via swe-workbench-address-feedback-fetch) and consume
     its output through the standard envelope + swe-workbench-result-check contract, not
     eval "$(...)" sourcing (retired along with the direct preflight-pr call)."""
     text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()

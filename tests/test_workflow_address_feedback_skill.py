@@ -247,7 +247,7 @@ def test_address_feedback_skill_phase6_preserves_trailer():
 # --- Cleanup (Phase 7) tests — AC#1, AC#2, AC#3 from issue #291 ---
 
 def test_address_feedback_skill_cleans_up_worktree():
-    """Phase 7 must release the worktree via the runtime command but KEEP the PR branch (issue #643, #662)."""
+    """Phase 7 must release the worktree via the runtime command but KEEP the PR branch."""
     text = SKILL_MD.read_text()
     assert re.search(
         r'swe-workbench-address-feedback-worktree release\s*\\\s*\n\s*--pr "\$PR" --path "\$WT" --branch "\$PR_BRANCH" --created "\$CREATED_WT"',
@@ -274,7 +274,7 @@ def test_address_feedback_skill_cleanup_failure_tolerant():
     )
 
 
-# --- Worktree create-path contract — issue #643, #662 ---
+# --- Worktree create-path contract ---
 
 def test_address_feedback_skill_create_uses_pr_branch_task_form():
     """Phase 2 must acquire the worktree via the runtime command, not the retired pr:<num> task form (AC#1)."""
@@ -363,7 +363,7 @@ def test_address_feedback_skill_phase2_derives_created_wt_from_acquire_result():
     pass $WT/$CREATED_WT through to Phase 7 — replaces the old skill-level reuse-detection
     (CURRENT_BRANCH/WT=$(pwd)/git worktree list --porcelain scan), now internal to `acquire`
     and covered executably by tests/test_address_feedback_worktree_script.py's
-    TestAcquireReuseCurrent/TestAcquireReuseExisting (closes #295, #662)."""
+    TestAcquireReuseCurrent/TestAcquireReuseExisting."""
     text = SKILL_MD.read_text()
     assert 'WT=$(printf \'%s\' "$RESULT" | jq -r \'.data.path\')' in text, (
         "SKILL.md Phase 2 must extract $WT from the acquire envelope's .data.path"
@@ -375,7 +375,7 @@ def test_address_feedback_skill_phase2_derives_created_wt_from_acquire_result():
 
 def test_address_feedback_skill_phase7_release_passes_created_wt():
     """Phase 7 must pass $CREATED_WT to release — release itself no-ops for a reused worktree,
-    replacing the old skill-level REUSED_WT guard (closes #295, #662)."""
+    replacing the old skill-level REUSED_WT guard."""
     text = SKILL_MD.read_text()
     phase7_idx = text.find("### Phase 7")
     assert phase7_idx != -1, "Phase 7 section must exist"
@@ -436,7 +436,7 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
 
 def test_address_feedback_skill_deletes_three_state_files():
     """Phase 7 must invoke swe-workbench-clean-state-files with the fetch-envelope-sourced
-    $JSON/$THREADS_PATH/$PR_COMMENTS_PATH manifest (issue #667) — not re-hardcoded literals —
+    $JSON/$THREADS_PATH/$PR_COMMENTS_PATH manifest — not re-hardcoded literals —
     and Phase 5 must still reap the literal triage resume-point path."""
     text = SKILL_MD.read_text()
     assert "swe-workbench-clean-state-files" in text, (
@@ -588,7 +588,7 @@ def test_address_feedback_skill_reply_body_embeds_handled_marker():
 
 def test_address_feedback_skill_pr_comments_state_file_in_reap():
     """Phase 7 reap must include $PR_COMMENTS_PATH in both the swe-workbench-clean-state-files
-    call and the report loop (issue #667 — sourced from the fetch envelope, not a re-hardcoded literal)."""
+    call and the report loop — sourced from the fetch envelope, not a re-hardcoded literal."""
     text = SKILL_MD.read_text()
     lines_with_path = [ln for ln in text.splitlines() if "PR_COMMENTS_PATH" in ln]
     assert len(lines_with_path) >= 3, (
