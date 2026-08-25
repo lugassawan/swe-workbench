@@ -181,17 +181,12 @@ else
   fi
 fi
 [ -n "${RUN_DIR:-}" ] && { swe-workbench-reap-run-dir "$RUN_DIR"; [ -e "$RUN_DIR" ] && echo "⚠ run dir NOT reaped: $RUN_DIR" >&2 || echo "✓ run dir reaped: $RUN_DIR"; }
-swe-workbench-clean-state-files \
-  "/tmp/swe-workbench-address-feedback/${PR}.json" \
-  "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
-  "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json"
-for f in "/tmp/swe-workbench-address-feedback/${PR}.json" \
-         "/tmp/swe-workbench-address-feedback/${PR}-threads.json" \
-         "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json"; do
+swe-workbench-clean-state-files "$JSON" "$THREADS_PATH" "$PR_COMMENTS_PATH"
+for f in "$JSON" "$THREADS_PATH" "$PR_COMMENTS_PATH"; do
   [ -e "$f" ] && echo "⚠ state file NOT reaped: $f" >&2 || echo "✓ state file reaped: $f"
 done
 ```
-Cleanup is **failure-tolerant**: `release` always exits 0, and a genuine removal failure surfaces as a warning rather than blocking completion. `release` is path-keyed and never issues a branch-deleting command, so `$PR_BRANCH` — the owner's actual PR head branch — can never be destroyed by this step. `$RUN_DIR` is reaped unconditionally whenever it exists, independent of whether Phase 2 reused an existing worktree. It is guarded with `${RUN_DIR:-}` because the Phase 1 `STATE`-gate rejection is the one exit that precedes `$RUN_DIR`'s allocation entirely — that path reaps `$JSON` inline instead of routing through this phase (see Phase 1) and never reaches this guard. The three run-scoped state files reaped above (`${PR}.json`, `${PR}-threads.json`, `${PR}-pr-comments.json`) are the ones whose lifetime ends with the run itself; the resume-point file created on Q-quit is reaped separately, on completion, in Phase 5 — never here, since a Q-quit into this phase must leave it intact for the next invocation to resume from.
+Cleanup is **failure-tolerant**: `release` always exits 0, and a genuine removal failure surfaces as a warning rather than blocking completion. `release` is path-keyed and never issues a branch-deleting command, so `$PR_BRANCH` — the owner's actual PR head branch — can never be destroyed by this step. `$RUN_DIR` is reaped unconditionally whenever it exists, independent of whether Phase 2 reused an existing worktree. It is guarded with `${RUN_DIR:-}` because the Phase 1 `STATE`-gate rejection is the one exit that precedes `$RUN_DIR`'s allocation entirely — that path reaps `$JSON` inline instead of routing through this phase (see Phase 1) and never reaches this guard. `$JSON`/`$THREADS_PATH`/`$PR_COMMENTS_PATH` are the paths the Phase 1 fetch envelope named — reaping whatever the manifest names, rather than re-hardcoding the three literals, keeps this list and `swe-workbench-address-feedback-fetch`'s own output in permanent sync. These are the state files whose lifetime ends with the run itself; the resume-point file created on Q-quit is reaped separately, on completion, in Phase 5 — never here, since a Q-quit into this phase must leave it intact for the next invocation to resume from.
 
 ## Failure modes
 

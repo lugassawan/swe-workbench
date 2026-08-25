@@ -435,16 +435,16 @@ def test_address_feedback_skill_no_bare_rm_rf_wt():
 # --- State-file cleanup assertions (issue #428) ---
 
 def test_address_feedback_skill_deletes_three_state_files():
-    """Phase 5 success path must invoke swe-workbench-clean-state-files with all three state files."""
+    """Phase 7 must invoke swe-workbench-clean-state-files with the fetch-envelope-sourced
+    $JSON/$THREADS_PATH/$PR_COMMENTS_PATH manifest (issue #667) — not re-hardcoded literals —
+    and Phase 5 must still reap the literal triage resume-point path."""
     text = SKILL_MD.read_text()
     assert "swe-workbench-clean-state-files" in text, (
         "SKILL.md must call swe-workbench-clean-state-files to remove address-feedback state files"
     )
-    assert "/tmp/swe-workbench-address-feedback/${PR}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}.json to swe-workbench-clean-state-files"
-    )
-    assert "/tmp/swe-workbench-address-feedback/${PR}-threads.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-threads.json to swe-workbench-clean-state-files"
+    assert 'swe-workbench-clean-state-files "$JSON" "$THREADS_PATH" "$PR_COMMENTS_PATH"' in text, (
+        "SKILL.md Phase 7 must reap $JSON/$THREADS_PATH/$PR_COMMENTS_PATH — the paths the "
+        "Phase 1 fetch envelope named, not re-hardcoded literals"
     )
     assert "/tmp/swe-workbench-address-feedback/${PR}-triage.json" in text, (
         "SKILL.md must pass /tmp/swe-workbench-address-feedback/${PR}-triage.json to swe-workbench-clean-state-files"
@@ -587,16 +587,13 @@ def test_address_feedback_skill_reply_body_embeds_handled_marker():
 
 
 def test_address_feedback_skill_pr_comments_state_file_in_reap():
-    """Phase 5 reap must include ${PR}-pr-comments.json in both the swe-workbench-clean-state-files call and the report loop."""
+    """Phase 7 reap must include $PR_COMMENTS_PATH in both the swe-workbench-clean-state-files
+    call and the report loop (issue #667 — sourced from the fetch envelope, not a re-hardcoded literal)."""
     text = SKILL_MD.read_text()
-    assert "/tmp/swe-workbench-address-feedback/${PR}-pr-comments.json" in text, (
-        "SKILL.md must reference /tmp/swe-workbench-address-feedback/${PR}-pr-comments.json "
-        "for state-file cleanup"
-    )
-    lines_with_path = [ln for ln in text.splitlines() if "${PR}-pr-comments.json" in ln]
-    assert len(lines_with_path) >= 2, (
-        "SKILL.md must reference ${PR}-pr-comments.json at least twice — once in the "
-        "swe-workbench-clean-state-files call and once in the post-reap report loop"
+    lines_with_path = [ln for ln in text.splitlines() if "PR_COMMENTS_PATH" in ln]
+    assert len(lines_with_path) >= 3, (
+        "SKILL.md must reference $PR_COMMENTS_PATH at least three times — the Phase 1 "
+        "assignment, the swe-workbench-clean-state-files call, and the post-reap report loop"
     )
 
 
@@ -651,10 +648,9 @@ def test_address_feedback_skill_phase7_reaps_run_scoped_files():
     assert phase7_idx != -1, "SKILL.md must have a ### Phase 7 section"
     next_section = re.search(r'\n## ', text[phase7_idx:])
     phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
-    for suffix in ["", "-threads", "-pr-comments"]:
-        path = f"/tmp/swe-workbench-address-feedback/${{PR}}{suffix}.json"
-        assert path in phase7_text, (
-            f"Phase 7 must reap {path} — run-scoped state files are reaped on every exit"
+    for var in ["$JSON", "$THREADS_PATH", "$PR_COMMENTS_PATH"]:
+        assert var in phase7_text, (
+            f"Phase 7 must reap {var} — run-scoped state files are reaped on every exit"
         )
     assert "${RUN_DIR:-}" in phase7_text, (
         "Phase 7 must guard the run-dir reap with ${RUN_DIR:-} — $RUN_DIR is unset on "
