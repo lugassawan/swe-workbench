@@ -113,7 +113,7 @@ Only after the gate passes, allocate the run dir once:
 
 ```bash
 LOOP_ID="${PR_NUM:-0}"
-eval "$(swe-workbench-new-run-dir review-converge "$LOOP_ID")"
+RUN_DIR=$(swe-workbench-new-run-dir review-converge "$LOOP_ID")
 ```
 
 `review-converge` matches the `review-[a-z][a-z-]*` allowlist in both

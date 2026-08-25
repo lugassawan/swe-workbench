@@ -9,11 +9,11 @@
 # /tmp/swe-workbench-address-feedback/, which survive the invocation by
 # design (resume points) and stay reaped by name via swe-workbench-clean-state-files.
 #
-# Prints RUN_DIR=<path> on stdout, for `eval` in the caller (matches the
-# KEY=VALUE convention in bin/swe-workbench-sweep-residuals).
+# Prints the bare allocated path on stdout — Tier S (bare scalar) per
+# shared/docs/runtime-result-contract.md: a single trusted value, no eval needed.
 #
 # Usage:
-#   eval "$(swe-workbench-new-run-dir pr-review 42)"
+#   RUN_DIR=$(swe-workbench-new-run-dir pr-review 42)
 #   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-42-a1b2c3
 #
 # <prefix> must be one of the flow prefixes swe-workbench-reap-run-dir's
@@ -104,4 +104,4 @@ done
 RUN_DIR=$(mktemp -d "${RUN_ROOT}/${PREFIX}-${ID}-XXXXXX") || reject "mktemp -d failed"
 chmod 0700 "$RUN_DIR"
 
-printf 'RUN_DIR=%s\n' "$RUN_DIR"
+printf '%s\n' "$RUN_DIR"

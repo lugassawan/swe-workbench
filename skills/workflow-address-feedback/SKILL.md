@@ -37,7 +37,7 @@ JSON="/tmp/swe-workbench-address-feedback/${PR}.json"
 eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
 [ "$STATE" = "OPEN" ] || { swe-workbench-clean-state-files "$JSON"; echo "PR #$PR is $STATE — address-feedback only applies to open PRs."; exit 1; }
 CURRENT_USER=$(gh api /user -q .login)
-PR_BRANCH=$(jq -r .headRefName "$JSON"); eval "$(swe-workbench-new-run-dir address-feedback "$PR")"
+PR_BRANCH=$(jq -r .headRefName "$JSON"); RUN_DIR=$(swe-workbench-new-run-dir address-feedback "$PR")
 ```
 `preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the preflight fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `PR_BRANCH` is derived from `headRefName` in `$JSON` (address-feedback uses it for worktree setup in Phase 2). `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files below (including `${PR}-triage.json`, which is a cross-invocation resume point and must never move here).
 

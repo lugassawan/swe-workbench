@@ -3,8 +3,10 @@
 
 Classifies the currently staged git file set in a single pass — filename patterns
 that commonly hold secrets, and whether every staged path is documentation-only for
-the purposes of a `[no ci]` commit marker — and prints one JSON object to stdout:
-`{"staged": [...], "suspicious": [...], "docs_only": bool}`.
+the purposes of a `[no ci]` commit marker — and prints one JSON envelope to stdout
+(schema `swb.preflight-commit/1`, see shared/docs/runtime-result-contract.md):
+`{"schema": "swb.preflight-commit/1", "status": "ok",
+  "data": {"staged": [...], "suspicious": [...], "docs_only": bool}, "warnings": []}`.
 
 The suspicious scan is a FILENAME HEURISTIC, not a content scan. A clean result means
 "no obvious filename red flags" — not proof the staged content is secret-free.
@@ -103,14 +105,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"swe-workbench-preflight-commit: {exc}", file=sys.stderr)
         return 1
 
-    result = {
-        "staged": staged,
-        "suspicious": classify_suspicious(staged),
-        "docs_only": is_docs_only(staged),
+    envelope = {
+        "schema": "swb.preflight-commit/1",
+        "status": "ok",
+        "data": {
+            "staged": staged,
+            "suspicious": classify_suspicious(staged),
+            "docs_only": is_docs_only(staged),
+        },
+        "warnings": [],
     }
     # ensure_ascii=True (the default) escapes non-ASCII to \uXXXX so stdout encoding
     # can never raise on a staged path containing arbitrary bytes.
-    json.dump(result, sys.stdout, ensure_ascii=True)
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
     sys.stdout.write("\n")
     return 0
 

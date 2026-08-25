@@ -62,8 +62,9 @@ def test_cta_outcome_axis_present():
     """The CTA emission block must reference the outcome axis conditions."""
     text = POST_CORE_SKILL.read_text()
     block = _suppression_block(text)
-    assert "DECISION = COMMENT" in block or "DECISION=COMMENT" in block, (
-        "CTA block must mention DECISION = COMMENT as an actionable outcome"
+    assert ".data.decision = COMMENT" in block or ".data.decision=COMMENT" in block, (
+        "CTA block must mention .data.decision = COMMENT as an actionable outcome — "
+        "field reads moved from a shell $DECISION var to the .data.decision envelope path"
     )
     assert "posted > 0" in block, "CTA block must mention posted > 0 as an actionable outcome"
     assert "deduped > 0" in block, "CTA block must mention deduped > 0 as an actionable outcome"

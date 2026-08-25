@@ -12,6 +12,7 @@ ship knowingly alongside these pages (their content also ships inlined into
 - [shell-echo-vs-printf.md](shell-echo-vs-printf.md) — `echo` vs `printf` on variables holding JSON: zsh expands backslash escapes and corrupts the data.
 - [gh-api-field-flags.md](gh-api-field-flags.md) — `-f` vs `-F` on `gh api`: avoid silent `@`-expansion when posting comment bodies.
 - [workflow-state.md](workflow-state.md) — schema, path, and lifecycle of the workflow-state checkpoint file that survives auto-compaction.
+- [runtime-result-contract.md](runtime-result-contract.md) — the standard JSON envelope a `bin/` script emits for a structured result: shape, versioning, the S/Q/J migration decision test, and the `swe-workbench-result-check` consumption pattern.
 
 **Adding a doc here:** it must be referenced by at least one shipped skill or command as
 material the executor reads at runtime. Contributor-facing material belongs in `docs/`.

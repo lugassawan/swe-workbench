@@ -4,6 +4,11 @@ call-index-driven `gh` stub (extends test_gh_timeout_script.py's stub convention
 multi-call state machine). `git show`/`swe-workbench-diff-line-lookup` are real, not
 stubbed, for line-validation tests, which build a throwaway repo via _init_repo and run
 with cwd set to it (test_diff_line_lookup_script.py's precedent).
+
+The `printf %q`-quoted `KEY=VALUE` stdout contract was later replaced with the standard
+JSON envelope (schema `swb.pr-review-submit/1`, see shared/docs/runtime-result-contract.md)
+— `_data(result)` reads `.data` from the parsed envelope in place of the old
+`"KEY=value" in result.stdout` substring checks.
 """
 
 from __future__ import annotations
@@ -87,6 +92,11 @@ def _write_gh_stub(tmp_path: Path, responses: list[dict]) -> tuple[Path, Path]:
     state_dir.mkdir(exist_ok=True)
     (tmp_path / "gh_responses.json").write_text(json.dumps(responses))
     return stub_dir, state_dir
+
+
+def _data(result: subprocess.CompletedProcess) -> dict:
+    """Parses the standard envelope from a successful run's stdout and returns `.data`."""
+    return json.loads(result.stdout)["data"]
 
 
 def _gh_calls(state_dir: Path) -> list[dict]:
@@ -513,7 +523,7 @@ def test_findings_json_via_stdin(tmp_path):
         stdin=json.dumps([]),
     )
     assert result.returncode == 0, result.stderr
-    assert "POSTED_INLINE=0" in result.stdout
+    assert _data(result)["posted_inline"] == 0
 
 
 # ── Behavioral: dedup + reactions ─────────────────────────────────────────────
@@ -540,8 +550,8 @@ def test_dedup_match_adds_one_reaction_and_posts_nothing(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "DEDUPED=1" in result.stdout
-    assert "POSTED_INLINE=0" in result.stdout
+    assert _data(result)["deduped"] == 1
+    assert _data(result)["posted_inline"] == 0
     calls = _gh_calls(state_dir)
     reaction_calls = [c for c in calls if "addReaction(input:" in json.dumps(c["argv"])]
     assert len(reaction_calls) == 1, f"expected exactly one addReaction call, got calls={calls}"
@@ -650,8 +660,8 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "POSTED_PR_LEVEL=1" in result.stdout
-    assert "POSTED_INLINE=0" in result.stdout
+    assert _data(result)["posted_pr_level"] == 1
+    assert _data(result)["posted_inline"] == 0
     calls = _gh_calls(state_dir)
     pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
     assert len(pr_comment_calls) == 1, "demoted findings must batch into exactly one gh pr comment call"
@@ -677,7 +687,7 @@ def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "POSTED_PR_LEVEL=0" in result.stdout
+    assert _data(result)["posted_pr_level"] == 0
 
 
 # ── Behavioral: atomic submit / 422 / 5xx / model-A fallback ─────────────────
@@ -713,7 +723,7 @@ def test_atomic_post_carries_candidate_count_in_body(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "POSTED_INLINE=1" in result.stdout
+    assert _data(result)["posted_inline"] == 1
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
@@ -760,8 +770,8 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "SUBMITTED=true" in result.stdout
-    assert "POSTED_INLINE=1" in result.stdout
+    assert _data(result)["submitted"] == True
+    assert _data(result)["posted_inline"] == 1
     calls = _gh_calls(state_dir)
     post_calls = [c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"]]
     assert len(post_calls) == 2, "a confirmed 422 must retry exactly once"
@@ -811,8 +821,8 @@ def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "SUBMITTED=true" in result.stdout
-    assert "POSTED_INLINE=1" in result.stdout
+    assert _data(result)["submitted"] == True
+    assert _data(result)["posted_inline"] == 1
     assert "PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: gh: rate limited" in result.stderr
 
 
@@ -852,8 +862,8 @@ def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "POSTED_INLINE=1" in result.stdout
-    assert "SUBMITTED=true" in result.stdout
+    assert _data(result)["posted_inline"] == 1
+    assert _data(result)["submitted"] == True
     calls = _gh_calls(state_dir)
     per_comment_calls = [c for c in calls if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
     assert len(per_comment_calls) == 1
@@ -939,9 +949,9 @@ def test_confirmed_landed_5xx_reports_submitted_without_reposting(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "SUBMITTED=true" in result.stdout
-    assert "POSTED_INLINE=1" in result.stdout
-    assert landed_url.replace(":", "\\:") in result.stdout or landed_url in result.stdout
+    assert _data(result)["submitted"] == True
+    assert _data(result)["posted_inline"] == 1
+    assert _data(result)["review_url"] == landed_url
     calls = _gh_calls(state_dir)
     post_calls = [c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"]]
     assert len(post_calls) == 1, "a confirmed read-your-write landing must not trigger a repost"
@@ -964,7 +974,7 @@ def test_self_review_submits_comment_event_never_approve(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "EVENT=COMMENT" in result.stdout
+    assert _data(result)["event"] == 'COMMENT'
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
@@ -1029,8 +1039,8 @@ def test_unresolved_non_outdated_thread_blocks_approve(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "EVENT=COMMENT" in result.stdout
-    assert "BLOCKED_BY_UNRESOLVED=1" in result.stdout
+    assert _data(result)["event"] == 'COMMENT'
+    assert _data(result)["blocked_by_unresolved"] == 1
     assert "APPROVE downgraded to COMMENT" in result.stderr
     assert "1 unresolved review" in result.stderr
 
@@ -1056,7 +1066,7 @@ def test_blocking_thread_with_decision_already_comment_prints_no_downgrade_messa
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "BLOCKED_BY_UNRESOLVED=1" in result.stdout
+    assert _data(result)["blocked_by_unresolved"] == 1
     assert "downgraded" not in result.stderr
 
 
@@ -1078,8 +1088,8 @@ def test_resolved_thread_does_not_block_approve(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "EVENT=APPROVE" in result.stdout
-    assert "BLOCKED_BY_UNRESOLVED=0" in result.stdout
+    assert _data(result)["event"] == 'APPROVE'
+    assert _data(result)["blocked_by_unresolved"] == 0
 
 
 def test_outdated_thread_does_not_block_approve(tmp_path):
@@ -1100,8 +1110,8 @@ def test_outdated_thread_does_not_block_approve(tmp_path):
         cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
     )
     assert result.returncode == 0, result.stderr
-    assert "EVENT=APPROVE" in result.stdout
-    assert "BLOCKED_BY_UNRESOLVED=0" in result.stdout
+    assert _data(result)["event"] == 'APPROVE'
+    assert _data(result)["blocked_by_unresolved"] == 0
 
 
 def test_n_zero_skips_atomic_post_entirely(tmp_path):
@@ -1126,3 +1136,134 @@ def test_n_zero_skips_atomic_post_entirely(tmp_path):
     assert len(post_calls) == 1
     payload = json.loads(post_calls[0]["stdin"])
     assert "comments" not in payload
+
+
+# ── Behavioral: envelope shape ─────────────────────────────────────────────────
+
+
+def test_stdout_is_one_envelope_with_data_holding_eight_fields(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert set(payload.keys()) == {"schema", "status", "data", "warnings"}
+    assert payload["schema"] == "swb.pr-review-submit/1"
+    assert payload["warnings"] == []
+    assert set(payload["data"].keys()) == {
+        "posted_inline", "posted_pr_level", "deduped", "submitted",
+        "event", "decision", "review_url", "blocked_by_unresolved",
+    }
+
+
+def test_status_is_ok_when_submitted_true(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["data"]["submitted"] is True
+    assert payload["status"] == "ok"
+
+
+def test_status_is_partial_when_submitted_false(tmp_path):
+    """Every fallback exhausted (double-422 -> per-comment attempt also fails -> no
+    confirmed landing -> final plain submit also fails) leaves submitted=false — the
+    script still exits 0 (never aborts the caller), but status must reflect the
+    genuine partial failure. Same call sequence as
+    test_double_422_falls_through_to_per_comment_model_a, with the last two calls
+    made to fail instead of succeed."""
+    head = _init_repo(tmp_path)
+    pr_diff = (
+        "diff --git a/src.py b/src.py\n"
+        "index e69de29..1234567 100644\n"
+        "--- a/src.py\n"
+        "+++ b/src.py\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+line1\n"
+        "+line2\n"
+        "+line3\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
+            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
+            {"stdout": "", "stderr": "still failing", "exit": 1},  # per-comment fallback POST fails
+            {"stdout": "", "stderr": "final submit fails too", "exit": 1},  # final plain review submit fails
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["data"]["submitted"] is False
+    assert payload["status"] == "partial"
+
+
+def test_invalid_payload_exits_nonzero_with_empty_stdout_no_envelope(tmp_path):
+    """Input-contract validation failures never emit an envelope at all — the
+    non-zero exit is the whole signal, matching the contract's fail-closed rule."""
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "MAYBE"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+
+
+def test_envelope_round_trips_through_result_check(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+
+    checker = ROOT / "bin" / "swe-workbench-result-check"
+    checked = subprocess.run(
+        [sys.executable, str(checker), "swb.pr-review-submit/1"],
+        input=result.stdout, capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == json.loads(result.stdout)

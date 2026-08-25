@@ -10,6 +10,14 @@ the input contract, the Step 5 AskUserQuestion CTA (main-thread-only, can't
 move into a script), and the failure-mode/common-mistakes documentation
 stay in skills/workflow-pr-review-post/SKILL.md.
 
+Prints one JSON envelope to stdout on success (schema `swb.pr-review-submit/1`, see
+shared/docs/runtime-result-contract.md): `status` is "ok" when the review was
+successfully submitted (by any of the atomic/retry/fallback paths) and "partial"
+when every path was exhausted with nothing landed — the script still exits 0 either
+way, since the caller's cleanup chain must never abort on a posting failure. An
+input-contract validation failure (see `validate_payload`) exits 1 with no stdout at
+all — never a partial envelope.
+
 Atomicity and idempotency rationale (why this isn't a simple per-finding
 loop): the GitHub Reviews API's POST .../pulls/{n}/reviews accepts a
 comments[] array and posts the whole batch as one review in one call. That
@@ -59,7 +67,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -597,10 +604,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _emit(key: str, value) -> None:
-    print(f"{key}={shlex.quote(str(value))}")
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
@@ -662,14 +665,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         (debug_dir / f"{args.caller_tag}-payload.json").write_text(json.dumps(comments, indent=2))
 
-    _emit("POSTED_INLINE", result.posted_inline)
-    _emit("POSTED_PR_LEVEL", result.posted_pr_level)
-    _emit("DEDUPED", deduped)
-    _emit("SUBMITTED", "true" if result.submitted else "false")
-    _emit("EVENT", event)
-    _emit("DECISION", decision)
-    _emit("REVIEW_URL", result.review_url)
-    _emit("BLOCKED_BY_UNRESOLVED", n_blocking)
+    envelope = {
+        "schema": "swb.pr-review-submit/1",
+        "status": "ok" if result.submitted else "partial",
+        "data": {
+            "posted_inline": result.posted_inline,
+            "posted_pr_level": result.posted_pr_level,
+            "deduped": deduped,
+            "submitted": result.submitted,
+            "event": event,
+            "decision": decision,
+            "review_url": result.review_url,
+            "blocked_by_unresolved": n_blocking,
+        },
+        "warnings": [],
+    }
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
     return 0
 
 

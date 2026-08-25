@@ -1,11 +1,12 @@
 """Tests for bin/swe-workbench-new-run-dir — run-scoped scratch directory allocation.
 
 Mirrors tests/test_reap_run_dir.py and tests/test_clean_ephemeral.py. Each
-test invokes the script as a subprocess and parses its `RUN_DIR=<path>`
-stdout contract.
+test invokes the script as a subprocess and reads its bare-path stdout contract
+(Tier S per shared/docs/runtime-result-contract.md — a single trusted scalar,
+no envelope, no eval; a caller reads it as `RUN_DIR=$(swe-workbench-new-run-dir ...)`).
 
-Exit code 0 + `RUN_DIR=<path>` printed -> allocation succeeded.
-Exit code 1                            -> rejected invocation.
+Exit code 0 + the bare path printed -> allocation succeeded.
+Exit code 1                         -> rejected invocation.
 """
 
 import os
@@ -23,8 +24,6 @@ REPO_ROOT = Path(__file__).parent.parent
 
 RUN_ROOT = Path("/tmp/swe-workbench-run")
 
-_RUN_DIR_RE = re.compile(r"^RUN_DIR=(.+)$", re.MULTILINE)
-
 
 def run_script(*args: str, env=None):
     merged_env = dict(_CLEAN_ENV)
@@ -39,9 +38,9 @@ def run_script(*args: str, env=None):
 
 
 def parse_run_dir(stdout: str) -> str:
-    m = _RUN_DIR_RE.search(stdout)
-    assert m, f"expected RUN_DIR=<path> in stdout, got: {stdout!r}"
-    return m.group(1).strip()
+    path = stdout.strip()
+    assert path, f"expected a bare path in stdout, got: {stdout!r}"
+    return path
 
 
 @pytest.fixture(autouse=True)
