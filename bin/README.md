@@ -17,6 +17,7 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 
 | Script | Purpose |
 |--------|---------|
+| `swe-workbench-address-feedback-worktree` | Worktree acquire/reconcile/release lifecycle for `swe-workbench:workflow-address-feedback` Phase 2/Phase 7 (`acquire --pr <N> --branch <PR_BRANCH>`, `release --pr <N> --path <abs-path> --branch <PR_BRANCH> --created <true\|false>`) — reuse-current/reuse-existing/create-via-rimba/create-via-git, fast-forward or diverged-warn reconcile, deps install; release is path-keyed only (never branch-keyed) and gated by an ownership receipt so it can never remove a worktree it did not itself create, or delete the PR's real head branch. Two envelopes: `swb.address-feedback-worktree-acquire/1`, `swb.address-feedback-worktree-release/1` |
 | `swe-workbench-apply-conflict-resolution` | Apply a keep-mine/keep-main conflict resolution to one file — validates a merge/rebase is in progress, the declared `--operation` matches it, and the path is unmerged, then translates intent to git's `--ours`/`--theirs` (inverted under rebase vs merge) and stages the result |
 | `swe-workbench-clean-ephemeral` | Safe `rm -rf` for ephemeral git worktrees (sanity-checked before removal) |
 | `swe-workbench-clean-state-files` | Safe `rm -f` for per-invocation `/tmp` state files |

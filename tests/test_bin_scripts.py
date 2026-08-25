@@ -21,6 +21,7 @@ BIN = ROOT / "bin"
 
 # bare command name -> interpreter
 SCRIPTS = {
+    "swe-workbench-address-feedback-worktree": "bash",
     "swe-workbench-apply-conflict-resolution": "bash",
     "swe-workbench-clean-ephemeral": "bash",
     "swe-workbench-clean-state-files": "bash",
@@ -47,6 +48,7 @@ SCRIPTS = {
 
 # scripts known to call a sibling script by basename (script -> sibling basenames it calls)
 SIBLING_CALLERS = {
+    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
     "swe-workbench-preflight-pr": [

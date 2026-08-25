@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# swe-workbench-address-feedback-worktree acquire --pr <N> --branch <PR_BRANCH>
+# swe-workbench-address-feedback-worktree release --pr <N> --path <abs-path> --branch <PR_BRANCH> --created <true|false>
+#
+# Worktree acquire/reconcile/release lifecycle for workflow-address-feedback's Phase 2
+# (create) and Phase 7 (teardown) — extracted from skills/workflow-address-feedback/SKILL.md
+# so the lifecycle is directly testable instead of living as executable prose (issue #662).
+#
+# `acquire` preserves the reuse/create/reconcile semantics the SKILL.md prose used to own,
+# fixing three defects found while extracting it:
+#   - the fast-forward/diverged merge-base checks now both run `git -C "$WT"` and are both
+#     gated by the same `git show-ref --verify --quiet refs/remotes/origin/$PR_BRANCH` check
+#     (previously only the diverged check was guarded — a fork PR with a failed fetch hit a
+#     noisy "fatal: Not a valid object name" from the unguarded fast-forward check instead of
+#     silently skipping both)
+#   - `rimba deps install` failure is now only reported when rimba is actually present and the
+#     install genuinely failed — previously an `A && B || C` idiom fired the failure branch
+#     whenever rimba was simply absent, a false alarm
+#   - rimba is resolved via the shared workflow-cleanup-merged resolve-rimba.sh helper (PATH,
+#     ~/.local/bin, ~/go/bin), not a bare `command -v rimba` check
+#
+# `release` never deletes $PR_BRANCH (the PR owner's real head branch) and never removes
+# anything it did not itself create. Its safety gate, in order:
+#   1. `--created` is required; `--created false` is a no-op (exit 0, nothing touched).
+#   2. Ownership receipt: `acquire` writes /tmp/swe-workbench-address-feedback/<PR>-worktree.json
+#      ({path, branch, created, created_at}) as its last act. `release` refuses to remove
+#      anything unless that receipt says `created: true` for the exact --path given — this is
+#      the only check that answers "did *this* acquire create *this* directory"; a location or
+#      basename check alone cannot distinguish one PR's worktree from another's.
+#   3. Branch re-verification: if the worktree still exists, its checked-out branch must still
+#      equal --branch, or removal is refused (stale receipt / concurrently switched worktree).
+#   4. Removal is path-keyed only, never branch-keyed: `git worktree remove --force <path>`
+#      (retried once with a second --force for a locked worktree), then
+#      swe-workbench-clean-ephemeral as a fallback, then `git worktree prune` to clear the
+#      admin dir a clean-ephemeral-only removal would otherwise leave behind. This replaces
+#      today's `rimba remove "$PR_BRANCH" --force --keep-branch`, which is branch-keyed and can
+#      hit a different concurrent session's live worktree on the same branch. Both removal
+#      attempts run with an explicit `-C <main repo root>` (derived from the worktree's own
+#      `git rev-parse --git-common-dir`) rather than relying on the caller's cwd, since the
+#      caller may still be cwd'd inside the directory being removed.
+#   5. `$PR_BRANCH`'s existence is captured before and after; if it existed before and is gone
+#      after, that is a hard, should-never-happen invariant violation (this script issues no
+#      branch-deletion command of any kind) and aborts loudly rather than reporting it as an
+#      ordinary partial failure.
+#   6. `release` always exits 0 on every other path — a genuine partial failure (receipt
+#      mismatch, branch mismatch, both removal attempts failing) is `status: "partial"` plus a
+#      `data.method` of "skipped-not-created" or "failed" and a `warnings` entry, never a
+#      non-zero exit inside what may be a `set -e` caller chain.
+#
+# Stdout contract: one JSON envelope per shared/docs/runtime-result-contract.md.
+#   acquire — schema swb.address-feedback-worktree-acquire/1
+#     data.path            (str)  — absolute worktree path
+#     data.branch          (str)  — $PR_BRANCH, echoed back
+#     data.reused          (bool) — true iff an existing checkout was reused, not created
+#     data.reuse_reason    (str)  — current-worktree | existing-worktree | created-rimba | created-git
+#     data.dirty           (bool) — worktree has uncommitted changes (non-blocking)
+#     data.deps_installed  (bool) — rimba deps install ran and succeeded
+#     data.diverged        (bool) — local $PR_BRANCH diverged from origin/$PR_BRANCH
+#   warnings codes: fetch-failed, branch-diverged, deps-install-failed
+#   status "partial" whenever any warning fired, "ok" otherwise. Exits 0 except on a hard
+#   precondition failure (neither rimba nor the git fallback produced a working tree at all) —
+#   that path prints to stderr and exits 1 with no stdout, per the envelope contract's
+#   exit-code/status orthogonality rule.
+#
+#   release — schema swb.address-feedback-worktree-release/1
+#     data.removed            (bool)
+#     data.branch_preserved   (bool) — always true on a normal return (see step 5 above)
+#     data.method             (str)  — skipped-not-created | git-worktree-remove | clean-ephemeral | failed
+#   warnings codes: receipt-mismatch, branch-mismatch, removal-failed
+#   Always exits 0 (see point 6 above).
+
+set -euo pipefail
+
+STATE_DIR="/tmp/swe-workbench-address-feedback"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+usage() {
+  echo "Usage: swe-workbench-address-feedback-worktree acquire --pr <N> --branch <PR_BRANCH>" >&2
+  echo "       swe-workbench-address-feedback-worktree release --pr <N> --path <abs-path> --branch <PR_BRANCH> --created <true|false>" >&2
+  exit 1
+}
+
+_json_warning() {
+  jq -cn --arg code "$1" --arg message "$2" '{code: $code, message: $message}'
+}
+
+emit_acquire_envelope() {
+  local status="ok"
+  [ "${#WARNINGS[@]}" -gt 0 ] && status="partial"
+  local warnings_json
+  warnings_json=$(printf '%s\n' "${WARNINGS[@]:-}" | jq -cs '.')
+  jq -cn \
+    --arg status "$status" \
+    --arg path "$WT" \
+    --arg branch "$PR_BRANCH" \
+    --argjson reused "$REUSED" \
+    --arg reuse_reason "$REUSE_REASON" \
+    --argjson dirty "$DIRTY" \
+    --argjson deps_installed "$DEPS_INSTALLED" \
+    --argjson diverged "$DIVERGED" \
+    --argjson warnings "$warnings_json" \
+    '{schema: "swb.address-feedback-worktree-acquire/1", status: $status,
+      data: {path: $path, branch: $branch, reused: $reused, reuse_reason: $reuse_reason,
+             dirty: $dirty, deps_installed: $deps_installed, diverged: $diverged},
+      warnings: $warnings}'
+}
+
+emit_release_envelope() {
+  local status="ok"
+  [ "${#WARNINGS[@]}" -gt 0 ] && status="partial"
+  local warnings_json
+  warnings_json=$(printf '%s\n' "${WARNINGS[@]:-}" | jq -cs '.')
+  jq -cn \
+    --arg status "$status" \
+    --argjson removed "$REMOVED" \
+    --argjson branch_preserved "$BRANCH_PRESERVED" \
+    --arg method "$METHOD" \
+    --argjson warnings "$warnings_json" \
+    '{schema: "swb.address-feedback-worktree-release/1", status: $status,
+      data: {removed: $removed, branch_preserved: $branch_preserved, method: $method},
+      warnings: $warnings}'
+}
+
+do_acquire() {
+  local WARNINGS=()
+  local WT="" REUSED=false REUSE_REASON="" DIRTY=false DEPS_INSTALLED=false DIVERGED=false
+
+  if ! git fetch origin "$PR_BRANCH" >/dev/null 2>&1; then
+    WARNINGS+=("$(_json_warning "fetch-failed" "git fetch origin $PR_BRANCH failed — fork PR? reconcile against origin/$PR_BRANCH will be skipped.")")
+  fi
+
+  local CURRENT_BRANCH
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+  if [ "$CURRENT_BRANCH" = "$PR_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
+    WT=$(pwd)
+    REUSED=true
+    REUSE_REASON="current-worktree"
+  fi
+
+  if [ -z "$WT" ]; then
+    local EXISTING_WT
+    EXISTING_WT=$(git worktree list --porcelain \
+      | awk -v b="refs/heads/$PR_BRANCH" 'BEGIN{wt=""} /^worktree /{wt=$2} $0 == "branch " b {print wt; exit}')
+    if [ -n "$EXISTING_WT" ] && [ -d "$EXISTING_WT" ]; then
+      WT="$EXISTING_WT"
+      REUSED=true
+      REUSE_REASON="existing-worktree"
+    fi
+  fi
+
+  if [ -z "$WT" ]; then
+    local RIMBA
+    RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
+    if [ -n "$RIMBA" ]; then
+      if git show-ref --verify --quiet "refs/heads/$PR_BRANCH"; then
+        # Local branch exists (kept by a prior run's release) — checkout preserves
+        # unpushed crash-recovery commits instead of erroring on "branch already exists".
+        WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+        if git worktree add "$WT" "$PR_BRANCH" >/dev/null 2>&1; then
+          REUSE_REASON="created-git"
+        else
+          WT=""
+        fi
+      else
+        local RIMBA_OUT=""
+        if ! RIMBA_OUT=$("$RIMBA" add "$PR_BRANCH" --source "origin/$PR_BRANCH" 2>&1); then
+          : # captured below regardless of exit status
+        fi
+        WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
+        if [ -n "$WT" ] && [ -d "$WT" ]; then
+          local WT_BRANCH
+          WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)
+          if [ "$WT_BRANCH" != "$PR_BRANCH" ]; then
+            # rimba re-prefixed a non-conventional name (feature/<name>) — wrong branch;
+            # tear down path-keyed, then drop the junk branch rimba fabricated (guarded on
+            # it not being $PR_BRANCH, which it structurally cannot be here), and fall
+            # through to the git fallback below.
+            git worktree remove --force "$WT" >/dev/null 2>&1 || true
+            if [ "$WT_BRANCH" != "$PR_BRANCH" ]; then
+              git branch -D "$WT_BRANCH" >/dev/null 2>&1 || true
+            fi
+            WT=""
+          else
+            REUSE_REASON="created-rimba"
+          fi
+        else
+          WT=""
+        fi
+      fi
+    fi
+    if [ -z "$WT" ]; then
+      WT="$HOME/.local/share/swe-workbench/address-feedback-${PR}"
+      if ! git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH" >/dev/null 2>&1; then
+        git worktree add "$WT" "$PR_BRANCH" >/dev/null 2>&1
+      fi
+      REUSE_REASON="created-git"
+    fi
+  fi
+
+  [ -e "$WT/.git" ] || {
+    echo "swe-workbench-address-feedback-worktree: worktree creation failed at $WT" >&2
+    exit 1
+  }
+
+  if git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH"; then
+    if git -C "$WT" merge-base --is-ancestor "$PR_BRANCH" "origin/$PR_BRANCH" 2>/dev/null; then
+      git -C "$WT" merge --ff-only "origin/$PR_BRANCH" >/dev/null 2>&1 || true
+    elif ! git -C "$WT" merge-base --is-ancestor "origin/$PR_BRANCH" "$PR_BRANCH" 2>/dev/null; then
+      DIVERGED=true
+      WARNINGS+=("$(_json_warning "branch-diverged" "local $PR_BRANCH diverged from origin/$PR_BRANCH — rebase before committing.")")
+    fi
+  fi
+
+  local RIMBA2
+  RIMBA2=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA2=""
+  if [ -n "$RIMBA2" ]; then
+    if "$RIMBA2" deps install "$PR_BRANCH" >/dev/null 2>&1; then
+      DEPS_INSTALLED=true
+    else
+      WARNINGS+=("$(_json_warning "deps-install-failed" "rimba deps install failed for $PR_BRANCH — install deps manually before running tests.")")
+    fi
+  fi
+
+  [ -n "$(git -C "$WT" status --porcelain 2>/dev/null)" ] && DIRTY=true
+
+  local CREATED_BOOL="true"
+  [ "$REUSED" = "true" ] && CREATED_BOOL="false"
+  mkdir -p "$STATE_DIR"
+  jq -cn \
+    --arg path "$WT" --arg branch "$PR_BRANCH" \
+    --argjson created "$CREATED_BOOL" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{path: $path, branch: $branch, created: $created, created_at: $created_at}' \
+    > "${STATE_DIR}/${PR}-worktree.json"
+
+  emit_acquire_envelope
+}
+
+# Prints the main repo root for the worktree at $1 (derived from its own
+# git-common-dir), or nothing on failure — best-effort, never fatal to the caller.
+_main_repo_root_for() {
+  local target="$1" common_dir
+  common_dir=$(git -C "$target" rev-parse --git-common-dir 2>/dev/null) || return 1
+  case "$common_dir" in
+    /*) : ;;
+    *) common_dir="$(cd "$target" 2>/dev/null && pwd -P)/$common_dir" ;;
+  esac
+  ( cd "$common_dir/.." 2>/dev/null && pwd -P )
+}
+
+do_release() {
+  local WARNINGS=()
+  local REMOVED=false BRANCH_PRESERVED=true METHOD="skipped-not-created"
+
+  if [ "$CREATED" != "true" ]; then
+    emit_release_envelope
+    return
+  fi
+
+  local RECEIPT="${STATE_DIR}/${PR}-worktree.json"
+  local receipt_ok=1
+  if [ -f "$RECEIPT" ]; then
+    local rc_created rc_path canon_receipt_path canon_wpath
+    rc_created=$(jq -r '.created // empty' "$RECEIPT" 2>/dev/null) || rc_created=""
+    rc_path=$(jq -r '.path // empty' "$RECEIPT" 2>/dev/null) || rc_path=""
+    if [ -n "$rc_path" ]; then
+      canon_receipt_path=$(cd "$rc_path" 2>/dev/null && pwd -P) || canon_receipt_path="$rc_path"
+      canon_wpath=$(cd "$WPATH" 2>/dev/null && pwd -P) || canon_wpath="$WPATH"
+      if [ "$rc_created" = "true" ] && [ "$canon_receipt_path" = "$canon_wpath" ]; then
+        receipt_ok=0
+      fi
+    fi
+  fi
+
+  if [ "$receipt_ok" -ne 0 ]; then
+    WARNINGS+=("$(_json_warning "receipt-mismatch" "no matching ownership receipt for $WPATH — refusing to remove")")
+    emit_release_envelope
+    return
+  fi
+
+  if [ -d "$WPATH" ]; then
+    local actual_branch
+    actual_branch=$(git -C "$WPATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [ "$actual_branch" != "$PR_BRANCH" ]; then
+      WARNINGS+=("$(_json_warning "branch-mismatch" "worktree at $WPATH is checked out on '$actual_branch', not '$PR_BRANCH' — refusing to remove")")
+      emit_release_envelope
+      return
+    fi
+  fi
+
+  local existed_before=false
+  git show-ref --verify --quiet "refs/heads/$PR_BRANCH" && existed_before=true
+
+  # Hop to a directory outside $WPATH before attempting removal — the caller (the
+  # skill) may still be cwd'd inside the worktree being released, and once removal
+  # succeeds a cwd left pointing at the deleted directory breaks every subsequent
+  # bare `git` command in this function (including the exists_after check below),
+  # not just the removal call itself. Best-effort: $HOME is a stable fallback when
+  # the worktree's own git-common-dir can't be resolved (e.g. it is already gone).
+  local MAIN_ROOT=""
+  MAIN_ROOT=$(_main_repo_root_for "$WPATH") || MAIN_ROOT=""
+  if [ -n "$MAIN_ROOT" ] && [ -d "$MAIN_ROOT" ]; then
+    cd "$MAIN_ROOT" 2>/dev/null || true
+  else
+    cd "${HOME:-/}" 2>/dev/null || true
+  fi
+
+  local removed_ok=1
+  if git worktree remove --force "$WPATH" >/dev/null 2>&1 \
+    || git worktree remove --force --force "$WPATH" >/dev/null 2>&1; then
+    removed_ok=0
+  fi
+
+  if [ "$removed_ok" -eq 0 ]; then
+    METHOD="git-worktree-remove"
+  else
+    "$SCRIPT_DIR/swe-workbench-clean-ephemeral" "$WPATH" >/dev/null 2>&1 || true
+    if [ ! -e "$WPATH" ]; then
+      METHOD="clean-ephemeral"
+      git worktree prune >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if [ ! -e "$WPATH" ]; then
+    REMOVED=true
+  else
+    METHOD="failed"
+    WARNINGS+=("$(_json_warning "removal-failed" "both git worktree remove and swe-workbench-clean-ephemeral failed for $WPATH")")
+  fi
+
+  local exists_after=false
+  git show-ref --verify --quiet "refs/heads/$PR_BRANCH" && exists_after=true
+
+  if [ "$existed_before" = "true" ] && [ "$exists_after" != "true" ]; then
+    echo "swe-workbench-address-feedback-worktree: FATAL — $PR_BRANCH no longer exists after release, but this script never deletes branches. This indicates external interference; aborting." >&2
+    exit 1
+  fi
+
+  emit_release_envelope
+}
+
+[ $# -ge 1 ] || usage
+OP="$1"
+shift
+case "$OP" in
+  acquire | release) ;;
+  *) usage ;;
+esac
+
+PR="" PR_BRANCH="" WPATH="" CREATED=""
+_PR_SET=0
+_BRANCH_SET=0
+_PATH_SET=0
+_CREATED_SET=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pr)
+      [ $# -ge 2 ] || usage
+      [ "$_PR_SET" -eq 0 ] || usage
+      PR=$2
+      _PR_SET=1
+      shift 2
+      ;;
+    --branch)
+      [ $# -ge 2 ] || usage
+      [ "$_BRANCH_SET" -eq 0 ] || usage
+      PR_BRANCH=$2
+      _BRANCH_SET=1
+      shift 2
+      ;;
+    --path)
+      [ $# -ge 2 ] || usage
+      [ "$_PATH_SET" -eq 0 ] || usage
+      WPATH=$2
+      _PATH_SET=1
+      shift 2
+      ;;
+    --created)
+      [ $# -ge 2 ] || usage
+      [ "$_CREATED_SET" -eq 0 ] || usage
+      CREATED=$2
+      _CREATED_SET=1
+      shift 2
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
+[ "$_PR_SET" -eq 1 ] || usage
+[ "$_BRANCH_SET" -eq 1 ] || usage
+case "$PR" in
+  [1-9]*)
+    case "$PR" in
+      *[!0-9]*) usage ;;
+    esac
+    ;;
+  *) usage ;;
+esac
+[ -n "$PR_BRANCH" ] || usage
+
+if [ "$OP" = "release" ]; then
+  [ "$_PATH_SET" -eq 1 ] || usage
+  [ "$_CREATED_SET" -eq 1 ] || usage
+  case "$WPATH" in
+    /*) ;;
+    *)
+      echo "swe-workbench-address-feedback-worktree: --path must be absolute" >&2
+      exit 1
+      ;;
+  esac
+  case "$CREATED" in
+    true | false) ;;
+    *)
+      echo "swe-workbench-address-feedback-worktree: --created must be 'true' or 'false'" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+case "$OP" in
+  acquire) do_acquire ;;
+  release) do_release ;;
+esac

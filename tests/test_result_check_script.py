@@ -78,6 +78,20 @@ EXPECTED_REGISTRY = {
         "review_url": "str",
         "blocked_by_unresolved": "int",
     },
+    "swb.address-feedback-worktree-acquire/1": {
+        "path": "str",
+        "branch": "str",
+        "reused": "bool",
+        "reuse_reason": "str",
+        "dirty": "bool",
+        "deps_installed": "bool",
+        "diverged": "bool",
+    },
+    "swb.address-feedback-worktree-release/1": {
+        "removed": "bool",
+        "branch_preserved": "bool",
+        "method": "str",
+    },
 }
 
 
