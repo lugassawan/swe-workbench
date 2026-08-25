@@ -10,18 +10,28 @@ Mirrors tests/test_delete_branches.py's harness conventions: real git repos buil
 with subprocess.run(..., env=_CLEAN_ENV), no mocking of git itself. State-file tests
 use real /tmp/swe-workbench-* paths (like tests/test_clean_state_files.py) with a
 unique high PR number per test to avoid cross-test / cross-run collisions.
+
+The `KEY=VALUE` stdout contract was later replaced with the standard JSON envelope
+(schema `swb.sweep-residuals/1`, see shared/docs/runtime-result-contract.md) —
+`retained_worktrees`/`failed_removals` are now `[{path, reason}]` arrays rather than
+bare counts. `_assert_contract`'s `retained_wt`/`failed` parameters still take an
+expected *count* (checked against array length) so nearly every existing call site
+is unchanged; a handful of dedicated tests assert the actual path/reason content.
 """
 
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from conftest import _CLEAN_ENV
 
-SCRIPT = Path(__file__).parent.parent / "bin" / "swe-workbench-sweep-residuals"
+ROOT = Path(__file__).parent.parent
+SCRIPT = ROOT / "bin" / "swe-workbench-sweep-residuals"
 REVIEW_MD = Path(__file__).parent.parent / "commands" / "review.md"
 
 TMP = Path("/tmp")
@@ -94,23 +104,41 @@ def _assert_contract(
     retained_wt: str = "0",
     failed: str = "0",
 ) -> None:
+    """`retained_wt`/`failed` are expected *counts* — checked against the length of
+    the `data.retained_worktrees`/`data.failed_removals` arrays, not their content."""
     assert result.returncode == 0, (
         f"Script must always exit 0 (rc={result.returncode})\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
-    lines = result.stdout.strip().splitlines()
-    expected = [
-        f"SWEPT_WORKTREES={swept_wt}",
-        f"SWEPT_STATE_FILES={swept_sf}",
-        f"SWEPT_RUN_DIRS={swept_rd}",
-        f"SWEPT_SESSION_FILES={swept_ssf}",
-        f"RETAINED_WORKTREES={retained_wt}",
-        f"FAILED_REMOVALS={failed}",
-        f"RESIDUAL_NONE={residual_none}",
-    ]
-    assert lines == expected, (
-        f"Expected stdout={expected}, got {lines!r}\n"
-        f"Full stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    payload = json.loads(result.stdout)
+    assert payload["schema"] == "swb.sweep-residuals/1"
+    assert payload["warnings"] == []
+    expected_status = "partial" if (int(retained_wt) > 0 or int(failed) > 0) else "ok"
+    assert payload["status"] == expected_status, (
+        f"expected status={expected_status!r}, got {payload['status']!r}\nFull payload: {payload!r}"
+    )
+    data = payload["data"]
+    actual = {
+        "swept_worktrees": data["swept_worktrees"],
+        "swept_state_files": data["swept_state_files"],
+        "swept_run_dirs": data["swept_run_dirs"],
+        "swept_session_files": data["swept_session_files"],
+        "retained_worktrees": len(data["retained_worktrees"]),
+        "failed_removals": len(data["failed_removals"]),
+        "residual_none": data["residual_none"],
+    }
+    expected = {
+        "swept_worktrees": int(swept_wt),
+        "swept_state_files": int(swept_sf),
+        "swept_run_dirs": int(swept_rd),
+        "swept_session_files": int(swept_ssf),
+        "retained_worktrees": int(retained_wt),
+        "failed_removals": int(failed),
+        "residual_none": bool(int(residual_none)),
+    }
+    assert actual == expected, (
+        f"Expected data={expected}, got {actual!r}\n"
+        f"Full payload: {payload!r}\nstderr: {result.stderr!r}"
     )
 
 
@@ -275,6 +303,10 @@ class TestDirtyWorktreeSkipped:
             assert "uncommitted" in result.stderr.lower() or "dirty" in result.stderr.lower(), (
                 f"a dirty-skip warning must be printed to stderr, got: {result.stderr!r}"
             )
+            # The actual capability gain of the envelope migration: retained_worktrees
+            # carries which path and why, not just a bare count.
+            retained = json.loads(result.stdout)["data"]["retained_worktrees"]
+            assert retained == [{"path": str(wt_path), "reason": "1 uncommitted change(s)"}], retained
         finally:
             _cleanup_worktree(repo, wt_path, branch)
 
@@ -317,6 +349,8 @@ class TestFailedRemovalCounted:
                 "removal must have genuinely failed — the worktree directory "
                 "must still be present on disk"
             )
+            failed_removals = json.loads(result.stdout)["data"]["failed_removals"]
+            assert failed_removals == [{"path": str(wt_path), "reason": "worktree removal failed"}], failed_removals
         finally:
             os.chmod(wt_path, 0o755)
             _cleanup_worktree(repo, wt_path, branch)
@@ -692,44 +726,40 @@ def test_specialist_modes_match_review_md_postable_list():
     )
 
 
-# ── eval safety (script feeds `eval "$(...)"` per the SKILL.md wiring) ──────
+# ── envelope round-trip (replaces the old eval-safety test class; production pattern
+#    is now RESULT=$(sweep-residuals <N> | result-check swb.sweep-residuals/1) || exit 1) ──
 
 
-def test_eval_stdout_only_does_not_create_stray_files(tmp_path):
-    """Production pattern: eval "$(swe-workbench-sweep-residuals <N>)" — stdout only.
-
-    Capture BEFORE cd-ing to a different directory (the eval/cwd trap). If
-    MAIN_REPO cannot be resolved (no git worktree list output — e.g. cwd is
-    not inside a git repo), Block B is skipped silently and Blocks C/D still
-    run; the script never aborts early over that.
-    """
+def test_envelope_round_trips_through_result_check(tmp_path):
+    """stdout must be a bare JSON envelope — no `eval`-able KEY=VALUE lines, and it
+    must validate cleanly against the checker's registered schema."""
     repo = _build_repo(tmp_path)
     n = _unique_n()
     env = _rimba_absent_env(tmp_path / "fake_home")
     (tmp_path / "fake_home").mkdir(exist_ok=True)
 
-    eval_cwd = tmp_path / "eval_cwd"
-    eval_cwd.mkdir()
-    (eval_cwd / "decoy").write_text("")
+    result = _run_script(repo, n, env)
+    assert result.returncode == 0, result.stderr
 
-    assert '"' not in str(eval_cwd) and '"' not in str(SCRIPT) and '"' not in n
+    checker = ROOT / "bin" / "swe-workbench-result-check"
+    checked = subprocess.run(
+        [sys.executable, str(checker), "swb.sweep-residuals/1"],
+        input=result.stdout, capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == json.loads(result.stdout)
 
-    runner = (
-        f'output="$(bash "{SCRIPT}" "{n}")"; '
-        f'cd "{eval_cwd}"; '
-        f'eval "$output" 2>/dev/null || true; '
-        f'echo "RESIDUAL_NONE_SEEN=$RESIDUAL_NONE"'
-    )
-    result = subprocess.run(
-        ["bash", "-c", runner], cwd=str(repo), capture_output=True, text=True, env=env,
-    )
-    assert result.returncode == 0, f"bash runner failed:\n{result.stderr}"
-    assert "RESIDUAL_NONE_SEEN=1" in result.stdout, (
-        f"eval'd contract did not set RESIDUAL_NONE in the caller's shell: {result.stdout!r}"
-    )
 
-    stray = [f for f in eval_cwd.iterdir() if f.name != "decoy"]
-    assert not stray, (
-        f"Stray files created in {eval_cwd} via eval of the script's stdout: "
-        f"{[f.name for f in stray]}"
+def test_stdout_contains_no_eval_able_key_value_lines(tmp_path):
+    """Regression lock for the migration itself — a stray `KEY=VALUE` line surviving
+    in stdout would silently re-open the eval-injection hazard this ticket closes."""
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    env = _rimba_absent_env(tmp_path / "fake_home")
+    (tmp_path / "fake_home").mkdir(exist_ok=True)
+
+    result = _run_script(repo, n, env)
+    assert result.returncode == 0, result.stderr
+    assert not re.search(r"^[A-Z_]+=", result.stdout, re.MULTILINE), (
+        f"stdout must be a bare JSON envelope, no shell KEY=VALUE lines: {result.stdout!r}"
     )

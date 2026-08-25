@@ -257,11 +257,9 @@ def test_common_mistakes_no_op_row_reframed():
 # ---------------------------------------------------------------------------
 
 def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
-    """Step 5 must delegate residual reaping to swe-workbench-sweep-residuals via eval.
-
-    Mirrors test_cleanup_merged_step6_delegates_to_delete_branches_script: the
-    skill slice for Step 5 must reference the companion script and invoke it
-    through an eval block, the same pattern every other Step in this file uses.
+    """Step 5 must delegate residual reaping to swe-workbench-sweep-residuals, piped
+    through the standard envelope checker (no eval — the envelope migration retired
+    the KEY=VALUE/eval contract every other companion script in this file still uses).
     """
     body = SKILL.read_text()
 
@@ -277,9 +275,13 @@ def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
     assert "swe-workbench-sweep-residuals" in step5_slice, (
         "Step 5 slice must reference swe-workbench-sweep-residuals"
     )
-    assert "eval" in step5_slice, (
-        "Step 5 slice must invoke swe-workbench-sweep-residuals through an eval block, "
-        "matching the KEY=VALUE contract used by every other step's companion script"
+    assert "swe-workbench-result-check" in step5_slice, (
+        "Step 5 slice must pipe swe-workbench-sweep-residuals' output through "
+        "swe-workbench-result-check, validating the envelope before use"
+    )
+    assert "eval" not in step5_slice, (
+        "Step 5 slice must not use eval — the envelope contract replaced the old "
+        "KEY=VALUE/eval pattern"
     )
 
 
@@ -391,11 +393,11 @@ def test_cleanup_merged_step7_report_includes_session_residuals_line():
     assert "Session residuals" in step7_slice, (
         "Step 7's report block must include a 'Session residuals' line"
     )
-    assert "SWEPT_SESSION_FILES" in step7_slice, (
-        "Step 7's report block must reference SWEPT_SESSION_FILES"
+    assert "swept_session_files" in step7_slice, (
+        "Step 7's report block must reference .data.swept_session_files"
     )
-    assert "SWEPT_RUN_DIRS" in step7_slice, (
-        "Step 7's report block must reference SWEPT_RUN_DIRS"
+    assert "swept_run_dirs" in step7_slice, (
+        "Step 7's report block must reference .data.swept_run_dirs"
     )
 
 
@@ -409,11 +411,11 @@ def test_cleanup_merged_step7_report_includes_retained_and_failed_line():
     body = SKILL.read_text()
     step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
 
-    assert "RETAINED_WORKTREES" in step7_slice, (
-        "Step 7's report block must reference RETAINED_WORKTREES"
+    assert "retained_worktrees" in step7_slice, (
+        "Step 7's report block must reference .data.retained_worktrees"
     )
-    assert "FAILED_REMOVALS" in step7_slice, (
-        "Step 7's report block must reference FAILED_REMOVALS"
+    assert "failed_removals" in step7_slice, (
+        "Step 7's report block must reference .data.failed_removals"
     )
 
 
@@ -449,10 +451,10 @@ def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped()
 
 def test_session_scratch_cleanup_is_platform_neutral() -> None:
     text = SKILL.read_text()
-    section = text[text.index("The session-scratchpad sweep"):text.index("The script emits")]
+    section = text[text.index("The session-scratchpad sweep"):text.index("The checker validates the envelope")]
 
     assert "session scratch adapter" in section
     assert "multiple active" in section
-    assert "SWEPT_SESSION_FILES=0" in section
+    assert "swept_session_files = 0" in section
     assert "CLAUDE_CODE_SESSION_ID" not in section
     assert "/tmp/claude-" not in section

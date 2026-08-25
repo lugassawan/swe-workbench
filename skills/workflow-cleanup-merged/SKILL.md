@@ -111,18 +111,27 @@ When the rimba post-merge hook is active (see `### rimba + post-merge hook (fast
 
 ### Step 5 — Residual Sweep (PR-scoped)
 ```bash
-eval "$(swe-workbench-sweep-residuals "<number>")"
+RESULT=$(swe-workbench-sweep-residuals "<number>" | swe-workbench-result-check swb.sweep-residuals/1) || exit 1
+RESIDUAL_NONE=$(printf '%s' "$RESULT" | jq -r '.data.residual_none')
 ```
-This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `swe-workbench:workflow-pr-review` (either mode), `swe-workbench:workflow-address-feedback`, and PR-mode specialist `/swe-workbench:review` runs when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, each postable specialist mode's `review-<mode>-<number>` worktree (plus its mode-scoped `/tmp` fallback path) and branch, and `#<number>`'s orphaned `/tmp` state JSON, including each specialist mode's own preflight state file (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, and counted as `RETAINED_WORKTREES` rather than dropped from the tally, so an interrupted session's local-only work is never silently discarded — nor silently reported as clean. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed by `eval` unless this sweep clears it first.
+This is a **backstop**, not a replacement for each flow's own Phase 7 cleanup: it force-removes any leftover `#<number>`-keyed ephemeral artifacts from `swe-workbench:workflow-pr-review` (either mode), `swe-workbench:workflow-address-feedback`, and PR-mode specialist `/swe-workbench:review` runs when their own cleanup failed or was interrupted — the reviewer worktrees `pr-review-<number>` and `pr-followup-<number>` (plus their bare-`<number>` `/tmp` fallback paths) and both reviewer branches, the `address-feedback-<number>` worktree, each postable specialist mode's `review-<mode>-<number>` worktree (plus its mode-scoped `/tmp` fallback path) and branch, and `#<number>`'s orphaned `/tmp` state JSON, including each specialist mode's own preflight state file (Step 2 already proved `#<number>` is `MERGED`, so this force-removal is safe). It never deletes the `address-feedback-<number>` branch — that may be the PR's real head branch — and never touches the shared containing dirs `/tmp/swe-workbench-pr-review/` or `/tmp/swe-workbench-address-feedback/`, since a concurrent unrelated PR may hold live state there. Worktrees with uncommitted changes are skipped rather than force-removed, with a stderr warning, and recorded in `.data.retained_worktrees` rather than dropped from the tally, so an interrupted session's local-only work is never silently discarded — nor silently reported as clean. **This runs before Step 6's branch deletion on purpose:** a stale `address-feedback-<number>` worktree checks out the PR's real head branch directly, so if it still exists, Step 6's `git branch -D` would be refused by git and silently swallowed unless this sweep clears it first.
 
 The same script also sweeps two additional artifact classes (labeled Block C and Block D in
 `swe-workbench-sweep-residuals`'s own comments — unrelated to Step 3's "Block D" hook-interruption checks in
 `sync-and-verify.sh`, a different script entirely):
 
 - **The run-dir sweep.** Any `/tmp/swe-workbench-run/*-<number>-??????` directory allocated by `swe-workbench-new-run-dir` for this PR (e.g. left behind by a flow killed before its own `swe-workbench-reap-run-dir` call) is reaped via `swe-workbench-reap-run-dir`. This is `#<number>`-keyed by the run-dir naming convention itself, so the same "Step 2 already proved MERGED" safety argument applies.
-- **The session-scratchpad sweep.** The current harness session's scratchpad contents — temporary review or implementation artifacts never committed — are cleared via `swe-workbench-reap-session-scratch`. This is deliberately **not** scoped to `#<number>`: those files never carry a `#<number>` token, so name-based matching can never reach them. A session scratch adapter resolves the session id to an authorized target; the reaper continues only when exactly one adapter is active and reports exactly one safe candidate. An unsupported platform, multiple active adapters, or an invalid descriptor or target produces a silent no-op with `SWEPT_SESSION_FILES=0`, leaving the directory intact and the remaining cleanup unaffected.
+- **The session-scratchpad sweep.** The current harness session's scratchpad contents — temporary review or implementation artifacts never committed — are cleared via `swe-workbench-reap-session-scratch`. This is deliberately **not** scoped to `#<number>`: those files never carry a `#<number>` token, so name-based matching can never reach them. A session scratch adapter resolves the session id to an authorized target; the reaper continues only when exactly one adapter is active and reports exactly one safe candidate. An unsupported platform, multiple active adapters, or an invalid descriptor or target produces a silent no-op with `.data.swept_session_files = 0`, leaving the directory intact and the remaining cleanup unaffected.
 
-The script emits `SWEPT_WORKTREES=<n>`, `SWEPT_STATE_FILES=<n>`, `SWEPT_RUN_DIRS=<n>`, `SWEPT_SESSION_FILES=<n>`, `RETAINED_WORKTREES=<n>`, `FAILED_REMOVALS=<n>`, `RESIDUAL_NONE=0|1` via `eval` and always exits 0. `RESIDUAL_NONE=1` iff all six counts are `0` — a retained (dirty) or failed removal keeps it `0` even when nothing was actually swept.
+The checker validates the envelope (schema `swb.sweep-residuals/1` — see
+[`shared/docs/runtime-result-contract.md`](../../shared/docs/runtime-result-contract.md)) and
+re-emits it into `$RESULT`, or `|| exit 1` aborts. `.data` carries `swept_worktrees`,
+`swept_state_files`, `swept_run_dirs`, `swept_session_files` (counts), `retained_worktrees` and
+`failed_removals` (`[{path, reason}]` — which worktree, why, not just a bare count), and
+`residual_none` (`true` iff every count is `0` and both arrays are empty — a retained dirty
+worktree or a failed removal keeps it `false` even when nothing was actually swept).
+`$RESIDUAL_NONE` is extracted once above; the sweep script always exits 0, so `status` (never
+`"failed"` here, only `"ok"`/`"partial"`) is how a genuine partial failure is expressed instead.
 
 ### Step 6 — Delete Branches
 ```bash
@@ -143,16 +152,23 @@ may pause on `AskUserQuestion`) afterward.
 ```
 Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
-  ✓ Residual sweep: <SWEPT_WORKTREES> worktree(s) + <SWEPT_STATE_FILES> state file(s) removed (or: none)
-  ✓ Session residuals: <SWEPT_SESSION_FILES> scratch file(s) + <SWEPT_RUN_DIRS> run dir(s) removed (or: none)
-  ⚠ Retained/failed: <RETAINED_WORKTREES> worktree(s) retained (dirty) + <FAILED_REMOVALS> removal(s) failed (or: none)
+  ✓ Residual sweep: <.data.swept_worktrees> worktree(s) + <.data.swept_state_files> state file(s) removed (or: none)
+  ✓ Session residuals: <.data.swept_session_files> scratch file(s) + <.data.swept_run_dirs> run dir(s) removed (or: none)
+  ⚠ Retained/failed: <n> worktree(s) retained (dirty) + <n> removal(s) failed (or: none)
+      - retained: <path> (<reason>)     ← one line per .data.retained_worktrees[] entry
+      - failed: <path> (<reason>)       ← one line per .data.failed_removals[] entry
   ✓ Branches deleted: local <branch> / remote <branch> (or: already gone — LOCAL_DELETED=0 / REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
 
-The retained/failed line is only printed when `RETAINED_WORKTREES` or `FAILED_REMOVALS` is nonzero — a
-dirty worktree was deliberately preserved (inspect and commit/discard manually before re-running cleanup),
-or a removal was attempted but the artifact is still on disk.
+Every count and record above is read from `$RESULT` with `jq` at this point (report-only —
+`printf '%s' "$RESULT" | jq -r '.data.swept_worktrees'`, etc., never `echo "$RESULT" | jq`). The
+retained/failed line — and its per-item sub-bullets — is only printed when
+`.data.retained_worktrees` or `.data.failed_removals` is non-empty: a dirty worktree was
+deliberately preserved (inspect and commit/discard manually before re-running cleanup), or a
+removal was attempted but the artifact is still on disk. Each sub-bullet's `<path>`/`<reason>`
+comes straight from that array entry, so an operator can tell *which* worktree needs manual
+attention and *why* without re-deriving it from `git worktree list` by hand.
 
 ### Step 8 — Deferred-verification follow-up
 
@@ -191,7 +207,7 @@ Step 4 falls through three mutually exclusive strategies — rimba + post-merge 
 | Remote branch already gone | HTTP 404 / "remote ref does not exist" | Treat as success. Report "already gone". |
 | Step 3 (sync main) fails | Non-zero exit from `git checkout` or `git pull` | Warn in report. Do not abort — sync is best-effort; cleanup proceeds. |
 | Session scratch adapter discovery or target resolution fails | No active adapter; multiple active adapters; invalid descriptor; or zero or multiple candidates | `swe-workbench-reap-session-scratch` reports `SWEPT_SESSION_FILES=0`; the session-scratchpad sweep is skipped and cleanup proceeds. |
-| Residual-sweep artifact retained or removal failed | `RETAINED_WORKTREES > 0` or `FAILED_REMOVALS > 0` | Not an abort — Step 5 always exits 0. Report the retained/failed line in Step 7 so the state is visible rather than silently dropped from the tally; a retained worktree holds uncommitted work (inspect and commit/discard manually), a failed removal needs a manual `git worktree remove` / `rm -rf` follow-up. |
+| Residual-sweep artifact retained or removal failed | `.data.retained_worktrees` or `.data.failed_removals` non-empty | Not an abort — Step 5 always exits 0 (`status: "partial"` instead). Report the retained/failed line in Step 7 so the state is visible rather than silently dropped from the tally; a retained worktree holds uncommitted work (inspect and commit/discard manually), a failed removal needs a manual `git worktree remove` / `rm -rf` follow-up. |
 | PR number not derivable from current branch | `gh pr view` fails | Ask the user for the PR number explicitly. |
 | Hook ran but did not clean | `WORKTREE_GONE=0` after sync despite hook active | Fall through to rimba-binary or shell strategy. No abort. |
 | cwd deleted mid-flow by hook | `fatal: not a git repository` on next command | Step 3a `ExitWorktree action=keep` (or the `cd`-to-main-root fallback for `cd`-entered worktrees) prevents this when followed. If observed, re-run from the main repo root. |

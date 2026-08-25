@@ -94,6 +94,16 @@ def test_secret_scan_section_present_with_askuserquestion():
         "Pre-commit gate section must guard swe-workbench-preflight-commit with a "
         "command -v check before invoking it"
     )
+    assert "command -v swe-workbench-result-check" in section, (
+        "Pre-commit gate section must also guard swe-workbench-result-check — it's "
+        "piped in to validate the envelope before $PREFLIGHT is trusted"
+    )
+    assert "swe-workbench-preflight-commit | swe-workbench-result-check swb.preflight-commit/1" in section, (
+        "Pre-commit gate section must pipe swe-workbench-preflight-commit's output "
+        "through swe-workbench-result-check swb.preflight-commit/1, matching the other "
+        "two migrated envelope consumers (workflow-pr-review-post, workflow-cleanup-merged) "
+        "rather than reading the raw producer output unvalidated"
+    )
 
     aq_block = _extract_fenced_block(section, "json")
     assert aq_block is not None, (
@@ -158,7 +168,8 @@ def test_skill_does_not_reimplement_the_scan_inline():
 
     no_ci_section = _section_body(body, "## Doc-only `[no ci]` rule")
     assert no_ci_section, "Missing '## Doc-only `[no ci]` rule' section in SKILL.md"
-    assert ".docs_only" in no_ci_section, (
-        "'## Doc-only [no ci] rule' must read `.docs_only` from the preflight result "
-        "computed by the pre-commit gate above, not re-derive the classification"
+    assert ".data.docs_only" in no_ci_section, (
+        "'## Doc-only [no ci] rule' must read `.data.docs_only` from the validated "
+        "preflight envelope computed by the pre-commit gate above, not re-derive the "
+        "classification"
     )

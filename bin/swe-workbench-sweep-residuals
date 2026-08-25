@@ -24,28 +24,81 @@
 #             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
 #
 # Usage: swe-workbench-sweep-residuals <PR number>
-# Stdout contract (always emitted, even on a non-integer arg or nothing found):
-#   SWEPT_WORKTREES=<n>      — count of ephemeral worktrees removed
-#   SWEPT_STATE_FILES=<n>    — count of /tmp state files removed
-#   SWEPT_RUN_DIRS=<n>       — count of orphaned run dirs removed (Block C)
-#   SWEPT_SESSION_FILES=<n>  — count of session scratchpad entries removed (Block D)
-#   RETAINED_WORKTREES=<n>   — dirty worktrees deliberately preserved, never force-removed
-#   FAILED_REMOVALS=<n>      — removal attempted but the artifact is still present
-#   RESIDUAL_NONE=0|1        — 1 iff all six counts above are 0
-# Always exits 0 — the caller's `eval "$(...)"` must never abort mid-cleanup.
+# Stdout contract (always emitted, even on a non-integer arg or nothing found): one
+# JSON envelope, schema swb.sweep-residuals/1 (see shared/docs/runtime-result-contract.md):
+#   data.swept_worktrees      — count of ephemeral worktrees removed
+#   data.swept_state_files    — count of /tmp state files removed
+#   data.swept_run_dirs       — count of orphaned run dirs removed (Block C)
+#   data.swept_session_files  — count of session scratchpad entries removed (Block D)
+#   data.retained_worktrees   — [{path, reason}] dirty worktrees deliberately preserved,
+#                               never force-removed
+#   data.failed_removals      — [{path, reason}] removal attempted but the artifact is
+#                               still present
+#   data.residual_none        — true iff every count above is 0 and both arrays are empty
+# status is "partial" whenever retained_worktrees or failed_removals is non-empty, "ok"
+# otherwise. Always exits 0 — the caller's cleanup chain must never abort mid-sweep; a
+# genuine partial failure is expressed through status/data, not the exit code.
 set -euo pipefail
 
-emit_clean_contract() {
-  printf 'SWEPT_WORKTREES=0\nSWEPT_STATE_FILES=0\nSWEPT_RUN_DIRS=0\nSWEPT_SESSION_FILES=0\nRETAINED_WORKTREES=0\nFAILED_REMOVALS=0\nRESIDUAL_NONE=1\n'
+SWEPT_WORKTREES=0
+SWEPT_STATE_FILES=0
+SWEPT_RUN_DIRS=0
+SWEPT_SESSION_FILES=0
+RETAINED_ITEMS=()
+FAILED_ITEMS=()
+
+# One jq-encoded {"path":...,"reason":...} object string, appended to a RETAINED_ITEMS/
+# FAILED_ITEMS array entry by the caller — jq --arg handles all string escaping, so a
+# path or reason containing quotes/backslashes/newlines can never corrupt the object.
+_json_item() {
+  jq -cn --arg path "$1" --arg reason "$2" '{path: $path, reason: $reason}'
+}
+
+emit_envelope() {
+  local status="ok"
+  if [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ]; then
+    status="partial"
+  fi
+
+  local residual_none="true"
+  if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ] \
+    || [ "$SWEPT_RUN_DIRS" -gt 0 ] || [ "$SWEPT_SESSION_FILES" -gt 0 ] \
+    || [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ]; then
+    residual_none="false"
+  fi
+
+  # "${ARR[@]:-}" (not bare "${ARR[@]}") — bash 3.2 (stock macOS) throws "unbound
+  # variable" under set -u when expanding a zero-element array's [@] elements, even
+  # inside a command substitution; the :- default avoids that without changing the
+  # expansion for a non-empty array. jq -s on empty/whitespace-only input yields [].
+  local retained_json failed_json
+  retained_json=$(printf '%s\n' "${RETAINED_ITEMS[@]:-}" | jq -cs '.')
+  failed_json=$(printf '%s\n' "${FAILED_ITEMS[@]:-}" | jq -cs '.')
+
+  jq -cn \
+    --arg status "$status" \
+    --argjson swept_worktrees "$SWEPT_WORKTREES" \
+    --argjson swept_state_files "$SWEPT_STATE_FILES" \
+    --argjson swept_run_dirs "$SWEPT_RUN_DIRS" \
+    --argjson swept_session_files "$SWEPT_SESSION_FILES" \
+    --argjson retained_worktrees "$retained_json" \
+    --argjson failed_removals "$failed_json" \
+    --argjson residual_none "$residual_none" \
+    '{schema: "swb.sweep-residuals/1", status: $status,
+      data: {swept_worktrees: $swept_worktrees, swept_state_files: $swept_state_files,
+             swept_run_dirs: $swept_run_dirs, swept_session_files: $swept_session_files,
+             retained_worktrees: $retained_worktrees, failed_removals: $failed_removals,
+             residual_none: $residual_none},
+      warnings: []}'
 }
 
 N="${1:-}"
 
-# Non-integer (or missing) arg: emit the clean contract and exit 0 — never abort
-# the caller's eval chain over a malformed argument.
+# Non-integer (or missing) arg: emit the clean envelope and exit 0 — never abort
+# the caller's cleanup chain over a malformed argument.
 case "$N" in
   ''|*[!0-9]*)
-    emit_clean_contract
+    emit_envelope
     exit 0
     ;;
 esac
@@ -56,13 +109,8 @@ esac
 # covered above) and `contributor-trust` creates no artifacts — both excluded.
 SPECIALIST_MODES=(security accessibility dependency performance tests ux)
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_clean_contract; exit 0; }
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_envelope; exit 0; }
 RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
-
-SWEPT_WORKTREES=0
-SWEPT_STATE_FILES=0
-RETAINED_WORKTREES=0
-FAILED_REMOVALS=0
 
 # ── Block A: state-file reap (independent of git; candidates are fixed by the
 # flows' own naming conventions) ────────────────────────────────────────────
@@ -102,7 +150,7 @@ if [ "${#TO_REAP[@]}" -gt 0 ]; then
   "$SCRIPT_DIR/swe-workbench-clean-state-files" "${TO_REAP[@]}" >/dev/null 2>&1 || true
   for f in "${TO_REAP[@]}"; do
     if [ -e "$f" ]; then
-      FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+      FAILED_ITEMS+=("$(_json_item "$f" "state file removal failed")")
     else
       SWEPT_STATE_FILES=$((SWEPT_STATE_FILES + 1))
     fi
@@ -182,7 +230,7 @@ if [ -n "${MAIN_REPO:-}" ]; then
       dirty_lines=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
       if [ "${dirty_lines:-0}" -gt 0 ]; then
         echo "swe-workbench-sweep-residuals: skipping $label — $dirty_lines uncommitted change(s) in $path; not force-removing." >&2
-        RETAINED_WORKTREES=$((RETAINED_WORKTREES + 1))
+        RETAINED_ITEMS+=("$(_json_item "$path" "$dirty_lines uncommitted change(s)")")
         return 0
       fi
     fi
@@ -200,7 +248,7 @@ if [ -n "${MAIN_REPO:-}" ]; then
     fi
 
     if [ -d "$path" ]; then
-      FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+      FAILED_ITEMS+=("$(_json_item "$path" "worktree removal failed")")
     else
       SWEPT_WORKTREES=$((SWEPT_WORKTREES + 1))
     fi
@@ -217,8 +265,6 @@ fi
 # <N>-keyed by the run-dir naming convention itself (<prefix>-<N>-<6-char suffix>) — the
 # same safety argument Blocks A and B already rely on: Step 2 already proved #N is MERGED.
 
-SWEPT_RUN_DIRS=0
-
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
 RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 
@@ -227,7 +273,7 @@ for run_dir in "$RUN_ROOT"/*-"$N"-??????; do
   [ -e "$run_dir" ] || continue
   "$SCRIPT_DIR/swe-workbench-reap-run-dir" "$run_dir" >/dev/null 2>&1 || true
   if [ -e "$run_dir" ]; then
-    FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+    FAILED_ITEMS+=("$(_json_item "$run_dir" "run dir removal failed")")
   else
     SWEPT_RUN_DIRS=$((SWEPT_RUN_DIRS + 1))
   fi
@@ -239,15 +285,12 @@ shopt -u nullglob
 # a "#<N>" token, so they cannot be reached by Blocks A-C's name matching. Scoped by
 # session id instead, entirely independent of which PR (if any) triggered this sweep.
 
-SWEPT_SESSION_FILES=0
-
 SESSION_SCRATCH_OUT=$("$SCRIPT_DIR/swe-workbench-reap-session-scratch" 2>/dev/null) || SESSION_SCRATCH_OUT=""
 case "$SESSION_SCRATCH_OUT" in
   SWEPT_SESSION_FILES=*)
     _raw_ssf="${SESSION_SCRATCH_OUT#SWEPT_SESSION_FILES=}"
-    # Never trust the sibling's stdout verbatim into a value this script's own
-    # caller will `eval` — a non-integer would silently become false in the
-    # -gt test below and land unquoted in the caller's shell.
+    # Never trust the sibling's stdout verbatim into a value this script goes on to
+    # embed as a JSON number — a non-integer would produce a malformed envelope.
     case "$_raw_ssf" in
       ''|*[!0-9]*) SWEPT_SESSION_FILES=0 ;;
       *) SWEPT_SESSION_FILES="$_raw_ssf" ;;
@@ -255,12 +298,4 @@ case "$SESSION_SCRATCH_OUT" in
     ;;
 esac
 
-RESIDUAL_NONE=1
-if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ] \
-  || [ "$SWEPT_RUN_DIRS" -gt 0 ] || [ "$SWEPT_SESSION_FILES" -gt 0 ] \
-  || [ "$RETAINED_WORKTREES" -gt 0 ] || [ "$FAILED_REMOVALS" -gt 0 ]; then
-  RESIDUAL_NONE=0
-fi
-
-printf 'SWEPT_WORKTREES=%s\nSWEPT_STATE_FILES=%s\nSWEPT_RUN_DIRS=%s\nSWEPT_SESSION_FILES=%s\nRETAINED_WORKTREES=%s\nFAILED_REMOVALS=%s\nRESIDUAL_NONE=%s\n' \
-  "$SWEPT_WORKTREES" "$SWEPT_STATE_FILES" "$SWEPT_RUN_DIRS" "$SWEPT_SESSION_FILES" "$RETAINED_WORKTREES" "$FAILED_REMOVALS" "$RESIDUAL_NONE"
+emit_envelope

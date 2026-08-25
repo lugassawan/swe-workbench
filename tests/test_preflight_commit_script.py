@@ -10,6 +10,11 @@ test_pr_review_submit_script.py's `_load_module()` precedent) — they are the p
 oracle against the old regex-in-Markdown behavior. Behavioral tests drive the script as
 a subprocess against a real throwaway git repo (test_diff_line_lookup_script.py's
 `_init_repo` precedent).
+
+The original 3-field object was later wrapped under the standard envelope's `data` key
+(schema `swb.preflight-commit/1`, see shared/docs/runtime-result-contract.md) — no
+external consumer existed for the old flat shape, so this was a same-PR retrofit, not a
+breaking migration.
 """
 
 from __future__ import annotations
@@ -202,8 +207,8 @@ def test_suspicious_file_reported_and_template_spared(tmp_path):
     result = _run(cwd=repo)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["suspicious"] == [".env"]
-    assert set(payload["staged"]) == {".env", ".env.example"}
+    assert payload["data"]["suspicious"] == [".env"]
+    assert set(payload["data"]["staged"]) == {".env", ".env.example"}
 
 
 def test_quoted_path_fidelity_round_trips_through_json(tmp_path):
@@ -218,8 +223,8 @@ def test_quoted_path_fidelity_round_trips_through_json(tmp_path):
     result = _run(cwd=repo)
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert set(payload["staged"]) == set(names)
-    assert set(payload["suspicious"]) == set(names)
+    assert set(payload["data"]["staged"]) == set(names)
+    assert set(payload["data"]["suspicious"]) == set(names)
 
 
 def test_spaces_round_trip_verbatim(tmp_path):
@@ -229,7 +234,7 @@ def test_spaces_round_trip_verbatim(tmp_path):
 
     result = _run(cwd=repo)
     payload = json.loads(result.stdout)
-    assert payload["staged"] == ["my secrets.yaml"]
+    assert payload["data"]["staged"] == ["my secrets.yaml"]
 
 
 def test_mixed_set_and_runtime_markdown_not_docs_only(tmp_path):
@@ -238,7 +243,7 @@ def test_mixed_set_and_runtime_markdown_not_docs_only(tmp_path):
     (repo / "main.py").write_text("x")
     _git(["add", "README.md", "main.py"], cwd=repo)
     result = _run(cwd=repo)
-    assert json.loads(result.stdout)["docs_only"] is False
+    assert json.loads(result.stdout)["data"]["docs_only"] is False
 
     repo3_dir = tmp_path / "repo3"
     repo3_dir.mkdir()
@@ -247,7 +252,7 @@ def test_mixed_set_and_runtime_markdown_not_docs_only(tmp_path):
     (repo3 / "skills" / "x.md").write_text("x")
     _git(["add", "skills/x.md"], cwd=repo3)
     result3 = _run(cwd=repo3)
-    assert json.loads(result3.stdout)["docs_only"] is False
+    assert json.loads(result3.stdout)["data"]["docs_only"] is False
 
 
 def test_unborn_head_no_commits_yet(tmp_path):
@@ -257,7 +262,7 @@ def test_unborn_head_no_commits_yet(tmp_path):
 
     result = _run(cwd=repo)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["staged"] == ["a.txt"]
+    assert json.loads(result.stdout)["data"]["staged"] == ["a.txt"]
 
 
 def test_index_not_mutated(tmp_path):
@@ -319,11 +324,32 @@ def test_help_exits_0_and_states_caveat(tmp_path):
     assert "no obvious filename red flags" in result.stdout
 
 
-def test_stdout_is_exactly_one_json_object_with_three_keys(tmp_path):
+def test_stdout_is_exactly_one_envelope_with_data_holding_three_keys(tmp_path):
     repo = _init_repo(tmp_path)
     (repo / "README.md").write_text("x")
     _git(["add", "README.md"], cwd=repo)
 
     result = _run(cwd=repo)
     payload = json.loads(result.stdout)
-    assert set(payload.keys()) == {"staged", "suspicious", "docs_only"}
+    assert set(payload.keys()) == {"schema", "status", "data", "warnings"}
+    assert payload["schema"] == "swb.preflight-commit/1"
+    assert payload["status"] == "ok"
+    assert payload["warnings"] == []
+    assert set(payload["data"].keys()) == {"staged", "suspicious", "docs_only"}
+
+
+def test_envelope_round_trips_through_result_check(tmp_path):
+    repo = _init_repo(tmp_path)
+    (repo / "README.md").write_text("x")
+    _git(["add", "README.md"], cwd=repo)
+
+    preflight = subprocess.run(
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True, cwd=str(repo), env=dict(_CLEAN_ENV),
+    )
+    checker = ROOT / "bin" / "swe-workbench-result-check"
+    checked = subprocess.run(
+        [sys.executable, str(checker), "swb.preflight-commit/1"],
+        input=preflight.stdout, capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == json.loads(preflight.stdout)

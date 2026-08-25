@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Validate a producer's JSON result envelope and pass it through unchanged.
+
+The standard envelope contract (shared/docs/runtime-result-contract.md) is:
+  {"schema": "swb.<command>/<major>", "status": "ok"|"partial"|"failed",
+   "data": {...command-specific...}, "warnings": [{"code","message","subject"?}]}
+
+Usage: swe-workbench-result-check <schema>
+  <schema> is checked against this module's registry, then stdin is parsed as JSON
+  and validated against that schema's required `data` fields and their types.
+  `schema` compatibility is exact string match — "swb.foo/1" never satisfies a
+  registry entry for "swb.foo/2".
+
+On success: the envelope is re-emitted verbatim to stdout, exit 0.
+On any failure (bad invocation, unknown schema, malformed JSON, or a validation
+problem): nothing is written to stdout, a diagnostic goes to stderr, exit 1. Exit
+code and stdout are the only two outcomes — a caller can drop this into
+`RESULT=$(producer ... | swe-workbench-result-check swb.foo/1) || exit 1` as a
+replacement for `eval "$(producer ...)"` with no further exit-code branching.
+
+Registry field kinds are a closed, intentionally small vocabulary: "str", "int",
+"bool", "list[str]", and "list[path_reason]" (a list of {"path": str, "reason": str}
+objects — the shape `swe-workbench-sweep-residuals` uses for retained/failed
+records). A field kind outside this vocabulary is a bug in this module's own
+REGISTRY, not a caller error — it raises rather than silently passing validation.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+
+REGISTRY: dict[str, dict[str, str]] = {
+    "swb.preflight-commit/1": {
+        "staged": "list[str]",
+        "suspicious": "list[str]",
+        "docs_only": "bool",
+    },
+    "swb.sweep-residuals/1": {
+        "swept_worktrees": "int",
+        "swept_state_files": "int",
+        "swept_run_dirs": "int",
+        "swept_session_files": "int",
+        "retained_worktrees": "list[path_reason]",
+        "failed_removals": "list[path_reason]",
+        "residual_none": "bool",
+    },
+    "swb.pr-review-submit/1": {
+        "posted_inline": "int",
+        "posted_pr_level": "int",
+        "deduped": "int",
+        "submitted": "bool",
+        "event": "str",
+        "decision": "str",
+        "review_url": "str",
+        "blocked_by_unresolved": "int",
+    },
+}
+
+_STATUSES = {"ok", "partial", "failed"}
+
+
+def _type_ok(kind: str, value: object) -> bool:
+    if kind == "str":
+        return isinstance(value, str)
+    if kind == "int":
+        # bool is a Python int subclass — exclude it explicitly so a JSON true/false
+        # never silently satisfies an int-typed field.
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "bool":
+        return isinstance(value, bool)
+    if kind == "list[str]":
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
+    if kind == "list[path_reason]":
+        return isinstance(value, list) and all(
+            isinstance(v, dict) and isinstance(v.get("path"), str) and isinstance(v.get("reason"), str)
+            for v in value
+        )
+    raise AssertionError(f"swe-workbench-result-check: unregistered field kind {kind!r} in REGISTRY")
+
+
+def validate_envelope(schema: str, envelope: object) -> list[str]:
+    """Returns a list of human-readable problems; an empty list means valid."""
+    if not isinstance(envelope, dict):
+        return ["envelope must be a JSON object"]
+
+    missing_top_level = [k for k in ("schema", "status", "data", "warnings") if k not in envelope]
+    if missing_top_level:
+        return [f"missing required top-level field {k!r}" for k in missing_top_level]
+
+    problems: list[str] = []
+
+    if envelope["schema"] != schema:
+        problems.append(
+            f"schema mismatch: expected {schema!r}, envelope declared {envelope['schema']!r} — "
+            "reinstall or update the swe-workbench plugin."
+        )
+
+    status = envelope["status"]
+    # isinstance guard first — `x not in a_set` requires x to be hashable, so an
+    # unhashable status (a list or dict) would otherwise raise TypeError instead of
+    # producing a clean validation message.
+    if not isinstance(status, str) or status not in _STATUSES:
+        problems.append(f"status must be one of {sorted(_STATUSES)}, got {status!r}")
+
+    if not isinstance(envelope["warnings"], list):
+        problems.append("warnings must be a JSON array")
+    else:
+        for i, w in enumerate(envelope["warnings"]):
+            if not (isinstance(w, dict) and isinstance(w.get("code"), str) and isinstance(w.get("message"), str)):
+                problems.append(f"warnings[{i}] must be an object with a string code and message")
+
+    data = envelope["data"]
+    if not isinstance(data, dict):
+        problems.append("data must be a JSON object")
+    else:
+        for field, kind in REGISTRY.get(schema, {}).items():
+            if field not in data:
+                problems.append(f"data.{field} is required and missing")
+            elif not _type_ok(kind, data[field]):
+                problems.append(f"data.{field} must be of type {kind}")
+
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    if len(argv) != 1:
+        print("Usage: swe-workbench-result-check <schema>", file=sys.stderr)
+        return 1
+
+    schema = argv[0]
+    if schema not in REGISTRY:
+        print(
+            f"swe-workbench-result-check: unknown schema {schema!r} — "
+            "reinstall or update the swe-workbench plugin.",
+            file=sys.stderr,
+        )
+        return 1
+
+    raw = sys.stdin.read()
+    try:
+        envelope = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        print(f"swe-workbench-result-check: invalid JSON on stdin ({exc})", file=sys.stderr)
+        return 1
+
+    problems = validate_envelope(schema, envelope)
+    if problems:
+        print(f"swe-workbench-result-check: envelope failed validation against {schema}:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
+    # ensure_ascii=True (the default) escapes non-ASCII to \uXXXX so stdout encoding
+    # can never raise on a data field containing arbitrary bytes.
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -105,30 +105,37 @@ rule` below — one snapshot of the staged set, exactly one `git diff --staged` 
 the whole flow):
 
 ```bash
-command -v swe-workbench-preflight-commit >/dev/null 2>&1 || {
+command -v swe-workbench-preflight-commit >/dev/null 2>&1 && command -v swe-workbench-result-check >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
-PREFLIGHT=$(swe-workbench-preflight-commit) || {
+PREFLIGHT=$(swe-workbench-preflight-commit | swe-workbench-result-check swb.preflight-commit/1) || {
   echo "swe-workbench-preflight-commit could not classify the staged set — see stderr above. Non-zero exit never means \"clean\"; do not proceed as if it were." >&2
   exit 1
 }
 ```
 
-`$PREFLIGHT` is one JSON object with three fields: `staged` (every staged path),
-`suspicious` (the subset that looks secret-shaped by filename), and `docs_only`
-(whether every staged path is documentation-only — consumed by `## Doc-only [no ci]
-rule` below). Consume it with `printf '%s' "$PREFLIGHT" | jq …`, **never** `echo
-"$PREFLIGHT" | jq` — see
+The checker validates the envelope before `$PREFLIGHT` is trusted — a stale or
+partially-updated `swe-workbench-preflight-commit` emitting an unexpected shape fails
+loud here ("reinstall or update the swe-workbench plugin") instead of degrading to a
+silent `null`/wrong-type read downstream on this secret-detection gate.
+
+`$PREFLIGHT` is one JSON envelope (schema `swb.preflight-commit/1` — see
+[`shared/docs/runtime-result-contract.md`](../../shared/docs/runtime-result-contract.md))
+whose `data` object carries three fields: `staged` (every staged path), `suspicious`
+(the subset that looks secret-shaped by filename), and `docs_only` (whether every
+staged path is documentation-only — consumed by `## Doc-only [no ci] rule` below).
+Consume it with `printf '%s' "$PREFLIGHT" | jq …`, **never** `echo "$PREFLIGHT" | jq` —
+see
 [`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md) for
 the corruption hazard.
 
-**On an empty `.staged` array** → abort and tell the user to `git add` first — there
-is nothing to commit.
+**On an empty `.data.staged` array** → abort and tell the user to `git add` first —
+there is nothing to commit.
 
-**On an empty `.suspicious` array** → silent; continue to `## Doc-only [no ci] rule`.
+**On an empty `.data.suspicious` array** → silent; continue to `## Doc-only [no ci] rule`.
 
-**On a non-empty `.suspicious` array**, print the file list verbatim to the user, then
+**On a non-empty `.data.suspicious` array**, print the file list verbatim to the user, then
 call `AskUserQuestion`:
 
 ```json
@@ -155,7 +162,7 @@ call `AskUserQuestion`:
 ## Doc-only `[no ci]` rule
 
 Append ` [no ci]` to the commit subject only when all three hold: `$PREFLIGHT`'s
-`.docs_only` is `true` (read from the same result the pre-commit gate above already
+`.data.docs_only` is `true` (read from the same result the pre-commit gate above already
 computed — do not re-derive it), the host CI honours the marker (see below), and the
 user has not overridden.
 
@@ -227,7 +234,7 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | `git push` rejected (non-FF) | Non-zero exit | Abort. Tell user to `git pull --rebase`; do NOT force-push. |
 | Doc-only `[no ci]` rule mis-triggers (ambiguous case) | User disagrees | Skip `[no ci]` and warn. The doc-only rule is conservative — when in doubt, run CI. |
 | Duplicate PR (already exists) | `gh pr view` returns `state == "OPEN"` before `gh pr create` | Surface URL via `AskUserQuestion` (see Pre-check section). On `Update existing PR`, skip `gh pr create`. **Never** re-run `gh pr create` to recover. |
-| Staged files look like secrets | `swe-workbench-preflight-commit`'s `.suspicious` is non-empty | Print file list. `AskUserQuestion` → on `Cancel`, abort with no `git restore --staged` and no commit. Never auto-unstage. |
+| Staged files look like secrets | `swe-workbench-preflight-commit`'s `.data.suspicious` is non-empty | Print file list. `AskUserQuestion` → on `Cancel`, abort with no `git restore --staged` and no commit. Never auto-unstage. |
 | `swe-workbench-preflight-commit` exits non-zero | Non-zero exit, empty stdout | Abort — the gate could not run. Non-zero never means "clean". Print stderr to the user. |
 
 ## Common mistakes

@@ -11,6 +11,14 @@ Verifies that preflight-pr.sh:
     $OUT_JSON in place on success — a caller invokes it as eval "$(...)", which
     structurally discards the script's own exit status, so the script must
     reap its own artifact rather than relying on the caller to do so.
+
+Tier Q per shared/docs/runtime-result-contract.md's S/Q/J decision test: every emitted
+value is already a printf %q-quoted, eval-safe scalar, and title/body are already
+routed around eval entirely via $OUT_JSON — migrating to the standard envelope buys
+no capability here. test_preflight_pr_emits_exactly_the_golden_six_field_contract
+below is the hardening ratchet that ticket asked for in place of a migration: any
+accidental addition, removal, reordering, or format change to the 6-field contract
+must fail here and force a deliberate update, rather than silently drifting.
 """
 
 import re
@@ -252,4 +260,29 @@ def test_preflight_trap_leaves_out_json_on_success():
             )
         finally:
             out_json.unlink(missing_ok=True)
+
+
+# ── Golden-literal ratchet: the exact 6-field %q-quoted contract ────────────
+
+GOLDEN_EMIT_LINES = [
+    "printf 'BASE=%q\\n'         \"$BASE\"",
+    "printf 'HEAD_SHA=%q\\n'     \"$HEAD_SHA\"",
+    "printf 'AUTHOR_LOGIN=%q\\n' \"$AUTHOR_LOGIN\"",
+    "printf 'OWNER=%q\\n'        \"$OWNER\"",
+    "printf 'REPO=%q\\n'         \"$REPO\"",
+    "printf 'STATE=%q\\n'        \"$STATE\"",
+]
+
+
+def test_preflight_pr_emits_exactly_the_golden_six_field_contract():
+    """Pins the script's entire emitted contract as a literal — not just presence of
+    each field name, but the exact printf %q line for each, in this exact order.
+    Tier Q means the ratchet is the hardening, not an envelope migration; a change
+    here must be a deliberate, reviewed edit to this golden list."""
+    lines = SCRIPT.read_text().splitlines()
+    emit_lines = [ln for ln in lines if ln.lstrip().startswith("printf '") and "%q" in ln]
+    assert emit_lines == GOLDEN_EMIT_LINES, (
+        f"bin/swe-workbench-preflight-pr's emitted contract drifted from the golden "
+        f"6-field list.\nExpected:\n{GOLDEN_EMIT_LINES}\nGot:\n{emit_lines}"
+    )
 
