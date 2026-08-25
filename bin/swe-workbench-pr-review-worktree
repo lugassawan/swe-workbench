@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# swe-workbench-pr-review-worktree {acquire|release|names} ...
+#
+# Single source of the ephemeral PR-review worktree naming/lifecycle contract shared by
+# workflow-pr-review (first-pass + followup modes) and the PR-mode specialist sub-flow in
+# commands/review.md. Replaces three copies of the same acquire/teardown prose
+# that had drifted into inconsistent label/PR/mode orderings across one shared
+# /tmp/swe-workbench-pr-review/ namespace.
+#
+#   swe-workbench-pr-review-worktree acquire --mode <MODE> --pr <N>
+#   swe-workbench-pr-review-worktree release --mode <MODE> --pr <N> --intent <completed|declined|failed>
+#   swe-workbench-pr-review-worktree names   --pr <N>
+#
+# MODE is one of: first-pass, followup, security, accessibility, dependency, performance,
+# tests, ux — the exact vocabulary workflow-pr-review's own $MODE (after auto-resolution) and
+# commands/review.md's normalized --mode already produce. No translation layer.
+#
+# Naming (one function, derive_names, so there is exactly one place that knows it):
+#   first-pass   -> rimba task/branch pr-review-<N>     ; git-fallback /tmp/swe-workbench-pr-review/<N>
+#   followup     -> rimba task/branch pr-followup-<N>   ; git-fallback /tmp/swe-workbench-pr-review/<N>-followup
+#   <specialist> -> rimba task/branch review-<mode>-<N> ; git-fallback /tmp/swe-workbench-pr-review/<mode>-<N>
+# This is today's naming contract as-is (verified against SKILL.md/commands/review.md), not a
+# normalization — unifying the three git-fallback basename orderings is explicitly out of scope
+# (a worktree directory is a persisted artifact that can outlive a plugin upgrade).
+#
+# Result shape: Tier Q (printf %q KEY=VALUE for eval), not the JSON envelope — see
+# shared/docs/runtime-result-contract.md's S/Q/J test. Every invocation acquires/releases
+# exactly one worktree; acquire returns a handful of trusted scalars, release's richest case
+# is still flat scalars. All output is computed and validated before anything is printed, so a
+# caller's eval "$(...)" never sees a partial emission.
+#
+#   acquire: WT=<abs-path> TASK=<label> BRANCH=<label> PROVIDER=rimba|git CREATED=1
+#            (CREATED is a documented constant — no PR-review flow has a reuse path)
+#   release: WORKTREE_REMOVED=0|1 BRANCH_DELETED=0|1 PRESERVED=0|1 REASON=<string>
+#            PROVIDER=rimba|git|unknown
+#   names:   bare JSON array (not the envelope — nothing in a SKILL.md consumes it; exists
+#            solely for the golden-ratchet test comparing this contract to
+#            swe-workbench-sweep-residuals' hardcoded WT_LABELS/WT_FALLBACKS/WT_DELETE_BRANCH
+#            arrays), one object per mode: {"mode","label","fallback_path","delete_branch"}
+#
+# Provider resolution reuses swe-workbench-sweep-residuals' own resolve-rimba.sh call and
+# rimba-remove-first `||` git-fallback removal chain — no new detection logic. acquire resolves
+# the created worktree's absolute path by cross-referencing `rimba list --json`'s .task field
+# (existence proof) against `git worktree list --porcelain` (matching worktree-dir basename ==
+# the task label — this naming contract always has branch == task, no prefix), rather than
+# awk-scraping `rimba add`'s human-readable "Path:" line or reconstructing rimba's own
+# relative-path anchor logic.
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+FALLBACK_ROOT="/tmp/swe-workbench-pr-review"
+SPECIALIST_MODES=(security accessibility dependency performance tests ux)
+
+usage() {
+  echo "Usage: swe-workbench-pr-review-worktree {acquire|release|names} ..." >&2
+  exit 1
+}
+
+# derive_names <mode> <pr> -- sets TASK and FALLBACK globals on success (deliberately not
+# `local` — every caller in this file relies on them as an out-parameter pair). Returns 1 on
+# an unrecognized mode, leaving TASK/FALLBACK untouched.
+derive_names() {
+  local mode="$1" pr="$2" m
+  case "$mode" in
+    first-pass)
+      TASK="pr-review-${pr}"
+      FALLBACK="${FALLBACK_ROOT}/${pr}"
+      return 0
+      ;;
+    followup)
+      TASK="pr-followup-${pr}"
+      FALLBACK="${FALLBACK_ROOT}/${pr}-followup"
+      return 0
+      ;;
+  esac
+  for m in "${SPECIALIST_MODES[@]}"; do
+    if [ "$mode" = "$m" ]; then
+      TASK="review-${mode}-${pr}"
+      FALLBACK="${FALLBACK_ROOT}/${mode}-${pr}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_require_pr() {
+  case "$1" in
+    ''|*[!0-9]*) echo "swe-workbench-pr-review-worktree: --pr must be a non-negative integer: $1" >&2; exit 1 ;;
+  esac
+}
+
+_resolve_rimba() {
+  "$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null || true
+}
+
+# _worktree_path_by_basename <label> -- absolute path of a registered git worktree whose
+# directory basename equals <label>, or empty if none. Process substitution (not a pipe), so
+# the loop runs in the caller's shell and `found` survives past it -- mirrors
+# swe-workbench-sweep-residuals' own Block B porcelain scan.
+_worktree_path_by_basename() {
+  local label="$1" found="" line cur_wt base
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        cur_wt="${line#worktree }"
+        base="${cur_wt##*/}"
+        [ "$base" = "$label" ] && found="$cur_wt"
+        ;;
+    esac
+  done < <(git worktree list --porcelain 2>/dev/null)
+  printf '%s' "$found"
+}
+
+_is_dirty() {
+  [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]
+}
+
+# _reap_worktree <rimba> <label> <path> -- rimba-remove-first, `||` git-fallback +
+# swe-workbench-clean-ephemeral. Mirrors swe-workbench-sweep-residuals' reap_one_worktree()
+# exactly (same order, same fallback chain) so the primary release path and the backstop that
+# recovers from it never diverge in how they actually remove an artifact.
+_reap_worktree() {
+  local rimba="$1" label="$2" path="$3"
+  if [ -n "$rimba" ] && "$rimba" remove "$label" --force >/dev/null 2>&1; then
+    :
+  else
+    git worktree remove --force "$path" >/dev/null 2>&1 || true
+    git branch -D "$label" >/dev/null 2>&1 || true
+    if [ -d "$path" ]; then
+      "$SCRIPT_DIR/swe-workbench-clean-ephemeral" "$path" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+# ── names ────────────────────────────────────────────────────────────────────
+
+cmd_names() {
+  local pr="" m
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pr) [ $# -ge 2 ] || usage; pr="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$pr" ] || usage
+  _require_pr "$pr"
+
+  local modes=(first-pass followup "${SPECIALIST_MODES[@]}")
+  local items=()
+  for m in "${modes[@]}"; do
+    derive_names "$m" "$pr"
+    items+=("$(jq -cn --arg mode "$m" --arg label "$TASK" --arg fallback_path "$FALLBACK" \
+      '{mode: $mode, label: $label, fallback_path: $fallback_path, delete_branch: true}')")
+  done
+  printf '%s\n' "${items[@]}" | jq -cs '.'
+}
+
+# ── acquire ──────────────────────────────────────────────────────────────────
+
+_acquire_rimba() {
+  local rimba="$1" mode="$2" pr="$3" existing add_out entry abs_path canon
+
+  existing=$(_worktree_path_by_basename "$TASK")
+  if [ -n "$existing" ]; then
+    if _is_dirty "$existing"; then
+      echo "swe-workbench-pr-review-worktree: acquire: existing worktree at $existing for mode=$mode pr=$pr has uncommitted changes -- refusing to overwrite. Inspect manually, or run 'release --mode $mode --pr $pr --intent failed' first." >&2
+      exit 1
+    fi
+    _reap_worktree "$rimba" "$TASK" "$existing"
+  fi
+
+  if ! add_out=$("$rimba" add "pr:$pr" --task "$TASK" --skip-deps --skip-hooks 2>&1); then
+    printf '%s\n' "$add_out" >&2
+    echo "swe-workbench-pr-review-worktree: acquire: rimba add failed for mode=$mode pr=$pr" >&2
+    exit 1
+  fi
+
+  entry=$("$rimba" list --json 2>/dev/null | jq -c --arg t "$TASK" '.data[] | select(.task==$t)') || entry=""
+  [ -n "$entry" ] || {
+    echo "swe-workbench-pr-review-worktree: acquire: rimba add reported success but no matching task '$TASK' in 'rimba list --json'" >&2
+    exit 1
+  }
+
+  abs_path=$(_worktree_path_by_basename "$TASK")
+  [ -n "$abs_path" ] || {
+    echo "swe-workbench-pr-review-worktree: acquire: could not resolve absolute path for task '$TASK' via 'git worktree list'" >&2
+    exit 1
+  }
+
+  canon=$(cd "$abs_path" 2>/dev/null && pwd -P) || canon="$abs_path"
+  printf '%s' "$canon"
+}
+
+_acquire_git() {
+  local mode="$1" pr="$2" wt="$FALLBACK" canon
+
+  if [ -d "$wt" ]; then
+    if _is_dirty "$wt"; then
+      echo "swe-workbench-pr-review-worktree: acquire: existing worktree at $wt for mode=$mode pr=$pr has uncommitted changes -- refusing to overwrite. Inspect manually, or run 'release --mode $mode --pr $pr --intent failed' first." >&2
+      exit 1
+    fi
+    # Route through _reap_worktree (rimba="" forces its git-fallback branch) rather than a
+    # hand-rolled subset of it, for parity with _acquire_rimba's self-heal -- this also force-
+    # deletes the stale $TASK branch, which the fetch --force refspec below would otherwise
+    # have to paper over, and which a partial `git worktree remove` can leave in a state
+    # swe-workbench-clean-ephemeral's is_registered_worktree() check may legitimately refuse.
+    _reap_worktree "" "$TASK" "$wt"
+  fi
+
+  mkdir -p "$(dirname "$wt")"
+  # 1>&2: this function's stdout is captured via `$(...)` by the caller as the return
+  # value (the final `printf '%s' "$canon"` below) -- git's own progress chatter on
+  # these two calls must never leak into that capture.
+  git fetch origin "pull/${pr}/head:${TASK}" --force 1>&2
+  git worktree add --detach "$wt" "$TASK" 1>&2
+
+  canon=$(cd "$wt" 2>/dev/null && pwd -P) || canon="$wt"
+  printf '%s' "$canon"
+}
+
+cmd_acquire() {
+  local mode="" pr="" rimba wt provider
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2 ;;
+      --pr)   [ $# -ge 2 ] || usage; pr="$2";   shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$mode" ] && [ -n "$pr" ] || usage
+  _require_pr "$pr"
+  derive_names "$mode" "$pr" || {
+    echo "swe-workbench-pr-review-worktree: acquire: unrecognized mode: $mode" >&2
+    exit 1
+  }
+
+  rimba=$(_resolve_rimba)
+  if [ -n "$rimba" ]; then
+    wt=$(_acquire_rimba "$rimba" "$mode" "$pr")
+    provider="rimba"
+  else
+    wt=$(_acquire_git "$mode" "$pr")
+    provider="git"
+  fi
+
+  printf 'WT=%q\n' "$wt"
+  printf 'TASK=%q\n' "$TASK"
+  printf 'BRANCH=%q\n' "$TASK"
+  printf 'PROVIDER=%q\n' "$provider"
+  printf 'CREATED=1\n'
+}
+
+# ── release ──────────────────────────────────────────────────────────────────
+
+cmd_release() {
+  local mode="" pr="" intent="" rimba path="" provider="unknown" via_rimba
+  local worktree_removed=0 branch_deleted=0 preserved=0 reason="" dirty_lines
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mode)   [ $# -ge 2 ] || usage; mode="$2";   shift 2 ;;
+      --pr)     [ $# -ge 2 ] || usage; pr="$2";     shift 2 ;;
+      --intent) [ $# -ge 2 ] || usage; intent="$2"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$mode" ] && [ -n "$pr" ] && [ -n "$intent" ] || usage
+  _require_pr "$pr"
+  derive_names "$mode" "$pr" || {
+    echo "swe-workbench-pr-review-worktree: release: unrecognized mode: $mode" >&2
+    exit 1
+  }
+  case "$intent" in
+    completed|declined|failed) ;;
+    *)
+      echo "swe-workbench-pr-review-worktree: release: --intent must be completed, declined, or failed, got '$intent'" >&2
+      exit 1
+      ;;
+  esac
+
+  rimba=$(_resolve_rimba)
+
+  via_rimba=$(_worktree_path_by_basename "$TASK")
+  if [ -n "$via_rimba" ]; then
+    path="$via_rimba"
+    provider="rimba"
+  elif [ -d "$FALLBACK" ]; then
+    path="$FALLBACK"
+    provider="git"
+  fi
+
+  if [ -z "$path" ]; then
+    reason="no worktree found for mode=$mode pr=$pr"
+  else
+    case "$intent" in
+      failed)
+        preserved=1
+        reason="intent=failed -- preserved for inspection"
+        ;;
+      completed|declined)
+        dirty_lines=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_lines=0
+        if [ "${dirty_lines:-0}" -gt 0 ]; then
+          preserved=1
+          reason="${dirty_lines} uncommitted change(s) -- preserved"
+        else
+          _reap_worktree "$rimba" "$TASK" "$path"
+          if [ -e "$path" ]; then
+            # Still on disk after a genuine removal attempt -- distinct from the dirty-skip
+            # case above only in REASON, but PRESERVED=1 here too so a caller checking
+            # "is it gone" via WORKTREE_REMOVED/PRESERVED alone (without parsing REASON)
+            # sees a consistent, exhaustive pair: exactly one of them is 1 whenever `path`
+            # was found at all.
+            preserved=1
+            reason="intent=${intent} -- worktree removal failed"
+          else
+            worktree_removed=1
+            git rev-parse --verify --quiet "refs/heads/${TASK}" >/dev/null 2>&1 || branch_deleted=1
+            reason="intent=${intent} -- removed"
+          fi
+        fi
+        ;;
+    esac
+  fi
+
+  printf 'WORKTREE_REMOVED=%q\n' "$worktree_removed"
+  printf 'BRANCH_DELETED=%q\n' "$branch_deleted"
+  printf 'PRESERVED=%q\n' "$preserved"
+  printf 'REASON=%q\n' "$reason"
+  printf 'PROVIDER=%q\n' "$provider"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+
+[ $# -ge 1 ] || usage
+SUBCOMMAND="$1"
+shift
+case "$SUBCOMMAND" in
+  acquire) cmd_acquire "$@" ;;
+  release) cmd_release "$@" ;;
+  names)   cmd_names "$@" ;;
+  *) usage ;;
+esac

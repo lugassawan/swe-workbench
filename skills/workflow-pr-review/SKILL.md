@@ -85,25 +85,18 @@ RUN_DIR=$(swe-workbench-new-run-dir "$MODE_TAG" "$PR")
 
 ### Step 2 — Ephemeral worktree
 
-**When rimba is available** (preferred — handles cross-fork remotes automatically and skips dep installation):
+`swe-workbench-pr-review-worktree` owns the acquire/release/naming contract for this ephemeral
+worktree — the underlying rimba-vs-git provider choice, the collision-safe naming
+(`pr-review-$PR` for first-pass, `pr-followup-$PR` for followup), and the stale/dirty self-heal
+logic all live there, not in this skill's prose. `$MODE` is passed through as-is (`first-pass` or
+`followup` — the exact vocabulary the mode table above already produces):
 
 ```bash
-RIMBA_OUT=$(rimba add pr:$PR --task "${MODE_TAG}-$PR" --skip-deps --skip-hooks 2>&1)
-WT=$(printf '%s\n' "$RIMBA_OUT" | awk '/Path:/{print $2}')
-[ -d "$WT" ] || { echo "rimba add failed: $RIMBA_OUT"; exit 1; }
+eval "$(swe-workbench-pr-review-worktree acquire --mode "$MODE" --pr "$PR")"
 ```
 
-**When rimba is absent** (fallback — direct git, NOT `superpowers:using-git-worktrees` which is consent-gated for durable feature work):
-
-```bash
-WT="/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}"
-if [ -d "$WT" ]; then
-  git worktree remove --force "$WT" 2>/dev/null || swe-workbench-clean-ephemeral "$WT" 2>/dev/null
-fi
-mkdir -p "$(dirname "$WT")"
-git fetch origin "pull/${PR}/head:${MODE_TAG}-${PR}" --force
-git worktree add --detach "$WT" "${MODE_TAG}-${PR}"
-```
+Sets `$WT` (absolute worktree path), `$TASK`/`$BRANCH` (the rimba task / worktree branch label),
+`$PROVIDER` (`rimba` or `git`), and `$CREATED`.
 
 ### Step 3 — Ticket-context chain
 
@@ -125,6 +118,13 @@ This applies identically in both modes — followup re-checks re-run the same re
 
 ### Step 5 — Parse decision footer + blocking-scope verdict
 
+Two abort paths share the same worktree-release contract below: the reviewer agent itself
+erroring mid-scan (Step 4), and the footer-parse failure in this step. Both call
+`swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent failed` — which
+preserves the worktree (never removes it), so inspection is still possible — instead of leaving
+an implicit absence of any cleanup call. Do this immediately before printing the abort message
+and exiting.
+
 Scan ALL non-blank lines for the footer pattern:
 
 ```
@@ -136,7 +136,9 @@ Abort with "reviewer agent did not emit a valid Review Decision footer (APPROVE|
 - More than one matching line found.
 - `REQUEST_CHANGES` appears anywhere in the agent output.
 
-Do NOT clean up the worktree on abort — leave it for inspection.
+```bash
+eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent failed)"
+```
 
 Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; parse into `$BLOCKING_SCOPE`. Zero or >1 matches → `BLOCKING_SCOPE=IN-DIFF` (fail-safe). Log warning; do **not** abort — footer is the only hard-required contract.
 
@@ -168,13 +170,14 @@ swe-workbench-reap-run-dir "$RUN_DIR"
   || echo "✓ run dir reaped: $RUN_DIR"
 ```
 
-Worktree teardown stays backgrounded (slow); it no longer carries state-file cleanup:
+Worktree teardown now runs foregrounded, not backgrounded: `release`'s own output must be read
+by the caller (`eval "$(...)"` cannot be backgrounded), and the acquired worktrees use
+`--skip-deps --skip-hooks`, so removal is a directory + branch delete, not an `npm` dependency
+tree — the original "slow" calibration was against a full dependency install that no longer
+happens here:
 
 ```bash
-( rimba remove "${MODE_TAG}-$PR" --force 2>/dev/null \
-  || { git worktree remove --force "$WT" 2>/dev/null; \
-       git branch -D "${MODE_TAG}-$PR" 2>/dev/null; \
-       swe-workbench-clean-ephemeral "$WT" 2>/dev/null; } ) &
+eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent completed)"
 ```
 
 Delete the workflow-state checkpoint file (see `shared/docs/workflow-state.md`) now that the flow has reached its terminal step.
@@ -198,8 +201,8 @@ Dedup algorithm, diff-scoping flip contract, and posting failure modes now live 
 | PR not open / 404 | `gh pr view` fails | Abort. Print PR URL if known. |
 | PR not open (followup mode only) | `$STATE != OPEN` after Step 1 preflight | Abort with "follow-up review only applies to open PRs." First-pass mode has no such gate. |
 | `git fetch pull/N/head` fails | Non-zero exit | Abort. Do not create worktree. |
-| Reviewer aborts mid-scan | Agent error | Skip submit. **Leave worktree** for inspection (do not remove). |
-| Decision footer missing or malformed | Regex no-match | Abort with explicit message. Worktree preserved. |
+| Reviewer aborts mid-scan | Agent error | Skip submit. Call `release --intent failed` (preserves the worktree for inspection). |
+| Decision footer missing or malformed | Regex no-match | Abort with explicit message. Call `release --intent failed` (worktree preserved). |
 
 See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup/submit failures (422s, stale SHA, pagination).
 
@@ -208,8 +211,8 @@ See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup
 | Mistake | Fix |
 |---|---|
 | Invoke this skill without setting `$MODE` first | Every state-file path, worktree task name, byline, and caller tag is derived from `$MODE` via the mode-resolution table — an unset `$MODE` breaks every downstream interpolation. Callers must set `MODE=auto`, `MODE=first-pass`, or `MODE=followup` before Step 1. |
-| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `rimba add pr:$PR --task "${MODE_TAG}-$PR" --skip-deps --skip-hooks` when rimba is available; direct `git worktree add` otherwise. |
+| Use `superpowers:using-git-worktrees` for the PR worktree | That skill is consent-gated and durable-feature-oriented. Use `swe-workbench-pr-review-worktree acquire --mode "$MODE" --pr "$PR"` instead — it owns the rimba-vs-git provider choice and the collision-safe naming. |
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
-| Block on cleanup | Cleanup runs in background `(... ) &`. Don't `wait` for it. |
+| Assume worktree teardown still backgrounds `(... ) &` | `release` runs foregrounded — its `eval "$(...)"` output must be read directly, and removal is fast (`--skip-deps --skip-hooks` worktrees have no dependency tree to clean up). |
 | Reuse the core's own dedup/CTA/flip logic inline instead of invoking it | Duplicating that mechanism here is exactly the drift this skill was folded to remove — always delegate Step 6 to `swe-workbench:workflow-pr-review-post`. |
