@@ -12,6 +12,14 @@ COMMANDS_DIR = ROOT / "commands"
 ADDRESS_FEEDBACK_CMD = COMMANDS_DIR / "address-feedback.md"
 DOCS_CATALOG = ROOT / "docs" / "catalog.md"
 README = ROOT / "README.md"
+SKILL_MD = ROOT / "skills" / "workflow-address-feedback" / "SKILL.md"
+
+
+def _skill_phase_number(title_fragment: str) -> str:
+    """Phase number whose SKILL.md heading matches `title_fragment` (em-dash separated)."""
+    m = re.search(rf"^#+ Phase (\d+) — {re.escape(title_fragment)}", SKILL_MD.read_text(), re.M)
+    assert m is not None, f"SKILL.md must have a 'Phase N — {title_fragment}' heading"
+    return m.group(1)
 
 
 def test_address_feedback_command_file_exists():
@@ -73,4 +81,50 @@ def test_address_feedback_in_readme():
     assert commands_line is not None, "README.md must have a '- **Commands**' bullet line"
     assert "/swe-workbench:address-feedback" in commands_line, (
         "The '- **Commands**' bullet line must include /swe-workbench:address-feedback"
+    )
+
+
+def test_address_feedback_command_drops_retired_worktree_form():
+    """commands/address-feedback.md must not describe the retired throwaway-task-branch worktree flow."""
+    text = ADDRESS_FEEDBACK_CMD.read_text()
+    assert "pr:$PR" not in text, (
+        "address-feedback.md still references the retired 'pr:$PR' rimba task form"
+    )
+    assert '--task "address-feedback-$PR"' not in text, (
+        "address-feedback.md still references the retired throwaway task-branch flag"
+    )
+
+
+def test_address_feedback_command_cites_current_worktree_phases():
+    """commands/address-feedback.md must cite SKILL.md's actual Worktree/Cleanup phase numbers."""
+    text = ADDRESS_FEEDBACK_CMD.read_text()
+    worktree_phase = f"Phase {_skill_phase_number('Worktree')}"
+    cleanup_phase = f"Phase {_skill_phase_number('Cleanup')}"
+    assert worktree_phase in text, (
+        f"address-feedback.md must cite '{worktree_phase}' for worktree setup"
+    )
+    assert cleanup_phase in text, (
+        f"address-feedback.md must cite '{cleanup_phase}' for cleanup"
+    )
+
+
+def test_address_feedback_command_describes_pr_branch_worktree():
+    """commands/address-feedback.md must pin the current PR-branch worktree create form."""
+    text = ADDRESS_FEEDBACK_CMD.read_text()
+    assert 'rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"' in text, (
+        "address-feedback.md must describe worktree creation on the PR branch itself"
+    )
+
+
+def test_address_feedback_catalog_row_has_no_stale_cleanup_claim():
+    """docs/catalog.md's workflow-address-feedback row must not claim 'no auto-cleanup'."""
+    text = DOCS_CATALOG.read_text()
+    lines = text.splitlines()
+    row = next(
+        (ln for ln in lines if "swe-workbench:workflow-address-feedback" in ln),
+        None,
+    )
+    assert row is not None, "docs/catalog.md must have a row for swe-workbench:workflow-address-feedback"
+    assert "no auto-cleanup" not in row, (
+        "docs/catalog.md workflow-address-feedback row still claims 'no auto-cleanup'"
     )

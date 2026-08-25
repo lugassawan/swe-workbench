@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 SKILL = ROOT / "skills" / "workflow-cleanup-merged" / "SKILL.md"
 TEMPLATE = ROOT / "skills" / "workflow-development" / "templates" / "plan-workflow-section.md"
-SWEEP_SCRIPT = ROOT / "skills" / "workflow-cleanup-merged" / "scripts" / "sweep-residuals.sh"
+SWEEP_SCRIPT = ROOT / "bin" / "swe-workbench-sweep-residuals"
 WORKTREE_REMOVAL_STRATEGIES_REF = (
     ROOT / "skills" / "workflow-cleanup-merged" / "reference" / "worktree-removal-strategies.md"
 )
@@ -257,7 +257,7 @@ def test_common_mistakes_no_op_row_reframed():
 # ---------------------------------------------------------------------------
 
 def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
-    """Step 5 must delegate residual reaping to sweep-residuals.sh via eval.
+    """Step 5 must delegate residual reaping to swe-workbench-sweep-residuals via eval.
 
     Mirrors test_cleanup_merged_step6_delegates_to_delete_branches_script: the
     skill slice for Step 5 must reference the companion script and invoke it
@@ -274,11 +274,11 @@ def test_cleanup_merged_step5_delegates_to_sweep_residuals_script():
 
     step5_slice = body.split("### Step 5 — Residual Sweep")[1].split("### Step 6 — Delete Branches")[0]
 
-    assert "sweep-residuals.sh" in step5_slice, (
-        "Step 5 slice must reference sweep-residuals.sh"
+    assert "swe-workbench-sweep-residuals" in step5_slice, (
+        "Step 5 slice must reference swe-workbench-sweep-residuals"
     )
     assert "eval" in step5_slice, (
-        "Step 5 slice must invoke sweep-residuals.sh through an eval block, "
+        "Step 5 slice must invoke swe-workbench-sweep-residuals through an eval block, "
         "matching the KEY=VALUE contract used by every other step's companion script"
     )
 
@@ -325,7 +325,7 @@ def test_sweep_residuals_script_exists_and_is_executable():
 
 
 def test_sweep_residuals_script_never_touches_shared_parent_dirs():
-    """sweep-residuals.sh must never rmdir or bare-rm-rf the shared containing dirs.
+    """swe-workbench-sweep-residuals must never rmdir or bare-rm-rf the shared containing dirs.
 
     /tmp/swe-workbench-pr-review/ and /tmp/swe-workbench-address-feedback/ are
     shared across concurrent PRs — a concurrent unrelated PR may hold live state
@@ -335,32 +335,32 @@ def test_sweep_residuals_script_never_touches_shared_parent_dirs():
     src = SWEEP_SCRIPT.read_text()
 
     assert "rmdir" not in src, (
-        "sweep-residuals.sh must never call rmdir — it could remove a shared "
+        "swe-workbench-sweep-residuals must never call rmdir — it could remove a shared "
         "parent dir out from under a concurrent PR"
     )
     assert 'rm -rf "/tmp/swe-workbench-pr-review"' not in src, (
-        "sweep-residuals.sh must never bare-rm-rf the shared pr-review parent dir"
+        "swe-workbench-sweep-residuals must never bare-rm-rf the shared pr-review parent dir"
     )
     assert 'rm -rf "/tmp/swe-workbench-address-feedback"' not in src, (
-        "sweep-residuals.sh must never bare-rm-rf the shared address-feedback parent dir"
+        "swe-workbench-sweep-residuals must never bare-rm-rf the shared address-feedback parent dir"
     )
     assert "swe-workbench-clean-ephemeral" in src, (
-        "sweep-residuals.sh must route worktree removal through bin/swe-workbench-clean-ephemeral"
+        "swe-workbench-sweep-residuals must route worktree removal through bin/swe-workbench-clean-ephemeral"
     )
     assert "swe-workbench-clean-state-files" in src, (
-        "sweep-residuals.sh must route state-file removal through bin/swe-workbench-clean-state-files"
+        "swe-workbench-sweep-residuals must route state-file removal through bin/swe-workbench-clean-state-files"
     )
 
 
 def test_sweep_residuals_script_never_force_deletes_address_feedback_branch():
-    """sweep-residuals.sh must never git branch -D an address-feedback-N branch.
+    """swe-workbench-sweep-residuals must never git branch -D an address-feedback-N branch.
 
     That branch may be the PR's real head branch — only its worktree is safe to
     remove, never the branch itself.
     """
     src = SWEEP_SCRIPT.read_text()
     assert 'git branch -D "address-feedback' not in src, (
-        "sweep-residuals.sh must never force-delete an address-feedback-N branch — "
+        "swe-workbench-sweep-residuals must never force-delete an address-feedback-N branch — "
         "it may be the PR's real head branch"
     )
 
@@ -399,6 +399,24 @@ def test_cleanup_merged_step7_report_includes_session_residuals_line():
     )
 
 
+def test_cleanup_merged_step7_report_includes_retained_and_failed_line():
+    """Step 7's report block must document retained/failed residuals so a
+    deliberately-preserved dirty worktree, or an artifact whose removal was
+    attempted but failed, is reported rather than silently dropped from the
+    tally (this is the ticket's headline correction — see
+    test_dirty_pr_review_worktree_skipped_not_removed in test_sweep_residuals.py).
+    """
+    body = SKILL.read_text()
+    step7_slice = body.split("### Step 7 — Report")[1].split("## Worktree Removal Strategies")[0]
+
+    assert "RETAINED_WORKTREES" in step7_slice, (
+        "Step 7's report block must reference RETAINED_WORKTREES"
+    )
+    assert "FAILED_REMOVALS" in step7_slice, (
+        "Step 7's report block must reference FAILED_REMOVALS"
+    )
+
+
 def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
     """Step 5's session-scratchpad sweep must be documented as scoped by session id,
     deliberately NOT scoped to #<number> — issue #595 / AC4: scratchpad residuals
@@ -407,7 +425,7 @@ def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped()
     manually; the sweep is now shipped shell code.
 
     Prose intentionally avoids the "Block C"/"Block D" labels used in
-    sweep-residuals.sh's own comments — Step 3 already uses "Block D" for an
+    swe-workbench-sweep-residuals's own comments — Step 3 already uses "Block D" for an
     unrelated sync-and-verify.sh concept (hook-interruption detection), and
     reusing the letter in Step 5's prose would be ambiguous within the same file.
     """

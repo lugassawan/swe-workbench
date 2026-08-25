@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Read-only preflight over the staged file set for workflow-commit-and-pr.
+
+Classifies the currently staged git file set in a single pass — filename patterns
+that commonly hold secrets, and whether every staged path is documentation-only for
+the purposes of a `[no ci]` commit marker — and prints one JSON object to stdout:
+`{"staged": [...], "suspicious": [...], "docs_only": bool}`.
+
+The suspicious scan is a FILENAME HEURISTIC, not a content scan. A clean result means
+"no obvious filename red flags" — not proof the staged content is secret-free.
+
+Fails closed: if the staged set cannot be read, this exits non-zero and prints nothing on
+stdout. A non-zero exit never means "clean".
+
+Exit codes: 0 classified (findings or not) | 1 could not classify | 2 bad invocation.
+
+Usage: swe-workbench-preflight-commit [--help]
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import sys
+
+# POSIX ERE carried over verbatim from the shell gate this replaces, with $ -> \Z
+# (Python's $ also matches before a trailing newline; \Z is absolute end-of-string).
+SUSPICIOUS_RE = re.compile(
+    r"(^|/)([^/]*\.env(\.|\Z)|.+\.pem\Z|.+\.key\Z|credentials\.json\Z|secrets?\.[a-z]+\Z)",
+    re.IGNORECASE,  # Unicode-aware [a-z] widens detection only — deliberate, fail-safe.
+)
+TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+RUNTIME_MARKDOWN_RE = re.compile(r"^(commands|skills|agents)/")
+# The .github alternative is subsumed by the leading \.md\Z (every path it matches also ends
+# in .md). Kept verbatim as the surviving record of the narrower intent the prose describes.
+DOCS_RE = re.compile(r"\.md\Z|^docs/|^\.github/[^/]*\.md\Z")
+_CONTROL = {chr(c) for c in range(0x20)} | {"\x7f"}
+
+
+def has_control_char(path: str) -> bool:
+    return any(c in _CONTROL for c in path)
+
+
+def is_suspicious(path: str) -> bool:
+    if has_control_char(path):  # never excludable, always flagged
+        return True
+    return bool(SUSPICIOUS_RE.search(path)) and not path.lower().endswith(TEMPLATE_SUFFIXES)
+
+
+def is_docs(path: str) -> bool:
+    if has_control_char(path):
+        return False
+    return not RUNTIME_MARKDOWN_RE.search(path) and bool(DOCS_RE.search(path))
+
+
+def classify_suspicious(paths: list[str]) -> list[str]:
+    return [p for p in paths if is_suspicious(p)]
+
+
+def is_docs_only(paths: list[str]) -> bool:
+    return bool(paths) and all(is_docs(p) for p in paths)
+
+
+def read_staged_paths() -> list[str]:
+    """The only subprocess call in this module. -z yields raw, unquoted paths —
+    without it, git escapes '"', '\\', and non-ASCII bytes under core.quotePath,
+    which walks a secret-shaped filename right past the suspicious scan. No HEAD
+    argument: `git diff --staged` compares the index to HEAD on its own, including
+    on an unborn HEAD (a repo's first commit), where passing HEAD would exit 128."""
+    result = subprocess.run(
+        ["git", "diff", "--staged", "--name-only", "-z"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "git diff --staged --name-only -z failed")
+    return [p for p in result.stdout.split("\0") if p]
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    if argv:
+        if len(argv) == 1 and argv[0] in ("--help", "-h"):
+            print(__doc__)
+            return 0
+        print(
+            f"swe-workbench-preflight-commit: unexpected argument(s): {' '.join(argv)}",
+            file=sys.stderr,
+        )
+        print("Usage: swe-workbench-preflight-commit [--help]", file=sys.stderr)
+        return 2
+
+    try:
+        staged = read_staged_paths()
+    except (RuntimeError, OSError) as exc:
+        # OSError also catches a missing/non-executable git binary (FileNotFoundError,
+        # PermissionError) — without it that case propagates an unhandled traceback
+        # instead of this module's own stderr format, though the exit code and empty
+        # stdout still fail closed either way.
+        print(f"swe-workbench-preflight-commit: {exc}", file=sys.stderr)
+        return 1
+
+    result = {
+        "staged": staged,
+        "suspicious": classify_suspicious(staged),
+        "docs_only": is_docs_only(staged),
+    }
+    # ensure_ascii=True (the default) escapes non-ASCII to \uXXXX so stdout encoding
+    # can never raise on a staged path containing arbitrary bytes.
+    json.dump(result, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# PR-scoped backstop: force-removes residual ephemeral artifacts left behind by
+# workflow-pr-review (either mode), workflow-address-feedback, and PR-mode
+# specialist /swe-workbench:review runs for one specific PR number — rimba
+# worktrees (pr-review-<N>, pr-followup-<N>, address-feedback-<N>,
+# review-<mode>-<N> for each postable specialist mode) and their
+# /tmp/swe-workbench-* state-file JSON.
+#
+# Invoked by workflow-cleanup-merged's Residual Sweep step AFTER it has already
+# independently verified via `gh pr view` that PR <N> is MERGED — so it is safe
+# to force-remove anything keyed to that specific N. Reviewer-flow worktrees
+# (pr-review-<N>, pr-followup-<N>, review-<mode>-<N>) also get their branch
+# force-deleted, since those are throwaway detached review copies.
+# address-feedback-<N> worktrees get ONLY their worktree removed — their
+# branch may be the PR's real head branch, so it is never touched here.
+#
+# Also sweeps two artifact classes that are NOT keyed to any PR name string but are
+# still safe to reap once #<number> is known to be MERGED:
+#   Block C — orphaned /tmp/swe-workbench-run/ run dirs allocated by swe-workbench-new-run-dir
+#             for this PR (e.g. a flow killed before its own swe-workbench-reap-run-dir call).
+#             These ARE <N>-keyed, by the run-dir naming convention itself.
+#   Block D — the current harness session's own scratchpad contents (temp files an agent
+#             improvised during review/implementation work). This one is deliberately NOT
+#             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
+#
+# Usage: swe-workbench-sweep-residuals <PR number>
+# Stdout contract (always emitted, even on a non-integer arg or nothing found):
+#   SWEPT_WORKTREES=<n>      — count of ephemeral worktrees removed
+#   SWEPT_STATE_FILES=<n>    — count of /tmp state files removed
+#   SWEPT_RUN_DIRS=<n>       — count of orphaned run dirs removed (Block C)
+#   SWEPT_SESSION_FILES=<n>  — count of session scratchpad entries removed (Block D)
+#   RETAINED_WORKTREES=<n>   — dirty worktrees deliberately preserved, never force-removed
+#   FAILED_REMOVALS=<n>      — removal attempted but the artifact is still present
+#   RESIDUAL_NONE=0|1        — 1 iff all six counts above are 0
+# Always exits 0 — the caller's `eval "$(...)"` must never abort mid-cleanup.
+set -euo pipefail
+
+emit_clean_contract() {
+  printf 'SWEPT_WORKTREES=0\nSWEPT_STATE_FILES=0\nSWEPT_RUN_DIRS=0\nSWEPT_SESSION_FILES=0\nRETAINED_WORKTREES=0\nFAILED_REMOVALS=0\nRESIDUAL_NONE=1\n'
+}
+
+N="${1:-}"
+
+# Non-integer (or missing) arg: emit the clean contract and exit 0 — never abort
+# the caller's eval chain over a malformed argument.
+case "$N" in
+  ''|*[!0-9]*)
+    emit_clean_contract
+    exit 0
+    ;;
+esac
+
+# Postable specialist review modes from commands/review.md's `--mode` table —
+# the *normalized* mode strings (not CLI aliases like a11y/deps/perf, which
+# never appear in a path). `general` delegates to workflow-pr-review (already
+# covered above) and `contributor-trust` creates no artifacts — both excluded.
+SPECIALIST_MODES=(security accessibility dependency performance tests ux)
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_clean_contract; exit 0; }
+RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
+
+SWEPT_WORKTREES=0
+SWEPT_STATE_FILES=0
+RETAINED_WORKTREES=0
+FAILED_REMOVALS=0
+
+# ── Block A: state-file reap (independent of git; candidates are fixed by the
+# flows' own naming conventions) ────────────────────────────────────────────
+
+STATE_FILES=(
+  "/tmp/swe-workbench-pr-review/$N.json"
+  "/tmp/swe-workbench-pr-review/$N-followup.json"
+  "/tmp/swe-workbench-address-feedback/$N.json"
+  "/tmp/swe-workbench-address-feedback/$N-threads.json"
+  "/tmp/swe-workbench-address-feedback/$N-pr-comments.json"
+  "/tmp/swe-workbench-address-feedback/$N-triage.json"
+)
+# Specialist-mode preflight state file (commands/review.md's Specialist post
+# sub-flow, Step 1): mode-scoped so it never collides with the general/followup
+# state files above.
+for mode in "${SPECIALIST_MODES[@]}"; do
+  STATE_FILES+=("/tmp/swe-workbench-pr-review/$N-review-$mode.json")
+done
+# workflow-pr-review-post scopes its own cache by CALLER_TAG (general, followup,
+# a specialist review mode, ...) — nullglob-scoped so a no-match glob expands to
+# zero words instead of the literal pattern (and never trips `set -u` the way an
+# empty array element expansion would on bash 3.2).
+shopt -s nullglob
+for f in /tmp/swe-workbench-pr-review/"$N"-post-threads-*.json; do
+  STATE_FILES+=("$f")
+done
+shopt -u nullglob
+
+TO_REAP=()
+for f in "${STATE_FILES[@]}"; do
+  [ -e "$f" ] && TO_REAP+=("$f")
+done
+
+if [ "${#TO_REAP[@]}" -gt 0 ]; then
+  # swe-workbench-clean-state-files validates all args before deleting any and
+  # exits 1 on the first invalid one — never let that abort us under set -e.
+  "$SCRIPT_DIR/swe-workbench-clean-state-files" "${TO_REAP[@]}" >/dev/null 2>&1 || true
+  for f in "${TO_REAP[@]}"; do
+    if [ -e "$f" ]; then
+      FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+    else
+      SWEPT_STATE_FILES=$((SWEPT_STATE_FILES + 1))
+    fi
+  done
+fi
+
+# ── Block B: worktree + branch reap ─────────────────────────────────────────
+
+MAIN_REPO=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}') || true
+
+if [ -n "${MAIN_REPO:-}" ]; then
+  cd "$MAIN_REPO"
+
+  # Parallel indexed arrays (bash 3.2 on macOS has no associative arrays) of
+  # (label, fallback_path, delete_branch) triples for every ephemeral worktree
+  # this backstop can reap. delete_branch=1 whenever the label IS the branch
+  # name — all of these are throwaway review/spec copies except
+  # address-feedback, whose branch may be the PR's real head branch.
+  WT_LABELS=("pr-review-$N" "pr-followup-$N" "address-feedback-$N")
+  WT_FALLBACKS=("/tmp/swe-workbench-pr-review/$N" "/tmp/swe-workbench-pr-review/$N-followup" "")
+  WT_DELETE_BRANCH=(1 1 0)
+  for mode in "${SPECIALIST_MODES[@]}"; do
+    WT_LABELS+=("review-$mode-$N")
+    WT_FALLBACKS+=("/tmp/swe-workbench-pr-review/$mode-$N")
+    WT_DELETE_BRANCH+=(1)
+  done
+
+  WT_PATHS=()
+  wi=0
+  while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+    WT_PATHS+=("")
+    wi=$((wi + 1))
+  done
+
+  # Single porcelain pass via process substitution (not a pipe) so the WT_PATHS
+  # assignments made inside the loop survive past it — a pipe would run the
+  # loop in a subshell and silently drop every assignment on exit.
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        cur_wt=${line#worktree }
+        base=${cur_wt##*/}
+        wi=0
+        while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+          if [ "$base" = "${WT_LABELS[$wi]}" ]; then
+            WT_PATHS[wi]="$cur_wt"
+          fi
+          wi=$((wi + 1))
+        done
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+
+  # Bare/mode-scoped /tmp fallback paths (rimba-absent convention): these
+  # worktrees are checked out --detach, so no `branch refs/heads/...` line
+  # exists to match in porcelain, AND their basename ("<N>", "<N>-followup",
+  # "<mode>-<N>") is not the task label — so the scan above cannot find them.
+  # Check the known literal paths directly. address-feedback carries no
+  # fallback entry (empty string), so it is skipped here by construction.
+  wi=0
+  while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+    if [ -z "${WT_PATHS[$wi]}" ] && [ -n "${WT_FALLBACKS[$wi]}" ] && [ -d "${WT_FALLBACKS[$wi]}" ]; then
+      WT_PATHS[wi]="${WT_FALLBACKS[$wi]}"
+    fi
+    wi=$((wi + 1))
+  done
+
+  reap_one_worktree() {
+    local label="$1" path="$2" delete_branch="$3"
+    [ -n "$path" ] || return 0
+
+    # Interrupted flows are exactly when a worktree is most likely to hold
+    # uncommitted, local-only work (e.g. a killed session mid-edit, before its
+    # own commit step) — skip it rather than silently discarding it.
+    if [ -d "$path" ]; then
+      local dirty_lines
+      dirty_lines=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      if [ "${dirty_lines:-0}" -gt 0 ]; then
+        echo "swe-workbench-sweep-residuals: skipping $label — $dirty_lines uncommitted change(s) in $path; not force-removing." >&2
+        RETAINED_WORKTREES=$((RETAINED_WORKTREES + 1))
+        return 0
+      fi
+    fi
+
+    if [ -n "$RIMBA" ] && "$RIMBA" remove "$label" --force >/dev/null 2>&1; then
+      :
+    else
+      git worktree remove --force "$path" >/dev/null 2>&1 || true
+      if [ "$delete_branch" = "1" ]; then
+        git branch -D "$label" >/dev/null 2>&1 || true
+      fi
+      if [ -d "$path" ]; then
+        "$SCRIPT_DIR/swe-workbench-clean-ephemeral" "$path" >/dev/null 2>&1 || true
+      fi
+    fi
+
+    if [ -d "$path" ]; then
+      FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+    else
+      SWEPT_WORKTREES=$((SWEPT_WORKTREES + 1))
+    fi
+  }
+
+  wi=0
+  while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+    reap_one_worktree "${WT_LABELS[$wi]}" "${WT_PATHS[$wi]}" "${WT_DELETE_BRANCH[$wi]}"
+    wi=$((wi + 1))
+  done
+fi
+
+# ── Block C: run-dir orphans (swe-workbench-new-run-dir / swe-workbench-reap-run-dir) ──
+# <N>-keyed by the run-dir naming convention itself (<prefix>-<N>-<6-char suffix>) — the
+# same safety argument Blocks A and B already rely on: Step 2 already proved #N is MERGED.
+
+SWEPT_RUN_DIRS=0
+
+CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
+RUN_ROOT="${CANON_TMP}/swe-workbench-run"
+
+shopt -s nullglob
+for run_dir in "$RUN_ROOT"/*-"$N"-??????; do
+  [ -e "$run_dir" ] || continue
+  "$SCRIPT_DIR/swe-workbench-reap-run-dir" "$run_dir" >/dev/null 2>&1 || true
+  if [ -e "$run_dir" ]; then
+    FAILED_REMOVALS=$((FAILED_REMOVALS + 1))
+  else
+    SWEPT_RUN_DIRS=$((SWEPT_RUN_DIRS + 1))
+  fi
+done
+shopt -u nullglob
+
+# ── Block D: session scratchpad (NOT <N>-keyed — see SKILL.md Step 5 / AC4) ─────────────
+# The scratchpad files an agent improvises during review/implementation work never carry
+# a "#<N>" token, so they cannot be reached by Blocks A-C's name matching. Scoped by
+# session id instead, entirely independent of which PR (if any) triggered this sweep.
+
+SWEPT_SESSION_FILES=0
+
+SESSION_SCRATCH_OUT=$("$SCRIPT_DIR/swe-workbench-reap-session-scratch" 2>/dev/null) || SESSION_SCRATCH_OUT=""
+case "$SESSION_SCRATCH_OUT" in
+  SWEPT_SESSION_FILES=*)
+    _raw_ssf="${SESSION_SCRATCH_OUT#SWEPT_SESSION_FILES=}"
+    # Never trust the sibling's stdout verbatim into a value this script's own
+    # caller will `eval` — a non-integer would silently become false in the
+    # -gt test below and land unquoted in the caller's shell.
+    case "$_raw_ssf" in
+      ''|*[!0-9]*) SWEPT_SESSION_FILES=0 ;;
+      *) SWEPT_SESSION_FILES="$_raw_ssf" ;;
+    esac
+    ;;
+esac
+
+RESIDUAL_NONE=1
+if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ] \
+  || [ "$SWEPT_RUN_DIRS" -gt 0 ] || [ "$SWEPT_SESSION_FILES" -gt 0 ] \
+  || [ "$RETAINED_WORKTREES" -gt 0 ] || [ "$FAILED_REMOVALS" -gt 0 ]; then
+  RESIDUAL_NONE=0
+fi
+
+printf 'SWEPT_WORKTREES=%s\nSWEPT_STATE_FILES=%s\nSWEPT_RUN_DIRS=%s\nSWEPT_SESSION_FILES=%s\nRETAINED_WORKTREES=%s\nFAILED_REMOVALS=%s\nRESIDUAL_NONE=%s\n' \
+  "$SWEPT_WORKTREES" "$SWEPT_STATE_FILES" "$SWEPT_RUN_DIRS" "$SWEPT_SESSION_FILES" "$RETAINED_WORKTREES" "$FAILED_REMOVALS" "$RESIDUAL_NONE"
