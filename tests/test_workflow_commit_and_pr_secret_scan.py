@@ -5,7 +5,9 @@ before the commit preview runs. It is the commit-layer complement to #181's
 write-time hook: #181 catches secrets the agent introduces via Write/Edit;
 this gate catches secrets staged by anyone before commit.
 """
+import importlib.util
 import re
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -75,7 +77,7 @@ def test_secret_scan_section_present_with_askuserquestion():
 
     Asserts:
     1. Section heading exists.
-    2. Body contains the scan command (git diff --staged --name-only).
+    2. Body delegates the scan to swe-workbench-preflight-commit behind a command -v guard.
     3. Body contains a fenced JSON AskUserQuestion block with "Cancel" as the last option.
     4. Body encodes the "don't auto-unstage" invariant ("NOT touched" or "untouched").
     5. Body cross-references issue #181 (the write-time hook complement).
@@ -88,8 +90,9 @@ def test_secret_scan_section_present_with_askuserquestion():
 
     section = _section_body(body, SECTION_HEADING)
 
-    assert "git diff --staged --name-only" in section, (
-        "Pre-commit gate section must contain 'git diff --staged --name-only'"
+    assert "command -v swe-workbench-preflight-commit" in section, (
+        "Pre-commit gate section must guard swe-workbench-preflight-commit with a "
+        "command -v check before invoking it"
     )
 
     aq_block = _extract_fenced_block(section, "json")
@@ -116,48 +119,46 @@ def test_secret_scan_section_present_with_askuserquestion():
     )
 
 
+def _load_preflight_commit_module():
+    """Import bin/swe-workbench-preflight-commit as a module (issue #660), mirroring
+    test_pr_review_submit_script.py's `_load_module()` precedent. This is a strict
+    upgrade over the prior version of this test, which extracted the grep -iE / -vE
+    patterns as strings out of the Markdown and re-ran them through Python `re` — not
+    POSIX ERE, and not `grep | grep` pipeline semantics. This tests the real code."""
+    script = ROOT / "bin" / "swe-workbench-preflight-commit"
+    loader = SourceFileLoader("preflight_commit", str(script))
+    spec = importlib.util.spec_from_file_location("preflight_commit", script, loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_secret_scan_regex_matches_expected_positives_and_negatives():
-    """The regex embedded in the skill must flag expected positives and spare negatives.
-
-    Extracts the grep -iE (positive) and grep -vE (exclusion) patterns from
-    the fenced bash block in the pre-commit gate section, then applies them to
-    a hand-picked filename matrix.
-    """
-    body = SKILL_PATH.read_text()
-    section = _section_body(body, SECTION_HEADING)
-
-    assert section, f"Section '{SECTION_HEADING}' not found in SKILL.md"
-
-    bash_block = _extract_fenced_block(section, "bash")
-    assert bash_block is not None, (
-        "Pre-commit gate section must contain a fenced bash block with the scan command"
-    )
-
-    pos_match = re.search(r"grep\s+-iE\s+'([^']+)'", bash_block)
-    assert pos_match, "Could not extract grep -iE pattern from bash block"
-    pos_pattern = pos_match.group(1)
-
-    excl_match = re.search(r"grep\s+-i?vE\s+'([^']+)'", bash_block)
-    assert excl_match, "Could not extract grep -vE pattern from bash block"
-    excl_pattern = excl_match.group(1)
-
-    def should_flag(filename: str) -> bool:
-        if not re.search(pos_pattern, filename, re.IGNORECASE):
-            return False
-        if re.search(excl_pattern, filename, re.IGNORECASE):
-            return False
-        return True
+    """bin/swe-workbench-preflight-commit's is_suspicious() must flag expected
+    positives and spare expected negatives — the same filename matrix the old
+    Markdown-regex-extraction version of this test used, now run against the real
+    ported function instead of a string that resembles code."""
+    pc = _load_preflight_commit_module()
 
     for fname in POSITIVE_FILENAMES:
-        assert should_flag(fname), (
-            f"Expected '{fname}' to be flagged as suspicious, but it was not.\n"
-            f"  pos_pattern:  {pos_pattern!r}\n"
-            f"  excl_pattern: {excl_pattern!r}"
-        )
+        assert pc.is_suspicious(fname), f"Expected '{fname}' to be flagged as suspicious, but it was not."
 
     for fname in NEGATIVE_FILENAMES:
-        assert not should_flag(fname), (
-            f"Expected '{fname}' NOT to be flagged, but it was.\n"
-            f"  pos_pattern:  {pos_pattern!r}\n"
-            f"  excl_pattern: {excl_pattern!r}"
-        )
+        assert not pc.is_suspicious(fname), f"Expected '{fname}' NOT to be flagged, but it was."
+
+
+def test_skill_does_not_reimplement_the_scan_inline():
+    """The inlined grep|grep pipeline and MATCHED/TOTAL wc -l classification must not
+    creep back into the skill now that both live in swe-workbench-preflight-commit —
+    one snapshot of the staged set, not two independently-drifting shell pipelines."""
+    body = SKILL_PATH.read_text()
+    assert "grep -iE" not in body, "SKILL.md must not reimplement the secret scan's grep -iE pipeline inline"
+    assert "wc -l" not in body, "SKILL.md must not reimplement the docs-only MATCHED/TOTAL count inline"
+    assert "MATCHED" not in body, "SKILL.md must not reimplement the docs-only MATCHED/TOTAL count inline"
+
+    no_ci_section = _section_body(body, "## Doc-only `[no ci]` rule")
+    assert no_ci_section, "Missing '## Doc-only `[no ci]` rule' section in SKILL.md"
+    assert ".docs_only" in no_ci_section, (
+        "'## Doc-only [no ci] rule' must read `.docs_only` from the preflight result "
+        "computed by the pre-commit gate above, not re-derive the classification"
+    )

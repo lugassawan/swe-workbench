@@ -28,6 +28,7 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `swe-workbench-lsp` | Stdlib-only LSP JSON-RPC client — semantic code navigation (`refs`/`def`/`impl`/`callers`/`callees`/`hover`/`symbols`/`wsymbols`/`check`) reachable via `Bash` regardless of whether the harness's own `LSP` tool is wired up for subagents |
 | `swe-workbench-new-run-dir` | Allocate a mode-0700 run-scoped scratch dir under `/tmp/swe-workbench-run/` (`mktemp -d`, explicit template); also runs the age-gated (24h) orphan sweep at allocation time |
 | `swe-workbench-pr-review-submit` | Posting mechanism for workflow-pr-review-post's `## Post` section: fetch review threads (paginated), Jaccard dedup + 👍 reactions, diff-line pre-validate, pr-level batching, self-review/diff-scoping decision flip, atomic Reviews-API submit with a bounded 422 retry and a per-comment fallback. `--findings-json <path\|->` in; `printf %q`-quoted `KEY=VALUE` lines out |
+| `swe-workbench-preflight-commit` | Read-only preflight over the staged file set for `swe-workbench:workflow-commit-and-pr`: one JSON snapshot classifying secret-shaped filenames (`suspicious`) and whether every staged path is documentation-only (`docs_only`); fails closed — a non-zero exit never means "clean" |
 | `swe-workbench-reap-run-dir` | Safe `rm -rf` for a single run-scoped scratch dir allocated by `swe-workbench-new-run-dir` (depth-exactly-one, name-shape, ownership, and `.git`-absence checks) |
 | `swe-workbench-reap-session-scratch` | Platform-neutral content-clear (directory preserved) for a verified current-session scratch target, authorized by exactly one packaged session scratch adapter; ambiguous or unsafe resolution is a zero-count no-op |
 | `swe-workbench-session-scratch-adapter-claude` | Claude Code session scratch adapter |
@@ -37,14 +38,19 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `swe-workbench-sweep-residuals` | PR-scoped residual-artifact backstop for `swe-workbench:workflow-cleanup-merged` Step 5 — force-removes leftover worktrees, state files, run dirs, and session-scratch entries for a merged PR number |
 | `swe-workbench-sync-pr-metadata` | Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync) |
 
-`swe-workbench-comment-scan`, `swe-workbench-lsp`, and `swe-workbench-pr-review-submit` are the
-three scripts in this directory with a `#!/usr/bin/env python3` shebang instead of
-`#!/usr/bin/env bash`. `comment-scan` is a pure diff-in/findings-out function (no git calls of its
-own; see `shared/agents/comment-scan.md` for the canonical diff command); `pr-review-submit` does
-call `git`/`gh` but needed Python's JSON and multi-call state-machine handling (422 retry,
-read-your-write confirmation) more than bash's process-spawning idioms; `lsp` speaks JSON-RPC
-framing to a spawned language server subprocess, which needs a real threaded reader loop bash
-can't give it. Same bare-command convention applies; only the interpreter differs.
+`swe-workbench-comment-scan`, `swe-workbench-lsp`, `swe-workbench-pr-review-submit`, and
+`swe-workbench-preflight-commit` are the four scripts in this directory with a
+`#!/usr/bin/env python3` shebang instead of `#!/usr/bin/env bash`. `comment-scan` is a pure
+diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md` for
+the canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON and
+multi-call state-machine handling (422 retry, read-your-write confirmation) more than bash's
+process-spawning idioms; `lsp` speaks JSON-RPC framing to a spawned language server subprocess,
+which needs a real threaded reader loop bash can't give it; `preflight-commit` classifies
+NUL-delimited raw staged paths and emits JSON — bash would need `jq` for escaping arbitrary path
+bytes and a second regex dialect (Oniguruma) for matching, a second engine to audit in a security
+gate that should have exactly one. Unlike `comment-scan` (advisory, correctly fails open),
+`preflight-commit` fails closed: a git error is a hard non-zero exit with nothing on stdout, never
+a silent "clean". Same bare-command convention applies; only the interpreter differs.
 
 ## Reference pattern
 
