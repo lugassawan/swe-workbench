@@ -1,4 +1,4 @@
-"""Tests for bin/swe-workbench-address-feedback-worktree (issue #662).
+"""Tests for bin/swe-workbench-address-feedback-worktree.
 
 Extracts workflow-address-feedback's Phase 2 worktree acquire/reconcile/release
 lifecycle out of SKILL.md prose into a directly-testable bash runtime command.
@@ -54,10 +54,18 @@ def _build_remote_and_clone(base: Path, pr_branch: str) -> tuple[Path, Path]:
     """A bare 'origin' remote plus a clone (the acquire caller's cwd) with
     `pr_branch` pushed to origin but NOT checked out locally in the clone."""
     remote = base / "origin.git"
-    _run("git", "init", "--bare", str(remote), cwd=base)
+    # -b main (not just the later `branch -M main` on the seed repo) — the bare
+    # repo's own HEAD symref is set once at `init --bare` time and never moves when
+    # something is later pushed to a *different*-named branch. Without an explicit
+    # -b here, a CI runner with no ~/.gitconfig init.defaultBranch (unlike a dev
+    # machine that commonly has one) leaves HEAD pointing at refs/heads/master —
+    # a ref that's never created — and `git clone` then fails to check out
+    # anything ("remote HEAD refers to nonexistent ref"), leaving `clone` on an
+    # unborn branch with no local `main` at all, only `origin/main`.
+    _run("git", "init", "--bare", "-b", "main", str(remote), cwd=base)
 
     seed = base / "seed"
-    _run("git", "init", str(seed), cwd=base)
+    _run("git", "init", "-b", "main", str(seed), cwd=base)
     _run("git", "config", "user.email", "test@example.com", cwd=seed)
     _run("git", "config", "user.name", "Test", cwd=seed)
     no_hooks = base / ".nohooks"
