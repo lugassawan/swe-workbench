@@ -23,6 +23,20 @@ bash "$SCRIPT_DIR/swe-workbench-gh-timeout" auth status >/dev/null || {
   exit 1
 }
 
+# The fetch below creates $OUT_JSON. Every abort past this point is this
+# script's own failure, so it owns removing the artifact it created --
+# callers structurally cannot, because eval "$(...)" discards this script's
+# exit status. Cleanup errors are suppressed: on an error path the original
+# failure is the news, and a reap complaint must not mask it. A function
+# (rather than an inline trap string) so shellcheck can track `rc`'s
+# assignment within its own scope.
+_preflight_pr_cleanup() {
+  local rc=$?
+  [ "$rc" -eq 0 ] || bash "$SCRIPT_DIR/swe-workbench-clean-state-files" "$OUT_JSON" >/dev/null 2>&1 || true
+  exit "$rc"
+}
+trap _preflight_pr_cleanup EXIT
+
 bash "$SCRIPT_DIR/swe-workbench-fetch-pr" "$PR" "$OUT_JSON" "$FIELDS"
 
 BASE=$(jq -r .baseRefName     "$OUT_JSON")
