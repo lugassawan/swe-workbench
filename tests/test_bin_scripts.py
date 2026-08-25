@@ -31,6 +31,7 @@ SCRIPTS = {
     "swe-workbench-gh-timeout": "bash",
     "swe-workbench-lsp": "python3",
     "swe-workbench-new-run-dir": "bash",
+    "swe-workbench-preflight-commit": "python3",
     "swe-workbench-preflight-pr": "bash",
     "swe-workbench-pr-review-submit": "python3",
     "swe-workbench-reap-run-dir": "bash",

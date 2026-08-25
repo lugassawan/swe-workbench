@@ -89,11 +89,10 @@ Detect the host repo's branch convention via 3-tier probe. **Tier 1:** run `git 
 
 ## Pre-commit gate: suspicious staged files
 
-Before the commit preview (or before running `git commit`), scan the staged
-file set for filenames that commonly hold secrets. This is a commit-layer
-twin of the PreToolUse Write/Edit hook: that hook catches secrets the agent
-introduces at authoring time; this gate catches secrets staged by anyone (a
-human running `git add`, an IDE that auto-stages, or any other tool) before
+Before the commit preview (or before running `git commit`), classify the staged file
+set. This is a commit-layer twin of the PreToolUse Write/Edit hook: that hook catches
+secrets the agent introduces at authoring time; this gate catches secrets staged by
+anyone (a human running `git add`, an IDE that auto-stages, or any other tool) before
 commit.
 
 The scan is a filename heuristic, not a content scan — it cannot catch a
@@ -101,25 +100,36 @@ secret pasted inside an otherwise innocuous `config.yaml`. False negatives
 are expected; treat a clean scan as "no obvious filename red flags", not
 "safe to commit".
 
-**Scan command** (run before `[no ci]` is computed):
+**Classify once** (covers this gate, the empty-staging check, and `## Doc-only [no ci]
+rule` below — one snapshot of the staged set, exactly one `git diff --staged` call in
+the whole flow):
 
 ```bash
-SUSPICIOUS=$(git diff --staged --name-only \
-  | grep -iE '(^|/)([^/]*\.env(\.|$)|.+\.pem$|.+\.key$|credentials\.json$|secrets?\.[a-z]+$)' \
-  | grep -ivE '\.(example|sample|template|dist)$' \
-  || true)
+command -v swe-workbench-preflight-commit >/dev/null 2>&1 || {
+  echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+  exit 1
+}
+PREFLIGHT=$(swe-workbench-preflight-commit) || {
+  echo "swe-workbench-preflight-commit could not classify the staged set — see stderr above. Non-zero exit never means \"clean\"; do not proceed as if it were." >&2
+  exit 1
+}
 ```
 
-The exclusion pass (`*.example`, `*.sample`, `*.template`, `*.dist`)
-prevents false-positives on `.env` template variants (e.g. `.env.example`,
-`.env.sample`). Files like `secrets.example.yaml` are already excluded by
-the positive pattern (which requires a single trailing extension), so the
-exclusion pass is not their gate.
+`$PREFLIGHT` is one JSON object with three fields: `staged` (every staged path),
+`suspicious` (the subset that looks secret-shaped by filename), and `docs_only`
+(whether every staged path is documentation-only — consumed by `## Doc-only [no ci]
+rule` below). Consume it with `printf '%s' "$PREFLIGHT" | jq …`, **never** `echo
+"$PREFLIGHT" | jq` — see
+[`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md) for
+the corruption hazard.
 
-**On no matches** → silent; continue to `## Doc-only [no ci] rule`.
+**On an empty `.staged` array** → abort and tell the user to `git add` first — there
+is nothing to commit.
 
-**On match**, print the file list verbatim to the user, then call
-`AskUserQuestion`:
+**On an empty `.suspicious` array** → silent; continue to `## Doc-only [no ci] rule`.
+
+**On a non-empty `.suspicious` array**, print the file list verbatim to the user, then
+call `AskUserQuestion`:
 
 ```json
 {
@@ -144,25 +154,12 @@ exclusion pass is not their gate.
 
 ## Doc-only `[no ci]` rule
 
-When ALL staged paths match doc-only patterns, append ` [no ci]` to the commit subject:
-
-```
-Doc-only patterns:
-  - *.md AND NOT under commands/, skills/, agents/      (e.g. README.md, root-level *.md)
-  - docs/**
-  - .github/*.md  (direct children of .github/ only — not subdirs like ISSUE_TEMPLATE/)
-```
+Append ` [no ci]` to the commit subject only when all three hold: `$PREFLIGHT`'s
+`.docs_only` is `true` (read from the same result the pre-commit gate above already
+computed — do not re-derive it), the host CI honours the marker (see below), and the
+user has not overridden.
 
 **Exclusion is load-bearing.** Markdown under `commands/`, `skills/`, `agents/` is plugin behaviour — changing those files changes the plugin's runtime, even though the file extension is `.md`. Never apply `[no ci]` to those.
-
-How to test the staged set:
-```bash
-TOTAL=$(git diff --staged --name-only | wc -l)
-MATCHED=$(git diff --staged --name-only | grep -Ev '^(commands|skills|agents)/' | grep -E '\.md$|^docs/|^\.github/[^/]*\.md$' | wc -l)
-[ "$MATCHED" -eq "$TOTAL" ] && echo "[no ci] applies" || echo "[no ci] does NOT apply"
-```
-
-If every staged path matches (`MATCHED == TOTAL`), append ` [no ci]`. Otherwise, do not.
 
 **Detect `[no ci]` behaviour.** Whether per-PR `[no ci]` is honoured depends on the host repo's CI configuration:
 
@@ -223,7 +220,6 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 
 | Failure | Signal | Action |
 |---|---|---|
-| No staged changes | `git diff --staged` empty | Abort. Tell user to `git add` first. |
 | Commit hook fails (bad subject) | Non-zero exit on `git commit` | Re-read `.githooks/commit-msg`, refine subject, re-attempt. **Do NOT use `--no-verify`.** |
 | Branch is `main`/`master` | `git rev-parse --abbrev-ref HEAD` | Abort. Pre-commit hook will block; tell user to checkout a feature branch. |
 | `gh auth status` fails | Non-zero exit | Abort. Print fix hint: `gh auth login`. |
@@ -231,7 +227,8 @@ If user replies `yes` → invoke `/swe-workbench:review <N>` with the new PR num
 | `git push` rejected (non-FF) | Non-zero exit | Abort. Tell user to `git pull --rebase`; do NOT force-push. |
 | Doc-only `[no ci]` rule mis-triggers (ambiguous case) | User disagrees | Skip `[no ci]` and warn. The doc-only rule is conservative — when in doubt, run CI. |
 | Duplicate PR (already exists) | `gh pr view` returns `state == "OPEN"` before `gh pr create` | Surface URL via `AskUserQuestion` (see Pre-check section). On `Update existing PR`, skip `gh pr create`. **Never** re-run `gh pr create` to recover. |
-| Staged files look like secrets | `grep` matches against curated pattern set | Print file list. `AskUserQuestion` → on `Cancel`, abort with no `git restore --staged` and no commit. Never auto-unstage. |
+| Staged files look like secrets | `swe-workbench-preflight-commit`'s `.suspicious` is non-empty | Print file list. `AskUserQuestion` → on `Cancel`, abort with no `git restore --staged` and no commit. Never auto-unstage. |
+| `swe-workbench-preflight-commit` exits non-zero | Non-zero exit, empty stdout | Abort — the gate could not run. Non-zero never means "clean". Print stderr to the user. |
 
 ## Common mistakes
 
