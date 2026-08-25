@@ -579,6 +579,62 @@ class TestReleaseCreatedTrueRemoves:
             _cleanup_worktree(clone, Path(wt_path), branch)
 
 
+def _write_git_worktree_remove_fails_stub(bin_dir: Path, *, real_git: str) -> Path:
+    """A stub `git` that fails only `worktree remove ...` invocations (both the
+    single- and double---force retry), delegating every other subcommand — branch
+    checks, show-ref, rev-parse, git-common-dir resolution — to the real git
+    unchanged. Isolates the release chain's fallback to swe-workbench-clean-ephemeral
+    without needing to corrupt real worktree/repo state (which entangles with the
+    branch-verification and receipt checks that must still pass normally)."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    stub = bin_dir / "git"
+    script = (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [ "${1:-}" = "worktree" ] && [ "${2:-}" = "remove" ]; then\n'
+        "  exit 1\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n'
+    )
+    stub.write_text(script)
+    stub.chmod(0o755)
+    return stub
+
+
+class TestReleaseCleanEphemeralFallback:
+    def test_falls_back_to_clean_ephemeral_when_git_worktree_remove_fails(self, tmp_path):
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        acquire_result = _run_acquire(clone, pr, branch, env)
+        assert acquire_result.returncode == 0, acquire_result.stderr
+        wt_path = Path(json.loads(acquire_result.stdout)["data"]["path"])
+
+        real_git = shutil.which("git")
+        assert real_git, "git must be resolvable to build the stub"
+        stub_dir = tmp_path / "git_stub_bin"
+        _write_git_worktree_remove_fails_stub(stub_dir, real_git=real_git)
+        stub_env = dict(env)
+        stub_env["PATH"] = f"{stub_dir}:{env['PATH']}"
+
+        try:
+            result = _run_release(clone, pr, str(wt_path), branch, "true", stub_env)
+            assert result.returncode == 0, result.stderr
+            payload = json.loads(result.stdout)
+            assert payload["data"]["removed"] is True
+            assert payload["data"]["method"] == "clean-ephemeral"
+            assert payload["data"]["branch_preserved"] is True
+            assert not wt_path.exists()
+            assert _branch_exists(clone, branch), (
+                "release must NEVER delete $PR_BRANCH, even on the clean-ephemeral fallback path"
+            )
+        finally:
+            _cleanup_state_files(pr)
+            _cleanup_worktree(clone, wt_path, branch)
+
+
 class TestReleaseReceiptMismatchRefused:
     def test_release_refuses_when_no_matching_receipt(self, tmp_path):
         pr = _unique_n()

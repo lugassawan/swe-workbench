@@ -253,22 +253,24 @@ def test_address_feedback_skill_phase6_preserves_trailer():
 # --- Cleanup (Phase 7) tests — AC#1, AC#2, AC#3 from issue #291 ---
 
 def test_address_feedback_skill_cleans_up_worktree():
-    """Phase 7 must remove the worktree via rimba but KEEP the PR branch (issue #643)."""
+    """Phase 7 must release the worktree via the runtime command but KEEP the PR branch (issue #643, #662)."""
     text = SKILL_MD.read_text()
     assert re.search(
-        r'rimba remove ["\']?\$PR_BRANCH["\']? --force --keep-branch', text
+        r'swe-workbench-address-feedback-worktree release\s*\\\s*\n\s*--pr "\$PR" --path "\$WT" --branch "\$PR_BRANCH" --created "\$CREATED_WT"',
+        text,
     ), (
-        'SKILL.md Phase 7 must include: rimba remove "$PR_BRANCH" --force --keep-branch — '
+        'SKILL.md Phase 7 must call: swe-workbench-address-feedback-worktree release '
+        '--pr "$PR" --path "$WT" --branch "$PR_BRANCH" --created "$CREATED_WT" — '
         "the worktree is disposable but the local PR head branch must be preserved "
-        "(rimba remove deletes the branch without --keep-branch)"
+        "(release is path-keyed and never issues a branch-deleting command)"
     )
 
 
 def test_address_feedback_skill_cleanup_failure_tolerant():
-    """Phase 7 cleanup must include a git-worktree fallback and must not block on failure (AC#2)."""
+    """Phase 7 cleanup must delegate to the release runtime command and must not block on failure (AC#2)."""
     text = SKILL_MD.read_text()
-    assert "git worktree remove" in text, (
-        "SKILL.md Phase 7 must include a 'git worktree remove' fallback for when rimba is absent"
+    assert "swe-workbench-address-feedback-worktree release" in text, (
+        "SKILL.md Phase 7 must delegate worktree teardown to swe-workbench-address-feedback-worktree release"
     )
     assert re.search(
         r"warn|do not block|never block|not block|continue|non.blocking|emit.*notice",
@@ -278,14 +280,14 @@ def test_address_feedback_skill_cleanup_failure_tolerant():
     )
 
 
-# --- Worktree create-path contract — issue #643 ---
+# --- Worktree create-path contract — issue #643, #662 ---
 
 def test_address_feedback_skill_create_uses_pr_branch_task_form():
-    """Phase 2 must create the worktree from the PR branch name, not the pr:<num> task form (AC#1)."""
+    """Phase 2 must acquire the worktree via the runtime command, not the retired pr:<num> task form (AC#1)."""
     text = _skill_text_with_references()
-    assert 'rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must invoke: rimba add "$PR_BRANCH" --source "origin/$PR_BRANCH" — '
-        "the task-form add names the branch after the PR branch itself"
+    assert 'swe-workbench-address-feedback-worktree acquire --pr "$PR" --branch "$PR_BRANCH"' in text, (
+        'SKILL.md Phase 2 must invoke: swe-workbench-address-feedback-worktree acquire '
+        '--pr "$PR" --branch "$PR_BRANCH" — the worktree always lands on the PR branch itself'
     )
     phase2_start = text.find("### Phase 2")
     phase2_end = text.find("### Phase 3")
@@ -298,97 +300,6 @@ def test_address_feedback_skill_create_uses_pr_branch_task_form():
     assert '--task "address-feedback-$PR"' not in text, (
         "SKILL.md must not pass --task address-feedback-$PR — the worktree must land on "
         "the PR branch itself"
-    )
-
-
-def test_address_feedback_skill_create_omits_skip_flags():
-    """Phase 2 create must let rimba fully initialize — no --skip-deps/--skip-hooks (AC#2/#3)."""
-    text = _skill_text_with_references()
-    # No rimba add invocation may carry either skip flag.
-    for m in re.finditer(r"rimba add[^\n]*", text):
-        assert "--skip-deps" not in m.group(0), (
-            f"rimba add must not pass --skip-deps: {m.group(0)!r}"
-        )
-        assert "--skip-hooks" not in m.group(0), (
-            f"rimba add must not pass --skip-hooks: {m.group(0)!r}"
-        )
-    assert re.search(r"Never pass either flag|must not pass either", text), (
-        "Common-mistakes table must forbid skip flags on the Phase 2 create so rimba "
-        "installs deps and runs hooks with no separate bootstrap step"
-    )
-
-
-def test_address_feedback_skill_create_fetches_pr_branch_first():
-    """Task-form rimba add does not fetch — Phase 2 must fetch origin/$PR_BRANCH itself."""
-    text = _skill_text_with_references()
-    assert 'git fetch origin "$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must run: git fetch origin "$PR_BRANCH" before rimba add — '
-        "task-mode add never fetches, and --source origin/$PR_BRANCH must be current"
-    )
-
-
-def test_address_feedback_skill_create_handles_existing_local_branch():
-    """Local branch already present → git worktree add checkout + rimba deps install (no re-add error)."""
-    text = _skill_text_with_references()
-    assert 'git show-ref --verify --quiet "refs/heads/$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must probe refs/heads/$PR_BRANCH — rimba add hard-errors "
-        "'branch already exists' when the local PR branch is present"
-    )
-    assert 'git worktree add "$WT" "$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must check out the existing local branch: git worktree add "$WT" "$PR_BRANCH"'
-    )
-    assert 'rimba deps install "$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must run rimba deps install on the existing-branch path so it "
-        "still gets dependency installation without a separate bootstrap step"
-    )
-
-
-def test_address_feedback_skill_create_verifies_branch_and_falls_back():
-    """Post-create verification: worktree branch must equal $PR_BRANCH; mismatch → git fallback."""
-    text = _skill_text_with_references()
-    assert 'WT_BRANCH=$(git -C "$WT" rev-parse --abbrev-ref HEAD)' in text, (
-        "SKILL.md Phase 2 must verify the checked-out branch after rimba add — rimba "
-        "re-prefixes non-conventional branch names (DefaultPrefixType is feature/)"
-    )
-    assert 'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 fallback must create the branch directly: '
-        'git worktree add -b "$PR_BRANCH" "$WT" "origin/$PR_BRANCH"'
-    )
-
-
-def test_address_feedback_skill_create_reconciles_stale_local_branch():
-    """Existing-branch checkout must reconcile against origin — ff-only when behind, warn when diverged."""
-    text = _skill_text_with_references()
-    assert 'git -C "$WT" merge --ff-only "origin/$PR_BRANCH"' in text, (
-        "SKILL.md Phase 2 must fast-forward a strictly-behind local $PR_BRANCH — "
-        "otherwise Phase 4 pushes are rejected non-FF when the PR advanced between runs"
-    )
-    assert 'diverged from origin' in text, (
-        "SKILL.md Phase 2 must warn loudly when local $PR_BRANCH diverged from origin "
-        "(needs rebase before Phase 4)"
-    )
-    assert '[ -e "$WT/.git" ]' in text, (
-        'SKILL.md Phase 2 must gate on the worktree existing ([ -e "$WT/.git" ]) before '
-        "proceeding — a dangling $WT fails confusingly in Phase 4 and mis-cleans in Phase 7"
-    )
-    assert 'git show-ref --verify --quiet "refs/remotes/origin/$PR_BRANCH"' in text, (
-        "the diverged warning must be gated on the remote ref existing — a missing ref "
-        "(failed fetch / fork PR) must not be misreported as divergence"
-    )
-    fetch_idx = text.find('git fetch origin "$PR_BRANCH"')
-    guard_idx = text.find('CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)')
-    assert fetch_idx != -1 and guard_idx != -1 and fetch_idx < guard_idx, (
-        "the fetch must run before the reuse guards — guard-path reconcile compares against "
-        "origin/$PR_BRANCH and needs a current ref"
-    )
-    assert "skip the create block below, run the shared reconcile block after it" in text, (
-        "SKILL.md Phase 2 reuse guards must route through the shared reconcile — a crash-leftover "
-        "worktree can be stale (PR advanced between runs) on reuse paths too"
-    )
-    gate_idx = text.find('[ -e "$WT/.git" ]')
-    ff_idx = text.find('merge --ff-only')
-    assert gate_idx != -1 and ff_idx != -1 and gate_idx < ff_idx, (
-        "the shared reconcile (ff-only) must run after the create-flow existence gate"
     )
 
 
@@ -453,56 +364,32 @@ def test_address_feedback_skill_cleanup_uses_existing_wt():
     )
 
 
-def test_address_feedback_skill_reuses_worktree_when_on_pr_branch():
-    """Phase 2 must reuse the current worktree when the branch matches the PR head (closes #295)."""
+def test_address_feedback_skill_phase2_derives_created_wt_from_acquire_result():
+    """Phase 2 must derive $CREATED_WT (inverse of the acquire envelope's reused field) and
+    pass $WT/$CREATED_WT through to Phase 7 — replaces the old skill-level reuse-detection
+    (CURRENT_BRANCH/WT=$(pwd)/git worktree list --porcelain scan), now internal to `acquire`
+    and covered executably by tests/test_address_feedback_worktree_script.py's
+    TestAcquireReuseCurrent/TestAcquireReuseExisting (closes #295, #662)."""
     text = SKILL_MD.read_text()
-    # Assignment line must exist in the code block.
-    assert "CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)" in text, (
-        "SKILL.md Phase 2 must assign: CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+    assert 'WT=$(printf \'%s\' "$RESULT" | jq -r \'.data.path\')' in text, (
+        "SKILL.md Phase 2 must extract $WT from the acquire envelope's .data.path"
     )
-    # Comparison must test $CURRENT_BRANCH against $PR_BRANCH in the if-condition.
-    assert re.search(r'"\$CURRENT_BRANCH"\s*=\s*"\$PR_BRANCH"', text), (
-        "SKILL.md Phase 2 must compare $CURRENT_BRANCH against $PR_BRANCH in the if-condition"
-    )
-    # Skip path: reuse the current directory instead of creating a worktree.
-    assert "WT=$(pwd)" in text, (
-        "SKILL.md Phase 2 must set WT=$(pwd) to reuse the current worktree when "
-        "already on the PR branch, skipping 'rimba add'"
+    assert 'CREATED_WT=$(printf \'%s\' "$RESULT" | jq -r \'if .data.reused then "false" else "true" end\')' in text, (
+        "SKILL.md Phase 2 must derive $CREATED_WT as the inverse of the acquire envelope's .data.reused"
     )
 
 
-def test_address_feedback_skill_phase6_skips_cleanup_on_reuse():
-    """Phase 7 must not run git worktree remove / rm -rf when the worktree was reused (closes #295)."""
+def test_address_feedback_skill_phase7_release_passes_created_wt():
+    """Phase 7 must pass $CREATED_WT to release — release itself no-ops for a reused worktree,
+    replacing the old skill-level REUSED_WT guard (closes #295, #662)."""
     text = SKILL_MD.read_text()
     phase7_idx = text.find("### Phase 7")
     assert phase7_idx != -1, "Phase 7 section must exist"
     phase7_text = text[phase7_idx:]
-    # Phase 7 must reference REUSED_WT so the cleanup is skipped for the reuse path.
-    assert "REUSED_WT" in phase7_text, (
-        "SKILL.md Phase 7 must guard cleanup with REUSED_WT — when the reuse-guard "
-        "fires (WT=$(pwd)), rimba remove will fail for an unregistered task, causing "
-        "git worktree remove --force / rm -rf to run against the user's live checkout"
-    )
-
-
-def test_address_feedback_skill_reuses_existing_worktree_on_main():
-    """Phase 2 must find and reuse an existing worktree for PR_BRANCH when session is not on that branch."""
-    text = SKILL_MD.read_text()
-    # Must use git worktree list --porcelain to locate an existing worktree for the branch.
-    assert "git worktree list --porcelain" in text, (
-        "SKILL.md Phase 2 must scan 'git worktree list --porcelain' to find an existing "
-        "worktree for $PR_BRANCH when the current branch does not match (e.g. session on main)"
-    )
-    # Must look up the branch ref inside the porcelain output (branch passed as an awk
-    # variable — a regex-interpolated branch name breaks on "/" in conventional names).
-    assert 'awk -v b="refs/heads/$PR_BRANCH"' in text, (
-        'SKILL.md Phase 2 must pass the branch to awk via -v (exact $0 == "branch " b match) — '
-        "interpolating $PR_BRANCH into a regex literal dies on slashed branch names"
-    )
-    # Must set REUSED_WT=1 on a match, same as the first guard.
-    assert re.search(r"EXISTING_WT.*\n.*REUSED_WT=1|REUSED_WT=1.*EXISTING_WT", text, re.DOTALL), (
-        "SKILL.md Phase 2 must set REUSED_WT=1 when an existing worktree is found via "
-        "git worktree list, so Phase 6 skips the destructive cleanup"
+    assert '--created "$CREATED_WT"' in phase7_text, (
+        "SKILL.md Phase 7 must pass --created \"$CREATED_WT\" to "
+        "swe-workbench-address-feedback-worktree release — the runtime command's own "
+        "--created flag now carries the reuse-vs-created distinction, not a skill-level REUSED_WT variable"
     )
 
 
@@ -535,15 +422,6 @@ def test_address_feedback_skill_skips_already_clarified_threads():
 
 
 # --- Cleanup call-site assertions (guard bypass fix) ---
-
-def test_address_feedback_skill_cleanup_uses_clean_ephemeral_script():
-    """Phase 6 fallback must invoke swe-workbench-clean-ephemeral, not bare rm -rf "$WT"."""
-    text = SKILL_MD.read_text()
-    assert "swe-workbench-clean-ephemeral" in text, (
-        "SKILL.md Phase 6 fallback must use swe-workbench-clean-ephemeral — "
-        "bare 'rm -rf $WT' under /Users/... (rimba worktree root) is blocked by the bash guard"
-    )
-
 
 def test_address_feedback_skill_no_bare_rm_rf_wt():
     """Phase 6 must not contain a bare 'rm -rf \"$WT\"' that the bash guard would block."""
@@ -926,10 +804,8 @@ def test_address_feedback_skill_phase7_worktree_removal_guards_on_wt_unset():
     """Phase 7's worktree-removal block must skip entirely when $WT was never set.
 
     A Phase-1-only exit (ownership decline, no-open-threads) leaves $WT unset since
-    Phase 2 never ran. Without a guard, the block falls into its else branch and
-    unconditionally runs `rimba remove "$PR_BRANCH"` — keyed by branch name alone,
-    not by this run's own $WT — which could force-remove a different, concurrently
-    active session's live worktree on the same PR branch.
+    Phase 2 never ran. Without a guard, the block falls into its else branch and calls
+    release with an empty --path, which is not a safe input to hand the runtime command.
     """
     text = SKILL_MD.read_text()
     phase7_idx = text.find("### Phase 7")
@@ -937,13 +813,13 @@ def test_address_feedback_skill_phase7_worktree_removal_guards_on_wt_unset():
     next_section = re.search(r'\n## ', text[phase7_idx:])
     phase7_text = text[phase7_idx: phase7_idx + next_section.start()] if next_section else text[phase7_idx:]
     match = re.search(
-        r'if \[ -z "\$\{WT:-\}" \]; then\n.*?\nelif \[ "\$\{REUSED_WT:-0\}" = "1" \]; then',
+        r'if \[ -z "\$\{WT:-\}" \]; then\n.*?\nelse\n.*?swe-workbench-address-feedback-worktree release',
         phase7_text, re.DOTALL,
     )
     assert match, (
         'Phase 7\'s worktree-removal block must open with `if [ -z "${WT:-}" ]; then` '
-        "before the REUSED_WT branch — otherwise a Phase-1-only exit falls into the "
-        'else branch and unconditionally runs rimba remove "$PR_BRANCH"'
+        "before the else branch that calls swe-workbench-address-feedback-worktree release — "
+        "otherwise a Phase-1-only exit would call release with an unset --path"
     )
 
 
