@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""Fetch + eligibility projection for workflow-address-feedback's Phase 1 (issue #667).
+
+Usage: swe-workbench-address-feedback-fetch --pr <N>
+
+Wraps bin/swe-workbench-preflight-pr (invoked via a scoped `bash -c` subshell that
+`eval`s its `printf %q`-quoted KEY=VALUE output and re-emits the six fields
+NUL-delimited — never a python shlex parse of that output, which mishandles
+`printf %q`'s `$'...'` ANSI-C-quoted form) to get BASE/HEAD_SHA/AUTHOR_LOGIN/OWNER/
+REPO/STATE and the PR JSON file preflight-pr already writes.
+
+Owns the STATE gate internally as a short-circuit: when STATE != "OPEN", the
+paginated GraphQL/REST fetch is skipped entirely (no wasted API calls on a closed/
+merged PR, preserving today's ordering) and the envelope returns immediately with
+threads_path/pr_comments_path empty. The calling skill still owns the
+`[ "$STATE" = "OPEN" ]` gate and its user-facing message/reap — it just reads
+`.data.state` from this envelope instead of an `eval`'d $STATE.
+
+When OPEN: paginates `reviewThreads` (mirroring bin/swe-workbench-pr-review-submit's
+cursor loop) with a per-thread `eligible`/`skip_reason` projection, paginates REST
+`issues/{pr}/comments` with the same bot/owner-exclusion + handled-marker/manual-reply
+eligibility logic the skill's jq program used to run (ported here as direct python,
+unit-tested against the same fixtures that program was tested against), atomically
+writes the three snapshot files at the byte-identical paths
+bin/swe-workbench-sweep-residuals hardcodes for its own merged-PR backstop sweep, and
+checks for `${PR}-triage.json`'s existence for `resume_available`.
+
+Manifest of paths, not inline records: `data` carries paths/counts/booleans only —
+the actual thread/comment records live in the snapshot files, read with `jq`. The
+envelope is a control-flow channel (report-once / gate-a-branch); downstream phases
+need repeated random access into thread bodies/authors/databaseIds, which belongs in
+a file, not a JSON-in-a-shell-variable payload — doubly so since review-comment
+bodies are attacker-influenced free text (see bin/swe-workbench-preflight-pr's own
+title/body-never-through-eval rule, which this mirrors).
+
+Stdout contract: one JSON envelope on success, schema `swb.address-feedback-fetch/1`
+(see shared/docs/runtime-result-contract.md). `status` is "ok" for any successful
+fetch, including the not-OPEN short-circuit (that is correct data, not a partial
+failure) — "failed" only occurs via a non-zero exit with no stdout at all (preflight
+itself failing, or a malformed/unreachable API response), since exit code and status
+are orthogonal and an auth/fetch failure means nothing on stdout is trustworthy.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+STATE_DIR = Path("/tmp/swe-workbench-address-feedback")
+
+_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { endCursor hasNextPage }
+        nodes {
+          id isResolved path line startLine
+          comments(first: 10) {
+            nodes { id databaseId body author { login } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+class FetchError(Exception):
+    pass
+
+
+# ── Pure helpers (unit-tested directly) ──────────────────────────────────────
+
+
+def compute_thread_eligibility(node: dict, current_user: str) -> tuple[bool, str | None]:
+    """Rule 1: resolved threads are ineligible. Rule 2: an unresolved thread already
+    replied to by $CURRENT_USER (a reply, not the thread-opening comment) is
+    ineligible — the owner clarified it in a prior pass but left it unresolved."""
+    if node.get("isResolved"):
+        return False, "resolved"
+    comments = (node.get("comments") or {}).get("nodes") or []
+    replies = comments[1:]
+    if any(((r.get("author") or {}).get("login") or "") == current_user for r in replies):
+        return False, "already-clarified"
+    return True, None
+
+
+def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -> list[dict]:
+    """Direct python port of the jq program this replaces. Bot comments, `[bot]`-suffix
+    logins, and the author's/current runner's own comments are dropped entirely (never
+    appear in the result) — matching the jq program's first two `map(select(...))`
+    stages exactly, not just filtered-but-still-present. Each survivor gets `eligible`:
+    False when either (a) an owner comment carries a `swe-workbench:handled:{id} `
+    marker for it (trailing space anchors the match — a marker for id 1234 must not
+    dedup-suppress id 123, a numeric prefix), or (b) a marker-less owner comment was
+    posted after it (a manual reply)."""
+    owner_comments = [c for c in comments if ((c.get("user") or {}).get("login") or "") in (author, me)]
+    candidates = [
+        c
+        for c in comments
+        if ((c.get("user") or {}).get("type") or "") != "Bot"
+        and not ((c.get("user") or {}).get("login") or "").endswith("[bot]")
+        and ((c.get("user") or {}).get("login") or "") not in (author, me)
+    ]
+    result = []
+    for c in candidates:
+        marker_text = f"swe-workbench:handled:{c.get('id')} "
+        marker = any(marker_text in (oc.get("body") or "") for oc in owner_comments)
+        manual = any(
+            "swe-workbench:handled" not in (oc.get("body") or "") and (oc.get("created_at") or "") > (c.get("created_at") or "")
+            for oc in owner_comments
+        )
+        result.append({**c, "eligible": not (marker or manual)})
+    return result
+
+
+# ── gh layer ─────────────────────────────────────────────────────────────────
+
+
+def _script_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _check_siblings(script_dir: Path) -> None:
+    for name in ("swe-workbench-preflight-pr", "swe-workbench-gh-timeout"):
+        path = script_dir / name
+        if not (path.is_file() and os.access(path, os.X_OK)):
+            raise FetchError(
+                f"sibling script {name} not found at {path} — reinstall or update the swe-workbench plugin."
+            )
+
+
+def _gh(args: list[str], script_dir: Path) -> subprocess.CompletedProcess:
+    cmd = ["bash", str(script_dir / "swe-workbench-gh-timeout"), *args]
+    return subprocess.run(cmd, input="", capture_output=True, text=True)
+
+
+def _gh_json(args: list[str], script_dir: Path):
+    """Returns (data, proc) — data is None on non-zero exit or unparseable stdout."""
+    proc = _gh(args, script_dir)
+    if proc.returncode != 0:
+        return None, proc
+    try:
+        return json.loads(proc.stdout), proc
+    except (json.JSONDecodeError, ValueError):
+        return None, proc
+
+
+def run_preflight(pr: str, out_json: Path, script_dir: Path) -> dict:
+    """Runs swe-workbench-preflight-pr in a scoped bash -c subshell that evals its
+    printf-%q output and re-emits the six fields NUL-delimited. Non-zero exit means
+    preflight itself failed (auth, PR not found) — the caller must not trust anything
+    on this function's return in that case; it raises instead."""
+    preflight = script_dir / "swe-workbench-preflight-pr"
+    bash_script = (
+        'OUT=$("$1" "$2" "$3"); RC=$?; '
+        '[ "$RC" -eq 0 ] || exit "$RC"; '
+        "eval \"$OUT\"; "
+        'printf "%s\\0%s\\0%s\\0%s\\0%s\\0%s\\0" '
+        '"$BASE" "$HEAD_SHA" "$AUTHOR_LOGIN" "$OWNER" "$REPO" "$STATE"'
+    )
+    proc = subprocess.run(
+        ["bash", "-c", bash_script, "--", str(preflight), pr, str(out_json)],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip()
+        raise FetchError(f"preflight failed for PR #{pr}: {detail or 'no diagnostic output'}")
+    parts = proc.stdout.split(b"\0")
+    if len(parts) < 6:
+        raise FetchError(f"preflight produced unexpected output for PR #{pr}")
+    base, head_sha, author_login, owner, repo, state = (p.decode("utf-8") for p in parts[:6])
+    return {
+        "base": base,
+        "head_sha": head_sha,
+        "author_login": author_login,
+        "owner": owner,
+        "repo": repo,
+        "state": state,
+    }
+
+
+def fetch_current_user(script_dir: Path) -> str:
+    proc = _gh(["api", "/user", "-q", ".login"], script_dir)
+    if proc.returncode != 0:
+        raise FetchError(f"failed to fetch current user: {proc.stderr.strip() or proc.stdout.strip()}")
+    return proc.stdout.strip()
+
+
+def fetch_threads(owner: str, repo: str, pr: str, current_user: str, script_dir: Path) -> list[dict]:
+    threads: list[dict] = []
+    after: str | None = None
+    while True:
+        args = [
+            "api",
+            "graphql",
+            "-F",
+            f"number={pr}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"repo={repo}",
+            "-f",
+            f"query={_THREADS_QUERY}",
+        ]
+        if after:
+            args += ["-F", f"after={after}"]
+        data, proc = _gh_json(args, script_dir)
+        if data is None:
+            raise FetchError(f"failed to fetch review threads: {proc.stderr.strip() or proc.stdout.strip()}")
+        try:
+            rt = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+        except (KeyError, TypeError) as exc:
+            raise FetchError(f"unexpected reviewThreads response shape: {exc}") from exc
+        for node in rt.get("nodes") or []:
+            eligible, skip_reason = compute_thread_eligibility(node, current_user)
+            threads.append({**node, "eligible": eligible, "skip_reason": skip_reason})
+        page = rt.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+        if not after:
+            raise FetchError("reviewThreads reported hasNextPage without an endCursor")
+    return threads
+
+
+def fetch_pr_comments_raw(owner: str, repo: str, pr: str, script_dir: Path) -> list[dict]:
+    proc = _gh(["api", "--paginate", f"repos/{owner}/{repo}/issues/{pr}/comments", "--jq", ".[]"], script_dir)
+    if proc.returncode != 0:
+        raise FetchError(f"failed to fetch PR comments: {proc.stderr.strip() or proc.stdout.strip()}")
+    comments: list[dict] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            comments.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise FetchError(f"malformed PR comment JSON from gh: {exc}") from exc
+    return comments
+
+
+# ── Atomic write ──────────────────────────────────────────────────────────────
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    tmp = path.parent / f".{path.name}.tmp-{os.getpid()}"
+    tmp.write_text(json.dumps(data, ensure_ascii=True))
+    os.replace(tmp, path)
+
+
+# ── Envelope ─────────────────────────────────────────────────────────────────
+
+
+def _build_envelope(*, resume_available: bool, **data) -> dict:
+    nothing_to_address = data["eligible_threads"] == 0 and data["eligible_pr_comments"] == 0
+    return {
+        "schema": "swb.address-feedback-fetch/1",
+        "status": "ok",
+        "data": {**data, "nothing_to_address": nothing_to_address, "resume_available": resume_available},
+        "warnings": [],
+    }
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="swe-workbench-address-feedback-fetch")
+    p.add_argument("--pr", required=True)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    pr = args.pr
+
+    if not re.match(r"^[1-9][0-9]*$", pr):
+        print(f"swe-workbench-address-feedback-fetch: --pr must match [1-9][0-9]*, got {pr!r}", file=sys.stderr)
+        return 1
+
+    script_dir = _script_dir()
+
+    try:
+        _check_siblings(script_dir)
+
+        pr_json_path = STATE_DIR / f"{pr}.json"
+        preflight = run_preflight(pr, pr_json_path, script_dir)
+        owner, repo, state = preflight["owner"], preflight["repo"], preflight["state"]
+
+        try:
+            pr_data = json.loads(pr_json_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise FetchError(f"could not read {pr_json_path}: {exc}") from exc
+        pr_branch = pr_data.get("headRefName") or ""
+
+        triage_path = STATE_DIR / f"{pr}-triage.json"
+        threads_path = STATE_DIR / f"{pr}-threads.json"
+        pr_comments_path = STATE_DIR / f"{pr}-pr-comments.json"
+
+        if state != "OPEN":
+            envelope = _build_envelope(
+                state=state,
+                owner=owner,
+                repo=repo,
+                author_login=preflight["author_login"],
+                current_user="",
+                pr_branch=pr_branch,
+                base=preflight["base"],
+                head_sha=preflight["head_sha"],
+                pr_json_path=str(pr_json_path),
+                threads_path="",
+                pr_comments_path="",
+                eligible_threads=0,
+                skipped_threads_clarified=0,
+                eligible_pr_comments=0,
+                skipped_pr_comments=0,
+                resume_available=triage_path.exists(),
+            )
+        else:
+            current_user = fetch_current_user(script_dir)
+            threads = fetch_threads(owner, repo, pr, current_user, script_dir)
+            pr_comments_raw = fetch_pr_comments_raw(owner, repo, pr, script_dir)
+            pr_comments = compute_pr_comment_eligibility(pr_comments_raw, preflight["author_login"], current_user)
+
+            _atomic_write_json(threads_path, threads)
+            _atomic_write_json(pr_comments_path, pr_comments)
+
+            envelope = _build_envelope(
+                state=state,
+                owner=owner,
+                repo=repo,
+                author_login=preflight["author_login"],
+                current_user=current_user,
+                pr_branch=pr_branch,
+                base=preflight["base"],
+                head_sha=preflight["head_sha"],
+                pr_json_path=str(pr_json_path),
+                threads_path=str(threads_path),
+                pr_comments_path=str(pr_comments_path),
+                eligible_threads=sum(1 for t in threads if t["eligible"]),
+                skipped_threads_clarified=sum(1 for t in threads if t.get("skip_reason") == "already-clarified"),
+                eligible_pr_comments=sum(1 for c in pr_comments if c["eligible"]),
+                skipped_pr_comments=sum(1 for c in pr_comments if not c["eligible"]),
+                resume_available=triage_path.exists(),
+            )
+    except FetchError as exc:
+        print(f"swe-workbench-address-feedback-fetch: {exc}", file=sys.stderr)
+        return 1
+
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

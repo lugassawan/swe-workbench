@@ -69,6 +69,25 @@ REGISTRY: dict[str, dict[str, str]] = {
         "branch_preserved": "bool",
         "method": "str",
     },
+    "swb.address-feedback-fetch/1": {
+        "state": "str",
+        "owner": "str",
+        "repo": "str",
+        "author_login": "str",
+        "current_user": "str",
+        "pr_branch": "str",
+        "base": "str",
+        "head_sha": "str",
+        "pr_json_path": "str",
+        "threads_path": "str",
+        "pr_comments_path": "str",
+        "eligible_threads": "int",
+        "skipped_threads_clarified": "int",
+        "eligible_pr_comments": "int",
+        "skipped_pr_comments": "int",
+        "nothing_to_address": "bool",
+        "resume_available": "bool",
+    },
 }
 
 _STATUSES = {"ok", "partial", "failed"}
