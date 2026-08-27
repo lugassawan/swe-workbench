@@ -15,10 +15,10 @@
  * registration, model-registry queries) lives here or in dispatch-resolver.ts (split off at the
  * line cap). agent-spec.ts and model-policy.ts stay SDK-free — see their own file headers.
  */
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   composeSystemPrompt,
   listAgentNames,
@@ -34,10 +34,10 @@ import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall, taskRenderResult } fro
 // module) keep a single import surface for the task tool — rendering and tool name included.
 export {
   composeTaskCallLine,
-  composeTaskResultHeader,
+  composeTaskDispatchLine,
   renderTaskCall,
   renderTaskResult,
-  TASK_TOOL_NAME,
+  TASK_TOOL_NAME
 } from "./task-call-line.ts";
 
 /** pi-subagents' own tool name (verified against its published source), excluded defensively
@@ -104,7 +104,7 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
     parameters: TASK_PARAMS_SCHEMA,
     renderCall: taskRenderCall,
     renderResult: taskRenderResult,
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const { agent, prompt } = params as unknown as TaskParams;
 
       const available = listAgentNames(root);
@@ -142,6 +142,7 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           "--no-session",
         ];
         const dispatch = resolveTargetDispatch(ctx, agent, spec);
+        onUpdate?.({ content: [], details: dispatch.details });
         if (dispatch.model) {
           args.push("--model", `${dispatch.model.provider}/${dispatch.model.id}`);
         }

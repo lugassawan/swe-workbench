@@ -1132,6 +1132,7 @@ const mod = await import(pathToFileURL(modPath).href);
 const execCalls = [];
 const modelRegistryCalls = [];
 const notifyCalls = [];
+let activeUpdateCalls = [];
 const stubPi = {
   registerTool(tool) { this._registered = tool; },
   async exec(command, args, options) {
@@ -1143,6 +1144,7 @@ const stubPi = {
     execCalls.push({
       command, args, promptFileContent,
       cwd: options && options.cwd, timeout: options && options.timeout,
+      updatesBeforeExec: activeUpdateCalls.length,
     });
     if (config.execBehavior === "throw") throw new Error("forced exec throw (test)");
     if (config.execBehavior === "failure") return { stdout: "", stderr: "boom", code: 1, killed: false };
@@ -1175,11 +1177,13 @@ async function run(agent, prompt, model, availableModels, scopedModels, thinking
       },
     },
   };
+  activeUpdateCalls = [];
+  const onUpdate = (update) => activeUpdateCalls.push(update);
   try {
-    const result = await registered.execute("tc1", { agent, prompt }, undefined, undefined, ctx);
-    return { ok: true, result };
+    const result = await registered.execute("tc1", { agent, prompt }, undefined, onUpdate, ctx);
+    return { ok: true, result, updates: activeUpdateCalls.slice() };
   } catch (err) {
-    return { ok: false, message: String(err && err.message) };
+    return { ok: false, message: String(err && err.message), updates: activeUpdateCalls.slice() };
   }
 }
 
@@ -1210,6 +1214,9 @@ if (registered) {
     : null;
   class FakeText {
     constructor(text, paddingX, paddingY) { this.text = text; this.px = paddingX; this.py = paddingY; }
+    setText(text) { this.text = text; }
+    render() { return this.text === "" ? [] : this.text.split("\\n"); }
+    invalidate() {}
   }
   out.hasRenderCall = typeof registered.renderCall === "function";
   const probe = (fn) => {
@@ -1229,18 +1236,53 @@ if (registered) {
 
   // renderResult probes — same nodeless-throws-to-fallback posture as renderCall above.
   out.hasRenderResult = typeof registered.renderResult === "function";
-  out.composedResultHeader = typeof mod.composeTaskResultHeader === "function"
-    ? mod.composeTaskResultHeader("reviewer", stubTheme, "high")
+  out.composedDispatchLine = typeof mod.composeTaskDispatchLine === "function"
+    ? mod.composeTaskDispatchLine("reviewer", stubTheme, { modelId: "claude-sonnet-5", thinking: "high" })
     : null;
+  const hostileModelState = {};
+  const hostileModelContext = { state: hostileModelState, invalidate() {} };
+  out.renderHostileModelId = probe(() => {
+    const result = mod.renderTaskResult(
+      {
+        content: [],
+        details: { model: "anthropic/claude-\\x1bsonnet-\\u202e5\\n", thinking: "high" },
+      },
+      stubTheme,
+      FakeText,
+      "reviewer",
+      false,
+      hostileModelContext,
+      true,
+    );
+    const call = mod.renderTaskCall({ agent: "reviewer" }, stubTheme, FakeText, hostileModelState);
+    return { partialLines: result.render(80), line: call.text };
+  });
+  out.renderControlOnlyModel = probe(() =>
+    mod.renderTaskResult(
+      { content: [], details: { model: "anthropic/\\x1b\\u202e\\n", thinking: "high" } },
+      stubTheme,
+      FakeText,
+      "reviewer",
+      false,
+    ));
   out.renderResultNoThinking = probe(() =>
     mod.renderTaskResult({ content: [{ type: "text", text: "hi" }], details: {} }, stubTheme, FakeText, "reviewer", false));
   out.renderResultUnknownThinking = probe(() =>
-    mod.renderTaskResult({ content: [], details: { thinking: "bogus" } }, stubTheme, FakeText, "reviewer", false));
+    mod.renderTaskResult(
+      { content: [], details: { model: "anthropic/claude-sonnet-5", thinking: "bogus" } },
+      stubTheme, FakeText, "reviewer", false,
+    ));
   out.renderResultMissingCtor = probe(() =>
-    mod.renderTaskResult({ content: [], details: { thinking: "high" } }, stubTheme, undefined, "reviewer", false));
+    mod.renderTaskResult(
+      { content: [], details: { model: "anthropic/claude-sonnet-5", thinking: "high" } },
+      stubTheme, undefined, "reviewer", false,
+    ));
   out.renderResultResolved = probe(() => {
     const c = mod.renderTaskResult(
-      { content: [{ type: "text", text: "agent output" }], details: { thinking: "xhigh" } },
+      {
+        content: [{ type: "text", text: "agent output" }],
+        details: { model: "anthropic/claude-sonnet-5", thinking: "xhigh" },
+      },
       stubTheme, FakeText, "reviewer", false,
     );
     return { text: c.text, px: c.px, py: c.py };
@@ -1248,32 +1290,94 @@ if (registered) {
   const longBody = Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join("\\n");
   out.renderResultLongBodyCollapsed = probe(() => {
     const c = mod.renderTaskResult(
-      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      { content: [{ type: "text", text: longBody }], details: { model: "anthropic/claude-sonnet-5", thinking: "high" } },
       stubTheme, FakeText, "reviewer", false,
     );
     return { text: c.text };
   });
   out.renderResultLongBodyExpanded = probe(() => {
     const c = mod.renderTaskResult(
-      { content: [{ type: "text", text: longBody }], details: { thinking: "high" } },
+      { content: [{ type: "text", text: longBody }], details: { model: "anthropic/claude-sonnet-5", thinking: "high" } },
       stubTheme, FakeText, "reviewer", true,
     );
     return { text: c.text };
   });
   out.renderResultNoBody = probe(() => {
     const c = mod.renderTaskResult(
-      { content: [], details: { thinking: "high" } },
+      { content: [], details: { model: "anthropic/claude-sonnet-5", thinking: "high" } },
       stubTheme, FakeText, "reviewer", false,
     );
-    return { text: c.text };
+    return { lines: c.render(80) };
   });
   out.registeredRenderResultViaContext = probe(() =>
     registered.renderResult(
-      { content: [{ type: "text", text: "agent output" }], details: { thinking: "max" } },
+      { content: [{ type: "text", text: "agent output" }], details: { model: "anthropic/claude-sonnet-5", thinking: "max" } },
       { expanded: false, isPartial: false },
       stubTheme,
-      { args: { agent: "reviewer", prompt: "hi" } },
+      { args: { agent: "reviewer", prompt: "hi" }, state: {}, invalidate() {} },
     ));
+
+  const lifecycleState = {};
+  let lifecycleInvalidations = 0;
+  const lifecycleContext = {
+    args: { agent: "reviewer", prompt: "review" },
+    state: lifecycleState,
+    lastComponent: undefined,
+    invalidate() { lifecycleInvalidations += 1; },
+  };
+  const lifecycleDetails = {
+    agent: "reviewer",
+    tier: "sonnet",
+    portableEffort: "xhigh",
+    model: "anthropic/claude-sonnet-5",
+    thinking: "xhigh",
+    policySource: "model-policy",
+    poolSource: "available",
+  };
+  const callBefore = mod.renderTaskCall(
+    lifecycleContext.args,
+    stubTheme,
+    FakeText,
+    lifecycleState,
+  );
+  const partialResult = mod.renderTaskResult(
+    { content: [], details: lifecycleDetails },
+    stubTheme,
+    FakeText,
+    "reviewer",
+    false,
+    lifecycleContext,
+    true,
+  );
+  const callDuring = mod.renderTaskCall(
+    lifecycleContext.args,
+    stubTheme,
+    FakeText,
+    lifecycleState,
+  );
+  const finalResult = mod.renderTaskResult(
+    { content: [{ type: "text", text: "agent output" }], details: lifecycleDetails },
+    stubTheme,
+    FakeText,
+    "reviewer",
+    false,
+    lifecycleContext,
+    false,
+  );
+  const callAfter = mod.renderTaskCall(
+    lifecycleContext.args,
+    stubTheme,
+    FakeText,
+    lifecycleState,
+  );
+  out.renderLifecycle = {
+    before: callBefore.text,
+    partialLines: partialResult.render(80),
+    during: callDuring.text,
+    finalLines: finalResult.render(80),
+    after: callAfter.text,
+    invalidations: lifecycleInvalidations,
+  };
 
   out.emptyTools = await run("empty-tools-agent", "hi");
 
@@ -1555,13 +1659,37 @@ def test_task_registers_a_render_result_override(subagent_root, tmp_path_factory
 
 
 @requires_node
-def test_compose_task_result_header_appends_colored_thinking_level(subagent_root, tmp_path_factory):
-    """The result header is the call line plus the thinking level in its own semantic
-    `thinking<Level>` theme token — the same token family Pi's own UI uses elsewhere."""
+def test_compose_task_dispatch_line_appends_model_and_colored_thinking_level(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory)
-    assert result["composedResultHeader"] == (
-        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    assert result["composedDispatchLine"] == (
+        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+        "<muted> (claude-sonnet-5 </muted><thinkingHigh>high</thinkingHigh><muted>)</muted>"
     )
+
+
+@requires_node
+def test_task_row_strips_terminal_and_bidi_controls_from_model_id(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderHostileModelId"]
+
+    assert outcome["threw"] is False
+    assert outcome["value"] == {
+        "partialLines": [],
+        "line": (
+            "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+            "<muted> (claude-sonnet-5 </muted>"
+            "<thinkingHigh>high</thinkingHigh><muted>)</muted>"
+        ),
+    }
+
+
+@requires_node
+def test_task_result_falls_back_when_model_id_strips_to_empty(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderControlOnlyModel"]
+
+    assert outcome["threw"] is True
+    assert "task" in outcome["message"]
 
 
 @requires_node
@@ -1598,17 +1726,12 @@ def test_render_task_result_throws_to_framework_fallback_without_pi_tui(subagent
 
 
 @requires_node
-def test_render_task_result_builds_header_plus_body_text(subagent_root, tmp_path_factory):
-    """Assert the resolved path builds a single Text combining the colored header and the
-    agent's own output text, with (0, 0) padding matching the call-line renderer."""
+def test_render_task_result_builds_only_body_text(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory)
     outcome = result["renderResultResolved"]
     assert outcome["threw"] is False
     resolved = outcome["value"]
-    assert resolved["text"] == (
-        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingXhigh>(xhigh)</thinkingXhigh>"
-        "\n\n<toolOutput>agent output</toolOutput>"
-    )
+    assert resolved["text"] == "<toolOutput>agent output</toolOutput>"
     assert [resolved["px"], resolved["py"]] == [0, 0]
 
 
@@ -1623,7 +1746,7 @@ def test_render_task_result_collapses_long_body_to_preview_lines_by_default(suba
     assert outcome["threw"] is False
     text = outcome["value"]["text"]
     shown_lines = [f"<toolOutput>line {i}</toolOutput>" for i in range(1, 11)]
-    assert text.endswith("\n\n" + "\n".join(shown_lines) + "<muted>\n... (5 more lines — expand to see all)</muted>")
+    assert text == "\n".join(shown_lines) + "<muted>\n... (5 more lines — expand to see all)</muted>"
     assert "line 11" not in text
 
 
@@ -1638,15 +1761,33 @@ def test_render_task_result_shows_full_body_when_expanded(subagent_root, tmp_pat
 
 
 @requires_node
-def test_render_task_result_with_no_body_shows_only_the_header(subagent_root, tmp_path_factory):
-    """No content text (an edge case, not a real dispatch shape today) must render just the
-    header, not a dangling separator or an empty truncation marker."""
+def test_render_task_result_with_no_body_returns_no_lines(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory)
     outcome = result["renderResultNoBody"]
     assert outcome["threw"] is False
-    assert outcome["value"]["text"] == (
-        "<toolTitle>**task**</toolTitle><muted> · reviewer</muted> <thinkingHigh>(high)</thinkingHigh>"
+    assert outcome["value"]["lines"] == []
+
+
+@requires_node
+def test_task_row_adds_model_and_thinking_without_duplicate_result_header(
+    subagent_root, tmp_path_factory
+):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    lifecycle = result["renderLifecycle"]
+    base = "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+    resolved = (
+        base
+        + "<muted> (claude-sonnet-5 </muted>"
+        + "<thinkingXhigh>xhigh</thinkingXhigh>"
+        + "<muted>)</muted>"
     )
+
+    assert lifecycle["before"] == base
+    assert lifecycle["partialLines"] == []
+    assert lifecycle["during"] == resolved
+    assert lifecycle["finalLines"] == ["<toolOutput>agent output</toolOutput>"]
+    assert lifecycle["after"] == resolved
+    assert lifecycle["invalidations"] == 1
 
 
 @requires_node
@@ -1844,6 +1985,30 @@ def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_
     assert run["result"]["content"] == [{"type": "text", "text": "agent output"}], (
         "no fallback warning line on the success path"
     )
+
+
+@requires_node
+def test_task_emits_resolved_dispatch_details_before_child_process_starts(
+    subagent_root, tmp_path_factory
+):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    run = result["tieredAgentResolvesHaiku"]
+
+    assert run["updates"] == [
+        {
+            "content": [],
+            "details": {
+                "agent": "tiered-agent",
+                "tier": "haiku",
+                "portableEffort": "high",
+                "model": "anthropic/claude-haiku-4-5",
+                "thinking": "high",
+                "policySource": "model-policy",
+                "poolSource": "available",
+            },
+        }
+    ]
+    assert result["tieredAgentExecCalls"][0]["updatesBeforeExec"] == 1
 
 
 @requires_node
