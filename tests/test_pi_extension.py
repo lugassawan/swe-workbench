@@ -1239,6 +1239,32 @@ if (registered) {
   out.composedDispatchLine = typeof mod.composeTaskDispatchLine === "function"
     ? mod.composeTaskDispatchLine("reviewer", stubTheme, { modelId: "claude-sonnet-5", thinking: "high" })
     : null;
+  const hostileModelState = {};
+  const hostileModelContext = { state: hostileModelState, invalidate() {} };
+  out.renderHostileModelId = probe(() => {
+    const result = mod.renderTaskResult(
+      {
+        content: [],
+        details: { model: "anthropic/claude-\\x1bsonnet-\\u202e5\\n", thinking: "high" },
+      },
+      stubTheme,
+      FakeText,
+      "reviewer",
+      false,
+      hostileModelContext,
+      true,
+    );
+    const call = mod.renderTaskCall({ agent: "reviewer" }, stubTheme, FakeText, hostileModelState);
+    return { partialLines: result.render(80), line: call.text };
+  });
+  out.renderControlOnlyModel = probe(() =>
+    mod.renderTaskResult(
+      { content: [], details: { model: "anthropic/\\x1b\\u202e\\n", thinking: "high" } },
+      stubTheme,
+      FakeText,
+      "reviewer",
+      false,
+    ));
   out.renderResultNoThinking = probe(() =>
     mod.renderTaskResult({ content: [{ type: "text", text: "hi" }], details: {} }, stubTheme, FakeText, "reviewer", false));
   out.renderResultUnknownThinking = probe(() =>
@@ -1639,6 +1665,31 @@ def test_compose_task_dispatch_line_appends_model_and_colored_thinking_level(sub
         "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
         "<muted> (claude-sonnet-5 </muted><thinkingHigh>high</thinkingHigh><muted>)</muted>"
     )
+
+
+@requires_node
+def test_task_row_strips_terminal_and_bidi_controls_from_model_id(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderHostileModelId"]
+
+    assert outcome["threw"] is False
+    assert outcome["value"] == {
+        "partialLines": [],
+        "line": (
+            "<toolTitle>**task**</toolTitle><muted> · reviewer</muted>"
+            "<muted> (claude-sonnet-5 </muted>"
+            "<thinkingHigh>high</thinkingHigh><muted>)</muted>"
+        ),
+    }
+
+
+@requires_node
+def test_task_result_falls_back_when_model_id_strips_to_empty(subagent_root, tmp_path_factory):
+    result = _subagent_result(subagent_root, tmp_path_factory)
+    outcome = result["renderControlOnlyModel"]
+
+    assert outcome["threw"] is True
+    assert "task" in outcome["message"]
 
 
 @requires_node

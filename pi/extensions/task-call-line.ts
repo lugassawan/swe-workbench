@@ -38,7 +38,7 @@ void import("@earendil-works/pi-tui")
 
 const UNSAFE_ID_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g;
 
-/** Strips terminal and bidirectional controls before an agent id reaches the terminal. */
+/** Strips terminal and bidirectional controls before an identifier reaches the terminal. */
 export function sanitizeAgentId(agent: string): string {
   return agent.replace(UNSAFE_ID_CHARS, "");
 }
@@ -69,7 +69,8 @@ function dispatchMetadataFromDetails(details: unknown): TaskDispatchRenderMetada
   if (!("thinking" in details) || !isParentThinkingLevel(details.thinking)) return undefined;
 
   const separator = details.model.indexOf("/");
-  const modelId = separator === -1 ? details.model : details.model.slice(separator + 1);
+  const rawModelId = separator === -1 ? details.model : details.model.slice(separator + 1);
+  const modelId = sanitizeAgentId(rawModelId);
   return modelId === "" ? undefined : { modelId, thinking: details.thinking };
 }
 
