@@ -5,6 +5,8 @@ import json
 import os
 import py_compile
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1385,6 +1387,108 @@ def check_shared_blocks_in_sync(cache=None):
                      "scripts/sync-shared-blocks.py --write")
 
 
+# The dispatch-ledger generator is part of this validator's toolchain, not part of the
+# tree being validated: it is always this repo's own copy, resolved from validate.py's
+# own location, and it is pointed at the tree under test via --root. That split is what
+# lets an isolated-tree test redirect ROOT to a synthetic plugin tree and still exercise
+# the real generator against it.
+_DISPATCH_LEDGER_SCRIPT = Path(__file__).parent / "dispatch-ledger.mjs"
+_DISPATCH_LEDGER_OUTPUT = "docs/dispatch-ledger.md"
+# --experimental-strip-types (needed to load pi/extensions/agent-spec.ts) requires Node 22+,
+# the same floor tests/test_pi_extension.py pins for its own behavioural tests.
+_DISPATCH_LEDGER_MIN_NODE = 22
+
+
+def _node_child_env():
+    """Environment for a `node` child: everything except the GIT_* vars.
+
+    Neither `node --version` nor the dispatch-ledger generator touches git, and validate.sh is
+    routinely run from inside a git hook, which exports GIT_DIR / GIT_INDEX_FILE and friends.
+    Passing those through to an unrelated child is the kind of ambient-context leak that makes a
+    tool behave differently depending on how it happened to be invoked, so strip them.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _node_major_version(node):
+    """Major version of the `node` at *node*, or None if it can't be determined."""
+    if node is None:
+        return None
+    try:
+        result = subprocess.run(
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_node_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        # "v22.6.0\n" -> 22
+        return int(result.stdout.strip().lstrip("v").split(".")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def check_dispatch_ledger_in_sync():
+    """docs/dispatch-ledger.md must match what scripts/dispatch-ledger.mjs regenerates.
+
+    Validator-side counterpart of `node --experimental-strip-types
+    scripts/dispatch-ledger.mjs --check`, wired in here for the same reason
+    check_shared_blocks_in_sync() is wired in above: without a validator-side
+    check, the ledger's entire purpose — making a newly preloaded skill show up
+    as a reviewable diff in the dispatch-cost snapshot — depends on someone
+    remembering to run the generator by hand.
+
+    Node gating mirrors tests/test_pi_extension.py's CI ratchet: a missing or
+    too-old Node downgrades to a warning locally, so a contributor without
+    Node 22 can still run validate.sh, but hard-fails under CI, where the
+    workflow pins Node 22 precisely so this check always genuinely runs.
+    """
+    if not _DISPATCH_LEDGER_SCRIPT.is_file():
+        return
+    rel = Path("scripts") / _DISPATCH_LEDGER_SCRIPT.name
+    node = shutil.which("node")
+    major = _node_major_version(node)
+    if major is None or major < _DISPATCH_LEDGER_MIN_NODE:
+        detail = (
+            "no usable `node` found on PATH"
+            if major is None
+            else f"node {major} is older than the required {_DISPATCH_LEDGER_MIN_NODE}"
+        )
+        message = (
+            f"could not verify {_DISPATCH_LEDGER_OUTPUT} is in sync: {detail} "
+            "(--experimental-strip-types is needed to load pi/extensions/agent-spec.ts)"
+        )
+        if os.environ.get("CI"):
+            fail(rel, message)
+        else:
+            warn(rel, message)
+        return
+    try:
+        result = subprocess.run(
+            [
+                node,
+                "--experimental-strip-types",
+                str(_DISPATCH_LEDGER_SCRIPT),
+                "--check",
+                "--root",
+                str(ROOT),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=_node_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        fail(rel, f"could not run the dispatch-ledger check: {e}")
+        return
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or "(no output)"
+        fail(rel, f"{_DISPATCH_LEDGER_OUTPUT} check failed: {detail}")
+
+
 _INERT_AT_INCLUDE_RE = re.compile(r'@\.\./shared/|@\./shared/')
 
 
@@ -2383,6 +2487,7 @@ def main():
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
     check_shared_blocks_in_sync(cache=cache)
+    check_dispatch_ledger_in_sync()
     check_no_inert_at_includes(cache=cache)
     check_language_pointer_matches_disk(cache=cache)
     check_adapter_blocks(cache=cache)
