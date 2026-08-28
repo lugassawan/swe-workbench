@@ -1,0 +1,4 @@
+# Representative dispatch prompts for contributor-auditor
+triage this external PR from a first-time contributor before we merge it
+assess contributor trust signals and diff-shape risk for this outside pull request
+is this PR from an unknown contributor safe to merge, check author signal and repo posture

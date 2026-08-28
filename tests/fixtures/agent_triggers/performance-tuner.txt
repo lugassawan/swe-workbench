@@ -1,0 +1,4 @@
+# Representative dispatch prompts for performance-tuner
+here's a flame graph from production, rank the hotspots and recommend optimizations
+I have an allocation report showing GC pressure, tell me what to optimize
+given this benchmark and query log, find the confirmed bottleneck before I touch any code

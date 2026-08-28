@@ -1,0 +1,4 @@
+# Representative dispatch prompts for code-impl
+here is your scoped brief with goal, file set, and verify command — implement exactly this assigned file group and return a structured summary
+you are the sub-agent receiving a cohesive change group from the orchestrator, implement only this file group
+execute this delegated implementation brief and report back a structured summary, not a diff

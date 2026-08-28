@@ -1,0 +1,4 @@
+# Representative dispatch prompts for test-writer
+write behavioural tests for this new function I just pointed you to
+add unit tests for this module, one behavior per test, no mocks at internal boundaries
+write AAA-style tests pinning this change set's behavior in the target language's idiom
