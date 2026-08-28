@@ -1,6 +1,6 @@
 ---
 name: language-bash
-description: Bash idioms — strict mode, quoting, parameter expansion, arrays, pipefail, trap cleanup, idempotency, heredocs, and POSIX portability. Auto-load when working with .sh, .bash files, or when the user mentions bash, shell, sh, shellcheck, set -e, or pipefail.
+description: Bash idioms — strict mode, parameter expansion, arrays, trap cleanup, heredocs, and POSIX portability. Auto-load when working with .sh, .bash files, or when the user mentions bash, shell, shellcheck, set -e, or pipefail.
 ---
 
 # Bash

@@ -1,6 +1,6 @@
 ---
 name: workflow-pr-review
-description: Use when reviewing a remote GitHub PR — a first-pass peer review, or a followup re-check after the owner has addressed feedback. Fetches into an ephemeral worktree, runs the reviewer agent against the updated diff with a Review Decision footer instruction, deduplicates findings against existing review threads (±5-line fuzzy match + Jaccard ≥ 0.4 against any author), posts only truly-new deduped inline comments via gh-api, adds 👍 reactions on dedup matches, and submits the review decision with APPROVE or COMMENT. Counterpart of local-diff review (which workflow-development Phase 4 keeps using).
+description: Use when reviewing a remote GitHub PR — a first-pass peer review, or a followup re-check after the owner has addressed feedback. Fetches into an ephemeral worktree, runs the reviewer agent against the updated diff with a Review Decision footer instruction, deduplicates findings against existing review threads (±5-line fuzzy match + Jaccard ≥ 0.4 against any author), posts only truly-new deduped inline comments via gh-api, and submits the review decision with APPROVE or COMMENT.
 orchestrator: true
 ---
 

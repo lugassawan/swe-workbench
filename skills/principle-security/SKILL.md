@@ -1,6 +1,6 @@
 ---
 name: principle-security
-description: Security design principles — trust boundaries and input validation, authentication vs authorization, secrets and credentials handling, secure defaults and defense in depth, lightweight threat modeling, cryptography hygiene, attack-surface minimization, RBAC/ABAC authorization models, OAuth 2.0/OIDC token validation, PII and data privacy, supply-chain integrity (SBOM, provenance). Auto-load when designing auth, discussing authn or authz, handling secrets or credentials, defining trust boundaries, validating untrusted input, considering SSRF or CSRF, choosing session or JWT mechanics, configuring TLS, picking an encryption primitive, weighing least-privilege trade-offs, choosing RBAC or ABAC, validating OAuth or OIDC tokens, handling PII or GDPR data, or pinning deps and generating an SBOM.
+description: Security design principles — trust boundaries and input validation, secure defaults and defense in depth, lightweight threat modeling, cryptography hygiene, RBAC/ABAC authorization models, OAuth 2.0/OIDC token validation. Auto-load when designing auth, discussing authn or authz, handling secrets or credentials, defining trust boundaries, validating untrusted input, considering SSRF or CSRF, configuring TLS, weighing least-privilege trade-offs, choosing RBAC or ABAC, handling PII or GDPR data, or pinning deps and generating an SBOM.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-SECURITY -->
 

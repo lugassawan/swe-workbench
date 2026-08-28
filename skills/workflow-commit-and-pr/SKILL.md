@@ -1,6 +1,6 @@
 ---
 name: workflow-commit-and-pr
-description: Use when the user wants to commit staged changes or create a PR — enforces trigger-phrase discipline (preview vs commit vs ship), the [type] commit format, branch-naming check, [no ci] auto-appended on docs-only commits, draft-vs-ready PR prompt, and PR template detection. Pre-merge counterpart to workflow-cleanup-merged.
+description: Use when the user wants to commit staged changes or create a PR — enforces trigger-phrase discipline (preview vs commit vs ship), the [type] commit format, branch-naming check, draft-vs-ready PR prompt, and PR template detection. Pre-merge counterpart to workflow-cleanup-merged.
 orchestrator: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: language-rust
-description: Rust idioms — ownership, borrowing, lifetimes, error handling, traits, and iterators. Auto-load when working with .rs files, Cargo.toml, or when the user mentions Rust, cargo, ownership, borrow checker, trait, lifetime, or async Rust.
+description: Rust idioms — ownership, lifetimes, and iterators. Auto-load when working with .rs files, Cargo.toml, or when the user mentions Rust, cargo, ownership, borrow checker, lifetime, or async Rust.
 ---
 
 # Rust

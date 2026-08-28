@@ -1,7 +1,7 @@
 ---
 name: workflow-worktree-session
 orchestrator: true
-description: Use when the user mentions a worktree — to start, switch, resume, continue, or end a worktree session. Routes to `EnterWorktree` / `ExitWorktree` so the running claude moves into the worktree without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), resuming or continuing work in an already-created worktree, pivoting current work into a new worktree, and exiting back. Also fires when a user describes the cd-prefix symptom ("I've been cd-ing into the worktree", "I've been cd-prefixing commands"). Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
+description: Use when the user mentions a worktree — to start, switch, resume, continue, or end a worktree session. Covers switching into an existing worktree, resuming or continuing work in an already-created worktree, and pivoting current work into a new worktree. Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs.
 ---
 
 # Workflow: Worktree Session
