@@ -125,18 +125,20 @@ def run_canary(agent_filter: str | None) -> int:
     for agent, skill in pairs:
         by_agent.setdefault(agent, []).append(skill)
 
+    # An --agent value that isn't in the discovered preload universe at all (no `skills:`
+    # frontmatter entries namespaced swe-workbench:<skill> in agents/<id>.md) is a usage error —
+    # a typo'd or nonexistent agent id — not a data-coverage gap. This is distinct from a known
+    # agent with 0 recorded dispatches, which is an expected, non-fatal state handled below (in
+    # the per-agent loop) with exit 0. Checked before any report output so a usage error doesn't
+    # get buried under the header/caveat.
+    if agent_filter is not None and agent_filter not in by_agent:
+        print(f"no such agent in the preload universe: {agent_filter}", file=sys.stderr)
+        return 1
+
     print("== preload-telemetry canary report ==")
     print()
     print(CANARY_CAVEAT)
     print()
-
-    if agent_filter is not None and agent_filter not in by_agent:
-        print(
-            f"agent {agent_filter!r} not found in the discovered preload universe "
-            "(no `skills:` frontmatter entries namespaced swe-workbench:<skill> in "
-            f"agents/{agent_filter}.md)"
-        )
-        return 0
 
     universe = [agent_filter] if agent_filter is not None else sorted(by_agent)
 

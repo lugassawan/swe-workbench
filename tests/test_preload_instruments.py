@@ -412,12 +412,30 @@ class TestPreloadTelemetryCanary:
         assert "SubagentStop" in out
 
     def test_missing_citations_file_exits_zero_with_message(self, tmp_path: Path):
+        """A known agent (real agents/*.md id) with zero recorded dispatches is an expected,
+        non-fatal data-coverage gap — exit 0, informational message. This must stay distinct
+        from an --agent value that isn't in the discovered preload universe at all (covered by
+        test_unknown_agent_exits_nonzero_with_error below)."""
         result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
         assert result.returncode == 0, result.stderr
         assert "no citation data collected yet" in result.stdout
         # A skill with no data yet still gets its own distinct 0/0 row, not omitted.
         assert "swe-workbench:principle-code-review: 0/0" in result.stdout
         assert "CAVEAT:" in result.stdout
+
+    def test_unknown_agent_exits_nonzero_with_error(self, tmp_path: Path):
+        """An --agent id that is NOT in the discovered preload universe at all (no `skills:`
+        frontmatter entries in any agents/*.md) is a usage error — typo'd or nonexistent agent —
+        distinct from a known agent with 0 recorded dispatches (which exits 0, see above)."""
+        result = _run_telemetry(
+            ["canary", "--agent", "totally-not-a-real-agent"], project_dir=tmp_path
+        )
+        assert result.returncode != 0
+        assert (
+            "no such agent in the preload universe: totally-not-a-real-agent" in result.stderr
+        )
+        # Must not be reported as ordinary "0 dispatches" data-coverage output on stdout.
+        assert "0 dispatches recorded" not in result.stdout
 
     def test_corrupted_line_is_skipped_not_fatal(self, tmp_path: Path):
         path = self._citations_file(tmp_path)
