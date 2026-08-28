@@ -74,3 +74,50 @@ different, unrelated mechanisms instead:
    the same preload contract this file describes for Claude Code — including the
    `<!-- preload-canary: SWB-PRELOAD-<ID> -->` marker, which is preserved unmodified so the manual
    verification runbook above works identically on both harnesses.
+
+## Demotion decision rule
+
+Preloading a skill is not a one-way door. Demote skill `S` from agent `A` — move it out of
+frontmatter, back to conditional — only when **all four** of the following hold:
+
+1. `S` is ≥ 500 tokens of `A`'s dispatch prefix (measured by `scripts/dispatch-ledger.mjs` — see
+   the runbook below).
+2. `S`'s preload citation (the `SWB-CANARIES-APPLIED` marker, see the runbook below) is cited in
+   fewer than 20% of at least 20 sampled dispatches for agent `A`.
+3. Ablation (`scripts/preload-probe.mjs ablate`) shows zero lost findings and zero severity
+   downgrades on a representative corpus with `S` omitted from `A`'s preload.
+4. Cache-read fraction on `A`'s dispatch prefix (`scripts/preload-probe.mjs cache`) is below 0.5.
+
+**A low or zero citation rate under condition 2 must never, by itself, be read as proof the skill
+is unused.** The harness where preload demonstrably fires — the Pi Coding Agent, via
+`composeSystemPrompt` in `pi/extensions/agent-spec.ts` — has no `SubagentStop` hook to harvest a
+citation from at all (`tests/test_pi_contract.py` pins both of Claude Code's telemetry hooks as
+explicitly not-applicable on Pi). Meanwhile Claude Code's in-session `Agent` tool, which does have
+a `SubagentStop` hook, carries its own already-documented caveat above (see "Known caveat" under
+"Manual verification runbook"): it may not honor an agent's `skills:` frontmatter preloading at
+all. So a zero citation rate can mean either "genuinely unused" or "collected on a harness where
+the signal was never going to fire" — the two are indistinguishable from condition 2 alone. That is
+exactly why condition 2 is necessary but never sufficient by itself, and why all four conditions
+must hold together before acting on any of them.
+
+The action a passing check authorizes is **demotion, not deletion**: move `S` out of `A`'s
+`skills:` frontmatter and into a conditional body bullet, the same pattern
+`swe-workbench:senior-engineer` and `swe-workbench:reviewer` already use for the catalog entries
+they leave conditional (see "How much of a catalog is preloaded" above).
+
+### Running the instruments
+
+Four scripts back the conditions above. Each one's own `--help`/usage output and top-of-file
+comments are the authoritative reference; this is just a pointer to the invocations a reader would
+actually run:
+
+- The static ledger (condition 1): `node --experimental-strip-types scripts/dispatch-ledger.mjs --check`
+  (and `--write` to regenerate `docs/dispatch-ledger.md`).
+- The citation report (condition 2): `python3 scripts/preload-telemetry.py canary`.
+- The cache-vs-fresh probe (condition 4) — must be run by a human in their own terminal, not from
+  an automated context (`hooks/bash_guard.sh` blocks a nested `pi` session): `node
+  --experimental-strip-types scripts/preload-probe.mjs cache --agent <id>`, then `python3
+  scripts/preload-telemetry.py cache` to see the accumulated history.
+- The ablation harness (condition 3) — also human-run, same constraint: `node
+  --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit
+  <skill-id>`, then `scripts/preload-probe.mjs ablate --report` to see the accumulated results.
