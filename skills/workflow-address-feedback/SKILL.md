@@ -1,6 +1,6 @@
 ---
 name: workflow-address-feedback
-description: Use when a PR owner wants to address review feedback — fetches outstanding threads and general comments, presents a per-item triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes via the Edit tool, commits via workflow-commit-and-pr, posts replies via the GitHub API, resolves review threads via GraphQL resolveReviewThread (those without a thread are never resolved), and syncs stale PR metadata when drift is detected.
+description: Use when a PR owner wants to address review feedback — fetches outstanding threads and general comments, presents a per-item triage (ADDRESSED / CLARIFIED / DEFERRED), applies fixes via the Edit tool, commits via workflow-commit-and-pr, resolves review threads via GraphQL resolveReviewThread (those without a thread are never resolved), and syncs stale PR metadata when drift is detected.
 orchestrator: true
 ---
 

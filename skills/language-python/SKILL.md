@@ -1,6 +1,6 @@
 ---
 name: language-python
-description: Python idioms — PEP 8, type hints, dataclasses, context managers, generators, asyncio, and testing. Auto-load when working with .py files, pyproject.toml, requirements.txt, or when the user mentions Python, pytest, asyncio, dataclass, type hints, or virtualenv.
+description: Python idioms — PEP 8, context managers, generators, asyncio, and testing. Auto-load when working with .py files, pyproject.toml, requirements.txt, or when the user mentions Python, pytest, asyncio, dataclass, type hints, or virtualenv.
 ---
 
 # Python

@@ -1,0 +1,4 @@
+# Representative dispatch prompts for security-auditor
+audit this diff for OWASP Top 10 vulnerabilities and secret leakage
+this change touches auth and crypto, do a focused security review
+check this parsing code for insecure-by-default APIs and injection risks

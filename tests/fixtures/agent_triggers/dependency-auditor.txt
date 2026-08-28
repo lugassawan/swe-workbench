@@ -1,0 +1,4 @@
+# Representative dispatch prompts for dependency-auditor
+audit our package.json and lockfile for outdated and deprecated dependencies
+check for license compatibility issues and transitive bloat across our Cargo.lock
+review this Dependabot version bump for supply-chain hygiene, not code vulnerabilities

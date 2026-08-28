@@ -1,6 +1,6 @@
 ---
 name: principle-accessibility
-description: Accessibility (a11y) principles — WCAG 2.2 AA conformance, semantic HTML, ARIA roles/properties/states, keyboard navigation, focus management, focus traps, color contrast, alt text, screen reader compatibility, accessible names, landmark regions, reduced motion. Auto-load when reviewing frontend or UI code, evaluating ARIA usage, designing keyboard interaction, auditing color contrast, writing alt text, building modals or dialogs, handling focus, choosing between semantic elements and ARIA workarounds, or assessing screen-reader experience.
+description: Accessibility (a11y) principles — WCAG 2.2 AA conformance, semantic HTML, keyboard navigation, focus management, focus traps, color contrast, alt text, screen reader compatibility, reduced motion. Auto-load when reviewing frontend or UI code, evaluating ARIA usage, auditing color contrast, building modals or dialogs, choosing between semantic elements and ARIA workarounds, or assessing screen-reader experience.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-ACCESSIBILITY -->
 

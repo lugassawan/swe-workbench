@@ -1,6 +1,6 @@
 ---
 name: principle-clean-architecture
-description: Clean Architecture, hexagonal architecture, ports and adapters, dependency rule, and domain-centric layering. Auto-load when designing architecture, choosing layers, discussing the dependency rule, ports, adapters, or keeping the domain free of framework code.
+description: Clean Architecture, hexagonal architecture, ports and adapters, and dependency rule. Auto-load when designing architecture, choosing layers, ports, adapters, or keeping the domain free of framework code.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-CLEAN-ARCHITECTURE -->
 

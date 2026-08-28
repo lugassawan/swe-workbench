@@ -1,6 +1,6 @@
 ---
 name: principle-postmortem
-description: Postmortem principles — blameless culture, root cause analysis (5 Whys, Fishbone), incident document structure, action-item discipline, MTTD/MTTR metrics. Auto-load when running a blameless review, structuring an incident report, facilitating RCA, tracking action items after an outage, or improving incident response processes.
+description: Postmortem principles — blameless culture, root cause analysis (5 Whys, Fishbone), incident document structure, MTTD/MTTR metrics. Auto-load when running a blameless review, facilitating RCA, tracking action items after an outage, or improving incident response processes.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-POSTMORTEM -->
 

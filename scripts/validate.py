@@ -26,6 +26,34 @@ PI_SKILL_DESCRIPTION_CAP = 1024
 # failure at 100%.
 CAP_HEADROOM_WARN_FRACTION = 0.90
 
+# Description-frontmatter session-token budgets. PI_SKILL_DESCRIPTION_CAP
+# above is a Pi *platform* ceiling on one skill's description string — a hard
+# technical limit unrelated to cost, and it permits 2.4x growth from a typical
+# description before ever failing a build. These three constants are a
+# different thing: a *session token budget* on the aggregate char cost every
+# Claude Code / Pi session pays for the whole catalog's description:
+# frontmatter before the user types anything. Neither makes the other
+# redundant — check_skills() still enforces the platform ceiling per-skill;
+# check_description_budget() below enforces the catalog-wide cost and an
+# early per-skill warning well ahead of that ceiling.
+#
+# Set from the catalog's measured, post-review description totals (not the
+# compressor's own unreviewed floor — see scripts/compress-descriptions.py).
+# Adding a 61st skill, a 23rd agent, or lengthening an existing description
+# enough to cross either budget requires consciously raising the constant
+# here, with the reason recorded in that commit — that friction is the point,
+# it is what stands between the catalog and slow, unnoticed session-tax growth.
+SKILL_DESCRIPTION_BUDGET_CHARS = 20436
+AGENT_DESCRIPTION_BUDGET_CHARS = 6087
+
+# Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP
+# so it warns well before a single description could ever trip that hard
+# platform failure. The post-review corpus tops out at 726 chars
+# (workflow-development); this leaves headroom for legitimate growth while
+# still catching one description ballooning long before it could silently
+# eat the whole catalog budget above.
+PER_SKILL_DESCRIPTION_CAP_CHARS = 900
+
 # Hook events that fire unconditionally and have no tool name to match against.
 # Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
 # must carry a "matcher" field. Only true lifecycle events belong in this set.
@@ -531,6 +559,94 @@ def check_skill_cap_headroom(cache=None):
                 f"{line_count} lines — within {round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% "
                 f"of the {cap}-line cap; consider extracting content before it hits the hard cap",
             )
+
+
+def _description_char_length(fm):
+    """Return the UTF-16 code-unit length of a parsed frontmatter's
+    description, or None if missing/malformed. Same measurement check_skills()
+    uses for PI_SKILL_DESCRIPTION_CAP, reused here so the two checks can
+    never drift on what counts as a description's length."""
+    if fm is None or "description" not in fm:
+        return None
+    description = _parse_description(fm["description"])
+    if description is None:
+        return None
+    return len(description.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def check_description_budget(cache=None):
+    """Catalog-wide description: session-token budget, plus an early
+    per-skill warning ahead of PI_SKILL_DESCRIPTION_CAP's hard platform
+    failure. See the SKILL_DESCRIPTION_BUDGET_CHARS comment above for why
+    this is not redundant with that cap. Never calls fail() for the
+    per-skill warning — only the two catalog-wide totals are hard failures.
+    Skills/agents with missing or malformed frontmatter are skipped here;
+    check_skills()/check_agents() already report those.
+    """
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+    skills_cache = cache[1] if cache is not None else None
+    agents_cache = cache[0] if cache is not None else None
+
+    skill_total = 0
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # unreadable — already reported by check_skills
+        else:
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        length = _description_char_length(parse_frontmatter(skill_md, text=text))
+        if length is None:
+            continue  # missing/malformed — already reported by check_skills
+        skill_total += length
+        threshold = PER_SKILL_DESCRIPTION_CAP_CHARS * CAP_HEADROOM_WARN_FRACTION
+        if length > threshold:
+            warn(
+                skill_md.relative_to(ROOT),
+                f"description is {length} chars — within "
+                f"{round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% of the "
+                f"{PER_SKILL_DESCRIPTION_CAP_CHARS}-char per-skill budget cap; "
+                "trim it with scripts/compress-descriptions.py before it forces "
+                "a catalog-wide budget increase",
+            )
+
+    if skill_total > SKILL_DESCRIPTION_BUDGET_CHARS:
+        fail(
+            skills_dir.relative_to(ROOT),
+            f"total skill description budget exceeded: {skill_total} chars "
+            f"(cap {SKILL_DESCRIPTION_BUDGET_CHARS}). Compress an existing "
+            "description with scripts/compress-descriptions.py, or raise "
+            "SKILL_DESCRIPTION_BUDGET_CHARS with a recorded reason.",
+        )
+
+    agent_total = 0
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # unreadable — already reported by check_agents
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        length = _description_char_length(parse_frontmatter(agent_md, text=text))
+        if length is None:
+            continue  # missing/malformed — already reported by check_agents
+        agent_total += length
+
+    if agent_total > AGENT_DESCRIPTION_BUDGET_CHARS:
+        fail(
+            agents_dir.relative_to(ROOT),
+            f"total agent description budget exceeded: {agent_total} chars "
+            f"(cap {AGENT_DESCRIPTION_BUDGET_CHARS}). Compress an existing "
+            "description with scripts/compress-descriptions.py --agents, or "
+            "raise AGENT_DESCRIPTION_BUDGET_CHARS with a recorded reason.",
+        )
 
 
 _ORCHESTRATOR_NAMESPACED_REF_RE = re.compile(r'`swe-workbench:([\w-]+)`')
@@ -2252,6 +2368,7 @@ def main():
     check_hooks_json()
     check_skills(cache=cache)
     check_skill_cap_headroom(cache=cache)
+    check_description_budget(cache=cache)
     check_orchestrator_flag_earned(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)
@@ -2284,7 +2401,7 @@ def main():
     check_no_unenumerated_tmp_write(cache=cache)
 
     if WARNINGS:
-        print(f"WARNING — {len(WARNINGS)} skill(s) near their line cap:")
+        print(f"WARNING — {len(WARNINGS)} item(s) near a cap or budget:")
         for w in WARNINGS:
             print(w)
         print()

@@ -1,6 +1,6 @@
 ---
 name: principle-clean-code
-description: Clean code, DRY, KISS, YAGNI, function length, naming, abstraction level, error handling, function argument count, Command-Query Separation, Boy Scout Rule, intent-revealing naming. Auto-load when writing functions, naming variables, reviewing code clarity, discussing comments, or debating whether to abstract.
+description: Clean code, DRY, KISS, YAGNI, function length, abstraction level, function argument count, Boy Scout Rule, intent-revealing naming. Auto-load when writing functions, reviewing code clarity, or debating whether to abstract.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-CLEAN-CODE -->
 

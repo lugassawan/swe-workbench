@@ -15,7 +15,8 @@ pytest tests/ -v
 | `test_validate.py` | Every `check_*` function in `scripts/validate.py` (positive + negative) |
 | `test_hooks.py` | All 3 regex blockers in `hooks/hooks.json` (block + allow cases) |
 | `test_secret_guard.py` | `hooks/secret_guard.py` — 7 units: plumbing/fail-open, HIGH patterns, NEEDS-CONTEXT patterns, `# nosecret` suppression, filename allowlist, Edit routing, hooks.json wiring |
-| `test_skill_triggers.py` | BM25 top-1 ranking harness across all 22 skills × their `triggers.txt` fixtures; deliberate-vague acceptance test |
+| `test_skill_triggers.py` | BM25 top-1 ranking harness across all 60 skills × their `triggers.txt` fixtures; deliberate-vague acceptance test |
+| `test_agent_triggers.py` | BM25 top-1 ranking harness across all 22 agents × their `fixtures/agent_triggers/*.txt` fixtures; distinctiveness ratchet |
 
 Tests are hermetic: `conftest.py` redirects `validate.ROOT` to a `tmp_path` so
 no test reads or writes outside of pytest's temporary directory.

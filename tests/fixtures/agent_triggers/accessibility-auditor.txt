@@ -1,0 +1,5 @@
+# Representative dispatch prompts for accessibility-auditor
+run an accessibility audit on this modal's ARIA attributes and keyboard navigation
+check this new form for WCAG 2.2 AA conformance before merging
+review this PR for screen-reader anti-patterns and focus trap bugs
+audit color contrast and keyboard-nav handling for this new navigation widget

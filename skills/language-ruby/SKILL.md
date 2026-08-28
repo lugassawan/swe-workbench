@@ -1,6 +1,6 @@
 ---
 name: language-ruby
-description: Ruby idioms — Ruby 3.x pattern matching, blocks, procs, lambdas, Enumerable, Comparable, frozen string literals, error handling, and testing. Auto-load when working with .rb files, Gemfile, Rakefile, gemspecs, or when the user mentions Ruby, Bundler, RSpec, minitest, blocks, procs, lambdas, or pattern matching.
+description: Ruby idioms — Ruby 3.x pattern matching, procs, Comparable, error handling, and testing. Auto-load when working with .rb files, Gemfile, Rakefile, gemspecs, or when the user mentions Ruby, blocks, procs, lambdas, or pattern matching.
 ---
 
 # Ruby
