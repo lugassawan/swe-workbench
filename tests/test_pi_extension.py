@@ -280,10 +280,10 @@ def test_path_gains_bin_dir_exactly_once_after_two_factory_invocations(extension
 
 
 @requires_node
-def test_before_agent_start_injects_marker_and_first_script_row(extension_result):
+def test_before_agent_start_injects_marker_and_a_bin_script_id(extension_result):
     injected = extension_result["firstInjection"]["systemPrompt"]
     assert "<!-- swe-workbench:pi-bin-preamble -->" in injected
-    assert "swe-workbench-clean-ephemeral" in injected
+    assert "swe-workbench-doctor" in injected
 
 
 @requires_node
@@ -357,19 +357,20 @@ def test_before_agent_start_does_not_duplicate_on_already_injected_prompt(extens
 
 
 @requires_node
-def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
-    """A missing bin/README.md must not take down PATH exposure or skill discovery.
+def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
+    """A bin/ directory with zero swe-workbench-* entries must not take down PATH exposure or
+    skill discovery — binScriptsSection() returns null in this case (same fail-soft posture as
+    an unreadable bin/), so only the bin-scripts row of the preamble disappears.
 
-    Regression test: the extension used to read bin/README.md unguarded, so a missing file
-    threw synchronously inside the factory — which fails the whole extension, not just the
-    bin-scripts row of the preamble (the one failure mode the code already degrades for). The
-    rest of the preamble — tool-vocab.ts's content, including the anti-hallucination rule —
-    must still be injected; only the bin-scripts row disappears.
+    Regression test: the extension used to read bin/README.md unguarded for this same row, so a
+    missing file threw synchronously inside the factory — which failed the whole extension, not
+    just this one row. The rest of the preamble — tool-vocab.ts's content, including the
+    anti-hallucination rule — must still be injected regardless.
     """
     synthetic_root = tmp_path_factory.mktemp("pi-synthetic-root")
     (synthetic_root / ".claude-plugin").mkdir()
     (synthetic_root / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
-    (synthetic_root / "bin").mkdir()  # deliberately no README.md
+    (synthetic_root / "bin").mkdir()  # deliberately empty — zero swe-workbench-* entries
     (synthetic_root / "skills").mkdir()
     synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
     synthetic_index.parent.mkdir(parents=True)
@@ -391,7 +392,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
         )
 
-    driver = tmp_path_factory.mktemp("pi-extension-driver-missing-readme") / "driver.mjs"
+    driver = tmp_path_factory.mktemp("pi-extension-driver-empty-bin") / "driver.mjs"
     driver.write_text(_DRIVER, encoding="utf-8")
     node = shutil.which("node")
     assert node is not None
@@ -411,7 +412,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     assert str(synthetic_root / "bin") in parsed["pathEntries"]
     injected = parsed["firstInjection"]["systemPrompt"]
     assert "<!-- swe-workbench:pi-bin-preamble -->" in injected
-    assert "swe-workbench-clean-ephemeral" not in injected, "bin-scripts row must be absent"
+    assert "swe-workbench-doctor" not in injected, "bin-scripts row must be absent"
     assert "Claude Code -> Pi tool vocabulary" in injected, "tool-vocab section must still inject"
 
 

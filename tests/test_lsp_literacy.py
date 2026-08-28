@@ -8,7 +8,10 @@ the dependency on it was replaced with `bin/swe-workbench-lsp`, a stdlib-only
 script reachable via `Bash` from any harness. This file now pins that
 script-based contract: the four agents' shared prose still references it,
 the doc names its subcommands, the three orchestrator skills still carry the
-fallback sentence, and docs/dependencies.md still documents it.
+fallback sentence, docs/dependencies.md still documents it, and
+`pi/extensions/bin-scripts.ts`'s generated inventory section — the sole
+channel by which a Pi session learns `swe-workbench-lsp` exists — still
+names it and every one of its subcommands.
 
 Agent tools:/body content for these four agents is otherwise covered by
 `scripts/validate.py`'s check_lsp_tool_gate() (self-disarms once no agent
@@ -31,6 +34,7 @@ AGENTS_DIR = ROOT / "agents"
 SKILLS_DIR = ROOT / "skills"
 SHARED_DIR = ROOT / "shared"
 LSP_SRC = SHARED_DIR / "agents" / "lsp.md"
+BIN_SCRIPTS_TS = ROOT / "pi" / "extensions" / "bin-scripts.ts"
 
 # The four agents this feature's shared doc still targets.
 LSP_AGENTS = ["reviewer", "auditor", "debugger", "refactorer"]
@@ -155,36 +159,27 @@ def test_dependencies_doc_has_language_servers_section():
 
 
 # ──────────────────────────────────────────────────────────────
-# bin/README.md's Current scripts section is the sole channel by which a
-# Pi session learns swe-workbench-lsp exists (pi/extensions/index.ts
-# splices that section into the Tier-1 preamble)
+# pi/extensions/bin-scripts.ts's generated inventory section is the sole
+# channel by which a Pi session learns swe-workbench-lsp exists
+# (pi/extensions/index.ts composes binScriptsSection() into the Tier-1
+# preamble). No Node required — this is a structural read of the source
+# text, not a behavioural drive of the compiled module, so it cannot
+# silently skip the way a requires_node test could.
 # ──────────────────────────────────────────────────────────────
 
 
-def test_bin_readme_lsp_row_is_the_pi_discovery_surface():
-    """bin/README.md's Current scripts section names swe-workbench-lsp and
-    every one of its subcommands. pi/extensions/index.ts makes this section
-    the sole channel by which a Pi session learns the script exists, and
-    test_pi_extension.py only pins the section's first row
-    (swe-workbench-clean-ephemeral) — so deleting or renaming this row would
-    silently drop LSP from every Pi session with a fully green suite."""
-    path = ROOT / "bin" / "README.md"
-    assert path.exists(), "bin/README.md does not exist"
-    text = path.read_text(encoding="utf-8")
-    start = text.find("## Current scripts")
-    assert start != -1, "bin/README.md is missing the '## Current scripts' heading"
-    end = text.find("\n## ", start + len("## Current scripts"))
-    assert end != -1, "bin/README.md's Current scripts section has no terminating heading"
-    section = text[start:end]
-
-    lsp_row = next(
-        (line for line in section.splitlines() if "swe-workbench-lsp" in line),
-        None,
-    )
-    assert lsp_row is not None, (
-        "bin/README.md's Current scripts section is missing the swe-workbench-lsp row"
+def test_bin_scripts_ts_names_lsp_and_every_subcommand():
+    """bin-scripts.ts's CAPABILITY_ROWS entry for swe-workbench-lsp must name the script and
+    every one of its subcommands as source-text literals. This is the load-bearing "sole
+    discovery channel" guarantee for a Pi session — test_pi_extension.py's behavioural driver
+    test pins the same content reaching the composed system prompt, but that test is
+    requires_node-gated and can skip; this structural half cannot."""
+    assert BIN_SCRIPTS_TS.exists(), "pi/extensions/bin-scripts.ts does not exist"
+    text = BIN_SCRIPTS_TS.read_text(encoding="utf-8")
+    assert "swe-workbench-lsp" in text, (
+        "pi/extensions/bin-scripts.ts is missing a reference to swe-workbench-lsp"
     )
     for subcommand in [*SCRIPT_SUBCOMMANDS, "check"]:
-        assert subcommand in lsp_row, (
-            f"bin/README.md's swe-workbench-lsp row is missing the subcommand '{subcommand}'"
+        assert subcommand in text, (
+            f"pi/extensions/bin-scripts.ts is missing the LSP subcommand '{subcommand}'"
         )
