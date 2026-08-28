@@ -28,6 +28,11 @@
 # an unmerged path, or a checkout failure unrelated to a missing blob.
 set -euo pipefail
 
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 usage() {
   echo "Usage: swe-workbench-apply-conflict-resolution --file <path> --intent <mine|main> --operation <merge|rebase>" >&2
   exit 1

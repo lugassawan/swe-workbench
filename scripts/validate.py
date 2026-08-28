@@ -1780,6 +1780,49 @@ def check_bin_wrappers():
         )
 
 
+_BASH_HELP_MARKER = "awk 'NR>1 && /^#/"
+_PY_HELP_MARKER_RE = re.compile(r'\(\s*"--help",\s*"-h"\s*\)')
+
+
+def check_bin_help_flags():
+    """Every bin/swe-workbench-* script must intercept a sole --help/-h
+    argument — this ratchet is what keeps the duplicated bash awk-header
+    blocks (inline by design, not extracted to a shared bin/lib/ file) and
+    the python docstring-print idiom from drifting apart. argparse-based
+    python scripts are exempt: their -h/--help comes free from argparse
+    itself and carries no literal marker to check."""
+    bin_dir = ROOT / "bin"
+    if not bin_dir.is_dir():
+        return
+    for wrapper in sorted(bin_dir.iterdir()):
+        if not wrapper.is_file() or wrapper.name == "README.md":
+            continue
+        if not wrapper.name.startswith("swe-workbench-"):
+            continue  # already flagged by check_bin_wrappers()
+        rel = wrapper.relative_to(ROOT)
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if text.startswith("#!/usr/bin/env python3"):
+            if "argparse" in text:
+                continue
+            if not (_PY_HELP_MARKER_RE.search(text) and "__doc__" in text):
+                fail(
+                    rel,
+                    'must intercept a sole --help/-h argument via '
+                    '`if len(argv) == 1 and argv[0] in ("--help", "-h"): print(__doc__)`',
+                )
+        elif text.startswith("#!/usr/bin/env bash"):
+            if _BASH_HELP_MARKER not in text:
+                fail(
+                    rel,
+                    "must intercept a sole --help/-h argument via the canonical awk-header "
+                    "block placed immediately after `set` and before any argument-consuming "
+                    "line",
+                )
+
+
 # ──────────────────────────────────────────────
 # Dependency-flow cycle checker
 # ──────────────────────────────────────────────
@@ -2497,6 +2540,7 @@ def main():
     check_hook_scripts()
     check_hook_script_permissions()
     check_bin_wrappers()
+    check_bin_help_flags()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)

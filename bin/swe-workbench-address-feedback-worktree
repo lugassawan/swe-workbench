@@ -72,6 +72,11 @@
 
 set -euo pipefail
 
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 STATE_DIR="/tmp/swe-workbench-address-feedback"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 

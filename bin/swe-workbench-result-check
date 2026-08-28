@@ -159,6 +159,10 @@ def validate_envelope(schema: str, envelope: object) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
 
+    if len(argv) == 1 and argv[0] in ("--help", "-h"):
+        print(__doc__)
+        return 0
+
     if len(argv) != 1:
         print("Usage: swe-workbench-result-check <schema>", file=sys.stderr)
         return 1

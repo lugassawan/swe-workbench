@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
@@ -264,6 +266,32 @@ def test_e2e_skill_script_rejects_traversal():
         assert result.returncode == 1, f"expected rejection for skill={skill!r} script={script!r}"
         assert result.stdout == ""
         assert result.stderr.strip(), f"expected a stderr message for skill={skill!r} script={script!r}"
+
+
+# ──────────────────────────────────────────────
+# --help / -h conformance: every script must respond to a sole --help/-h
+# argument with exit 0 and non-empty, script-identifying stdout — not just
+# rc == 0, which both swe-workbench-doctor's old "always exits 0" behavior
+# and swe-workbench-gh-timeout's unhandled-passthrough behavior would
+# satisfy vacuously.
+# ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", sorted(SCRIPTS))
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_flag_exits_zero_with_identifying_stdout(name, flag):
+    result = subprocess.run(
+        [str(BIN / name), flag],
+        capture_output=True, text=True,
+        env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0, (
+        f"bin/{name} {flag} must exit 0, got {result.returncode} (stderr: {result.stderr!r})"
+    )
+    assert result.stdout.strip(), f"bin/{name} {flag} must print non-empty stdout"
+    assert name in result.stdout, (
+        f"bin/{name} {flag} stdout must name the script itself, got: {result.stdout!r}"
+    )
 
 
 def test_e2e_skill_script_requires_both_args():
