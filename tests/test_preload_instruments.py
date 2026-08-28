@@ -13,6 +13,7 @@ small helper across more than one test file).
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -24,8 +25,10 @@ from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 PROBE = ROOT / "scripts" / "preload-probe.mjs"
+PROBE_LIB = ROOT / "scripts" / "preload-probe-lib.mjs"
 FLUSH_SH = ROOT / "hooks" / "skill_usage_flush.sh"
 TELEMETRY = ROOT / "scripts" / "preload-telemetry.py"
+ABLATION_CORPUS = ROOT / "tests" / "fixtures" / "ablation_corpus"
 
 
 def _node_major_version():
@@ -59,6 +62,32 @@ def _run_probe(args, env=None, **kwargs):
         timeout=30,
         **kwargs,
     )
+
+
+def _call_lib_function(fn_name, *fn_args):
+    """Invokes one exported pure function from scripts/preload-probe-lib.mjs directly and
+    returns its JSON-decoded return value, via a tiny `node -e` snippet that imports the module
+    and calls it. No `pi` dispatch, no filesystem I/O, no CLI parsing — preload-probe-lib.mjs has
+    no side effects at import time (unlike preload-probe.mjs itself), so this is a plain function
+    call at the JS level, matching the brief's requirement that the pipe-delimited parser be
+    independently testable without a process spawn beyond invoking node itself."""
+    node = shutil.which("node")
+    assert node is not None
+    snippet = (
+        "import(process.argv[1]).then((m) => {"
+        f"const result = m.{fn_name}(...JSON.parse(process.argv[2]));"
+        "process.stdout.write(JSON.stringify(result));"
+        "});"
+    )
+    result = subprocess.run(
+        [node, "--experimental-strip-types", "-e", snippet, str(PROBE_LIB), json.dumps(list(fn_args))],
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+        timeout=15,
+    )
+    assert result.returncode == 0, f"preload-probe-lib.mjs call to {fn_name} failed: {result.stderr}"
+    return json.loads(result.stdout)
 
 
 @pytest.fixture(scope="module")
@@ -517,3 +546,298 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
     result = _run_telemetry(["bogus"])
     assert result.returncode != 0
     assert "invalid choice" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Task 7 (C3 ablation harness) — the `ablate` subcommand added to
+# preload-probe.mjs (run mode + report mode), plus the standalone pure
+# helpers factored into preload-probe-lib.mjs. No test spawns real `pi` —
+# same constraint as Tasks 2 and 6.
+# ---------------------------------------------------------------------------
+
+
+class TestParsePipeDelimitedFindings:
+    """Direct, no-process-spawn (beyond `node` itself) unit tests of
+    parsePipeDelimitedFindings — the standalone parser factored out of the ablate dispatch flow
+    into scripts/preload-probe-lib.mjs specifically so it's testable this way."""
+
+    @requires_node
+    def test_no_issues_sentence_yields_zero_findings_not_an_error(self):
+        text = "No security issues found in this diff."
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert findings == []
+
+    @requires_node
+    def test_well_formed_findings_are_parsed(self):
+        text = (
+            "Critical | a.ts:10 | SQL injection | Attacker-controlled input reaches a raw query "
+            "| Use a parameterized query\n"
+            "Medium | b.ts:20 | Missing null check | Crashes on empty input | Add a guard clause\n"
+            "Low | c.ts:30 | Unused import | Dead code | Remove the import\n"
+        )
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert len(findings) == 3
+        assert findings[0] == {
+            "severity": "Critical",
+            "fileLine": "a.ts:10",
+            "issue": "SQL injection",
+            "whyItMatters": "Attacker-controlled input reaches a raw query",
+            "suggestedFix": "Use a parameterized query",
+        }
+        assert [f["severity"] for f in findings] == ["Critical", "Medium", "Low"]
+
+    @requires_node
+    def test_mixed_prose_and_findings_skips_non_matching_lines(self):
+        text = (
+            "Here is my review of this diff:\n"
+            "\n"
+            "High | c.ts:5 | Leaked secret | Committed API key | Rotate and remove from history\n"
+            "\n"
+            "That's everything I found.\n"
+        )
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert len(findings) == 1
+        assert findings[0]["severity"] == "High"
+        assert findings[0]["fileLine"] == "c.ts:5"
+
+    @requires_node
+    def test_tolerates_surrounding_whitespace_around_pipes(self):
+        text = "Low  |  d.ts:1  |  minor nit  |  style only  |  rename variable  \n"
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert len(findings) == 1
+        assert findings[0] == {
+            "severity": "Low",
+            "fileLine": "d.ts:1",
+            "issue": "minor nit",
+            "whyItMatters": "style only",
+            "suggestedFix": "rename variable",
+        }
+
+    @requires_node
+    def test_unknown_severity_word_is_not_treated_as_a_finding(self):
+        """A line that happens to have 5 pipe-delimited fields but whose first field isn't one
+        of the 4 known severity tiers (e.g. a stray markdown table row) must not be misparsed as
+        a finding."""
+        text = "Column A | Column B | Column C | Column D | Column E\n"
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert findings == []
+
+
+@requires_node
+def test_ablate_dry_run_reports_both_arms_prefix_lengths_and_confirms_pure_subset(real_agent_id):
+    result = _run_probe(
+        [
+            "ablate",
+            "--agent",
+            real_agent_id,
+            "--corpus",
+            str(ABLATION_CORPUS),
+            "--omit",
+            "principle-ddd",
+            "--dry-run",
+        ]
+    )
+    assert result.returncode == 0, f"probe failed: {result.stderr}"
+    out = result.stdout
+
+    baseline_match = re.search(r"baseline prefix length: (\d+) chars", out)
+    omit_match = re.search(r"omit\(principle-ddd\) prefix length: (\d+) chars", out)
+    assert baseline_match and omit_match, f"dry-run output missing expected lines: {out!r}"
+    baseline_len = int(baseline_match.group(1))
+    omit_len = int(omit_match.group(1))
+    diff = baseline_len - omit_len
+    assert diff > 0, "omitting a preloaded skill must shrink the composed prefix"
+
+    # Ballpark tolerance (brief: "don't assert exact byte equality... ballpark is fine"):
+    # composeSystemPrompt() adds a "## Preloaded skill: ..." header + relative-path note + a
+    # "\n\n---\n\n" separator around each skill's (frontmatter-stripped) body, so the removed
+    # prefix is somewhat larger than the raw on-disk file (which still includes frontmatter,
+    # partially offsetting that overhead) — assert same order of magnitude, not exact equality.
+    skill_file = ROOT / "skills" / "principle-ddd" / "SKILL.md"
+    raw_len = len(skill_file.read_text())
+    assert raw_len * 0.5 <= diff <= raw_len * 1.5, (
+        f"prefix length diff {diff} not within a reasonable ballpark of raw skill file size {raw_len}"
+    )
+
+    assert "confirmed: omit arm introduces no lines absent from baseline" in out
+
+
+@requires_node
+def test_ablate_dry_run_unknown_omit_skill_fails_fast_naming_actual_skills(real_agent_id):
+    result = _run_probe(
+        [
+            "ablate",
+            "--agent",
+            real_agent_id,
+            "--corpus",
+            str(ABLATION_CORPUS),
+            "--omit",
+            "totally-not-a-preloaded-skill",
+            "--dry-run",
+        ]
+    )
+    assert result.returncode != 0
+    assert "totally-not-a-preloaded-skill" in result.stderr
+    # The error must name the agent's actual preloaded skill ids, per the brief.
+    assert "principle-ddd" in result.stderr
+    assert "principle-code-review" in result.stderr
+
+
+@requires_node
+def test_ablate_nonexistent_corpus_dir_fails_with_clear_error(real_agent_id, tmp_path):
+    missing = tmp_path / "does-not-exist"
+    result = _run_probe(
+        ["ablate", "--agent", real_agent_id, "--corpus", str(missing), "--omit", "principle-ddd"]
+    )
+    assert result.returncode != 0
+    assert str(missing) in result.stderr
+
+
+@requires_node
+def test_ablate_empty_corpus_dir_fails_with_clear_error(real_agent_id, tmp_path):
+    empty_dir = tmp_path / "empty-corpus"
+    empty_dir.mkdir()
+    result = _run_probe(
+        ["ablate", "--agent", real_agent_id, "--corpus", str(empty_dir), "--omit", "principle-ddd"]
+    )
+    assert result.returncode != 0
+    assert "no *.diff files" in result.stderr
+
+
+@requires_node
+def test_ablate_run_missing_agent_fails_with_usage_error():
+    result = _run_probe(["ablate", "--corpus", str(ABLATION_CORPUS), "--omit", "principle-ddd"])
+    assert result.returncode != 0
+    assert "--agent" in result.stderr
+
+
+@requires_node
+def test_ablate_run_missing_corpus_fails_with_usage_error(real_agent_id):
+    result = _run_probe(["ablate", "--agent", real_agent_id, "--omit", "principle-ddd"])
+    assert result.returncode != 0
+    assert "--corpus" in result.stderr
+
+
+@requires_node
+def test_ablate_run_missing_omit_fails_with_usage_error(real_agent_id):
+    result = _run_probe(["ablate", "--agent", real_agent_id, "--corpus", str(ABLATION_CORPUS)])
+    assert result.returncode != 0
+    assert "--omit" in result.stderr
+
+
+class TestAblateReport:
+    def _ablation_runs_file(self, project_dir: Path) -> Path:
+        path = project_dir / ".claude" / "cache" / "dispatch-probes" / "ablation-runs.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @requires_node
+    def test_no_data_file_yet_exits_zero_pointing_at_run_mode(self, tmp_path: Path):
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(["ablate", "--report"], env=env)
+        assert result.returncode == 0, result.stderr
+        assert "no ablation-run data collected yet" in result.stdout
+        assert "ablate --agent" in result.stdout
+
+    @requires_node
+    def test_lost_and_downgrade_counts_match_hand_calculation(self, tmp_path: Path):
+        """Hand-constructed fixture, one diff, one omitted skill:
+        - a.ts:10  baseline High -> omit-arm Low   => severity downgrade
+        - a.ts:20  baseline Medium -> absent        => lost finding
+        - a.ts:30  baseline Critical -> omit-arm Critical (unchanged) => neither lost nor
+          downgraded
+        Hand calc: lost=1, downgraded=1.
+        """
+        baseline = {
+            "diff": "01.diff",
+            "agent": "reviewer",
+            "omitted": None,
+            "findings": [
+                {
+                    "severity": "High",
+                    "fileLine": "a.ts:10",
+                    "issue": "x",
+                    "whyItMatters": "y",
+                    "suggestedFix": "z",
+                },
+                {
+                    "severity": "Medium",
+                    "fileLine": "a.ts:20",
+                    "issue": "x2",
+                    "whyItMatters": "y2",
+                    "suggestedFix": "z2",
+                },
+                {
+                    "severity": "Critical",
+                    "fileLine": "a.ts:30",
+                    "issue": "x3",
+                    "whyItMatters": "y3",
+                    "suggestedFix": "z3",
+                },
+            ],
+        }
+        omit = {
+            "diff": "01.diff",
+            "agent": "reviewer",
+            "omitted": "principle-ddd",
+            "findings": [
+                {
+                    "severity": "Low",
+                    "fileLine": "a.ts:10",
+                    "issue": "x",
+                    "whyItMatters": "y",
+                    "suggestedFix": "z",
+                },
+                {
+                    "severity": "Critical",
+                    "fileLine": "a.ts:30",
+                    "issue": "x3",
+                    "whyItMatters": "y3",
+                    "suggestedFix": "z3",
+                },
+            ],
+        }
+        path = self._ablation_runs_file(tmp_path)
+        path.write_text(json.dumps(baseline) + "\n" + json.dumps(omit) + "\n")
+
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(["ablate", "--report", "--agent", "reviewer"], env=env)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+
+        assert "agent=reviewer omitted=principle-ddd: lost=1 downgraded=1" in out
+        assert "lost: a.ts:20 (Medium)" in out
+        assert "downgraded: a.ts:10 High -> Low" in out
+        # a.ts:30 (unchanged severity) must not appear as either lost or downgraded.
+        assert "a.ts:30" not in out
+
+    @requires_node
+    def test_agent_filter_excludes_other_agents_data(self, tmp_path: Path):
+        other_agent_baseline = {
+            "diff": "x.diff",
+            "agent": "some-other-agent",
+            "omitted": None,
+            "findings": [
+                {
+                    "severity": "High",
+                    "fileLine": "z.ts:1",
+                    "issue": "a",
+                    "whyItMatters": "b",
+                    "suggestedFix": "c",
+                }
+            ],
+        }
+        other_agent_omit = {
+            "diff": "x.diff",
+            "agent": "some-other-agent",
+            "omitted": "some-skill",
+            "findings": [],
+        }
+        path = self._ablation_runs_file(tmp_path)
+        path.write_text(json.dumps(other_agent_baseline) + "\n" + json.dumps(other_agent_omit) + "\n")
+
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(["ablate", "--report", "--agent", "reviewer"], env=env)
+        assert result.returncode == 0, result.stderr
+        assert "no ablation-run data collected yet" in result.stdout
+        assert "some-other-agent" not in result.stdout

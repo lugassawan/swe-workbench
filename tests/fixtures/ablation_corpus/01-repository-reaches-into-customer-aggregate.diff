@@ -1,0 +1,22 @@
+--- a/src/orders/infrastructure/order-repository.ts
++++ b/src/orders/infrastructure/order-repository.ts
+@@ -12,11 +12,19 @@ export class OrderRepository {
+   async markShipped(orderId: string): Promise<void> {
+     const order = await this.db.orders.findById(orderId);
+     order.status = "SHIPPED";
+     order.shippedAt = new Date();
+     await this.db.orders.save(order);
++
++    // Award loyalty points by writing straight into the Customer aggregate's fields from the
++    // Order repository, bypassing Customer.addLoyaltyPoints() and its invariants (e.g. the
++    // points cap, the tier-recalculation side effect).
++    const customer = await this.db.customers.findById(order.customerId);
++    customer.loyaltyPoints += Math.floor(order.total / 10);
++    customer.lastOrderId = order.id;
++    await this.db.customers.save(customer);
+   }
+
+   async findById(orderId: string): Promise<Order | null> {
+     return this.db.orders.findById(orderId);
+   }
+ }

@@ -1,0 +1,23 @@
+--- a/src/checkout/http/checkout-controller.ts
++++ b/src/checkout/http/checkout-controller.ts
+@@ -20,7 +20,18 @@ export class CheckoutController {
+   async postCheckout(req: Request, res: Response): Promise<void> {
+     const cart = await this.carts.findById(req.params.cartId);
+-    const total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+-    const order = await this.checkoutService.checkout(cart.id, total);
++
++    // Discount and tax rules computed inline in the HTTP layer instead of delegating to the
++    // Cart/Pricing domain model — business logic now lives in the transport layer and will
++    // silently diverge from any other entry point (CLI, batch job) that also needs pricing.
++    let total = cart.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
++    if (cart.items.length >= 10) {
++      total = total * 0.9; // bulk discount
++    }
++    if (req.headers["x-region"] === "EU") {
++      total = total * 1.2; // VAT
++    }
++
++    const order = await this.checkoutService.checkout(cart.id, total);
+     res.status(201).json({ orderId: order.id });
+   }
+ }
