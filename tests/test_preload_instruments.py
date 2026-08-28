@@ -264,6 +264,32 @@ class TestCanaryCitationHarvest:
         assert result.returncode == 0
         assert _read_citation_records(canary_cache_dir) == []
 
+    def test_stray_commas_do_not_leak_empty_string_entries(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """A malformed marker with a stray double-comma and trailing comma +
+        whitespace must not produce empty-string entries in cited_skills."""
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-006",
+                "agent_type": "reviewer",
+                "last_assistant_message": (
+                    "SWB-CANARIES-APPLIED: swe-workbench:principle-ddd,,"
+                    "swe-workbench:principle-tdd,  "
+                ),
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["cited_skills"] == [
+            "swe-workbench:principle-ddd",
+            "swe-workbench:principle-tdd",
+        ]
+        assert "" not in records[0]["cited_skills"]
+
     def test_citation_harvest_does_not_disturb_existing_buffer_flush(
         self, canary_plugin_root, canary_cache_dir
     ):

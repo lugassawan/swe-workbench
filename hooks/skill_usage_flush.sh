@@ -24,6 +24,10 @@ cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
 # are a distinct signal (which preloaded skills actually shaped the
 # subagent's response) from the Skill-tool usage buffer that opt-out exists
 # for, so a telemetry-opted-out agent still gets its citations harvested.
+# Not gated on skill_telemetry:false — that flag silences the ephemeral,
+# transcript-visible Skill-tool usage message; citation harvest is a
+# separate, persistent measurement C2 needs collected across all agents
+# regardless.
 last_msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')
 if [ -n "$last_msg" ]; then
   citation_line=$(printf '%s\n' "$last_msg" | grep -E '^SWB-CANARIES-APPLIED:' | tail -n1)
@@ -32,7 +36,7 @@ if [ -n "$last_msg" ]; then
     cited_json=$(jq -n --arg raw "$captured" '
       ($raw | gsub("^\\s+|\\s+$"; "")) as $trimmed
       | if ($trimmed == "NONE" or $trimmed == "") then []
-        else ($trimmed | split(",") | map(gsub("^\\s+|\\s+$"; "")))
+        else ($trimmed | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))
         end
     ' 2>/dev/null)
     if [ -n "$cited_json" ]; then
