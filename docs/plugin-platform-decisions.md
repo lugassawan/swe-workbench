@@ -172,8 +172,9 @@ dependency on a harness-provided `LSP` tool ever being wired up.
 
 Phase 1 already did the only port work this capability needs: `pi/extensions/index.ts`
 appends `<root>/bin` to `process.env.PATH`, so `swe-workbench-lsp` is already a bare command in a
-Pi session, and it splices `bin/README.md`'s `## Current scripts` body into the Tier-1 preamble,
-so a Pi session is already told the capability exists. A Pi-registered `LSP` tool would fork the
+Pi session, and `pi/extensions/bin-scripts.ts` generates a bare-id inventory of `bin/` (plus a
+one-entry capability row naming `swe-workbench-lsp`'s subcommands) into the Tier-1 preamble, so a
+Pi session is already told the capability exists. A Pi-registered `LSP` tool would fork the
 886-line script plus `tests/test_lsp_script.py`'s suite into a second implementation, teach the
 two harnesses different vocabularies for one capability — the opposite of what
 `pi/extensions/tool-vocab.ts` exists to do — and gain zero callers, since the four consumers

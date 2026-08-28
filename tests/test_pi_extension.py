@@ -29,7 +29,6 @@ TOOL_VOCAB_TS = ROOT / "pi" / "extensions" / "tool-vocab.ts"
 BIN_SCRIPTS_TS = ROOT / "pi" / "extensions" / "bin-scripts.ts"
 BIN_DIR = ROOT / "bin"
 ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
-BIN_README = ROOT / "bin" / "README.md"
 SKILLS_DIR = ROOT / "skills"
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
@@ -220,17 +219,6 @@ def test_package_json_has_no_forbidden_pi_keys():
 def test_package_json_has_no_dependencies_key():
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     assert "dependencies" not in data
-
-
-def test_bin_readme_current_scripts_section_has_a_terminating_heading():
-    text = BIN_README.read_text(encoding="utf-8")
-    start = text.find("## Current scripts")
-    assert start != -1, "bin/README.md must contain the literal '## Current scripts' heading"
-    next_heading = text.find("\n## ", start + len("## Current scripts"))
-    assert next_heading != -1, (
-        "a later '## ' heading must terminate the Current scripts section so extraction "
-        "in pi/extensions/index.ts has a well-defined end"
-    )
 
 
 def test_index_ts_has_no_hardcoded_root_hop():
