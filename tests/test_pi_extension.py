@@ -26,6 +26,8 @@ INDEX_TS = ROOT / "pi" / "extensions" / "index.ts"
 GUARDS_TS = ROOT / "pi" / "extensions" / "guards.ts"
 GUARD_RUNNER_TS = ROOT / "pi" / "extensions" / "guard-runner.ts"
 TOOL_VOCAB_TS = ROOT / "pi" / "extensions" / "tool-vocab.ts"
+BIN_SCRIPTS_TS = ROOT / "pi" / "extensions" / "bin-scripts.ts"
+BIN_DIR = ROOT / "bin"
 ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
 BIN_README = ROOT / "bin" / "README.md"
 SKILLS_DIR = ROOT / "skills"
@@ -377,6 +379,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "cc-payload.ts",
         "guard-runner.ts",
         "tool-vocab.ts",
+        "bin-scripts.ts",
         "ask-user.ts",
         "agent-spec.ts",
         "model-policy.ts",
@@ -975,6 +978,67 @@ def test_tool_vocab_generated_skill_id_list_matches_disk(tmp_path_factory):
     on_disk = sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
     for skill_id in on_disk:
         assert skill_id in section["body"], f"{skill_id} missing from the generated skill legend"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: bin-scripts.ts. Pure text generation from the real bin/ directory — no stub
+# `pi`/`ctx` needed, but still imported through Node under --experimental-strip-types since it
+# is a .ts module. Same driver shape as _TOOL_VOCAB_DRIVER above.
+# ---------------------------------------------------------------------------
+
+_BIN_SCRIPTS_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, root] = process.argv;
+const mod = await import(pathToFileURL(modPath).href);
+const section = mod.binScriptsSection(root);
+console.log(JSON.stringify(section));
+"""
+
+
+def _bin_scripts_section(root, tmp_path_factory):
+    return _run_node(
+        _BIN_SCRIPTS_DRIVER, [str(BIN_SCRIPTS_TS), str(root)], tmp_path_factory, label="pi-bin-scripts-driver"
+    )
+
+
+@requires_node
+def test_bin_scripts_section_lists_every_script_on_disk(tmp_path_factory):
+    section = _bin_scripts_section(ROOT, tmp_path_factory)
+    assert section["title"] == "swe-workbench bin/ scripts (bare commands, already on PATH)"
+    on_disk = sorted(
+        p.name for p in BIN_DIR.iterdir() if p.is_file() and p.name.startswith("swe-workbench-")
+    )
+    for script_id in on_disk:
+        assert script_id in section["body"], f"{script_id} missing from the generated bin-scripts section"
+
+
+@requires_node
+def test_bin_scripts_section_names_lsp_and_its_subcommands(tmp_path_factory):
+    """swe-workbench-lsp is the sole CAPABILITY_ROWS entry — its subcommands must reach the
+    generated section verbatim, since this is the sole channel by which a Pi session learns the
+    script (and what it can do) exists."""
+    section = _bin_scripts_section(ROOT, tmp_path_factory)
+    assert "swe-workbench-lsp" in section["body"]
+    for subcommand in ["refs", "def", "impl", "callers", "callees", "hover", "symbols", "wsymbols", "check"]:
+        assert subcommand in section["body"], f"missing LSP subcommand {subcommand!r}"
+
+
+@requires_node
+def test_bin_scripts_section_is_null_when_bin_dir_has_no_scripts(tmp_path_factory):
+    empty_bin = tmp_path_factory.mktemp("pi-bin-scripts-empty")
+    section = _bin_scripts_section(empty_bin, tmp_path_factory)
+    assert section is None
+
+
+@requires_node
+def test_before_agent_start_injects_generated_bin_scripts_section(extension_result):
+    """Wiring assertion: the generated section's content (not just the old splice's) actually
+    reaches firstInjection.systemPrompt via the real index.ts composition."""
+    injected = extension_result["firstInjection"]["systemPrompt"]
+    assert "swe-workbench-lsp" in injected
+    for subcommand in ["refs", "def", "impl", "callers", "callees", "hover", "symbols", "wsymbols", "check"]:
+        assert subcommand in injected, f"missing LSP subcommand {subcommand!r} in injected preamble"
 
 
 @requires_node

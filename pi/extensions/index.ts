@@ -32,6 +32,7 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask-user.ts";
+import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
@@ -113,6 +114,12 @@ export default function (pi: ExtensionAPI): void {
       ? []
       : [{ title: "swe-workbench bin/ scripts (bare commands, already on PATH)", body: currentScripts }];
 
+  // Expand step: the generated section coexists with the bin/README.md splice above. A later
+  // commit removes binSection/readCurrentScripts/extractCurrentScripts once pi-extensions/tests
+  // have been retargeted onto this one — see docs/plugin-platform-decisions.md.
+  const generatedBinSection = binScriptsSection(root);
+  const generatedSection = generatedBinSection === null ? [] : [generatedBinSection];
+
   let warnedMissingAnchor = false;
   let cachedPreamble: string | undefined;
 
@@ -125,7 +132,11 @@ export default function (pi: ExtensionAPI): void {
   function getPreamble(): string {
     if (cachedPreamble === undefined) {
       const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);
-      cachedPreamble = composePreamble([...binSection, toolVocabSection(root, taskToolRegistered)]);
+      cachedPreamble = composePreamble([
+        ...binSection,
+        ...generatedSection,
+        toolVocabSection(root, taskToolRegistered),
+      ]);
     }
     return cachedPreamble;
   }
