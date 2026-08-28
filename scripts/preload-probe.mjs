@@ -18,7 +18,7 @@
  * This file reproduces (deliberately simplified, see below) the exact dispatch shape the `task`
  * tool builds in pi/extensions/subagent.ts's `execute()`.
  *
- * Deliberate simplifications versus subagent.ts (do not "complete" these — see task-2-brief.md):
+ * Deliberate simplifications versus subagent.ts — each is a choice, not an omission to fix:
  *   - No `--tools`/`--exclude-tools`. subagent.ts derives these from translateToolTokens(), but
  *     this probe only measures prefix caching / preload content, not tool-call behavior, and
  *     omitting them keeps the dispatched child from doing real tool-using work (the point is a
@@ -248,10 +248,28 @@ function buildDispatchArgv({ prompt = TRIVIAL_PROMPT, promptFilePath, model }) {
   return args;
 }
 
+/** Wall-clock ceiling for one `pi` dispatch, matching pi/extensions/subagent.ts's own
+ *  TASK_TIMEOUT_MS (15 minutes) — this probe reproduces that file's dispatch shape, so it takes
+ *  the same bound. Without it a hung provider call hangs the probe indefinitely. */
+const DISPATCH_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** stdout/stderr capture ceiling for one `pi` dispatch. Node's spawnSync default is 1 MiB, which
+ *  an `ablate` run's NDJSON event stream over a real diff review can plausibly exceed — and
+ *  exceeding it kills the child and surfaces an error only AFTER the live provider call has
+ *  already been paid for. 50 MiB is deliberately generous, matching subagent.ts's
+ *  OUTPUT_CAP_CHARS posture of capping well clear of realistic output rather than silently
+ *  truncating at a default. */
+const DISPATCH_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
+
 /** Runs `pi` once with the given argv and captures stdout as text. Throws (with captured stderr)
- *  on a missing binary or non-zero exit — never swallows a dispatch failure. */
+ *  on a missing binary, a timeout, an output-size overrun, or a non-zero exit — never swallows a
+ *  dispatch failure. */
 function runPiOnce(args) {
-  const result = spawnSync("pi", args, { encoding: "utf8" });
+  const result = spawnSync("pi", args, {
+    encoding: "utf8",
+    timeout: DISPATCH_TIMEOUT_MS,
+    maxBuffer: DISPATCH_MAX_BUFFER_BYTES,
+  });
   if (result.error) {
     throw new Error(`failed to spawn "pi": ${result.error.message}`);
   }
@@ -328,11 +346,12 @@ function cacheRunsDir() {
 
 /** Appends one JSON record for a single dispatch run to cache-runs.jsonl — live path only, one
  *  call per run (two per invocation). `preload-telemetry.py cache` reads these back to report a
- *  durable, aggregable cache-vs-fresh comparison (this task's controller ruling — see
- *  task-6-brief.md). Never throws: an append failure (permissions, disk) is a warning on stderr,
- *  not a reason to fail the whole probe — the human-readable summary this script already prints
- *  to stdout is still the primary output. No-ops (nothing to record, nothing to warn about) when
- *  `usage` is null, i.e. no message_update line was found for that run. */
+ *  durable, aggregable cache-vs-fresh comparison across invocations, rather than only the
+ *  single-invocation summary this script prints. Never throws: an append failure (permissions,
+ *  disk) is a warning on stderr, not a reason to fail the whole probe — the human-readable
+ *  summary this script already prints to stdout is still the primary output. No-ops (nothing to
+ *  record, nothing to warn about) when `usage` is null, i.e. no message_update line was found
+ *  for that run. */
 function appendCacheRunRecord(agent, run, usage) {
   if (!usage) return;
   const record = {

@@ -18,7 +18,7 @@ agent_type=$(printf '%s' "$input" | jq -r '.agent_type // empty')
 
 cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
 
-# --- Preload citation harvest (issue #681 C2) -------------------------------
+# --- Preload citation harvest -----------------------------------------------
 # Independent of the skill-usage-buffer flush below, and NOT gated on the
 # skill_telemetry opt-out check further down: SWB-CANARIES-APPLIED citations
 # are a distinct signal (which preloaded skills actually shaped the
@@ -30,25 +30,38 @@ cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
 # regardless.
 last_msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')
 if [ -n "$last_msg" ]; then
-  citation_line=$(printf '%s\n' "$last_msg" | grep -E '^SWB-CANARIES-APPLIED:' | tail -n1)
+  # An optional leading backtick is tolerated: the instruction fragment shows the
+  # marker as inline code, so a model can plausibly reproduce its own closing line
+  # the same way. Backticks are never valid inside a skill id, so deleting every
+  # backtick from the captured line before parsing is lossless and also survives
+  # per-id backticking.
+  citation_line=$(printf '%s\n' "$last_msg" | grep -E '^`?SWB-CANARIES-APPLIED:' | tail -n1)
   if [ -n "$citation_line" ]; then
-    captured=$(printf '%s\n' "$citation_line" | sed -E 's/^SWB-CANARIES-APPLIED:[[:space:]]*//')
+    captured=$(printf '%s\n' "$citation_line" | tr -d '`' \
+      | sed -E 's/^SWB-CANARIES-APPLIED:[[:space:]]*//')
     cited_json=$(jq -n --arg raw "$captured" '
       ($raw | gsub("^\\s+|\\s+$"; "")) as $trimmed
       | if ($trimmed == "NONE" or $trimmed == "") then []
         else ($trimmed | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))
         end
     ' 2>/dev/null)
-    if [ -n "$cited_json" ]; then
-      citation_record=$(jq -nc \
-        --arg agent_type "$agent_type" \
-        --arg agent_id "$agent_id" \
-        --argjson cited_skills "$cited_json" \
-        '{agent_type: $agent_type, cited_skills: $cited_skills, agent_id: $agent_id}' 2>/dev/null)
-      if [ -n "$citation_record" ]; then
-        mkdir -p "$cache_dir" 2>/dev/null
-        printf '%s\n' "$citation_record" >>"$cache_dir/canary-citations.jsonl" 2>/dev/null || true
-      fi
+  else
+    # No marker line anywhere in the response. Still record the dispatch, with a
+    # null cited_skills, so the reporter's denominator is every observed dispatch
+    # rather than only the ones that complied with the trailing instruction —
+    # a dropped marker is itself the signal that matters most here. null (marker
+    # absent) stays distinct from [] (agent explicitly emitted NONE).
+    cited_json=null
+  fi
+  if [ -n "$cited_json" ]; then
+    citation_record=$(jq -nc \
+      --arg agent_type "$agent_type" \
+      --arg agent_id "$agent_id" \
+      --argjson cited_skills "$cited_json" \
+      '{agent_type: $agent_type, cited_skills: $cited_skills, agent_id: $agent_id}' 2>/dev/null)
+    if [ -n "$citation_record" ]; then
+      mkdir -p "$cache_dir" 2>/dev/null
+      printf '%s\n' "$citation_record" >>"$cache_dir/canary-citations.jsonl" 2>/dev/null || true
     fi
   fi
 fi

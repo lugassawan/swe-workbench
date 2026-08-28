@@ -1,11 +1,11 @@
-"""Tests for scripts/preload-probe.mjs.
+"""Tests for the preload instruments: scripts/preload-probe.mjs, scripts/preload-telemetry.py,
+and hooks/skill_usage_flush.sh's citation-harvest block.
 
-This is a new shared file across several C-track tasks (issue #681). This task (Task 2) covers
-only the `cache --dry-run` surface — the ONLY path exercised here. The live dispatch path (which
-actually spawns `pi` twice and reads real provider-billed usage) is explicitly out of scope for
-automated tests: it requires `pi auth` configured for a provider and costs real money. It is
-exercised by a human, once, outside this test suite — see the "Operational constraint" section of
-this task's brief.
+Every live dispatch path (the ones that actually spawn `pi` and read real provider-billed usage)
+is explicitly out of scope here: those require `pi auth` configured for a provider and cost real
+money, so they are exercised by a human outside this test suite. What is covered here is every
+surface reachable without a dispatch — argv construction, `--dry-run`, the pure parsers, the
+harvest hook, and the reporters over hand-written JSONL fixtures.
 
 Node-version gating mirrors tests/test_pi_extension.py's `_node_major_version` / `_NODE_TOO_OLD` /
 `requires_node` pattern (duplicated here rather than imported — this repo already duplicates this
@@ -92,8 +92,8 @@ def _call_lib_function(fn_name, *fn_args):
 
 @pytest.fixture(scope="module")
 def real_agent_id():
-    """A real agents/*.md id, verified against listAgentNames rather than hardcoded — the brief
-    warns against assuming a specific id exists."""
+    """A real agents/*.md id, asserted to exist rather than assumed — an agent can be renamed or
+    removed, and these tests must fail loudly on that rather than silently probing a ghost."""
     agents_dir = ROOT / "agents"
     names = sorted(p.stem for p in agents_dir.glob("*.md"))
     assert names, "expected at least one agents/*.md file"
@@ -133,9 +133,56 @@ def test_cache_without_agent_flag_fails_with_usage_error():
 
 @requires_node
 def test_unknown_subcommand_fails():
-    result = _run_probe(["ablate", "--agent", "reviewer", "--dry-run"])
+    """A token that is not a real subcommand must hit the unknown-subcommand path specifically,
+    and say so. The token has to be one that will never become a real subcommand — naming a
+    planned-but-unimplemented one would turn this into a duplicate of that subcommand's own
+    argument-validation test the moment it lands, silently losing coverage of this path."""
+    result = _run_probe(["bogus"])
     assert result.returncode != 0
+    assert 'unknown subcommand "bogus"' in result.stderr
+    # The error must name every implemented subcommand so the caller can pick a real one.
     assert "cache" in result.stderr
+    assert "ablate" in result.stderr
+
+
+@requires_node
+def test_no_subcommand_at_all_fails_with_usage():
+    result = _run_probe([])
+    assert result.returncode != 0
+    assert "unknown subcommand" in result.stderr
+    assert "usage:" in result.stderr
+
+
+def test_every_pi_spawn_is_bounded_by_a_timeout_and_a_maxbuffer():
+    """Every `pi` dispatch this probe makes must carry both bounds.
+
+    Neither can be exercised without a real (paid) dispatch, so this is a source-shape ratchet
+    over the single spawn site instead. Both bounds guard money already spent: without a
+    `timeout`, a hung provider call hangs the probe indefinitely; without a `maxBuffer`, Node's
+    1 MiB default lets an ablate run's NDJSON event stream overflow, killing the child and
+    surfacing an error only after the provider call has already been billed.
+    """
+    text = PROBE.read_text()
+
+    spawn_sites = re.findall(r"spawnSync\(\s*\"pi\"", text)
+    assert len(spawn_sites) == 1, (
+        f"expected exactly one spawnSync(\"pi\", ...) site, found {len(spawn_sites)} — every "
+        "new site needs the same timeout/maxBuffer bounds"
+    )
+
+    call = re.search(r"spawnSync\(\s*\"pi\",\s*args,\s*\{(.*?)\}\s*\)", text, re.DOTALL)
+    assert call, "could not locate the spawnSync(\"pi\", ...) options object"
+    options = call.group(1)
+    assert "timeout:" in options, "spawnSync(\"pi\", ...) must pass a timeout"
+    assert "maxBuffer:" in options, "spawnSync(\"pi\", ...) must pass a maxBuffer"
+
+    # The bounds must be real values, not zero/undefined placeholders.
+    assert re.search(r"const DISPATCH_TIMEOUT_MS = 15 \* 60 \* 1000;", text), (
+        "DISPATCH_TIMEOUT_MS must stay pinned to subagent.ts's own 15-minute TASK_TIMEOUT_MS"
+    )
+    assert re.search(r"const DISPATCH_MAX_BUFFER_BYTES = 50 \* 1024 \* 1024;", text), (
+        "DISPATCH_MAX_BUFFER_BYTES must stay well clear of Node's 1 MiB spawnSync default"
+    )
 
 
 _PRELOAD_CANARY_BEGIN = "<!-- BEGIN shared/agents/preload-canary-citation.md -->"
@@ -143,9 +190,10 @@ _PRELOAD_CANARY_END = "<!-- END shared/agents/preload-canary-citation.md -->"
 
 
 def test_all_agents_carry_the_preload_canary_citation_block():
-    """Task 4 (C2 emit) inlines shared/agents/preload-canary-citation.md into every agents/*.md
-    file via the sentinel-block mechanism. No Node/`pi` involvement needed here — this is a plain
-    text-shape assertion over the static agent files, so it does not need `requires_node`."""
+    """shared/agents/preload-canary-citation.md must be inlined into every agents/*.md file via
+    the sentinel-block mechanism — the citation signal only exists for agents that carry the
+    instruction. No Node/`pi` involvement needed here — this is a plain text-shape assertion over
+    the static agent files, so it does not need `requires_node`."""
     agents_dir = ROOT / "agents"
     agent_files = sorted(agents_dir.glob("*.md"))
     assert len(agent_files) == 22, f"expected 22 agents/*.md files, found {len(agent_files)}"
@@ -163,9 +211,22 @@ def test_all_agents_carry_the_preload_canary_citation_block():
         assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"
 
 
+def test_citation_instruction_does_not_claim_the_sections_are_above_it():
+    """composeSystemPrompt (pi/extensions/agent-spec.ts) appends each `## Preloaded skill:`
+    section AFTER the agent body, and this fragment is inlined at the very end of that body — so
+    the sections it points at are below it, never above. A positional word pointing the wrong way
+    would send the agent looking in the wrong direction for the one thing the whole citation
+    signal depends on it finding."""
+    text = (ROOT / "shared" / "agents" / "preload-canary-citation.md").read_text()
+    assert "sections above" not in text, (
+        "the preloaded-skill sections are composed BELOW this instruction, not above it"
+    )
+    assert "## Preloaded skill: <id>" in text
+
+
 # ---------------------------------------------------------------------------
-# Task 5 (C2 harvest) — hooks/skill_usage_flush.sh reads back
-# SWB-CANARIES-APPLIED and appends canary-citations.jsonl.
+# hooks/skill_usage_flush.sh reads back SWB-CANARIES-APPLIED and appends
+# canary-citations.jsonl.
 #
 # Fixture/subprocess pattern mirrors tests/test_skill_usage_telemetry.py
 # (same hook, same env wiring), duplicated here rather than imported since
@@ -280,9 +341,17 @@ class TestCanaryCitationHarvest:
         assert json.loads(result.stdout) == {}
         assert not _citations_file(canary_cache_dir).exists()
 
-    def test_message_without_marker_line_is_noop(self, canary_plugin_root, canary_cache_dir):
-        """last_assistant_message present but no SWB-CANARIES-APPLIED line →
-        no citation record written, hook still exits 0."""
+    def test_message_without_marker_line_records_null_cited_skills(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """last_assistant_message present but no SWB-CANARIES-APPLIED line → a record is still
+        appended, with cited_skills: null.
+
+        The dispatch happened and was observed; the agent just dropped the trailing instruction.
+        Recording it is what lets the reporter compute citation rates against every sampled
+        dispatch — the denominator the demotion decision rule actually names — instead of only
+        against the dispatches that happened to comply.
+        """
         result = _run_flush_for_canary(
             {
                 "agent_id": "cite-004",
@@ -293,7 +362,85 @@ class TestCanaryCitationHarvest:
             canary_cache_dir,
         )
         assert result.returncode == 0
-        assert _read_citation_records(canary_cache_dir) == []
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["agent_type"] == "reviewer"
+        assert records[0]["agent_id"] == "cite-004"
+        assert records[0]["cited_skills"] is None
+
+    def test_null_none_and_populated_are_three_distinct_record_shapes(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """null (no marker emitted), [] (marker emitted saying NONE), and a populated list are
+        three different facts and must never collapse into each other."""
+        for agent_id, message in (
+            ("shape-null", "No marker at all here."),
+            ("shape-none", "Done.\nSWB-CANARIES-APPLIED: NONE"),
+            ("shape-cited", "Done.\nSWB-CANARIES-APPLIED: swe-workbench:principle-ddd"),
+        ):
+            result = _run_flush_for_canary(
+                {
+                    "agent_id": agent_id,
+                    "agent_type": "reviewer",
+                    "last_assistant_message": message,
+                },
+                canary_plugin_root,
+                canary_cache_dir,
+            )
+            assert result.returncode == 0
+
+        records = _read_citation_records(canary_cache_dir)
+        by_id = {rec["agent_id"]: rec["cited_skills"] for rec in records}
+        assert by_id == {
+            "shape-null": None,
+            "shape-none": [],
+            "shape-cited": ["swe-workbench:principle-ddd"],
+        }
+
+    def test_backtick_wrapped_marker_line_is_still_harvested(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """The instruction fragment shows the marker as inline code, so a model can plausibly
+        emit its own closing line backtick-wrapped. A regex anchored strictly at
+        `^SWB-CANARIES-APPLIED:` would silently drop that citation and score it as a
+        non-compliant dispatch."""
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-007",
+                "agent_type": "reviewer",
+                "last_assistant_message": (
+                    "Analysis.\n"
+                    "`SWB-CANARIES-APPLIED: swe-workbench:principle-ddd, "
+                    "swe-workbench:principle-tdd`"
+                ),
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["cited_skills"] == [
+            "swe-workbench:principle-ddd",
+            "swe-workbench:principle-tdd",
+        ]
+
+    def test_backtick_wrapped_none_marker_is_an_explicit_none_not_a_dropped_marker(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-008",
+                "agent_type": "reviewer",
+                "last_assistant_message": "Nothing applied.\n`SWB-CANARIES-APPLIED: NONE`",
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["cited_skills"] == []
 
     def test_stray_commas_do_not_leak_empty_string_entries(
         self, canary_plugin_root, canary_cache_dir
@@ -357,18 +504,17 @@ class TestCanaryCitationHarvest:
 
 
 # ---------------------------------------------------------------------------
-# Task 6 (C2/C4 reporter) — Part A: preload-probe.mjs cache --dry-run must
-# remain side-effect free even with the new live-path cache-runs.jsonl append
-# added by this task. Part B: scripts/preload-telemetry.py's canary and cache
-# subcommands.
+# preload-probe.mjs `cache --dry-run` must stay side-effect free despite the
+# live path's cache-runs.jsonl append, plus scripts/preload-telemetry.py's
+# canary and cache reporters.
 # ---------------------------------------------------------------------------
 
 
 @requires_node
 def test_cache_dry_run_writes_no_cache_runs_file(tmp_path: Path, real_agent_id):
-    """--dry-run must exit before any file I/O beyond argv construction — this is the one new
-    behavioural assertion Task 6 needs for Part A (the live-append path itself cannot be
-    exercised without a real `pi` dispatch, out of scope here as it was for Task 2)."""
+    """--dry-run must exit before any file I/O beyond argv construction. The live-append path
+    itself cannot be exercised without a real `pi` dispatch, so this asserts the negative: the
+    append never fires on the path that does not dispatch."""
     env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     result = _run_probe(["cache", "--agent", real_agent_id, "--dry-run"], env=env)
     assert result.returncode == 0, f"probe failed: {result.stderr}"
@@ -436,9 +582,59 @@ class TestPreloadTelemetryCanary:
         assert "reviewer" in out and "4 dispatch(es) recorded" in out
         assert "swe-workbench:principle-code-review: 2/4 (50.0%)" in out
         assert "swe-workbench:principle-clean-code: 0/4 (0.0%)" in out
+        # Every record here carries a list, so marker compliance is a clean 4/4.
+        assert "marker compliance: 4/4 (100.0%)" in out
         # The caveat must be present unconditionally, not just for low rates.
         assert "CAVEAT:" in out
         assert "SubagentStop" in out
+
+    def test_rates_use_all_dispatches_as_denominator_not_just_marker_emitting_ones(
+        self, tmp_path: Path
+    ):
+        """The demotion decision rule's denominator is sampled dispatches, not compliant ones.
+
+        Hand calc over 5 records: 2 emitted no marker at all (cited_skills: null), 1 emitted an
+        explicit NONE ([]), 2 cited principle-code-review. Citation rate must be 2/5 = 40.0%
+        (NOT 2/3 = 66.7%, which is what counting only marker-emitting records would report), and
+        marker compliance must be 3/5 = 60.0%.
+        """
+        lines = [
+            {"agent_type": "reviewer", "cited_skills": None, "agent_id": "n1"},
+            {"agent_type": "reviewer", "cited_skills": None, "agent_id": "n2"},
+            {"agent_type": "reviewer", "cited_skills": [], "agent_id": "e1"},
+            {
+                "agent_type": "reviewer",
+                "cited_skills": ["swe-workbench:principle-code-review"],
+                "agent_id": "c1",
+            },
+            {
+                "agent_type": "reviewer",
+                "cited_skills": ["swe-workbench:principle-code-review"],
+                "agent_id": "c2",
+            },
+        ]
+        path = self._citations_file(tmp_path)
+        path.write_text("\n".join(json.dumps(rec) for rec in lines) + "\n")
+
+        result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+
+        assert "5 dispatch(es) recorded" in out
+        assert "marker compliance: 3/5 (60.0%)" in out
+        assert "swe-workbench:principle-code-review: 2/5 (40.0%)" in out
+        # The marker-emitting-only denominator must not appear anywhere.
+        assert "2/3" not in out
+
+    def test_zero_data_reports_marker_compliance_as_no_data_not_as_zero_percent(
+        self, tmp_path: Path
+    ):
+        """0 of 0 dispatches emitting a marker is "no data yet", not "0% compliance" — the same
+        distinction the per-skill 0/0 rows already draw."""
+        result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "marker compliance: 0/0 (no dispatch data yet)" in result.stdout
+        assert "0.0%)" not in result.stdout
 
     def test_missing_citations_file_exits_zero_with_message(self, tmp_path: Path):
         """A known agent (real agents/*.md id) with zero recorded dispatches is an expected,
@@ -534,6 +730,33 @@ class TestPreloadTelemetryCache:
         assert result.returncode == 0, result.stderr
         assert "no cache-probe run data collected yet" in result.stdout
         assert "preload-probe.mjs cache --agent" in result.stdout
+
+    def test_known_agent_with_no_runs_exits_zero(self, tmp_path: Path, real_agent_id):
+        """A real agents/*.md id with zero recorded probe runs is an expected data-coverage
+        gap, not a usage error — exit 0 with an informational message."""
+        result = _run_telemetry(["cache", "--agent", real_agent_id], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "no cache-probe run data collected yet" in result.stdout
+
+    def test_unknown_agent_exits_nonzero_with_error(self, tmp_path: Path):
+        """An --agent id that is not a real agents/*.md id is a usage error — a typo or a
+        nonexistent agent — and must be distinguishable from a real agent with no runs yet
+        (above), which is the same distinction the canary subcommand draws."""
+        result = _run_telemetry(
+            ["cache", "--agent", "totally-not-a-real-agent"], project_dir=tmp_path
+        )
+        assert result.returncode != 0
+        assert "no such agent: totally-not-a-real-agent" in result.stderr
+        # Must not be reported as ordinary "no data yet" coverage output on stdout.
+        assert "no cache-probe run data collected yet" not in result.stdout
+
+    def test_unknown_agent_error_precedes_any_report_output(self, tmp_path: Path):
+        """The usage error must not be buried under the report header."""
+        result = _run_telemetry(
+            ["cache", "--agent", "totally-not-a-real-agent"], project_dir=tmp_path
+        )
+        assert result.returncode != 0
+        assert "== preload-telemetry cache report ==" not in result.stdout
 
 
 def test_telemetry_no_subcommand_exits_nonzero_with_usage():

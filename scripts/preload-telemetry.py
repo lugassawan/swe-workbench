@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""C2/C4 reporter for issue #681's preload instrumentation (Task 6).
+"""Reporter for the preloaded-skill citation and dispatch-cache instruments.
 
 Two subcommands, both stdlib-only and read-only over durable JSONL data other tools already
 write:
 
-  canary  Reads .claude/cache/skill-usage/canary-citations.jsonl (written by Task 5's
-          hooks/skill_usage_flush.sh citation-harvest block) and reports, per (agent, preloaded
-          skill), how often that skill's namespaced id showed up in a dispatch's cited skills.
+  canary  Reads .claude/cache/skill-usage/canary-citations.jsonl (written by
+          hooks/skill_usage_flush.sh's citation-harvest block) and reports, per (agent, preloaded
+          skill), how often that skill's namespaced id showed up in a dispatch's cited skills,
+          alongside how often the citation marker was emitted at all.
 
-  cache   Reads .claude/cache/dispatch-probes/cache-runs.jsonl (written by this same task's
-          additive change to scripts/preload-probe.mjs's live `cache` path) and reports the
-          cold-vs-repeat usage comparison for each recorded run pair.
+  cache   Reads .claude/cache/dispatch-probes/cache-runs.jsonl (written by
+          scripts/preload-probe.mjs's live `cache` path) and reports the cold-vs-repeat usage
+          comparison for each recorded run pair.
 
 Neither subcommand spawns `pi` or any other process — both are pure readers over data other
 tools already produced. Usage:
@@ -102,9 +103,9 @@ def _discover_preload_pairs(agents_dir: Path) -> list[tuple[str, str]]:
     return pairs
 
 
-# Paraphrases (does not omit) the plan's finding: the harness that can collect this data may not
-# be the harness where the citation is actually meaningful. Printed unconditionally, every run —
-# not just for low rates — per the brief.
+# The harness that can collect this data may not be the harness where the citation is actually
+# meaningful. Printed unconditionally, every run — a high rate is just as easy to over-read as a
+# low one, so the caveat must never be conditional on the numbers it qualifies.
 CANARY_CAVEAT = (
     'CAVEAT: a zero or low citation rate below must NOT be read as "the skill is unused." '
     "The harness where preload provably fires (Pi) has no SubagentStop hook — both telemetry "
@@ -153,7 +154,17 @@ def run_canary(agent_filter: str | None) -> int:
         print(f"no citation data collected yet ({citations_path} not found or empty)")
         print()
 
+    # Three counters, deliberately distinct:
+    #   agent_totals  — every recorded dispatch for an agent, marker-emitting or not. This is the
+    #                   denominator the demotion decision rule actually names ("cited in <20% of
+    #                   >=20 sampled dispatches"), so citation rates are computed against it.
+    #   marker_totals — the subset that emitted a SWB-CANARIES-APPLIED line at all. The harvest
+    #                   hook records cited_skills: null for a dispatch where no marker line was
+    #                   found, which is a different fact from cited_skills: [] (the agent
+    #                   explicitly emitted NONE) and must never be folded into it.
+    #   skill_hits    — per (agent, namespaced skill) citation counts.
     agent_totals: dict[str, int] = {}
+    marker_totals: dict[str, int] = {}
     skill_hits: dict[tuple[str, str], int] = {}
     for rec in records:
         if not isinstance(rec, dict):
@@ -164,6 +175,7 @@ def run_canary(agent_filter: str | None) -> int:
         agent_totals[agent_type] = agent_totals.get(agent_type, 0) + 1
         cited = rec.get("cited_skills")
         if isinstance(cited, list):
+            marker_totals[agent_type] = marker_totals.get(agent_type, 0) + 1
             for skill_id in cited:
                 key = (agent_type, skill_id)
                 skill_hits[key] = skill_hits.get(key, 0) + 1
@@ -174,11 +186,21 @@ def run_canary(agent_filter: str | None) -> int:
 
     for agent in universe:
         total = agent_totals.get(agent, 0)
+        with_marker = marker_totals.get(agent, 0)
         skills = by_agent.get(agent, [])
         if total == 0:
             print(f"agent: {agent} — 0 dispatches recorded")
+            print("  marker compliance: 0/0 (no dispatch data yet)")
         else:
             print(f"agent: {agent} — {total} dispatch(es) recorded")
+            compliance = (with_marker / total) * 100
+            # A low marker-compliance rate invalidates the citation rates below far more than it
+            # informs them: it means the trailing instruction is being dropped, not that the
+            # skills are unused. Reported first, on its own line, for exactly that reason.
+            print(
+                f"  marker compliance: {with_marker}/{total} ({compliance:.1f}%) "
+                "emitted a SWB-CANARIES-APPLIED line"
+            )
         for skill in skills:
             namespaced = f"swe-workbench:{skill}"
             cited = skill_hits.get((agent, namespaced), 0)
@@ -204,7 +226,8 @@ _PROBE_HINT = "node --experimental-strip-types scripts/preload-probe.mjs cache -
 def _pair_cache_runs(records: list) -> list[tuple[str, dict, dict]]:
     """Pairs run:1/run:2 records by agent + adjacency in file order (append order), NOT by
     timestamp proximity — a live probe invocation always writes exactly one run:1 then one
-    run:2 record in sequence for its agent, per the brief."""
+    run:2 record in sequence for its agent, so append order is the authoritative pairing and
+    timestamps (which two concurrent invocations could interleave) are not."""
     pending: dict[str, dict] = {}
     pairs: list[tuple[str, dict, dict]] = []
     for rec in records:
@@ -223,7 +246,23 @@ def _pair_cache_runs(records: list) -> list[tuple[str, dict, dict]]:
     return pairs
 
 
+def _known_agent_ids(agents_dir: Path) -> list[str]:
+    """Every agents/*.md id. The `cache` probe can be pointed at any agent (unlike `canary`,
+    whose universe is narrowed to agents that actually preload a skill), so this is the right
+    universe for validating `cache --agent`."""
+    return sorted(p.stem for p in agents_dir.glob("*.md"))
+
+
 def run_cache(agent_filter: str | None) -> int:
+    # An --agent value that isn't a real agents/*.md id is a usage error — a typo'd or
+    # nonexistent agent — and must be distinguishable from a real agent that simply has no
+    # recorded probe runs yet (an expected, non-fatal state that exits 0 below). Same
+    # distinction run_canary already draws, and checked before any report output for the same
+    # reason: a usage error must not get buried under the report header.
+    if agent_filter is not None and agent_filter not in _known_agent_ids(ROOT / "agents"):
+        print(f"no such agent: {agent_filter}", file=sys.stderr)
+        return 1
+
     print("== preload-telemetry cache report ==")
     print()
 
@@ -281,8 +320,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="preload-telemetry.py",
         description=(
-            "C2/C4 reporter for issue #681 preload instrumentation: "
-            "canary citation rates and cache-probe run comparisons."
+            "Preload instrumentation reporter: preloaded-skill citation rates and "
+            "cache-probe run comparisons."
         ),
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)

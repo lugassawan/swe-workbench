@@ -27,7 +27,7 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 /** Chars-per-token divisor for the derived, clearly-"(est.)"-labeled token columns. There is no
  *  tokenizer available in this repo (matches scripts/validate.py's stdlib-only, zero-dependency
@@ -45,6 +45,27 @@ class UsageError extends Error {}
  *  fileURLToPath(new URL("..", import.meta.url)) pattern as preload-probe.mjs's pluginRoot(). */
 function defaultRoot() {
   return fileURLToPath(new URL("..", import.meta.url));
+}
+
+/** Strips any trailing path separator(s) so every root string this script handles reaches
+ *  normalizeRoot() in one canonical form.
+ *
+ *  This is load-bearing, not cosmetic. defaultRoot() always ends in a separator (that is what
+ *  `new URL("..", ...)` produces), while an explicitly-passed `--root` typically does not. Skill
+ *  `dir` values are built with path.join(), which always collapses the separator — so the raw
+ *  composed prompt contains `<root>/skills/<id>` either way. Splitting that text on a root that
+ *  still carries its own trailing separator consumes the separator too, emitting
+ *  `<PLUGIN_ROOT>skills/<id>`; splitting on the canonical form emits `<PLUGIN_ROOT>/skills/<id>`.
+ *  That one-character difference lands in every `Preload chars` cell (one char per preloaded
+ *  skill), so a ledger generated through one convention reads as out-of-sync when checked through
+ *  the other. Canonicalizing once, here, makes the emitted ledger byte-identical either way.
+ *  A lone separator ("/") is left intact — stripping it would produce an empty root. */
+function canonicalizeRoot(root) {
+  let out = root;
+  while (out.length > 1 && (out.endsWith(sep) || out.endsWith("/"))) {
+    out = out.slice(0, -1);
+  }
+  return out;
 }
 
 /** Parses process.argv.slice(2) into { mode, root }. --check and --write are mutually
@@ -69,7 +90,7 @@ function parseArgs(argv) {
       throw new UsageError(`unrecognized argument "${token}"\n${USAGE}`);
     }
   }
-  return { mode: mode ?? "--check", root: root ?? defaultRoot() };
+  return { mode: mode ?? "--check", root: canonicalizeRoot(root ?? defaultRoot()) };
 }
 
 /** Loads pi/extensions/agent-spec.ts via the same pathToFileURL(...).href dynamic-import pattern
@@ -85,11 +106,11 @@ async function loadAgentSpecModule() {
 }
 
 /** Replaces every occurrence of the literal absolute repo root with <PLUGIN_ROOT>. Plain
- *  string split/join (not a regex) since `root` is a known literal, not a pattern — see the
- *  brief's "Root normalization" section: composeSystemPrompt inlines each skill's absolute `dir`
- *  verbatim, so the raw composed text (and its length) would otherwise differ between machines
- *  purely because of repo-path length, making the ledger non-reproducible across a developer
- *  machine and CI. */
+ *  string split/join (not a regex) since `root` is a known literal, not a pattern.
+ *  composeSystemPrompt inlines each skill's absolute `dir` verbatim, so the raw composed text
+ *  (and its length) would otherwise differ between machines purely because of repo-path length,
+ *  making the ledger non-reproducible across a developer machine and CI. `root` must already be
+ *  canonical (no trailing separator) — see canonicalizeRoot above for why that matters. */
 function normalizeRoot(text, root) {
   return text.split(root).join("<PLUGIN_ROOT>");
 }
@@ -109,8 +130,7 @@ function measureAgent(agentSpecModule, root, agentId) {
   // composition also adds the "\n\n---\n\n" join separator and the "## Preloaded skill: ..."
   // header (with its `dir` line) per skill. Those exist only because preloading exists — zero
   // preloaded skills means zero separator/header overhead too — so they are correctly counted
-  // as preload cost, matching what a real dispatch actually sends. See task-3-brief.md's
-  // "What to measure, per agent" section for the full rationale.
+  // as preload cost, matching what a real dispatch actually sends.
   const preloadChars = composed.length - agentBodyChars;
   const preloadSharePct = composed.length === 0 ? 0 : (preloadChars / composed.length) * 100;
 

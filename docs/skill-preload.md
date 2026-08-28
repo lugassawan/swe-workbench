@@ -121,3 +121,11 @@ actually run:
 - The ablation harness (condition 3) — also human-run, same constraint: `node
   --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit
   <skill-id>`, then `scripts/preload-probe.mjs ablate --report` to see the accumulated results.
+
+Everything the last three write accumulates under `.claude/cache/` (`skill-usage/canary-citations.jsonl`, `dispatch-probes/cache-runs.jsonl`, `dispatch-probes/ablation-runs.jsonl`), which is gitignored — that raw data is local to whoever ran the command and is never committed or shared. Only a short human-written summary of a run makes it into the repo, in the section below.
+
+## Recorded measurements
+
+A place to record what the live instruments actually reported, since the raw JSONL never leaves the machine that produced it. After running one of the commands above, add a dated one-liner here naming the agent, the figure, and the date — for example `reviewer: cache-read fraction 0.XX (YYYY-MM-DD)` or `reviewer: principle-i18n cited in N/M dispatches (YYYY-MM-DD)`. This section is hand-maintained; nothing generates it.
+
+_No measurements recorded yet._
