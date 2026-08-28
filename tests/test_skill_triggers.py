@@ -260,7 +260,7 @@ def test_workflow_family_margin(skill_name, prompt, real_corpus, real_index, sib
     )
 
 
-# ── Self-rank margin report (#680) ─────────────────────────────────────
+# ── Self-rank margin report ────────────────────────────────────────────
 
 # Corpus-wide floor for the worst per-skill margin (target score minus the
 # best-scoring non-sibling competitor, computed the same way for every
@@ -268,8 +268,8 @@ def test_workflow_family_margin(skill_name, prompt, real_corpus, real_index, sib
 # sibling-set escape hatch). This is an *early-warning* signal ahead of
 # _SCORE_MARGIN=0.1's hard failure — the same pathology
 # CAP_HEADROOM_WARN_FRACTION already fixed for SKILL.md line caps, applied to
-# descriptions. Measured against the live corpus at authoring time (#680
-# commit 1, before description compression): principle-performance's
+# descriptions. Measured against the live corpus at authoring time (before
+# description compression): principle-performance's
 # "what should I profile before optimizing this slow request" fixture scores
 # 0.05563039534899428 against its best non-sibling competitor
 # (principle-cost-awareness). Rounded down to 4 decimals so float

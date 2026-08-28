@@ -1,4 +1,4 @@
-"""Unit tests for scripts/compress-descriptions.py's internal logic (#680):
+"""Unit tests for scripts/compress-descriptions.py's internal logic:
 the clause splitter, YAML re-serialization, DescriptionFile drop/restore
 symmetry, and the optimizer's longest-first convergence — the pieces that
 are otherwise only exercised indirectly through the resulting description

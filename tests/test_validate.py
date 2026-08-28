@@ -805,7 +805,7 @@ class TestCheckSkillCapHeadroom:
 
 
 # ──────────────────────────────────────────────
-# check_description_budget (#680)
+# check_description_budget
 # ──────────────────────────────────────────────
 
 class TestCheckDescriptionBudget:
@@ -813,7 +813,7 @@ class TestCheckDescriptionBudget:
         # Ratchet: assert the exact measured bound, not "a bound exists" —
         # a regex/inequality check here would let a defeating widening slip
         # through unnoticed. See scripts/validate.py's constant comments for
-        # where these numbers come from (#680 commits 2 and 4).
+        # where these numbers come from.
         assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20436
         assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
         assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900

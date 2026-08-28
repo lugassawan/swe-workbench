@@ -117,7 +117,7 @@ def test_prompt_ranks_target_agent_top1(agent_name, prompt, real_agent_corpus, r
         )
 
 
-# ── Distinctiveness ratchet (#680 R5) ──────────────────────────────────────
+# ── Distinctiveness ratchet ─────────────────────────────────────────────
 
 # Every agent description must retain at least this many tokens that appear
 # in no other agent's description. Measured against the live corpus at

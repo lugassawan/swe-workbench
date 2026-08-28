@@ -2,7 +2,7 @@
 """Compress skill/agent description: frontmatter against the BM25 trigger-fixture suite.
 
 Every Claude Code / Pi session pays for the catalog's description: frontmatter before
-the user types anything (#680). This is a global optimizer, not a per-file editor:
+the user types anything. This is a global optimizer, not a per-file editor:
 descriptions share one BM25 corpus and one avg_dl, so shortening any one description
 perturbs the ranking of all others. It never reimplements BM25 — it imports the scorer
 and the fixture harness directly from tests/test_skill_triggers.py (and, once it
@@ -16,12 +16,12 @@ fixture; it accepts the drop only if the full suite stays green, otherwise resto
 the clause. This repeats to a fixed point (a full pass with zero accepted drops).
 
 This is a *monotone shrink*: a clause, once dropped, is never re-added and no clause
-is ever lengthened. That is what keeps the loop convergent — see #680's plan for why
-a per-token filter with greedy repair does not have this property.
+is ever lengthened. That is what keeps the loop convergent — a per-token filter with
+greedy repair does not have this property.
 
 The optimizer maximises BM25 pass-rate; it does not know which words a human reader
 still needs (file extensions, manifest names, product names). --apply always requires
-a hand review of the diff before it is trustworthy — see #680 commit 2/4.
+a hand review of the diff before it is trustworthy.
 
 Modes:
   --report    Measure current corpus size + print a per-item worst-margin table. Read-only. Default.
@@ -301,7 +301,7 @@ def _skill_margin_table(files, fixtures, sibling_sets):
     return worst
 
 
-# ── Agent-corpus adapter (requires tests/test_agent_triggers.py, added #680 commit 3) ──
+# ── Agent-corpus adapter (requires tests/test_agent_triggers.py) ──
 
 def _load_agent_module():
     import test_agent_triggers as agent_harness

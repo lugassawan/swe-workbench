@@ -26,7 +26,7 @@ PI_SKILL_DESCRIPTION_CAP = 1024
 # failure at 100%.
 CAP_HEADROOM_WARN_FRACTION = 0.90
 
-# Description-frontmatter session-token budgets (#680). PI_SKILL_DESCRIPTION_CAP
+# Description-frontmatter session-token budgets. PI_SKILL_DESCRIPTION_CAP
 # above is a Pi *platform* ceiling on one skill's description string — a hard
 # technical limit unrelated to cost, and it permits 2.4x growth from a typical
 # description before ever failing a build. These three constants are a
@@ -37,19 +37,18 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # check_description_budget() below enforces the catalog-wide cost and an
 # early per-skill warning well ahead of that ceiling.
 #
-# Set from #680's measured, post-review totals (commits 2 and 4): the
-# compression this issue shipped, not the compressor's own unreviewed floor.
+# Set from the catalog's measured, post-review description totals (not the
+# compressor's own unreviewed floor — see scripts/compress-descriptions.py).
 # Adding a 61st skill, a 23rd agent, or lengthening an existing description
 # enough to cross either budget requires consciously raising the constant
 # here, with the reason recorded in that commit — that friction is the point,
-# it is what stands between the catalog and the slow, session-tax growth #680
-# was filed to reverse.
+# it is what stands between the catalog and slow, unnoticed session-tax growth.
 SKILL_DESCRIPTION_BUDGET_CHARS = 20436
 AGENT_DESCRIPTION_BUDGET_CHARS = 6087
 
 # Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP
 # so it warns well before a single description could ever trip that hard
-# platform failure. #680's post-review corpus tops out at 726 chars
+# platform failure. The post-review corpus tops out at 726 chars
 # (workflow-development); this leaves headroom for legitimate growth while
 # still catching one description ballooning long before it could silently
 # eat the whole catalog budget above.
@@ -576,7 +575,7 @@ def _description_char_length(fm):
 
 
 def check_description_budget(cache=None):
-    """Catalog-wide description: session-token budget (#680), plus an early
+    """Catalog-wide description: session-token budget, plus an early
     per-skill warning ahead of PI_SKILL_DESCRIPTION_CAP's hard platform
     failure. See the SKILL_DESCRIPTION_BUDGET_CHARS comment above for why
     this is not redundant with that cap. Never calls fail() for the
