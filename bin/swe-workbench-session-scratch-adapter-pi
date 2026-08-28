@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Pi authorizes no scratch target until a sanctioned contract exists; never derive one
 # from session JSONL.
+# Usage: swe-workbench-session-scratch-adapter-pi
 
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 
 note() {
   printf 'session-scratch-adapter-pi: %s\n' "$*" >&2

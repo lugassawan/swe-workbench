@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Read-only preflight probe for swe-workbench runtime dependencies.
 # Prints a green/red table to stdout. Writes no files. Exits 0 always.
+# Usage: swe-workbench-doctor
 set -uo pipefail  # -e omitted: exit 0 required even when probes fail
                   # -u active: all variables must be initialized before use
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 
 MISSING=0
 

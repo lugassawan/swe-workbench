@@ -8,6 +8,10 @@
 # "issue" posts REPLY_BODY to the PR's top-level conversation (issues/{pr}/comments) instead — used
 # for PR-level comments, which have no thread to resolve. COMMENT_DATABASEID/THREAD_ID are ignored.
 set -euo pipefail
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 # Fast-exit when both reply and resolve are suppressed (both args empty) — nothing to do.
 if [ -z "${6:-}" ] && [ -z "${5:-}" ]; then exit 0; fi
 OWNER="${1:?}"; REPO="${2:?}"; PR="${3:?}"

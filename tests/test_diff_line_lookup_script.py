@@ -11,7 +11,7 @@ Behavioral paths under test:
   - Not-found paths (exit 1): absent entirely, found on a context line, found on a removed line
   - Ambiguity (exit 2): multiple matching `+` lines, stdout empty, all candidates on stderr
   - Git-internal modes: default (git diff HEAD), --staged, --range=<rev>
-  - Wiring: SCRIPTS dict, shellcheck auto-discovery contract, bin/README.md,
+  - Wiring: SCRIPTS dict, shellcheck auto-discovery contract, --help output,
     agents/reviewer.md, workflow-pr-review-post/SKILL.md
 """
 
@@ -409,11 +409,12 @@ def test_shellcheck_coverage_contract_contains_wrapper():
     )
 
 
-def test_bin_readme_has_row():
-    text = (ROOT / "bin" / "README.md").read_text()
-    assert "swe-workbench-diff-line-lookup" in text, (
-        "bin/README.md must document swe-workbench-diff-line-lookup in the current scripts table"
+def test_help_flag_names_the_script():
+    result = subprocess.run(
+        [str(SCRIPT), "--help"], capture_output=True, text=True, env=dict(_CLEAN_ENV)
     )
+    assert result.returncode == 0
+    assert "swe-workbench-diff-line-lookup" in result.stdout
 
 
 def test_reviewer_agent_references_helper():

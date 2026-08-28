@@ -3,6 +3,12 @@
 # Usage: swe-workbench-sync-pr-metadata <pr> <new_title> <body_file>
 # Empty new_title skips --title; empty body_file skips --body-file.
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 PR="${1:?sync-pr-metadata: PR number required}"
 NEW_TITLE="${2:-}"; BODY_FILE="${3:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

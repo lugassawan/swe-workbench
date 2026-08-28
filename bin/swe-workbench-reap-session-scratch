@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # swe-workbench-reap-session-scratch
 # Clear a verified current-session scratch target without removing the target directory.
+# Usage: swe-workbench-reap-session-scratch
 
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 
 note() {
   printf 'reap-session-scratch: %s\n' "$*" >&2

@@ -796,6 +796,7 @@ def test_ask_user_ts_has_no_typebox_import():
 AGENT_SPEC_TS = EXTENSIONS_DIR / "agent-spec.ts"
 MODEL_POLICY_TS = EXTENSIONS_DIR / "model-policy.ts"
 SUBAGENT_TS = EXTENSIONS_DIR / "subagent.ts"
+BIN_SCRIPTS_TS = EXTENSIONS_DIR / "bin-scripts.ts"
 
 
 def test_agent_spec_ts_never_references_pi():
@@ -817,6 +818,16 @@ def test_model_policy_ts_never_references_pi():
     text = MODEL_POLICY_TS.read_text(encoding="utf-8")
     assert "pi-coding-agent" not in text, "model-policy.ts must not reference the Pi SDK at all"
     assert "node:child_process" not in text, "model-policy.ts must not spawn processes — that is subagent.ts's job"
+
+
+def test_bin_scripts_ts_never_references_pi():
+    """bin-scripts.ts is the domain layer for the generated bin/ inventory preamble section:
+    pure text generation from node:fs/node:path only, no Pi SDK reference and no process
+    spawning — index.ts owns composing it into the system prompt. Same posture, same test
+    shape, as test_agent_spec_ts_never_references_pi above."""
+    text = BIN_SCRIPTS_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text, "bin-scripts.ts must not reference the Pi SDK at all"
+    assert "node:child_process" not in text, "bin-scripts.ts must not spawn processes — that is index.ts's job"
 
 
 _TRANSLATION_TABLE_DRIVER = """

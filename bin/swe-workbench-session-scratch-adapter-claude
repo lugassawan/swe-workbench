@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Claude authorizes only /tmp/claude-<uid>/<project>/<session>/scratchpad;
 # the core owns deletion after independently validating this descriptor.
+# Usage: swe-workbench-session-scratch-adapter-claude
 
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 
 note() {
   printf 'session-scratch-adapter-claude: %s\n' "$*" >&2

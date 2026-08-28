@@ -40,6 +40,11 @@
 # genuine partial failure is expressed through status/data, not the exit code.
 set -euo pipefail
 
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 SWEPT_WORKTREES=0
 SWEPT_STATE_FILES=0
 SWEPT_RUN_DIRS=0

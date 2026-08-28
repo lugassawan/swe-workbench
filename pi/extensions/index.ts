@@ -27,11 +27,12 @@
  *     `_ctx` argument, which kills the `PI_SESSION_ID`/`PI_MODEL`/`PI_PROVIDER` env vars the bash
  *     tool's own guidelines tell the model to read. Do not copy that pattern verbatim.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask-user.ts";
+import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
@@ -63,34 +64,6 @@ function composePreamble(sections: { title: string; body: string }[]): string {
   );
 }
 
-/** Extracts the body of bin/README.md's "## Current scripts" section, up to the next "## " heading. */
-function extractCurrentScripts(readmeText: string): string | null {
-  const heading = "## Current scripts";
-  const start = readmeText.indexOf(heading);
-  if (start === -1) return null;
-  const rest = readmeText.slice(start + heading.length);
-  const nextHeadingOffset = rest.indexOf("\n## ");
-  const body = nextHeadingOffset === -1 ? rest : rest.slice(0, nextHeadingOffset);
-  return body.trim();
-}
-
-/**
- * Reads bin/README.md and extracts the "## Current scripts" section. Returns null on any
- * failure (file missing/unreadable, or heading missing) — this is a doc file, not load-bearing
- * for PATH exposure or skill discovery, so its absence must degrade only the bin-scripts row of
- * the preamble, never take down the whole extension or the rest of the preamble (in particular,
- * toolVocabSection's content — including the anti-hallucination rule — must still be injected).
- */
-function readCurrentScripts(binDir: string): string | null {
-  let readmeText: string;
-  try {
-    readmeText = readFileSync(join(binDir, "README.md"), "utf8");
-  } catch {
-    return null;
-  }
-  return extractCurrentScripts(readmeText);
-}
-
 export default function (pi: ExtensionAPI): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = findPluginRoot(here);
@@ -101,17 +74,13 @@ export default function (pi: ExtensionAPI): void {
     process.env.PATH = [...pathEntries, binDir].join(delimiter);
   }
 
-  // Only the bin-scripts section depends on bin/README.md; toolVocabSection is pure and never
-  // fails, so it must NOT be dragged down by a missing/unreadable README — Tier-1 vocabulary
-  // prose (including the anti-hallucination rule) stays on unconditionally, same posture as
-  // ask-user.ts's kill switch. composePreamble (via getPreamble() below) is still computed
-  // exactly once per session (cached after first call), so the single PREAMBLE_MARKER dedup
-  // check keeps proving something real.
-  const currentScripts = readCurrentScripts(binDir);
-  const binSection =
-    currentScripts === null
-      ? []
-      : [{ title: "swe-workbench bin/ scripts (bare commands, already on PATH)", body: currentScripts }];
+  // toolVocabSection is pure and never fails, so it must NOT be dragged down by an
+  // unreadable/empty bin/ — Tier-1 vocabulary prose (including the anti-hallucination rule)
+  // stays on unconditionally, same posture as ask-user.ts's kill switch. composePreamble (via
+  // getPreamble() below) is still computed exactly once per session (cached after first call),
+  // so the single PREAMBLE_MARKER dedup check keeps proving something real.
+  const generatedBinSection = binScriptsSection(root);
+  const generatedSection = generatedBinSection === null ? [] : [generatedBinSection];
 
   let warnedMissingAnchor = false;
   let cachedPreamble: string | undefined;
@@ -125,7 +94,7 @@ export default function (pi: ExtensionAPI): void {
   function getPreamble(): string {
     if (cachedPreamble === undefined) {
       const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);
-      cachedPreamble = composePreamble([...binSection, toolVocabSection(root, taskToolRegistered)]);
+      cachedPreamble = composePreamble([...generatedSection, toolVocabSection(root, taskToolRegistered)]);
     }
     return cachedPreamble;
   }
@@ -136,10 +105,10 @@ export default function (pi: ExtensionAPI): void {
   }));
 
   pi.on("session_start", (_event, ctx: ExtensionContext) => {
-    if (currentScripts === null && !warnedMissingAnchor && ctx.hasUI) {
+    if (generatedBinSection === null && !warnedMissingAnchor && ctx.hasUI) {
       warnedMissingAnchor = true;
       ctx.ui.notify(
-        "swe-workbench: bin/README.md's '## Current scripts' section could not be read — the " +
+        "swe-workbench: bin/ could not be read (or has no swe-workbench-* scripts) — the " +
           "bin/ script inventory will not be injected into the system prompt this session.",
         "warning",
       );

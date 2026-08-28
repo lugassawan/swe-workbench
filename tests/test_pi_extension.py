@@ -26,8 +26,9 @@ INDEX_TS = ROOT / "pi" / "extensions" / "index.ts"
 GUARDS_TS = ROOT / "pi" / "extensions" / "guards.ts"
 GUARD_RUNNER_TS = ROOT / "pi" / "extensions" / "guard-runner.ts"
 TOOL_VOCAB_TS = ROOT / "pi" / "extensions" / "tool-vocab.ts"
+BIN_SCRIPTS_TS = ROOT / "pi" / "extensions" / "bin-scripts.ts"
+BIN_DIR = ROOT / "bin"
 ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
-BIN_README = ROOT / "bin" / "README.md"
 SKILLS_DIR = ROOT / "skills"
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
@@ -220,17 +221,6 @@ def test_package_json_has_no_dependencies_key():
     assert "dependencies" not in data
 
 
-def test_bin_readme_current_scripts_section_has_a_terminating_heading():
-    text = BIN_README.read_text(encoding="utf-8")
-    start = text.find("## Current scripts")
-    assert start != -1, "bin/README.md must contain the literal '## Current scripts' heading"
-    next_heading = text.find("\n## ", start + len("## Current scripts"))
-    assert next_heading != -1, (
-        "a later '## ' heading must terminate the Current scripts section so extraction "
-        "in pi/extensions/index.ts has a well-defined end"
-    )
-
-
 def test_index_ts_has_no_hardcoded_root_hop():
     text = INDEX_TS.read_text(encoding="utf-8")
     assert '"../.."' not in text and "'../..'" not in text, (
@@ -278,10 +268,10 @@ def test_path_gains_bin_dir_exactly_once_after_two_factory_invocations(extension
 
 
 @requires_node
-def test_before_agent_start_injects_marker_and_first_script_row(extension_result):
+def test_before_agent_start_injects_marker_and_a_bin_script_id(extension_result):
     injected = extension_result["firstInjection"]["systemPrompt"]
     assert "<!-- swe-workbench:pi-bin-preamble -->" in injected
-    assert "swe-workbench-clean-ephemeral" in injected
+    assert "swe-workbench-doctor" in injected
 
 
 @requires_node
@@ -355,19 +345,20 @@ def test_before_agent_start_does_not_duplicate_on_already_injected_prompt(extens
 
 
 @requires_node
-def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
-    """A missing bin/README.md must not take down PATH exposure or skill discovery.
+def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
+    """A bin/ directory with zero swe-workbench-* entries must not take down PATH exposure or
+    skill discovery — binScriptsSection() returns null in this case (same fail-soft posture as
+    an unreadable bin/), so only the bin-scripts row of the preamble disappears.
 
-    Regression test: the extension used to read bin/README.md unguarded, so a missing file
-    threw synchronously inside the factory — which fails the whole extension, not just the
-    bin-scripts row of the preamble (the one failure mode the code already degrades for). The
-    rest of the preamble — tool-vocab.ts's content, including the anti-hallucination rule —
-    must still be injected; only the bin-scripts row disappears.
+    Regression test: the extension used to read bin/README.md unguarded for this same row, so a
+    missing file threw synchronously inside the factory — which failed the whole extension, not
+    just this one row. The rest of the preamble — tool-vocab.ts's content, including the
+    anti-hallucination rule — must still be injected regardless.
     """
     synthetic_root = tmp_path_factory.mktemp("pi-synthetic-root")
     (synthetic_root / ".claude-plugin").mkdir()
     (synthetic_root / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
-    (synthetic_root / "bin").mkdir()  # deliberately no README.md
+    (synthetic_root / "bin").mkdir()  # deliberately empty — zero swe-workbench-* entries
     (synthetic_root / "skills").mkdir()
     synthetic_index = synthetic_root / "pi" / "extensions" / "index.ts"
     synthetic_index.parent.mkdir(parents=True)
@@ -377,6 +368,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
         "cc-payload.ts",
         "guard-runner.ts",
         "tool-vocab.ts",
+        "bin-scripts.ts",
         "ask-user.ts",
         "agent-spec.ts",
         "model-policy.ts",
@@ -388,7 +380,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
         )
 
-    driver = tmp_path_factory.mktemp("pi-extension-driver-missing-readme") / "driver.mjs"
+    driver = tmp_path_factory.mktemp("pi-extension-driver-empty-bin") / "driver.mjs"
     driver.write_text(_DRIVER, encoding="utf-8")
     node = shutil.which("node")
     assert node is not None
@@ -408,7 +400,7 @@ def test_missing_bin_readme_degrades_gracefully(tmp_path_factory):
     assert str(synthetic_root / "bin") in parsed["pathEntries"]
     injected = parsed["firstInjection"]["systemPrompt"]
     assert "<!-- swe-workbench:pi-bin-preamble -->" in injected
-    assert "swe-workbench-clean-ephemeral" not in injected, "bin-scripts row must be absent"
+    assert "swe-workbench-doctor" not in injected, "bin-scripts row must be absent"
     assert "Claude Code -> Pi tool vocabulary" in injected, "tool-vocab section must still inject"
 
 
@@ -975,6 +967,67 @@ def test_tool_vocab_generated_skill_id_list_matches_disk(tmp_path_factory):
     on_disk = sorted(p.parent.name for p in SKILLS_DIR.glob("*/SKILL.md"))
     for skill_id in on_disk:
         assert skill_id in section["body"], f"{skill_id} missing from the generated skill legend"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural: bin-scripts.ts. Pure text generation from the real bin/ directory — no stub
+# `pi`/`ctx` needed, but still imported through Node under --experimental-strip-types since it
+# is a .ts module. Same driver shape as _TOOL_VOCAB_DRIVER above.
+# ---------------------------------------------------------------------------
+
+_BIN_SCRIPTS_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, root] = process.argv;
+const mod = await import(pathToFileURL(modPath).href);
+const section = mod.binScriptsSection(root);
+console.log(JSON.stringify(section));
+"""
+
+
+def _bin_scripts_section(root, tmp_path_factory):
+    return _run_node(
+        _BIN_SCRIPTS_DRIVER, [str(BIN_SCRIPTS_TS), str(root)], tmp_path_factory, label="pi-bin-scripts-driver"
+    )
+
+
+@requires_node
+def test_bin_scripts_section_lists_every_script_on_disk(tmp_path_factory):
+    section = _bin_scripts_section(ROOT, tmp_path_factory)
+    assert section["title"] == "swe-workbench bin/ scripts (bare commands, already on PATH)"
+    on_disk = sorted(
+        p.name for p in BIN_DIR.iterdir() if p.is_file() and p.name.startswith("swe-workbench-")
+    )
+    for script_id in on_disk:
+        assert script_id in section["body"], f"{script_id} missing from the generated bin-scripts section"
+
+
+@requires_node
+def test_bin_scripts_section_names_lsp_and_its_subcommands(tmp_path_factory):
+    """swe-workbench-lsp is the sole CAPABILITY_ROWS entry — its subcommands must reach the
+    generated section verbatim, since this is the sole channel by which a Pi session learns the
+    script (and what it can do) exists."""
+    section = _bin_scripts_section(ROOT, tmp_path_factory)
+    assert "swe-workbench-lsp" in section["body"]
+    for subcommand in ["refs", "def", "impl", "callers", "callees", "hover", "symbols", "wsymbols", "check"]:
+        assert subcommand in section["body"], f"missing LSP subcommand {subcommand!r}"
+
+
+@requires_node
+def test_bin_scripts_section_is_null_when_bin_dir_has_no_scripts(tmp_path_factory):
+    empty_bin = tmp_path_factory.mktemp("pi-bin-scripts-empty")
+    section = _bin_scripts_section(empty_bin, tmp_path_factory)
+    assert section is None
+
+
+@requires_node
+def test_before_agent_start_injects_generated_bin_scripts_section(extension_result):
+    """Wiring assertion: the generated section's content (not just the old splice's) actually
+    reaches firstInjection.systemPrompt via the real index.ts composition."""
+    injected = extension_result["firstInjection"]["systemPrompt"]
+    assert "swe-workbench-lsp" in injected
+    for subcommand in ["refs", "def", "impl", "callers", "callees", "hover", "symbols", "wsymbols", "check"]:
+        assert subcommand in injected, f"missing LSP subcommand {subcommand!r} in injected preamble"
 
 
 @requires_node
