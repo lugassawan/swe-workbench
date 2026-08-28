@@ -15,6 +15,7 @@ small helper across more than one test file).
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from conftest import _CLEAN_ENV
 ROOT = Path(__file__).parent.parent
 PROBE = ROOT / "scripts" / "preload-probe.mjs"
 FLUSH_SH = ROOT / "hooks" / "skill_usage_flush.sh"
+TELEMETRY = ROOT / "scripts" / "preload-telemetry.py"
 
 
 def _node_major_version():
@@ -46,14 +48,14 @@ requires_node = pytest.mark.skipif(
 )
 
 
-def _run_probe(args, **kwargs):
+def _run_probe(args, env=None, **kwargs):
     node = shutil.which("node")
     assert node is not None
     return subprocess.run(
         [node, "--experimental-strip-types", str(PROBE), *args],
         capture_output=True,
         text=True,
-        env=_CLEAN_ENV,
+        env=env if env is not None else _CLEAN_ENV,
         timeout=30,
         **kwargs,
     )
@@ -323,3 +325,177 @@ class TestCanaryCitationHarvest:
         records = _read_citation_records(canary_cache_dir)
         assert len(records) == 1
         assert records[0]["cited_skills"] == ["swe-workbench:principle-clean-code"]
+
+
+# ---------------------------------------------------------------------------
+# Task 6 (C2/C4 reporter) — Part A: preload-probe.mjs cache --dry-run must
+# remain side-effect free even with the new live-path cache-runs.jsonl append
+# added by this task. Part B: scripts/preload-telemetry.py's canary and cache
+# subcommands.
+# ---------------------------------------------------------------------------
+
+
+@requires_node
+def test_cache_dry_run_writes_no_cache_runs_file(tmp_path: Path, real_agent_id):
+    """--dry-run must exit before any file I/O beyond argv construction — this is the one new
+    behavioural assertion Task 6 needs for Part A (the live-append path itself cannot be
+    exercised without a real `pi` dispatch, out of scope here as it was for Task 2)."""
+    env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    result = _run_probe(["cache", "--agent", real_agent_id, "--dry-run"], env=env)
+    assert result.returncode == 0, f"probe failed: {result.stderr}"
+    assert not (tmp_path / ".claude" / "cache" / "dispatch-probes").exists()
+    assert not (tmp_path / ".claude" / "cache" / "dispatch-probes" / "cache-runs.jsonl").exists()
+
+
+def _run_telemetry(args, project_dir=None):
+    env = dict(_CLEAN_ENV)
+    if project_dir is not None:
+        env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+    return subprocess.run(
+        [sys.executable, str(TELEMETRY), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+
+class TestPreloadTelemetryCanary:
+    def _citations_file(self, project_dir: Path) -> Path:
+        path = project_dir / ".claude" / "cache" / "skill-usage" / "canary-citations.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_citation_rate_and_zero_citation_row(self, tmp_path: Path):
+        """Hand-constructed scenario against the real 'reviewer' agent's real preloaded skills
+        (agents/*.md discovery is fixed to this repo's own tree, not redirectable — only the
+        citations JSONL data directory is redirected via CLAUDE_PROJECT_DIR).
+
+        reviewer preloads (among others) swe-workbench:principle-code-review and
+        swe-workbench:principle-clean-code. 4 synthetic dispatches: principle-code-review cited
+        in 2 of them (hand calc: 2/4 = 50.0%), principle-clean-code cited in 0 of them (must
+        still get its own 0/4 row, not be omitted).
+        """
+        lines = [
+            {
+                "agent_type": "reviewer",
+                "cited_skills": [
+                    "swe-workbench:principle-code-review",
+                    "swe-workbench:principle-solid",
+                ],
+                "agent_id": "r1",
+            },
+            {
+                "agent_type": "reviewer",
+                "cited_skills": ["swe-workbench:principle-code-review"],
+                "agent_id": "r2",
+            },
+            {"agent_type": "reviewer", "cited_skills": [], "agent_id": "r3"},
+            {
+                "agent_type": "reviewer",
+                "cited_skills": ["swe-workbench:principle-solid"],
+                "agent_id": "r4",
+            },
+        ]
+        path = self._citations_file(tmp_path)
+        path.write_text("\n".join(json.dumps(rec) for rec in lines) + "\n")
+
+        result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+
+        assert "reviewer" in out and "4 dispatch(es) recorded" in out
+        assert "swe-workbench:principle-code-review: 2/4 (50.0%)" in out
+        assert "swe-workbench:principle-clean-code: 0/4 (0.0%)" in out
+        # The caveat must be present unconditionally, not just for low rates.
+        assert "CAVEAT:" in out
+        assert "SubagentStop" in out
+
+    def test_missing_citations_file_exits_zero_with_message(self, tmp_path: Path):
+        result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "no citation data collected yet" in result.stdout
+        # A skill with no data yet still gets its own distinct 0/0 row, not omitted.
+        assert "swe-workbench:principle-code-review: 0/0" in result.stdout
+        assert "CAVEAT:" in result.stdout
+
+    def test_corrupted_line_is_skipped_not_fatal(self, tmp_path: Path):
+        path = self._citations_file(tmp_path)
+        good = {
+            "agent_type": "reviewer",
+            "cited_skills": ["swe-workbench:principle-code-review"],
+            "agent_id": "r1",
+        }
+        path.write_text(json.dumps(good) + "\n" + "not valid json {\n")
+
+        result = _run_telemetry(["canary", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "skipped 1 malformed line" in result.stdout
+        # The rest of the file is still processed and reported.
+        assert "swe-workbench:principle-code-review: 1/1 (100.0%)" in result.stdout
+
+
+class TestPreloadTelemetryCache:
+    def _cache_runs_file(self, project_dir: Path) -> Path:
+        path = project_dir / ".claude" / "cache" / "dispatch-probes" / "cache-runs.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_pairing_and_cache_read_fraction_reporting(self, tmp_path: Path):
+        run1 = {
+            "agent": "reviewer",
+            "run": 1,
+            "usage": {
+                "input": 1000,
+                "output": 50,
+                "cacheRead": 0,
+                "cacheWrite": 900,
+                "cost": {"input": 0.01, "output": 0.002, "cacheRead": 0.0, "cacheWrite": 0.015, "total": 0.027},
+            },
+            "cacheReadFraction": 0.0,
+            "ts": "2026-01-01T00:00:00.000Z",
+        }
+        run2 = {
+            "agent": "reviewer",
+            "run": 2,
+            "usage": {
+                "input": 100,
+                "output": 50,
+                "cacheRead": 900,
+                "cacheWrite": 0,
+                "cost": {"input": 0.001, "output": 0.002, "cacheRead": 0.0009, "cacheWrite": 0.0, "total": 0.0039},
+            },
+            "cacheReadFraction": 0.9,
+            "ts": "2026-01-01T00:00:05.000Z",
+        }
+        path = self._cache_runs_file(tmp_path)
+        path.write_text(json.dumps(run1) + "\n" + json.dumps(run2) + "\n")
+
+        result = _run_telemetry(["cache", "--agent", "reviewer"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+
+        assert "agent: reviewer" in out
+        assert "cacheRead=0" in out
+        assert "cacheRead=900" in out
+        assert "cacheReadFraction=0.0" in out
+        assert "cacheReadFraction=0.9" in out
+        assert "cache: YES — run 2 showed cache-read activity (cacheRead > 0)" in out
+
+    def test_missing_cache_runs_file_exits_zero_pointing_at_probe_command(self, tmp_path: Path):
+        result = _run_telemetry(["cache"], project_dir=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert "no cache-probe run data collected yet" in result.stdout
+        assert "preload-probe.mjs cache --agent" in result.stdout
+
+
+def test_telemetry_no_subcommand_exits_nonzero_with_usage():
+    result = _run_telemetry([])
+    assert result.returncode != 0
+    assert "canary" in result.stderr and "cache" in result.stderr
+
+
+def test_telemetry_unknown_subcommand_exits_nonzero():
+    result = _run_telemetry(["bogus"])
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr

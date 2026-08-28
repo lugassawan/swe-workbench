@@ -29,7 +29,7 @@
  *     via this probe's own `--model` flag.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -170,6 +170,46 @@ function cacheReadFraction(usage) {
   return denom === 0 ? 0 : usage.cacheRead / denom;
 }
 
+/** Resolves the cache-runs directory the same way hooks/skill_usage_flush.sh's `cache_dir`
+ *  resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`) — same
+ *  env-var-or-cwd fallback, different leaf directory (issue #681 C4: durable cache-probe run
+ *  records live in dispatch-probes/, not skill-usage/). */
+function cacheRunsDir() {
+  const base = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  return join(base, ".claude", "cache", "dispatch-probes");
+}
+
+/** Appends one JSON record for a single dispatch run to cache-runs.jsonl — live path only, one
+ *  call per run (two per invocation). `preload-telemetry.py cache` reads these back to report a
+ *  durable, aggregable cache-vs-fresh comparison (this task's controller ruling — see
+ *  task-6-brief.md). Never throws: an append failure (permissions, disk) is a warning on stderr,
+ *  not a reason to fail the whole probe — the human-readable summary this script already prints
+ *  to stdout is still the primary output. No-ops (nothing to record, nothing to warn about) when
+ *  `usage` is null, i.e. no message_update line was found for that run. */
+function appendCacheRunRecord(agent, run, usage) {
+  if (!usage) return;
+  const record = {
+    agent,
+    run,
+    usage: {
+      input: usage.input,
+      output: usage.output,
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
+      cost: usage.cost,
+    },
+    cacheReadFraction: cacheReadFraction(usage),
+    ts: new Date().toISOString(),
+  };
+  try {
+    const dir = cacheRunsDir();
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "cache-runs.jsonl"), `${JSON.stringify(record)}\n`);
+  } catch (err) {
+    console.error(`preload-probe: warning: failed to append cache-run record: ${err.message}`);
+  }
+}
+
 function formatRunSummary(label, usage) {
   const lines = [`${label}:`];
   if (!usage) {
@@ -209,6 +249,9 @@ async function main(argv) {
 
     const firstUsage = lastMessageUpdateUsage(firstStdout);
     const secondUsage = lastMessageUpdateUsage(secondStdout);
+
+    appendCacheRunRecord(agent, 1, firstUsage);
+    appendCacheRunRecord(agent, 2, secondUsage);
 
     console.log(formatRunSummary("run 1 (cold)", firstUsage));
     console.log(formatRunSummary("run 2 (repeat, same prefix)", secondUsage));
