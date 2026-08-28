@@ -5,6 +5,8 @@
 # On timeout, exits 124 and prints a diagnostic to stderr so a stall is not misreported
 # by a caller (e.g. swe-workbench-fetch-pr's "PR not found" branch).
 # Usage: swe-workbench-gh-timeout <gh-subcommand> [args...]
+# A sole --help/-h argument prints this header instead of running gh — pass a subcommand first
+# (e.g. `swe-workbench-gh-timeout api --help`) to reach gh's own --help for that subcommand.
 set -euo pipefail
 
 if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then

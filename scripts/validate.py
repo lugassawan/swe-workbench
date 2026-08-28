@@ -1782,6 +1782,7 @@ def check_bin_wrappers():
 
 _BASH_HELP_MARKER = "awk 'NR>1 && /^#/"
 _PY_HELP_MARKER_RE = re.compile(r'\(\s*"--help",\s*"-h"\s*\)')
+_PY_ARGPARSE_RE = re.compile(r'\bimport argparse\b|\bargparse\.ArgumentParser\(')
 
 
 def check_bin_help_flags():
@@ -1805,7 +1806,7 @@ def check_bin_help_flags():
         except OSError:
             continue
         if text.startswith("#!/usr/bin/env python3"):
-            if "argparse" in text:
+            if _PY_ARGPARSE_RE.search(text):
                 continue
             if not (_PY_HELP_MARKER_RE.search(text) and "__doc__" in text):
                 fail(
