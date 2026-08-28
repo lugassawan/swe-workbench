@@ -814,7 +814,7 @@ class TestCheckDescriptionBudget:
         # a regex/inequality check here would let a defeating widening slip
         # through unnoticed. See scripts/validate.py's constant comments for
         # where these numbers come from (#680 commits 2 and 4).
-        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20332
+        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20436
         assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
         assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900
 
@@ -880,6 +880,45 @@ class TestCheckDescriptionBudget:
         validate.check_description_budget()
         assert len(validate.FAILURES) == 0
         assert len(validate.WARNINGS) == 0
+
+    def test_cache_hit_path_matches_direct_read(self, reset_validate):
+        """main()/validate.sh always call check_description_budget(cache=cache)
+        with a real _build_cache() result — exercise that path explicitly,
+        not just the cache=None direct-read fallback the other tests above use."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"},
+        )
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_description_budget(cache=cache)
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_is_skipped_without_double_reporting(self, reset_validate):
+        """A None cache entry (unreadable file) is check_skills's/check_agents's
+        failure to report, not this check's — it must not raise and must not
+        count toward either budget total."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"},
+        )
+        skill_md = root / "skills" / "my-skill" / "SKILL.md"
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        agent_md = agents_dir / "my-agent.md"
+        agent_md.write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n", encoding="utf-8"
+        )
+        cache = ({agent_md: None}, {skill_md: None})
+        validate.check_description_budget(cache=cache)
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────

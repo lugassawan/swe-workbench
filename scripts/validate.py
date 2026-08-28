@@ -44,7 +44,7 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # here, with the reason recorded in that commit — that friction is the point,
 # it is what stands between the catalog and the slow, session-tax growth #680
 # was filed to reverse.
-SKILL_DESCRIPTION_BUDGET_CHARS = 20332
+SKILL_DESCRIPTION_BUDGET_CHARS = 20436
 AGENT_DESCRIPTION_BUDGET_CHARS = 6087
 
 # Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP

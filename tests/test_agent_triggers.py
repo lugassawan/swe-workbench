@@ -70,6 +70,17 @@ assert _AGENT_FIXTURES, (
     "check that tests/fixtures/agent_triggers/*.txt files exist"
 )
 
+# Every agents/*.md must have a matching fixture file — otherwise a new
+# agent silently gets zero coverage from this whole harness instead of a
+# loud failure here.
+_agents_on_disk = {p.stem for p in _AGENTS_DIR.glob("*.md")}
+_agents_with_fixtures = {name for name, _ in _AGENT_FIXTURES}
+_MISSING_AGENT_FIXTURES = _agents_on_disk - _agents_with_fixtures
+assert not _MISSING_AGENT_FIXTURES, (
+    f"agents/*.md with no tests/fixtures/agent_triggers/<name>.txt: "
+    f"{sorted(_MISSING_AGENT_FIXTURES)}"
+)
+
 # Minimum BM25 score gap between #1 and #2 when the target agent ranks top.
 # Reuses the same value skills use (tests/test_skill_triggers.py's
 # _SCORE_MARGIN) rather than defining an independent constant, since it is

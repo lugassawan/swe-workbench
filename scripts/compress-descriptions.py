@@ -95,7 +95,17 @@ def _serialize_value(new_text: str, original_raw_value: str) -> str:
     """Re-emit new_text in the same YAML scalar style the original value used."""
     if original_raw_value.startswith('"'):
         escaped = new_text.replace("\\", "\\\\").replace('"', '\\"')
-        return '"' + escaped + '"'
+        serialized = '"' + escaped + '"'
+        # Only \\ and " are re-escaped above; assert the round-trip explicitly
+        # rather than silently write a line that would decode to something
+        # other than new_text — relevant if a future description ever needs
+        # one of the other escapes validate._parse_double_quoted_description
+        # decodes (e.g. \n, \uXXXX), which this function does not re-encode.
+        decoded = validate._parse_double_quoted_description(serialized)
+        assert decoded == new_text, (
+            f"double-quote re-serialization round-trip mismatch: {decoded!r} != {new_text!r}"
+        )
+        return serialized
     if original_raw_value.startswith("'"):
         return "'" + new_text.replace("'", "''") + "'"
     # Plain scalar — verify it still round-trips as plain (a merged clause
@@ -261,6 +271,15 @@ def _make_skill_suite_passes(fixtures, sibling_sets):
                 skill_name, prompt, corpus, index, sibling_sets
             ):
                 return False
+        # Also gate on the corpus-wide margin-report ratchet
+        # (test_self_rank_margin_report's _MEASURED_MIN_MARGIN) — without
+        # this, the optimizer could accept a sequence of drops that stays
+        # green against the top-1/family checks above yet fails that test
+        # once actually run. Mirrors _make_agent_suite_passes() folding in
+        # _distinctiveness_passes() for the same reason.
+        worst_margins = skill_harness._self_rank_worst_margins(corpus, index, fixtures, sibling_sets)
+        if worst_margins and min(worst_margins.values()) < skill_harness._MEASURED_MIN_MARGIN:
+            return False
         return True
 
     return _passes
@@ -361,10 +380,16 @@ def _agent_margin_table(agent_harness, files, fixtures):
 def _optimize(files, suite_passes_fn, log=lambda *a: None):
     """Monotone-shrink global optimizer: longest-clause-first, full-suite
     re-evaluation, accept only on a fully green suite. Repeats to a fixed
-    point. Position-based candidate indices can go briefly stale within a
-    single pass when an earlier same-file drop shifts later indices — that
-    self-heals because the candidate list is rebuilt fresh every pass and the
-    loop runs to a fixed point (zero accepted drops in a full pass)."""
+    point. Position-based candidate indices go stale within a single pass
+    when an earlier same-file drop shifts later indices — both the
+    out-of-range case (pos no longer exists) and the in-range-but-wrong-
+    clause case (pos now names a neighbor that shifted into that slot) are
+    guarded by re-checking the recorded length against the clause actually
+    at pos before trial-dropping it, so a stale candidate is skipped rather
+    than silently dropping a different clause than the one its place in the
+    longest-first sort order was earned by. Skipped candidates are retried
+    next pass against a freshly rebuilt candidate list; the loop runs to a
+    fixed point (zero accepted drops in a full pass)."""
     total_dropped = 0
     pass_num = 0
     while True:
@@ -378,9 +403,9 @@ def _optimize(files, suite_passes_fn, log=lambda *a: None):
             break
         candidates.sort(key=lambda c: -c[0])
         accepted_this_pass = 0
-        for _, name, pos in candidates:
+        for expected_len, name, pos in candidates:
             df = files[name]
-            if pos >= len(df.clauses):
+            if pos >= len(df.clauses) or len(df.clauses[pos]) != expected_len:
                 continue
             undo = df.drop(pos)
             if suite_passes_fn(files, changed_name=name):
@@ -454,9 +479,14 @@ def _print_diff(files):
         df = files[name]
         if not df.dirty():
             continue
+        # Diff the actual serialized value --apply would write, not the bare
+        # description text — a drop that trips the plain-scalar-safety
+        # fallback (switching an unquoted description to quoted) must be
+        # visible in --dry-run output before --apply writes it.
+        after_value = _serialize_value(df.render(), df.raw_value)
         diff = difflib.unified_diff(
-            [df.original_description + "\n"],
-            [df.render() + "\n"],
+            [df.raw_value + "\n"],
+            [after_value + "\n"],
             fromfile=f"{name} (before)",
             tofile=f"{name} (after)",
         )
