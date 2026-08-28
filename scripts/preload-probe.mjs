@@ -184,7 +184,7 @@ function resolveSystemPrompt(agentSpecModule, root, agent) {
 /** `agents/*.md`'s `skills:` entries are namespaced (`swe-workbench:<id>`), per
  *  pi/extensions/agent-spec.ts's `AgentSpec.skillIds`. That file's own `bareSkillId()` helper
  *  (strips the `swe-workbench:` prefix) is private/unexported, so this is the same one-line
- *  strip re-implemented locally, per this task's brief — not an import of a private helper. */
+ *  strip re-implemented locally here — not an import of a private helper. */
 const SKILL_NAMESPACE_PREFIX = "swe-workbench:";
 function bareSkillId(skillId) {
   return skillId.startsWith(SKILL_NAMESPACE_PREFIX) ? skillId.slice(SKILL_NAMESPACE_PREFIX.length) : skillId;
@@ -213,8 +213,7 @@ function resolveAblateArms(agentSpecModule, root, agent, omitBare) {
 
 /** Lists `*.diff` files (sorted, for determinism) directly under `corpusDir`. Throws a clear
  *  error if the directory doesn't exist/isn't readable, or exists but contains no `*.diff`
- *  files — both are "clear error, non-zero exit" cases per this task's brief, not silently
- *  treated as an empty corpus. */
+ *  files — both are clear, non-zero-exit errors, not silently treated as an empty corpus. */
 function listCorpusDiffFiles(corpusDir) {
   let entries;
   try {
@@ -315,13 +314,13 @@ function lastMessageUpdateUsage(ndjson) {
 
 // extractFinalAssistantText, parsePipeDelimitedFindings, and SEVERITY_RANK now live in
 // ./preload-probe-lib.mjs (imported above) — factored out so the pipe-delimited finding parser
-// is a standalone, independently-testable pure function, per this task's brief.
+// is a standalone, independently-testable pure function.
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
- *  — same env-var-or-cwd fallback, different leaf directory (issue #681 C4: durable dispatch-probe
- *  run records live in dispatch-probes/, not skill-usage/). Shared by both `cache-runs.jsonl`
- *  (Task 6) and `ablation-runs.jsonl` (this task) — same directory, sibling files. */
+ *  — same env-var-or-cwd fallback, different leaf directory: durable dispatch-probe run records
+ *  live in dispatch-probes/, not skill-usage/. Shared by both `cache-runs.jsonl` and
+ *  `ablation-runs.jsonl` — same directory, sibling files. */
 function cacheRunsDir() {
   const base = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   return join(base, ".claude", "cache", "dispatch-probes");
@@ -360,10 +359,10 @@ function appendCacheRunRecord(agent, run, usage) {
 
 /** Appends one JSON record for a single ablate dispatch arm to ablation-runs.jsonl (sibling of
  *  cache-runs.jsonl, same directory-resolution/mkdir -p logic reused via cacheRunsDir() rather
- *  than duplicated). Record shape is exactly what this task's brief specifies:
- *  `{diff, agent, omitted, findings[]}`, with `omitted: null` for the baseline arm and
- *  `omitted: "<bare-skill-id>"` (the exact string the caller passed to `--omit`) for the omit
- *  arm. Same never-throws-on-append-failure posture as appendCacheRunRecord. */
+ *  than duplicated). Record shape: `{diff, agent, omitted, findings[]}`, with `omitted: null` for
+ *  the baseline arm and `omitted: "<bare-skill-id>"` (the exact string the caller passed to
+ *  `--omit`) for the omit arm. Same never-throws-on-append-failure posture as
+ *  appendCacheRunRecord. */
 function appendAblationRunRecord(diffFilename, agent, omitted, findings) {
   const record = { diff: diffFilename, agent, omitted, findings };
   try {

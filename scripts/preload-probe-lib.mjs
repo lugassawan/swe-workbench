@@ -17,24 +17,56 @@ export const SEVERITY_RANK = { Critical: 4, High: 3, Medium: 2, Low: 1 };
  *  requires ("No <domain> issues found in this diff."): zero findings, not a parse failure. */
 const NO_ISSUES_SENTENCE_RE = /^No .+ issues found in this diff\.$/;
 
+/** The literal field separator severity-output-contract.md's format uses:
+ *  `Severity | File:Line | Issue | Why it matters | Suggested fix`. A field's own text can
+ *  legitimately contain a bare `|` character (e.g. a Suggested fix mentioning a TypeScript union
+ *  type like `string | number`), so the delimiter search below only treats `|` as a field
+ *  boundary when it appears in this exact space-pipe-space form — a bare `|` with no surrounding
+ *  space is left untouched inside whichever field it falls in. */
+const FIELD_SEPARATOR = " | ";
+const FIELD_COUNT = 5;
+
+/** Splits one line into exactly FIELD_COUNT fields by finding the first (FIELD_COUNT - 1)
+ *  occurrences of FIELD_SEPARATOR, left to right, and treating everything after the last one as
+ *  the final field's raw content — deliberately NOT splitting on every bare `|` character.
+ *  Returns null if the line doesn't contain enough separator occurrences to produce
+ *  FIELD_COUNT fields (i.e. it isn't a well-formed finding line at all). Any `|` remaining inside
+ *  the fifth field (or, if an earlier field's own text happens to contain a " | " sequence, one
+ *  misattributed to an earlier boundary) is a known, accepted limitation of this line-oriented
+ *  heuristic — see parsePipeDelimitedFindings's own docs for why exact parsing isn't attempted. */
+function splitFindingFields(line) {
+  const fields = [];
+  let rest = line;
+  for (let i = 0; i < FIELD_COUNT - 1; i++) {
+    const idx = rest.indexOf(FIELD_SEPARATOR);
+    if (idx === -1) return null;
+    fields.push(rest.slice(0, idx).trim());
+    rest = rest.slice(idx + FIELD_SEPARATOR.length);
+  }
+  fields.push(rest.trim());
+  return fields;
+}
+
 /** Parses an agent's response text into structured findings per
  *  shared/agents/severity-output-contract.md's pipe-delimited format:
  *  `Severity | File:Line | Issue | Why it matters | Suggested fix`, one finding per line.
- *  Tolerant by design: splits on lines, trims whitespace around each `|`, and silently skips any
- *  line that isn't a well-formed 5-field finding (headers, prose, blank lines) — including the
- *  Silence rule's "No X issues found in this diff." sentence, which is zero findings, not an
+ *  Tolerant by design: splits on lines, trims whitespace around each field, and silently skips
+ *  any line that isn't a well-formed 5-field finding (headers, prose, blank lines) — including
+ *  the Silence rule's "No X issues found in this diff." sentence, which is zero findings, not an
  *  error. A line is only accepted as a finding if its first field is one of the four known
- *  severity tiers, which is what keeps stray prose containing pipe characters (e.g. a markdown
- *  table cell inside a "Suggested fix" code block on its own line) from being misparsed as a 6th
- *  "finding". */
+ *  severity tiers, which is what keeps stray prose containing the field separator (e.g. a
+ *  markdown table row) from being misparsed as a finding. Splitting is delimiter-based (see
+ *  splitFindingFields), not "split on every `|`" — a field's own text (most often Suggested fix,
+ *  e.g. a TypeScript union type like `string | number`) can contain a bare pipe without breaking
+ *  the parse or silently dropping the finding. */
 export function parsePipeDelimitedFindings(responseText) {
   const findings = [];
   for (const rawLine of (responseText ?? "").split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     if (NO_ISSUES_SENTENCE_RE.test(line)) continue;
-    const parts = line.split("|").map((part) => part.trim());
-    if (parts.length !== 5) continue;
+    const parts = splitFindingFields(line);
+    if (!parts) continue;
     const [severity, fileLine, issue, whyItMatters, suggestedFix] = parts;
     if (!(severity in SEVERITY_RANK)) continue;
     if (!fileLine || !issue) continue;
@@ -47,8 +79,8 @@ export function parsePipeDelimitedFindings(responseText) {
  *  `ablate` needs (the pipe-delimited findings live in this text), as opposed to
  *  preload-probe.mjs's `lastMessageUpdateUsage`, which only needs the numeric usage block.
  *
- *  Event-shape source (inspected directly, per this task's brief, since nothing in this repo
- *  already extracted final assistant text from a JSON-mode event stream):
+ *  Event-shape source (inspected directly, since nothing in this repo already extracted final
+ *  assistant text from a JSON-mode event stream):
  *    - node_modules/@earendil-works/pi-coding-agent/dist/modes/json-event.d.ts: every session
  *      event the `AgentSessionEvent` union produces is JSON.stringify(toJsonEvent(event))'d to
  *      stdout, one per line (dist/modes/print-mode.js's `session.subscribe` callback) — not just
@@ -95,9 +127,9 @@ export function extractFinalAssistantText(ndjson) {
 
 /** Compares one omit-arm's findings against the matching baseline's findings for the same diff.
  *
- *  Matching heuristic (approximate BY DESIGN, per this task's brief — two independent LLM
- *  dispatches reviewing the same diff will not produce byte-identical prose, so findings can't be
- *  matched by exact-equality): match findings by their `fileLine` field. Both arms review the
+ *  Matching heuristic (approximate BY DESIGN — two independent LLM dispatches reviewing the same
+ *  diff will not produce byte-identical prose, so findings can't be matched by exact-equality):
+ *  match findings by their `fileLine` field. Both arms review the
  *  exact same diff text, so a real finding's file:line reference should be stable across the two
  *  dispatches even when the wording of `Issue`/`Why it matters`/`Suggested fix` varies. A
  *  baseline finding whose `fileLine` has no corresponding entry in the omit arm's findings is

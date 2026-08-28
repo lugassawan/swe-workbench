@@ -69,8 +69,8 @@ def _call_lib_function(fn_name, *fn_args):
     returns its JSON-decoded return value, via a tiny `node -e` snippet that imports the module
     and calls it. No `pi` dispatch, no filesystem I/O, no CLI parsing — preload-probe-lib.mjs has
     no side effects at import time (unlike preload-probe.mjs itself), so this is a plain function
-    call at the JS level, matching the brief's requirement that the pipe-delimited parser be
-    independently testable without a process spawn beyond invoking node itself."""
+    call at the JS level — the pipe-delimited parser is independently testable this way without a
+    process spawn beyond invoking node itself."""
     node = shutil.which("node")
     assert node is not None
     snippet = (
@@ -549,10 +549,9 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 
 
 # ---------------------------------------------------------------------------
-# Task 7 (C3 ablation harness) — the `ablate` subcommand added to
-# preload-probe.mjs (run mode + report mode), plus the standalone pure
-# helpers factored into preload-probe-lib.mjs. No test spawns real `pi` —
-# same constraint as Tasks 2 and 6.
+# preload-probe.mjs's `ablate` subcommand (run mode + report mode), plus the standalone pure
+# helpers factored into preload-probe-lib.mjs. No test spawns real `pi` — same constraint the
+# `cache` subcommand's own tests above follow.
 # ---------------------------------------------------------------------------
 
 
@@ -622,6 +621,26 @@ class TestParsePipeDelimitedFindings:
         findings = _call_lib_function("parsePipeDelimitedFindings", text)
         assert findings == []
 
+    @requires_node
+    def test_bare_pipe_inside_a_field_does_not_drop_the_finding(self):
+        """A finding whose Suggested fix text contains a bare `|` (realistic for a TypeScript
+        review, e.g. recommending a union type like `string | number`) must still be parsed as
+        one finding, with that pipe preserved as literal content in the field — not silently
+        dropped because the line no longer splits into exactly 5 parts on every `|`."""
+        text = (
+            "Medium | e.ts:12 | Overly broad parameter type | Callers can pass unexpected values "
+            "| Narrow the parameter to `string | number` instead of `any`\n"
+        )
+        findings = _call_lib_function("parsePipeDelimitedFindings", text)
+        assert len(findings) == 1
+        assert findings[0] == {
+            "severity": "Medium",
+            "fileLine": "e.ts:12",
+            "issue": "Overly broad parameter type",
+            "whyItMatters": "Callers can pass unexpected values",
+            "suggestedFix": "Narrow the parameter to `string | number` instead of `any`",
+        }
+
 
 @requires_node
 def test_ablate_dry_run_reports_both_arms_prefix_lengths_and_confirms_pure_subset(real_agent_id):
@@ -678,7 +697,7 @@ def test_ablate_dry_run_unknown_omit_skill_fails_fast_naming_actual_skills(real_
     )
     assert result.returncode != 0
     assert "totally-not-a-preloaded-skill" in result.stderr
-    # The error must name the agent's actual preloaded skill ids, per the brief.
+    # The error must name the agent's actual preloaded skill ids so the caller can pick a real one.
     assert "principle-ddd" in result.stderr
     assert "principle-code-review" in result.stderr
 
