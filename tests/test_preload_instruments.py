@@ -104,3 +104,28 @@ def test_unknown_subcommand_fails():
     result = _run_probe(["ablate", "--agent", "reviewer", "--dry-run"])
     assert result.returncode != 0
     assert "cache" in result.stderr
+
+
+_PRELOAD_CANARY_BEGIN = "<!-- BEGIN shared/agents/preload-canary-citation.md -->"
+_PRELOAD_CANARY_END = "<!-- END shared/agents/preload-canary-citation.md -->"
+
+
+def test_all_agents_carry_the_preload_canary_citation_block():
+    """Task 4 (C2 emit) inlines shared/agents/preload-canary-citation.md into every agents/*.md
+    file via the sentinel-block mechanism. No Node/`pi` involvement needed here — this is a plain
+    text-shape assertion over the static agent files, so it does not need `requires_node`."""
+    agents_dir = ROOT / "agents"
+    agent_files = sorted(agents_dir.glob("*.md"))
+    assert len(agent_files) == 22, f"expected 22 agents/*.md files, found {len(agent_files)}"
+
+    for path in agent_files:
+        text = path.read_text()
+        assert _PRELOAD_CANARY_BEGIN in text, f"{path.name} missing BEGIN sentinel"
+        assert _PRELOAD_CANARY_END in text, f"{path.name} missing END sentinel"
+
+        begin_idx = text.index(_PRELOAD_CANARY_BEGIN) + len(_PRELOAD_CANARY_BEGIN)
+        end_idx = text.index(_PRELOAD_CANARY_END)
+        assert begin_idx < end_idx, f"{path.name} has END before BEGIN"
+
+        inner = text[begin_idx:end_idx].strip()
+        assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"

@@ -165,3 +165,14 @@ reading or writing, when one exists for that language. Invoke it via the `Skill`
 <!-- END shared/agents/language-skill-required.md -->
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections above actually shaped
+your guidance, as opposed to skills that were merely present. End your response with this line,
+last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

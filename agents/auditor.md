@@ -164,3 +164,13 @@ through the language server's semantic index.
 > output), state `LSP unavailable — falling back to Grep` once and use Grep
 > for the remainder of this run. Do not retry.
 <!-- END shared/agents/lsp.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections above actually shaped
+your guidance, as opposed to skills that were merely present. End your response with this line,
+last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

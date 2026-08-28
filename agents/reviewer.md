@@ -210,3 +210,13 @@ Group findings by severity, highest first: Critical → High → Medium → Low.
 
 If no findings, say so explicitly: "No \<domain\> issues found in this diff." Silence is not a passing grade.
 <!-- END shared/agents/severity-output-contract.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections above actually shaped
+your guidance, as opposed to skills that were merely present. End your response with this line,
+last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

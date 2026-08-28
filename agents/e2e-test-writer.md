@@ -104,3 +104,14 @@ reading or writing, when one exists for that language. Invoke it via the `Skill`
 3. **Specs written** — count and names.
 4. **Run-readiness** — the exact command to run the suite and any prerequisites (dev server, env vars).
 5. **What was NOT covered and why** — e.g., "auth flow requires live OAuth provider", "payment form behind feature flag".
+
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections above actually shaped
+your guidance, as opposed to skills that were merely present. End your response with this line,
+last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

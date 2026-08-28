@@ -14,6 +14,7 @@ EXPECTED_SHARED_AGENT_STEMS = {
     "language-skill-required",
     "languages",
     "lsp",
+    "preload-canary-citation",
     "principles",
     "severity-output-contract",
     "skill-catalog-pointer",
