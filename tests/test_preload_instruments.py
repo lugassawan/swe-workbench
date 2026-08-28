@@ -23,6 +23,7 @@ from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 PROBE = ROOT / "scripts" / "preload-probe.mjs"
+FLUSH_SH = ROOT / "hooks" / "skill_usage_flush.sh"
 
 
 def _node_major_version():
@@ -129,3 +130,170 @@ def test_all_agents_carry_the_preload_canary_citation_block():
 
         inner = text[begin_idx:end_idx].strip()
         assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (C2 harvest) — hooks/skill_usage_flush.sh reads back
+# SWB-CANARIES-APPLIED and appends canary-citations.jsonl.
+#
+# Fixture/subprocess pattern mirrors tests/test_skill_usage_telemetry.py
+# (same hook, same env wiring), duplicated here rather than imported since
+# that file's fixtures are function-scoped and private to its module.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def canary_plugin_root(tmp_path: Path) -> Path:
+    """Minimal plugin dir with an agents/reviewer.md (no opt-out)."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "reviewer.md").write_text(
+        "---\nname: reviewer\nmodel: sonnet\n---\nReviewer body.\n"
+    )
+    return tmp_path
+
+
+@pytest.fixture()
+def canary_cache_dir(tmp_path: Path) -> Path:
+    """Isolated cache directory; CLAUDE_PROJECT_DIR points here."""
+    d = tmp_path / "project"
+    d.mkdir()
+    return d
+
+
+def _canary_env(plugin_root: Path, cache_dir: Path) -> dict:
+    env = dict(_CLEAN_ENV)
+    env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+    env["CLAUDE_PROJECT_DIR"] = str(cache_dir)
+    return env
+
+
+def _run_flush_for_canary(
+    stdin_json: dict, plugin_root: Path, cache_dir: Path
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(FLUSH_SH)],
+        input=json.dumps(stdin_json),
+        capture_output=True,
+        text=True,
+        env=_canary_env(plugin_root, cache_dir),
+    )
+
+
+def _citations_file(cache_dir: Path) -> Path:
+    return cache_dir / ".claude" / "cache" / "skill-usage" / "canary-citations.jsonl"
+
+
+def _read_citation_records(cache_dir: Path) -> list[dict]:
+    path = _citations_file(cache_dir)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+class TestCanaryCitationHarvest:
+    def test_citation_marker_appends_jsonl_record(self, canary_plugin_root, canary_cache_dir):
+        """A last_assistant_message ending in the marker line appends a JSONL
+        record with the parsed, namespaced skill ids."""
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-001",
+                "agent_type": "reviewer",
+                "last_assistant_message": (
+                    "Some analysis here.\n"
+                    "SWB-CANARIES-APPLIED: swe-workbench:principle-ddd, "
+                    "swe-workbench:principle-tdd"
+                ),
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["agent_type"] == "reviewer"
+        assert records[0]["agent_id"] == "cite-001"
+        assert records[0]["cited_skills"] == [
+            "swe-workbench:principle-ddd",
+            "swe-workbench:principle-tdd",
+        ]
+
+    def test_citation_marker_none_appends_empty_list(self, canary_plugin_root, canary_cache_dir):
+        """SWB-CANARIES-APPLIED: NONE → a record with an empty cited_skills array."""
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-002",
+                "agent_type": "reviewer",
+                "last_assistant_message": "Nothing applied.\nSWB-CANARIES-APPLIED: NONE",
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["cited_skills"] == []
+
+    def test_missing_last_assistant_message_is_silent_noop(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """No last_assistant_message field at all → exits 0, emits the same {}
+        the existing skill-usage flush emits for an agent with no buffer, and
+        never creates canary-citations.jsonl."""
+        result = _run_flush_for_canary(
+            {"agent_id": "cite-003", "agent_type": "reviewer"},
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        assert json.loads(result.stdout) == {}
+        assert not _citations_file(canary_cache_dir).exists()
+
+    def test_message_without_marker_line_is_noop(self, canary_plugin_root, canary_cache_dir):
+        """last_assistant_message present but no SWB-CANARIES-APPLIED line →
+        no citation record written, hook still exits 0."""
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-004",
+                "agent_type": "reviewer",
+                "last_assistant_message": "Just an ordinary response with no marker.",
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        assert _read_citation_records(canary_cache_dir) == []
+
+    def test_citation_harvest_does_not_disturb_existing_buffer_flush(
+        self, canary_plugin_root, canary_cache_dir
+    ):
+        """Regression: when both a citation marker AND a skill-usage buffer
+        file are present, the pre-existing buffer-flush systemMessage
+        behaviour is unaffected by the new citation-harvest logic."""
+        skill_cache = canary_cache_dir / ".claude" / "cache" / "skill-usage"
+        skill_cache.mkdir(parents=True)
+        today = __import__("datetime").date.today().strftime("%Y%m%d")
+        buf = skill_cache / f"{today}-cite-005.txt"
+        buf.write_text("swe-workbench:principle-clean-code\n")
+
+        result = _run_flush_for_canary(
+            {
+                "agent_id": "cite-005",
+                "agent_type": "reviewer",
+                "last_assistant_message": (
+                    "Body.\nSWB-CANARIES-APPLIED: swe-workbench:principle-clean-code"
+                ),
+            },
+            canary_plugin_root,
+            canary_cache_dir,
+        )
+        assert result.returncode == 0
+        out = json.loads(result.stdout)
+        assert "systemMessage" in out
+        assert "Skills used by reviewer" in out["systemMessage"]
+        assert "swe-workbench:principle-clean-code" in out["systemMessage"]
+        assert not buf.exists(), "buffer should still be deleted after flush"
+
+        records = _read_citation_records(canary_cache_dir)
+        assert len(records) == 1
+        assert records[0]["cited_skills"] == ["swe-workbench:principle-clean-code"]

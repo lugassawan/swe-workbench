@@ -16,6 +16,40 @@ agent_type=$(printf '%s' "$input" | jq -r '.agent_type // empty')
 [[ "$agent_id" =~ ^[A-Za-z0-9_-]+$ ]] || { printf '{}'; exit 0; }
 [[ "$agent_type" =~ ^[A-Za-z0-9_-]+$ ]] || { printf '{}'; exit 0; }
 
+cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
+
+# --- Preload citation harvest (issue #681 C2) -------------------------------
+# Independent of the skill-usage-buffer flush below, and NOT gated on the
+# skill_telemetry opt-out check further down: SWB-CANARIES-APPLIED citations
+# are a distinct signal (which preloaded skills actually shaped the
+# subagent's response) from the Skill-tool usage buffer that opt-out exists
+# for, so a telemetry-opted-out agent still gets its citations harvested.
+last_msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // empty')
+if [ -n "$last_msg" ]; then
+  citation_line=$(printf '%s\n' "$last_msg" | grep -E '^SWB-CANARIES-APPLIED:' | tail -n1)
+  if [ -n "$citation_line" ]; then
+    captured=$(printf '%s\n' "$citation_line" | sed -E 's/^SWB-CANARIES-APPLIED:[[:space:]]*//')
+    cited_json=$(jq -n --arg raw "$captured" '
+      ($raw | gsub("^\\s+|\\s+$"; "")) as $trimmed
+      | if ($trimmed == "NONE" or $trimmed == "") then []
+        else ($trimmed | split(",") | map(gsub("^\\s+|\\s+$"; "")))
+        end
+    ' 2>/dev/null)
+    if [ -n "$cited_json" ]; then
+      citation_record=$(jq -nc \
+        --arg agent_type "$agent_type" \
+        --arg agent_id "$agent_id" \
+        --argjson cited_skills "$cited_json" \
+        '{agent_type: $agent_type, cited_skills: $cited_skills, agent_id: $agent_id}' 2>/dev/null)
+      if [ -n "$citation_record" ]; then
+        mkdir -p "$cache_dir" 2>/dev/null
+        printf '%s\n' "$citation_record" >>"$cache_dir/canary-citations.jsonl" 2>/dev/null || true
+      fi
+    fi
+  fi
+fi
+# --- end preload citation harvest -------------------------------------------
+
 # Scope + opt-out (same gates as the record hook).
 plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 agent_file="$plugin_root/agents/$agent_type.md"
@@ -23,8 +57,6 @@ agent_file="$plugin_root/agents/$agent_type.md"
 if head -20 "$agent_file" | grep -Eq '^skill_telemetry:[[:space:]]*false[[:space:]]*$'; then
   printf '{}'; exit 0
 fi
-
-cache_dir="${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage"
 
 # Buffer may span today's and yesterday's date-stamped file (straddle midnight).
 # The 8-digit bracket prefix is intentional: without it, "*-foo.txt" greedily
