@@ -143,7 +143,7 @@ the portable `effort:` frontmatter it also resolves into a thinking level.
 
 ---
 
-## Always-on token surface pass — 2026-08-28 (#679)
+## Always-on token surface pass — 2026-08-28
 
 Closeout measurement for the always-on token surface umbrella, which opened on a 48-character Pi
 prompt costing 16,369 input tokens (swe-workbench ≈ 10,922, 67%). All three child tracks — budget
