@@ -107,9 +107,11 @@ they leave conditional (see "How much of a catalog is preloaded" above).
 
 ### Running the instruments
 
-Four scripts back the conditions above. Each one's own `--help`/usage output and top-of-file
+Four scripts back the conditions above. Each one's own `USAGE`/`--help` output and top-of-file
 comments are the authoritative reference; this is just a pointer to the invocations a reader would
-actually run:
+actually run. `dispatch-ledger.mjs` and `preload-probe.mjs` have no dedicated `--help` handler and
+only print a `USAGE` block on an unrecognized argument; `preload-telemetry.py` has a proper
+`argparse` `--help`.
 
 - The static ledger (condition 1): `node --experimental-strip-types scripts/dispatch-ledger.mjs --check`
   (and `--write` to regenerate `docs/dispatch-ledger.md`).
@@ -128,4 +130,14 @@ Everything the last three write accumulates under `.claude/cache/` (`skill-usage
 
 A place to record what the live instruments actually reported, since the raw JSONL never leaves the machine that produced it. After running one of the commands above, add a dated one-liner here naming the agent, the figure, and the date — for example `reviewer: cache-read fraction 0.XX (YYYY-MM-DD)` or `reviewer: principle-i18n cited in N/M dispatches (YYYY-MM-DD)`. This section is hand-maintained; nothing generates it.
 
-_No measurements recorded yet._
+- **all agents: preload share 72.6% (222,950 agent-body chars vs. 589,781 preload chars,
+  ~147,445 est. preload tokens across 22 agents) (2026-08-28)** — the static figure
+  (`docs/dispatch-ledger.md`, condition 1). Worst offenders: `swe-workbench:senior-engineer` 90.8%,
+  `swe-workbench:architect` 89.7%, `swe-workbench:reviewer` 86.9%.
+
+The two **live** figures — citation rate (condition 2) and cache-read fraction (condition 4) —
+remain uncollected; both require a human-run instrument in an interactive terminal (see "Running
+the instruments" above) and are tracked in a filed follow-up issue. Until they're collected,
+conditions 2 and 4 of the `## Demotion decision rule` above are unsatisfiable, so **no skill can
+legitimately be demoted yet** — that is a statement about what hasn't been measured, not that
+nothing has.
