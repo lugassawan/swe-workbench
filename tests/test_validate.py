@@ -805,6 +805,84 @@ class TestCheckSkillCapHeadroom:
 
 
 # ──────────────────────────────────────────────
+# check_description_budget (#680)
+# ──────────────────────────────────────────────
+
+class TestCheckDescriptionBudget:
+    def test_constants_exact_values(self):
+        # Ratchet: assert the exact measured bound, not "a bound exists" —
+        # a regex/inequality check here would let a defeating widening slip
+        # through unnoticed. See scripts/validate.py's constant comments for
+        # where these numbers come from (#680 commits 2 and 4).
+        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20332
+        assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
+        assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900
+
+    def test_skills_under_budget_no_failure(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root, skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"}
+        )
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+
+    def test_skills_over_budget_fails(self, reset_validate):
+        root = reset_validate
+        # "word " * 5000 minus the trailing space is 24999 chars, over the
+        # 20332-char SKILL_DESCRIPTION_BUDGET_CHARS total.
+        long_desc = ("word " * 5000).strip()
+        make_plugin_tree(
+            root, skills={"my-skill": f"---\nname: my-skill\ndescription: {long_desc}\n---\n"}
+        )
+        validate.check_description_budget()
+        assert any("total skill description budget exceeded" in f for f in validate.FAILURES)
+
+    def test_per_skill_over_cap_warns_but_never_fails(self, reset_validate):
+        root = reset_validate
+        # 849 chars: over 90% of PER_SKILL_DESCRIPTION_CAP_CHARS (810) but
+        # under the cap itself (900) and nowhere near the 20332 total budget.
+        desc = ("word " * 170).strip()
+        make_plugin_tree(
+            root, skills={"my-skill": f"---\nname: my-skill\ndescription: {desc}\n---\n"}
+        )
+        validate.check_description_budget()
+        assert any("per-skill budget cap" in w for w in validate.WARNINGS)
+        assert len(validate.FAILURES) == 0
+
+    def test_agents_under_budget_no_failure(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n",
+            encoding="utf-8",
+        )
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+
+    def test_agents_over_budget_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        # "word " * 2000 minus the trailing space is 9999 chars, over the
+        # 6087-char AGENT_DESCRIPTION_BUDGET_CHARS total.
+        long_desc = ("word " * 2000).strip()
+        (agents_dir / "my-agent.md").write_text(
+            f"---\nname: my-agent\ndescription: {long_desc}\n---\n",
+            encoding="utf-8",
+        )
+        validate.check_description_budget()
+        assert any("total agent description budget exceeded" in f for f in validate.FAILURES)
+
+    def test_malformed_frontmatter_skipped(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": "No frontmatter\n"})
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+        assert len(validate.WARNINGS) == 0
+
+
+# ──────────────────────────────────────────────
 # check_orchestrator_flag_earned (#568)
 # ──────────────────────────────────────────────
 
