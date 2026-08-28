@@ -140,3 +140,68 @@ themselves) are harness-agnostic — they apply to Pi the same as Claude Code. H
 to an actual model differs, though: see `cost-tiers.md`'s "On the Pi Coding Agent" section for
 `pi/extensions/model-policy.ts`'s exact-id (not cost-based) resolution, its 3-provider scope, and
 the portable `effort:` frontmatter it also resolves into a thinking level.
+
+---
+
+## Always-on token surface pass — 2026-08-28
+
+Closeout measurement for the always-on token surface umbrella, which opened on a 48-character Pi
+prompt costing 16,369 input tokens (swe-workbench ≈ 10,922, 67%). All three child tracks — budget
++ compress always-on descriptions, instrument per-dispatch preload cost, replace the `bin/README.md`
+Pi splice — shipped by `836a723`. This section re-attributes the 16,369 baseline against the
+actually-landed compression, in place of the umbrella's opening projection. Measured at `836a723`,
+4.0 chars/token (the same rate the opening measurement used), via
+`python3 scripts/compress-descriptions.py --report` / `--agents --report`, and a Node one-liner
+importing `binScriptsSection()` / `toolVocabSection()` from `pi/extensions/`.
+
+| Component | Baseline | Now | Δ tokens |
+|---|---|---|---|
+| 60 skill `description:` fields | 25,474 ch / 6,368 tok | 20,436 ch / 5,109 tok | **−1,259** |
+| `bin/` listing spliced into Pi | 8,210 ch / 2,052 tok | 1,210 ch / 303 tok | **−1,749** |
+| 22 agent `description:` fields | 6,150 ch / 1,537 tok | 6,087 ch / 1,522 tok | −15 |
+| `tool-vocab` incl. `skillLegendSection` | ~3,860 ch / 965 tok | 3,568 ch / 892 tok | −73 |
+| **swe-workbench Pi subtotal** | **10,922 tok** | **7,826 tok** | **−3,096 (−28%)** |
+| Pi cold start, 48-char prompt | 16,369 tok | **~13,273 tok** (derived) | **−19%** |
+| Claude Code always-on (skills + agents) | 7,905 tok | **6,631 tok** | **−16%** |
+
+Two honesty notes on the numbers above:
+
+- The Pi cold-start figure is **derived** (baseline minus measured component deltas), not a fresh
+  live Pi measurement — `hooks/bash_guard.sh` blocks a nested non-interactive `pi` session by
+  design.
+- `skillLegendSection` turned out to live *inside* `toolVocabSection`
+  (`pi/extensions/tool-vocab.ts:120`), so the opening measurement's two separate rows
+  (636 + 329 tok) are one row now. The baseline above is combined accordingly.
+
+**The shortfall vs. the opening projection (~10,900–11,600, −29–34%) is real but was a deliberate
+choice, not a failure.** The projection assumed a prototype "Rule B" compression (−71% on skill
+descriptions). The description-compression track's hand review found that optimizer had gutted
+load-bearing `Auto-load when …` trigger clauses and the agents' `Invoke when X, not Y`
+disambiguation, and restored most of it — landing −20% instead. This is exactly what risk R2
+(below) predicted.
+
+Track C's dispatch-prefix pool is now measured for the first time — see `docs/dispatch-ledger.md`:
+22 agents, 222,950 agent-body chars vs. 589,781 preload chars = **72.6% preload share**, ~147,445
+estimated preload tokens. Worst offenders: `swe-workbench:senior-engineer` 90.8%,
+`swe-workbench:architect` 89.7%, `swe-workbench:reviewer` 86.9%.
+
+### Risk dispositions
+
+| # | Risk | Disposition |
+|---|---|---|
+| R1 | Dispatch prefix caches well → Track C premise collapses | **OPEN** — needs a human-run cache probe (`scripts/preload-probe.mjs cache`). Gates all further Track-C work; tracked in a filed follow-up issue. |
+| R2 | Suite can't survive target compression | **Materialized as predicted.** Response applied: budget set to the largest value passing with zero exemptions; `tests/skill_sibling_sets.txt` unchanged by the compression. |
+| R3 | Description length isn't what's billed | **Not triggered.** Startup fell by ≈ the sum of Track A's and Track B's measured component cuts — attribution holds. |
+| R4 | Bare-id `bin/` listing degrades Pi behavior | **No signal observed.** `CAPABILITY_ROWS` still holds exactly one entry (`swe-workbench-lsp`). |
+| R5 | Agent-description compression regresses routing, no detector | **Response executed.** `tests/test_agent_triggers.py` and its 69 fixtures landed before any agent-description compression. |
+
+### Governance gap (recorded, not fixed)
+
+Track A's ratchets are live in `scripts/validate.py`: `SKILL_DESCRIPTION_BUDGET_CHARS = 20436`,
+`AGENT_DESCRIPTION_BUDGET_CHARS = 6087`, `PER_SKILL_DESCRIPTION_CAP_CHARS = 900`, plus
+`dispatch-ledger.mjs --check` wired into CI. But `binScriptsSection` (303 tok) and
+`toolVocabSection` (892 tok) are bounded by nothing — no char or token assertion exists in
+`tests/test_bin_scripts.py` or `tests/test_pi_extension.py`. `tool-vocab` is the second-largest
+swe-workbench Pi contributor and can grow unbounded, which is the exact failure mode the umbrella
+opened with (ratchet machinery pointed at the wrong surface). Out of scope for this pass by
+deliberate choice; a candidate for a future ratchet issue.
