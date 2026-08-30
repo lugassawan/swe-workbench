@@ -109,10 +109,17 @@ Print the returned checkpoint id and warning. Recovery is truthful degraded salv
 
 ## Close
 
-Run the exact lifecycle pipeline:
+Authenticate close with the same harness and canonical receiver session that acquired the lease. Run exactly one pipeline:
 
 ```bash
-swe-workbench-handoff close "<checkpoint-id>" \
+# Claude receiver
+swe-workbench-handoff close "<checkpoint-id>" --as claude \
+  --session-ref "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" \
+  | swe-workbench-result-check swb.handoff/1
+
+# Pi receiver
+swe-workbench-handoff close "<checkpoint-id>" --as pi \
+  --session-ref "${PI_SESSION_ID:?missing PI_SESSION_ID}" \
   | swe-workbench-result-check swb.handoff/1
 ```
 

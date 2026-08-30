@@ -871,7 +871,10 @@ def test_close_rejects_a_stale_checkpoint_without_releasing_the_current_lease(tm
     first_id = _planned_checkpoint(repo, state_dir, "close-stale-first")
     acquired_first = _resume(repo, state_dir, first_id, "--as", "pi", "--receiver-session", "pi-s1")
     assert acquired_first.returncode == 0, acquired_first.stderr
-    closed_first = _run_handoff("close", first_id, cwd=repo, env=_env_for(state_dir))
+    closed_first = _run_handoff(
+        "close", first_id, "--as", "pi", "--session-ref", "pi-s1",
+        cwd=repo, env=_env_for(state_dir),
+    )
     assert closed_first.returncode == 0, closed_first.stderr
 
     second_input = _create_input("close-stale-second")
@@ -887,12 +890,67 @@ def test_close_rejects_a_stale_checkpoint_without_releasing_the_current_lease(tm
     )
     assert acquired_second.returncode == 0, acquired_second.stderr
 
-    stale_close = _run_handoff("close", first_id, cwd=repo, env=_env_for(state_dir))
+    stale_close = _run_handoff(
+        "close", first_id, "--as", "claude", "--session-ref", "claude-s2",
+        cwd=repo, env=_env_for(state_dir),
+    )
 
     assert stale_close.returncode != 0
     lease = json.loads(next(state_dir.glob("workspaces/*/*/lease.json")).read_text())
     assert lease["checkpoint_id"] == second_id
     assert lease["owner_harness"] == "claude"
+
+
+def test_close_rejects_wrong_harness_or_session_without_releasing_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "close-authenticated")
+    acquired = _resume(
+        repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "pi-owner"
+    )
+    assert acquired.returncode == 0, acquired.stderr
+
+    wrong_harness = _run_handoff(
+        "close", checkpoint_id, "--as", "claude", "--session-ref", "pi-owner",
+        cwd=repo, env=_env_for(state_dir),
+    )
+    wrong_session = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "other-session",
+        cwd=repo, env=_env_for(state_dir),
+    )
+
+    assert wrong_harness.returncode != 0
+    assert wrong_session.returncode != 0
+    lease = _lease_for_checkpoint(state_dir, checkpoint_id)
+    assert lease["owner_harness"] == "pi"
+    assert lease["receiver_session_ref"] == "pi-owner"
+
+
+def test_guard_rejects_an_unbound_active_lease_as_corrupt(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "guard-unbound-active")
+    acquired = _resume(
+        repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "pi-owner"
+    )
+    assert acquired.returncode == 0, acquired.stderr
+    lease_path = next(state_dir.glob("workspaces/*/*/lease.json"))
+    lease = json.loads(lease_path.read_text())
+    lease["receiver_session_ref"] = None
+    lease_path.write_text(json.dumps(lease))
+
+    result = _run_handoff(
+        "guard", "--as", "pi", "--session-ref", "pi-owner",
+        cwd=repo, env=_env_for(state_dir),
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "lease" in result.stderr.lower()
 
 
 def test_close_returns_the_worktree_to_normal(tmp_path):
@@ -904,7 +962,10 @@ def test_close_returns_the_worktree_to_normal(tmp_path):
     acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
     assert acquired.returncode == 0, acquired.stderr
 
-    closed = _run_handoff("close", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+    closed = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "s1",
+        cwd=repo, env=_env_for(state_dir),
+    )
 
     assert closed.returncode == 0, closed.stderr
     assert not list(state_dir.glob("workspaces/*/*/lease.json"))
@@ -1048,7 +1109,10 @@ def test_consumed_checkpoints_are_retained_then_cleaned(tmp_path):
     checkpoint_id = _planned_checkpoint(repo, state_dir, "retention-consumed")
     acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
     assert acquired.returncode == 0, acquired.stderr
-    closed = _run_handoff("close", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+    closed = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "s1",
+        cwd=repo, env=_env_for(state_dir),
+    )
     assert closed.returncode == 0, closed.stderr
     assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
 

@@ -502,6 +502,15 @@ def other_harness(harness: str) -> str:
     return "pi" if harness == "claude" else "claude"
 
 
+def valid_session_ref(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= 256
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+    )
+
+
 def load_lease(workspace_directory: Path) -> dict[str, object] | None:
     lease_path = workspace_directory / "lease.json"
     if not lease_path.is_file():
@@ -515,13 +524,20 @@ def load_lease(workspace_directory: Path) -> dict[str, object] | None:
     schema_version = lease.get("schema_version")
     owner = lease.get("owner_harness")
     epoch = lease.get("epoch")
+    checkpoint_id = lease.get("checkpoint_id")
+    receiver_session_ref = lease.get("receiver_session_ref")
     if (
         not isinstance(schema_version, int)
         or isinstance(schema_version, bool)
         or schema_version != LEASE_SCHEMA_VERSION
+        or not isinstance(owner, str)
         or owner not in {*HARNESSES, "released"}
         or not isinstance(epoch, int)
         or isinstance(epoch, bool)
+        or not isinstance(checkpoint_id, str)
+        or not checkpoint_id
+        or (owner in HARNESSES and not valid_session_ref(receiver_session_ref))
+        or (owner == "released" and receiver_session_ref is not None)
     ):
         raise StorageError("handoff lease is malformed")
     return lease
@@ -794,12 +810,7 @@ def resume_checkpoint(
     receiver_session: str | None,
     acknowledge_degraded: bool,
 ) -> Envelope:
-    if (
-        receiver_session is None
-        or not receiver_session.strip()
-        or len(receiver_session) > 256
-        or any(ord(character) < 32 or ord(character) == 127 for character in receiver_session)
-    ):
+    if not valid_session_ref(receiver_session):
         raise InputError("resume requires a non-empty bounded --receiver-session")
     workspace = resolve_workspace()
     paths = StatePaths.from_environment()
@@ -1014,7 +1025,7 @@ def recover_checkpoint(source_harness: str, source_stopped: bool, source_session
     )
 
 
-def close_checkpoint(checkpoint_id: str) -> Envelope:
+def close_checkpoint(checkpoint_id: str, as_harness: str, session_ref: str) -> Envelope:
     workspace = resolve_workspace()
     paths = StatePaths.from_environment()
     workspace_directory = paths.workspace_directory(workspace)
@@ -1022,16 +1033,23 @@ def close_checkpoint(checkpoint_id: str) -> Envelope:
     if not checkpoint_path.is_file():
         raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
     load_checkpoint(checkpoint_path)
+    if not valid_session_ref(session_ref):
+        raise InputError("close requires a non-empty bounded --session-ref")
     with workspace_flock(workspace_directory, "lease.lock"):
         lease = load_lease(workspace_directory)
-        if lease is not None and lease.get("checkpoint_id") != checkpoint_id:
+        if lease is None:
+            raise InputError("cannot close a checkpoint without an active handoff lease")
+        if lease.get("checkpoint_id") != checkpoint_id:
             raise InputError(
                 f"cannot close stale checkpoint {checkpoint_id}; "
                 f"the active lease references {lease.get('checkpoint_id')}"
             )
+        if lease["owner_harness"] != as_harness:
+            raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+        if lease["receiver_session_ref"] != session_ref:
+            raise InputError("handoff lease is bound to a different receiver session")
         rewrite_checkpoint_fields(checkpoint_path, status="closed", closed_at=iso_now())
-        if lease is not None:
-            (workspace_directory / "lease.json").unlink(missing_ok=True)
+        (workspace_directory / "lease.json").unlink(missing_ok=True)
     run_cleanup(paths)
     return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "closed"}, [])
 
@@ -1185,6 +1203,8 @@ def build_parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("--source-session-ref")
     close_parser = subcommands.add_parser("close", help="close a handoff checkpoint and release the worktree")
     close_parser.add_argument("checkpoint_id")
+    close_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    close_parser.add_argument("--session-ref", required=True)
     guard_parser = subcommands.add_parser("guard", help="decide whether a harness may mutate this worktree")
     guard_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
     guard_parser.add_argument("--session-ref")
@@ -1211,7 +1231,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "recover":
             write_envelope(recover_checkpoint(args.from_harness, args.source_stopped, args.source_session_ref))
         elif args.command == "close":
-            write_envelope(close_checkpoint(args.checkpoint_id))
+            write_envelope(close_checkpoint(args.checkpoint_id, args.as_harness, args.session_ref))
         elif args.command == "guard":
             envelope, exit_code = guard_decision(args.as_harness, args.session_ref)
             write_envelope(envelope)

@@ -79,6 +79,15 @@ def test_lifecycle_routes_use_guard_allowlisted_single_pipelines():
     assert 'swe-workbench-handoff close "<checkpoint-id>"' in text
 
 
+def test_close_authenticates_the_current_harness_and_session():
+    text = _text()
+    close_section = text.split("## Close", 1)[1]
+    assert "--as" in close_section
+    assert "--session-ref" in close_section
+    assert "CLAUDE_CODE_SESSION_ID" in close_section
+    assert "PI_SESSION_ID" in close_section
+
+
 def test_command_never_imports_native_transcripts():
     text = _text()
     assert "/export" not in text

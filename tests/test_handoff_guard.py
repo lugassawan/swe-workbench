@@ -259,7 +259,8 @@ def test_allows_close_pipeline_for_the_bound_owner_session(tmp_path):
     payload = _payload(repo, "Bash", session_id="sess-1")
     payload["tool_input"] = {
         "command": (
-            f'swe-workbench-handoff close "{checkpoint_id}" '
+            f'swe-workbench-handoff close "{checkpoint_id}" --as claude '
+            '--session-ref "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" '
             '| swe-workbench-result-check swb.handoff/1'
         )
     }
