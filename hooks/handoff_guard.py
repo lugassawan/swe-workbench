@@ -82,7 +82,7 @@ def _block(message: str) -> None:
     raise SystemExit(2)
 
 
-def _decision(output: str) -> tuple[str, str] | None:
+def _decision(output: str) -> tuple[str, str, str | None, str | None] | None:
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError:
@@ -96,7 +96,19 @@ def _decision(output: str) -> tuple[str, str] | None:
     reason = data.get("reason")
     if decision not in {"allow", "deny"} or not isinstance(reason, str):
         return None
-    return decision, reason
+    checkpoint_id = data.get("checkpoint_id")
+    target_harness = data.get("target_harness")
+    safe_checkpoint_id = (
+        checkpoint_id
+        if isinstance(checkpoint_id, str) and re.fullmatch(_UUID, checkpoint_id)
+        else None
+    )
+    safe_target_harness = (
+        target_harness
+        if isinstance(target_harness, str) and target_harness in {"claude", "pi"}
+        else None
+    )
+    return decision, reason, safe_checkpoint_id, safe_target_harness
 
 
 def main() -> None:
@@ -133,9 +145,15 @@ def main() -> None:
         return
 
     if parsed is not None and parsed[0] == "deny":
-        reason = parsed[1]
+        reason, checkpoint_id, target_harness = parsed[1:]
         if "released" in reason:
-            _block("handoff ownership is released; resume the checkpoint in the receiver before mutating")
+            if checkpoint_id is None or target_harness is None:
+                _block("handoff ownership is released but its receiver state is invalid")
+            command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
+            _block(
+                f"handoff ownership is released to {target_harness}; "
+                f"run `{command_name} resume {checkpoint_id}` in the receiver"
+            )
         if "different receiver session" in reason:
             _block("this worktree is bound to a different receiver session")
         if "held by" in reason:

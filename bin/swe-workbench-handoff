@@ -1041,16 +1041,25 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
     owner = str(lease["owner_harness"])
     checkpoint_id = lease.get("checkpoint_id")
     if owner == "released":
+        if not isinstance(checkpoint_id, str):
+            raise StorageError("released handoff lease has no checkpoint id")
+        checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+        if not checkpoint_path.is_file():
+            raise StorageError(f"released handoff checkpoint {checkpoint_id} was not found")
+        checkpoint = load_checkpoint(checkpoint_path)
+        target_harness = checkpoint.get("target_harness")
+        if target_harness not in HARNESSES:
+            raise StorageError("released handoff checkpoint has an invalid target harness")
+        command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
         return (
             Envelope(
                 "ok",
                 {
                     "decision": "deny",
                     "reason": "handoff lease released; a receiver must resume the checkpoint",
-                    "instruction": (
-                        f"handoff in flight for this worktree; resume checkpoint "
-                        f"{checkpoint_id} in the target harness before mutating"
-                    ),
+                    "checkpoint_id": checkpoint_id,
+                    "target_harness": target_harness,
+                    "instruction": f"{command_name} resume {checkpoint_id}",
                 },
                 [],
             ),

@@ -105,13 +105,25 @@ def test_blocks_mutating_tools_under_a_released_lease(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)
     state_dir = tmp_path / "state"
-    _create(repo, state_dir, target="pi")
+    checkpoint_id = _create(repo, state_dir, target="pi")
 
     for tool_name in ("Bash", "Edit", "Write"):
         result = _run_hook(_payload(repo, tool_name), state_dir=state_dir)
         assert result.returncode == 2, f"{tool_name}: {result.stderr}"
         assert "BLOCKED:" in result.stderr
-        assert "resume" in result.stderr.lower()
+        assert f"/handoff resume {checkpoint_id}" in result.stderr
+
+
+def test_released_lease_names_the_claude_receiver_command(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+
+    result = _run_hook(_payload(repo, "Edit"), state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert f"/swe-workbench:handoff resume {checkpoint_id}" in result.stderr
 
 
 def test_allows_read_tools_under_a_released_lease(tmp_path):

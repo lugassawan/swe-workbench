@@ -807,14 +807,16 @@ def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
     repo.mkdir()
     _initialize_repo(repo)
     state_dir = tmp_path / "state"
-    _planned_checkpoint(repo, state_dir, "guard-released")
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "guard-released")
 
     for harness in ("claude", "pi"):
         result = _run_handoff("guard", "--as", harness, cwd=repo, env=_env_for(state_dir))
         assert result.returncode == 3, result.stderr
         envelope = json.loads(result.stdout)
         assert envelope["data"]["decision"] == "deny"
-        assert "resume" in envelope["data"]["instruction"].lower()
+        assert envelope["data"]["checkpoint_id"] == checkpoint_id
+        assert envelope["data"]["target_harness"] == "pi"
+        assert envelope["data"]["instruction"] == f"/handoff resume {checkpoint_id}"
 
 
 def test_guard_allows_only_the_bound_owner_session(tmp_path):
