@@ -647,6 +647,7 @@ def test_referenced_fields_actually_appear_in_hook_source():
 HOOK_PI_STATUS = {
     "bash_guard.sh": "wired",
     "secret_guard.py": "wired",
+    "handoff_guard.py": "deferred",
     "workflow_resume_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",

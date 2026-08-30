@@ -60,7 +60,7 @@ def test_commands_dir_walk_finds_only_top_level_command_files():
     all_md = list((ROOT / "commands").rglob("*.md"))
     top_level_md = list((ROOT / "commands").glob("*.md"))
     assert all_md == top_level_md
-    assert len(top_level_md) == 21
+    assert len(top_level_md) == 22
 
 
 def test_every_sentinel_block_source_resolves_on_disk():
