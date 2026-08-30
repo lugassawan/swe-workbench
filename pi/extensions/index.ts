@@ -22,14 +22,13 @@
  *     extension that wants the user's `shellPath`/`shellCommandPrefix` would have to re-register
  *     the `bash` tool, which silently discards both — and a `commandPrefix` approach would
  *     overwrite the user's own `shellCommandPrefix`. The bin/ wiring only ever appends to
- *     `process.env.PATH`; it never re-registers the bash tool (see the scope note below).
+ *     `process.env.PATH` and never re-registers the bash tool.
  *   - The shipped `examples/extensions/bash-spawn-hook.ts` wraps the bash tool by dropping its
  *     `_ctx` argument, which kills the `PI_SESSION_ID`/`PI_MODEL`/`PI_PROVIDER` env vars the bash
  *     tool's own guidelines tell the model to read. Do not copy that pattern verbatim.
  *
- * Scope note: the PATH wiring never re-registers the bash tool or wraps tool execution.
- * tool_call handlers ARE registered by this adapter — handoff.ts (ownership) and guards.ts
- * (security) — but they only observe and block, never replace the tool.
+ * Scope note: tool_call handlers ARE registered by this adapter (handoff.ts — ownership,
+ * guards.ts — security); they observe and block, never replace the tool.
  */
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -133,10 +132,8 @@ export default function (pi: ExtensionAPI): void {
   // tool_call handler must wrap its own body and return undefined on throw.
   //
   // registerHandoff is deliberately ABOVE registerGuards: an ownership denial must win the
-  // block reason (it carries the receiver resume instruction), and because an allow is
-  // `undefined` — which never short-circuits — every security guard below still runs on each
-  // allowed call. When handoff blocks, the call is dead regardless of what the guards would
-  // have said, so ordering cannot weaken them.
+  // block reason (it carries the receiver resume instruction), and an allow is `undefined`,
+  // which never short-circuits — every security guard below still runs on each allowed call.
   registerHandoff(pi, root);
   registerGuards(pi, root);
   registerAskUser(pi);

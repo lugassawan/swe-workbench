@@ -119,16 +119,12 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
     if (toolName !== "bash" && toolName !== "write" && toolName !== "edit") return undefined;
 
     if (toolName === "bash") {
-      // `input` is unknown-shaped at this boundary; a nullish input must not throw — this
-      // handler is first-registered and a throw would abort the tool_call loop before the
-      // security guards run.
       const command = (event.input as { command?: unknown } | undefined)?.command;
       if (typeof command === "string" && isControlCommand(command)) return undefined;
     }
 
-    // emitToolCall has no try/catch around handler bodies and this is the FIRST-registered
-    // tool_call handler — a throw here would abort the loop before registerGuards' checks run.
-    // Per the invariant index.ts documents: wrap the body, return undefined on throw.
+    // emitToolCall has no try/catch around handler bodies, and this is the first-registered
+    // tool_call handler — a throw would abort the loop before the security guards run.
     try {
       if (!existsSync(runtimePath)) {
         if (!warnedMissingRuntime && ctx.hasUI) {
@@ -166,8 +162,6 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
   pi.on("after_provider_response", (event, ctx: ExtensionContext) => {
     const status = (event as { status?: unknown }).status;
     if (status !== 429) return;
-    // Persistent recovery status + at most one warning per session. Context-window usage
-    // is intentionally never consulted — it is not subscription quota.
     if (!ctx.hasUI) return;
     ctx.ui.setStatus(STATUS_KEY, QUOTA_RECOVERY_TEXT);
     if (!quotaWarningShown) {

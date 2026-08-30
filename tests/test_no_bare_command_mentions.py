@@ -58,8 +58,6 @@ _PI_TEMPLATE_NAME_ALLOWED_IN = {
     Path("commands/handoff.md"),
     Path("docs/cross-harness-handoff.md"),
     Path("docs/plugin-platform-decisions.md"),
-    Path("docs/superpowers/plans/2026-08-30-cross-harness-handoff.md"),
-    Path("docs/superpowers/specs/2026-08-30-cross-harness-handoff-design.md"),
 }
 
 

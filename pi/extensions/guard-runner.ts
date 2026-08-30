@@ -84,9 +84,7 @@ export const runGuard: RunGuard = (options) =>
   });
 
 export interface RuntimeSpawnOptions {
-  /** Executable name, resolved from PATH (e.g. "python3" or "bash"). */
   readonly command: string;
-  /** Argument vector — argv array, never a shell string. */
   readonly args: readonly string[];
   readonly cwd: string;
   readonly timeoutMs: number;
@@ -96,10 +94,9 @@ export type SpawnRuntime = (options: RuntimeSpawnOptions) => Promise<GuardRunRes
 
 /**
  * Argv-based spawn for the bin/ runtime scripts (no stdin payload). Unlike runGuard this
- * NEVER rejects: callers enforce their own failure posture from {code, stdout, stderr}, and a
- * spawn error or timeout kills (code === null) is a decision input — the handoff adapter
- * treats it as fail-closed. Env passes through verbatim so SWE_WORKBENCH_HANDOFF_STATE_DIR
- * and PI_* variables reach the runtime exactly as the caller's process sees them.
+ * NEVER rejects: callers enforce their own failure posture from {code, stdout, stderr}, with
+ * a spawn error or timeout kill surfacing as code === null. Env passes through verbatim so
+ * SWE_WORKBENCH_HANDOFF_STATE_DIR and PI_* variables reach the runtime unchanged.
  */
 export const spawnRuntime: SpawnRuntime = (options) =>
   new Promise((resolve) => {
