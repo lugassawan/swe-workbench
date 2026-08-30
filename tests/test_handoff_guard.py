@@ -302,6 +302,31 @@ def test_still_blocks_arbitrary_read_only_bash_under_a_released_lease(tmp_path):
     assert result.returncode == 2
 
 
+def test_blocks_a_claude_owned_lease_when_hook_session_id_is_missing(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    acquired = _runtime(
+        "resume",
+        checkpoint_id,
+        "--as",
+        "claude",
+        "--receiver-session",
+        "sess-1",
+        cwd=repo,
+        state_dir=state_dir,
+    )
+    assert acquired.returncode == 0, acquired.stderr
+    payload = _payload(repo, "Edit")
+    payload.pop("session_id")
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+
+
 def test_fails_closed_on_a_malformed_lease_without_granting_mutation(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

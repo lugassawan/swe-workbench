@@ -1016,8 +1016,15 @@ def close_checkpoint(checkpoint_id: str) -> Envelope:
         raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
     load_checkpoint(checkpoint_path)
     with workspace_flock(workspace_directory, "lease.lock"):
+        lease = load_lease(workspace_directory)
+        if lease is not None and lease.get("checkpoint_id") != checkpoint_id:
+            raise InputError(
+                f"cannot close stale checkpoint {checkpoint_id}; "
+                f"the active lease references {lease.get('checkpoint_id')}"
+            )
         rewrite_checkpoint_fields(checkpoint_path, status="closed", closed_at=iso_now())
-        (workspace_directory / "lease.json").unlink(missing_ok=True)
+        if lease is not None:
+            (workspace_directory / "lease.json").unlink(missing_ok=True)
     run_cleanup(paths)
     return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "closed"}, [])
 
@@ -1079,7 +1086,7 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
             GUARD_DENY_EXIT_CODE,
         )
     bound_session = lease.get("receiver_session_ref")
-    if session_ref is not None and isinstance(bound_session, str) and session_ref != bound_session:
+    if isinstance(bound_session, str) and session_ref != bound_session:
         return (
             Envelope(
                 "ok",

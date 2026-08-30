@@ -89,7 +89,7 @@ swe-workbench-handoff resume "<checkpoint-id>" --as claude \
 
 # Pi receiver
 swe-workbench-handoff resume "<checkpoint-id>" --as pi \
-  --receiver-session "$PI_SESSION_ID" \
+  --receiver-session "${PI_SESSION_ID:?missing PI_SESSION_ID}" \
   <include --acknowledge-degraded only when requested> \
   | swe-workbench-result-check swb.handoff/1
 ```
