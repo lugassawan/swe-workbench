@@ -8,13 +8,12 @@ Manage a Claude Code ↔ Pi handoff in the current git worktree. Parse `$ARGUMEN
 - `resume <checkpoint-id> [--acknowledge-degraded]` — acquire and continue a checkpoint in the current harness.
 - `recover --from <claude|pi> --source-stopped` — salvage deterministic workspace state after the source harness has stopped unexpectedly.
 - `close <checkpoint-id>` — end the lease and retain the closed checkpoint for normal cleanup.
-- `status` — print the latest checkpoint and lease state without changing them.
 
 Reject any other arguments with a short usage message.
 
 ## Preflight
 
-Run once before every route:
+Run once before planned checkpoint creation. Resume, recovery, and close use the exact single-pipeline forms below because the ownership hook permits only those lifecycle commands through an active or released lease:
 
 ```bash
 command -v swe-workbench-handoff >/dev/null 2>&1 || {
@@ -45,7 +44,7 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
        "decisions": ["bounded strings"],
        "progress": {"done": ["bounded strings"], "in_progress": ["bounded strings"]},
        "changed_path_intents": {"relative/path": "intent only, never content"},
-       "verification": [{"command": "command name only", "result": "bounded status"}],
+       "verification": [{"command": "bounded command", "label": "bounded label", "exit_status": 0, "timestamp": "ISO-8601 timestamp", "result": "bounded status"}],
        "blockers": ["bounded strings"],
        "risks": ["bounded strings"],
        "exact_next_action": "one executable next action"
@@ -53,7 +52,7 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
    }
    ```
 
-   Use the `--next` value verbatim as `exact_next_action` when supplied. Describe only facts supported by the current task and workspace. Omit `source_session_ref` when unknown.
+   Use the `--next` value verbatim as `exact_next_action` when supplied. Determine `source_harness` as `pi` when `PI_SESSION_ID` is set and `claude` otherwise. For Pi, use `PI_SESSION_ID` as `source_session_ref`; for Claude, use `CLAUDE_CODE_SESSION_ID`. Describe only facts supported by the current task and workspace. Omit `source_session_ref` when unknown.
 
 2. Create a private temporary file with `mktemp`, register cleanup immediately, and use the Write tool to write only that JSON object to `$HANDOFF_INPUT`. Do not put the JSON in a shell variable, command argument, echo, heredoc, or log.
 
@@ -68,7 +67,7 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
    printf '%s\n' "$HANDOFF_RESULT"
    ```
 
-3. Read `data.checkpoint_id`, `data.target_harness`, and `data.instruction` from the validated envelope. Print the instruction and the appropriate exact receiver command:
+3. Read `data.checkpoint_id`, `data.target_harness`, and `data.worktree_root` from the validated envelope. Print the appropriate exact receiver command:
 
    - Pi: `cd <worktree-root> && /handoff resume <checkpoint-id>`
    - Claude Code: `cd <worktree-root> && /swe-workbench:handoff resume <checkpoint-id>`
@@ -77,38 +76,44 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
 
 ## Resume
 
-Determine the current harness (`pi` when `PI_SESSION_ID` is set; otherwise `claude`). Bind the lease to a receiver session. Pi must use `PI_SESSION_ID`; Claude may use `CLAUDE_SESSION_ID` when available, otherwise a stable local fallback that contains no environment value or credential:
+Determine the current harness (`pi` when `PI_SESSION_ID` is set; otherwise `claude`). Bind the lease to the canonical receiver session: Pi uses `PI_SESSION_ID`; Claude uses `CLAUDE_CODE_SESSION_ID`, which matches the Claude hook payload identity. A missing session ID is an error; never acquire an unbound lease.
+
+Run exactly one of these single pipelines, inserting `--acknowledge-degraded` only when explicitly requested:
 
 ```bash
-SESSION_REF="${PI_SESSION_ID:-${CLAUDE_SESSION_ID:-claude-local}}"
-HANDOFF_RESULT=$(swe-workbench-handoff resume "<checkpoint-id>" \
-  --as "<current-harness>" --receiver-session "$SESSION_REF" \
+# Claude receiver
+swe-workbench-handoff resume "<checkpoint-id>" --as claude \
+  --receiver-session "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" \
   <include --acknowledge-degraded only when requested> \
-  | swe-workbench-result-check swb.handoff/1) || exit 1
-printf '%s\n' "$HANDOFF_RESULT"
+  | swe-workbench-result-check swb.handoff/1
+
+# Pi receiver
+swe-workbench-handoff resume "<checkpoint-id>" --as pi \
+  --receiver-session "$PI_SESSION_ID" \
+  <include --acknowledge-degraded only when requested> \
+  | swe-workbench-result-check swb.handoff/1
 ```
 
-Read and present the bounded checkpoint fields from the validated envelope: goal, constraints, decisions, progress, changed-path intents, verification status, blockers, risks, and exact next action. Verify the displayed worktree root matches the current worktree. For a degraded checkpoint, do not proceed unless `--acknowledge-degraded` was explicitly supplied. Continue from `exact_next_action` in the same worktree; do not import a native session history.
+After ownership is acquired, run `swe-workbench-handoff show "<checkpoint-id>" | swe-workbench-result-check swb.handoff/1`. Read and present the bounded checkpoint fields: goal, constraints, decisions, progress, changed-path intents, verification status, blockers, risks, and exact next action. Verify the displayed worktree root matches the current worktree. For a degraded checkpoint, do not proceed unless `--acknowledge-degraded` was explicitly supplied. Continue from `exact_next_action` in the same worktree; do not import a native session history.
 
 ## Recover
 
 Require both `--from <claude|pi>` and the literal `--source-stopped` acknowledgement. Then run:
 
 ```bash
-HANDOFF_RESULT=$(swe-workbench-handoff recover --from "<source-harness>" --source-stopped \
-  | swe-workbench-result-check swb.handoff/1) || exit 1
-printf '%s\n' "$HANDOFF_RESULT"
+swe-workbench-handoff recover --from "<source-harness>" --source-stopped \
+  | swe-workbench-result-check swb.handoff/1
 ```
 
 Print the returned checkpoint id and warning. Recovery is truthful degraded salvage from git/worktree evidence, not semantic reconstruction. Tell the user to resume the returned checkpoint with explicit `--acknowledge-degraded` in the receiver.
 
-## Close or status
+## Close
 
-For close:
+Run the exact lifecycle pipeline:
 
 ```bash
 swe-workbench-handoff close "<checkpoint-id>" \
   | swe-workbench-result-check swb.handoff/1
 ```
 
-For status, run `swe-workbench-handoff status` and print its JSON unchanged. Status is read-only. Do not claim a handoff completed until `close` returns a validated `status: ok` envelope.
+Do not claim a handoff completed until `close` returns a validated `status: ok` envelope. The `status-segment` runtime subcommand is reserved for Claude status-line quota composition and is not an interactive handoff route.

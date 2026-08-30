@@ -49,6 +49,20 @@ def test_resume_binds_a_receiver_session_from_the_harness_environment():
     text = _text()
     assert "--receiver-session" in text
     assert "PI_SESSION_ID" in text
+    assert "${CLAUDE_CODE_SESSION_ID:?" in text
+    assert "CLAUDE_SESSION_ID" not in text
+
+
+def test_verification_example_matches_the_bounded_runtime_schema():
+    text = _text()
+    for field in ('"command"', '"label"', '"exit_status"', '"timestamp"', '"result"'):
+        assert field in text
+
+
+def test_command_does_not_advertise_a_nonexistent_status_subcommand():
+    text = _text()
+    assert "swe-workbench-handoff status" not in text
+    assert "- `status`" not in text
 
 
 def test_recovery_route_gates_on_source_stopped_and_acknowledgement():
@@ -56,6 +70,13 @@ def test_recovery_route_gates_on_source_stopped_and_acknowledgement():
     assert "--source-stopped" in text
     assert "--acknowledge-degraded" in text
     assert "recover" in text
+
+
+def test_lifecycle_routes_use_guard_allowlisted_single_pipelines():
+    text = _text()
+    assert 'swe-workbench-handoff resume "<checkpoint-id>"' in text
+    assert 'swe-workbench-handoff recover --from "<source-harness>" --source-stopped' in text
+    assert 'swe-workbench-handoff close "<checkpoint-id>"' in text
 
 
 def test_command_never_imports_native_transcripts():

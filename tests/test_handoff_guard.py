@@ -174,6 +174,83 @@ def test_blocks_when_the_other_harness_owns_the_lease(tmp_path):
     assert "pi" in result.stderr
 
 
+def test_allows_exact_resume_pipeline_through_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            '--receiver-session "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" '
+            '| swe-workbench-result-check swb.handoff/1'
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_allows_exact_recovery_and_close_pipelines_through_ownership_gate(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="pi", source="claude")
+
+    recover_payload = _payload(repo, "Bash")
+    recover_payload["tool_input"] = {
+        "command": (
+            'swe-workbench-handoff recover --from "pi" --source-stopped '
+            '| swe-workbench-result-check swb.handoff/1'
+        )
+    }
+    close_payload = _payload(repo, "Bash")
+    close_payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff close "{checkpoint_id}" '
+            '| swe-workbench-result-check swb.handoff/1'
+        )
+    }
+
+    assert _run_hook(recover_payload, state_dir=state_dir).returncode == 0
+    assert _run_hook(close_payload, state_dir=state_dir).returncode == 0
+
+
+def test_rejects_lifecycle_pipeline_with_a_shell_suffix(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            '--receiver-session "$CLAUDE_CODE_SESSION_ID" '
+            '| swe-workbench-result-check swb.handoff/1; touch /tmp/not-allowed'
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+
+
+def test_still_blocks_arbitrary_read_only_bash_under_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _create(repo, state_dir, target="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {"command": "git status --short"}
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+
+
 def test_fails_closed_on_a_malformed_lease_without_granting_mutation(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

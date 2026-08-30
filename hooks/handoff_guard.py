@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,22 @@ from pathlib import Path
 _MUTATING_TOOLS = frozenset({"Bash", "Edit", "Write"})
 _RUNTIME_NAME = "swe-workbench-handoff"
 _TIMEOUT_SECONDS = 10
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_CHECKED_PIPE = r"\| swe-workbench-result-check swb\.handoff/1"
+_CLAUDE_SESSION_ARGUMENT = re.escape(
+    '"${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}"'
+)
+_CONTROL_COMMANDS = (
+    re.compile(
+        rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
+        rf'--receiver-session {_CLAUDE_SESSION_ARGUMENT} '
+        rf'(?:--acknowledge-degraded )?{_CHECKED_PIPE}$'
+    ),
+    re.compile(
+        rf'^swe-workbench-handoff recover --from "?pi"? --source-stopped {_CHECKED_PIPE}$'
+    ),
+    re.compile(rf'^swe-workbench-handoff close "?{_UUID}"? {_CHECKED_PIPE}$'),
+)
 
 
 def _load_payload() -> dict[str, object] | None:
@@ -48,6 +65,19 @@ def _working_directory(payload: dict[str, object]) -> Path:
     return Path.cwd()
 
 
+def _is_control_command(payload: dict[str, object]) -> bool:
+    if payload.get("tool_name") != "Bash":
+        return False
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return False
+    command = tool_input.get("command")
+    if not isinstance(command, str):
+        return False
+    normalized = " ".join(command.replace("\\\n", " ").split())
+    return any(pattern.fullmatch(normalized) for pattern in _CONTROL_COMMANDS)
+
+
 def _block(message: str) -> None:
     print(f"BLOCKED: {message}", file=sys.stderr)
     raise SystemExit(2)
@@ -73,6 +103,8 @@ def _decision(output: str) -> tuple[str, str] | None:
 def main() -> None:
     payload = _load_payload()
     if payload is None or payload.get("tool_name") not in _MUTATING_TOOLS:
+        return
+    if _is_control_command(payload):
         return
 
     runtime = _runtime_path()
