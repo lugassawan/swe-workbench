@@ -794,6 +794,13 @@ def resume_checkpoint(
     receiver_session: str | None,
     acknowledge_degraded: bool,
 ) -> Envelope:
+    if (
+        receiver_session is None
+        or not receiver_session.strip()
+        or len(receiver_session) > 256
+        or any(ord(character) < 32 or ord(character) == 127 for character in receiver_session)
+    ):
+        raise InputError("resume requires a non-empty bounded --receiver-session")
     workspace = resolve_workspace()
     paths = StatePaths.from_environment()
     workspace_directory = paths.workspace_directory(workspace)
@@ -1170,7 +1177,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subcommands.add_parser("resume", help="acquire ownership of a handoff checkpoint")
     resume_parser.add_argument("checkpoint_id")
     resume_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
-    resume_parser.add_argument("--receiver-session")
+    resume_parser.add_argument("--receiver-session", required=True)
     resume_parser.add_argument("--acknowledge-degraded", action="store_true")
     recover_parser = subcommands.add_parser("recover", help="rebuild a degraded checkpoint after source failure")
     recover_parser.add_argument("--from", dest="from_harness", required=True, choices=list(HARNESSES))

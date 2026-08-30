@@ -673,6 +673,26 @@ def test_create_releases_the_source_lease_after_the_checkpoint_is_durable(tmp_pa
     assert lease["source_session_ref"] is None
 
 
+@pytest.mark.parametrize(
+    "session_args",
+    [(), ("--receiver-session", "")],
+    ids=["omitted", "empty"],
+)
+def test_resume_requires_a_nonempty_receiver_session(tmp_path, session_args):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-session-required")
+
+    result = _resume(repo, state_dir, checkpoint_id, "--as", "pi", *session_args)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    lease = _lease_for_checkpoint(state_dir, checkpoint_id)
+    assert lease["owner_harness"] == "released"
+
+
 def test_resume_acquires_ownership_for_the_target_harness(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
