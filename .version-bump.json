@@ -2,14 +2,15 @@
   "files": [
     { "path": ".claude-plugin/plugin.json", "field": ".version" },
     { "path": ".claude-plugin/marketplace.json", "field": ".plugins[0].version" },
-    { "path": "package.json", "field": ".version" }
+    { "path": "package.json", "field": ".version" },
+    { "path": "package-lock.json", "field": ".version" },
+    { "path": "package-lock.json", "field": ".packages[\"\"].version" }
   ],
   "audit": {
     "exclude": [
       ".git",
       "node_modules",
-      ".venv",
-      "package-lock.json"
+      ".venv"
     ]
   }
 }

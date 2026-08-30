@@ -205,6 +205,33 @@ class TestAuditMode:
         assert "vendor/package.json" in result.stderr
 
 
+class TestRepositoryVersionConfig:
+    def test_bump_updates_both_package_lock_root_versions(self, tmp_path):
+        _make_fixture_tree(tmp_path)
+        (tmp_path / ".version-bump.json").write_text(
+            (ROOT / ".version-bump.json").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps(
+                {
+                    "name": "test-plugin",
+                    "version": "0.9.0",
+                    "lockfileVersion": 3,
+                    "packages": {"": {"name": "test-plugin", "version": "0.9.0"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = _run(tmp_path, "9.9.9")
+
+        assert result.returncode == 0, result.stderr
+        package_lock = json.loads((tmp_path / "package-lock.json").read_text(encoding="utf-8"))
+        assert package_lock["version"] == "9.9.9"
+        assert package_lock["packages"][""]["version"] == "9.9.9"
+
+
 class TestCiWiring:
     def test_audit_is_wired_into_pr_validation_workflow(self):
         workflow_path = ROOT / ".github" / "workflows" / "pr.yml"

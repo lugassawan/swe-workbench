@@ -2,8 +2,7 @@
 set -euo pipefail
 
 # Keeps every manifest declared in .version-bump.json in sync on a single version string.
-# Adapted from obra/superpowers' bump-version.sh for this repo's own declared-file list
-# (.claude-plugin/plugin.json, .claude-plugin/marketplace.json, package.json).
+# Adapted from obra/superpowers' bump-version.sh for this repo's plugin and npm manifests.
 #
 # Usage:
 #   scripts/bump-version.sh <X.Y.Z>   # write <X.Y.Z> into every declared file's field
