@@ -1152,16 +1152,15 @@ def _prune_workspace_directory(workspace_directory: Path, lease_active: bool) ->
     shutil.rmtree(workspace_directory, ignore_errors=True)
 
 
-def _guarded_worktree_exists(workspace_directory: Path, guarded_id: object) -> bool:
-    """Active-lease protection applies only while the worktree still exists on disk.
+def _recorded_worktree_exists(workspace_directory: Path, checkpoint_id: object) -> bool:
+    """Return whether the lease's recorded worktree still exists.
 
-    A worktree removed mid-handoff (e.g. by post-merge cleanup) would otherwise hold its
-    guarded checkpoint and lease forever — cleanup-merged removes the worktree, not the XDG
-    handoff state. Unreadable or missing evidence conservatively keeps the protection.
+    A worktree removed mid-handoff (e.g. by post-merge cleanup) would otherwise leave its XDG
+    lease markers forever. Unreadable or missing evidence conservatively keeps the state.
     """
-    if not isinstance(guarded_id, str):
+    if not isinstance(checkpoint_id, str):
         return True
-    checkpoint_path = workspace_directory / "checkpoints" / f"{guarded_id}.json"
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
     if not checkpoint_path.is_file():
         return True
     try:
@@ -1186,12 +1185,14 @@ def run_cleanup(paths: StatePaths) -> None:
             if lease is False:
                 continue
             lease_active = lease is not None and lease.get("owner_harness") != "released"
-            guarded_id = lease.get("checkpoint_id") if lease_active else None
-            orphaned = False
-            if lease_active and not _guarded_worktree_exists(workspace_directory, guarded_id):
+            lease_checkpoint_id = lease.get("checkpoint_id") if lease is not None else None
+            guarded_id = lease_checkpoint_id if lease_active else None
+            orphaned = lease is not None and not _recorded_worktree_exists(
+                workspace_directory, lease_checkpoint_id
+            )
+            if lease_active and orphaned:
                 lease_active = False
                 guarded_id = None
-                orphaned = True
             checkpoints_directory = workspace_directory / "checkpoints"
             if checkpoints_directory.is_dir():
                 for checkpoint_path in sorted(checkpoints_directory.glob("*.json")):

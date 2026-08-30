@@ -1329,3 +1329,40 @@ def test_cleanup_retains_an_orphaned_workspace_before_expiry(tmp_path):
         "an orphaned workspace within its normal retention window must stay reclaimable"
     )
     assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+
+
+def test_cleanup_reclaims_a_released_orphan_after_expiry(tmp_path):
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    orphan_repo = tmp_path / "orphan-repo"
+    orphan_repo.mkdir()
+    _initialize_repo(orphan_repo)
+    checkpoint_id = _planned_checkpoint(orphan_repo, state_dir, "cleanup-released-orphan")
+    orphan_workspace = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).parent.parent
+    import shutil as _shutil
+    _shutil.rmtree(orphan_repo)
+    _backdate(state_dir, checkpoint_id, "created_at", days=8)
+
+    _create_checkpoint(other_repo, state_dir, _create_input("cleanup-released-orphan-trigger"))
+
+    assert not orphan_workspace.exists()
+
+
+def test_cleanup_retains_a_released_orphan_before_expiry(tmp_path):
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    orphan_repo = tmp_path / "orphan-repo"
+    orphan_repo.mkdir()
+    _initialize_repo(orphan_repo)
+    checkpoint_id = _planned_checkpoint(orphan_repo, state_dir, "cleanup-released-orphan-fresh")
+    orphan_workspace = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).parent.parent
+    import shutil as _shutil
+    _shutil.rmtree(orphan_repo)
+
+    _create_checkpoint(other_repo, state_dir, _create_input("cleanup-released-orphan-fresh-trigger"))
+
+    assert orphan_workspace.exists()
