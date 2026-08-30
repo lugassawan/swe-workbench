@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,24 @@ FORBIDDEN_INPUT_FIELDS = frozenset(
 )
 VERIFICATION_FIELDS = frozenset({"command", "label", "exit_status", "timestamp", "result"})
 VERIFICATION_RESULTS = frozenset({"passed", "failed", "not_run", "skipped"})
+HARNESSES = ("claude", "pi")
+LEASE_SCHEMA_VERSION = 1
+MANDATORY_REVIEW_ACTION = (
+    "Review the salvage manifest, reconcile it with the live worktree, "
+    "and obtain user confirmation of intent before editing."
+)
+SEMANTIC_OMISSION_LABELS = (
+    "goal",
+    "constraints",
+    "decisions",
+    "progress",
+    "changed_path_intents",
+    "verification",
+    "blockers",
+    "risks",
+    "exact_next_action",
+)
+GUARD_DENY_EXIT_CODE = 3
 REQUIRED_CHECKPOINT_FIELDS = frozenset(
     {"checkpoint_id", "created_at", "expires_at", "mode", "operation_id", "status"}
 )
@@ -272,7 +291,7 @@ def parse_verification_item(item: dict[str, object]) -> dict[str, object]:
         raise InputError("verification.exit_status must be an integer from 0 through 255")
     if not isinstance(timestamp, str) or not timestamp or len(timestamp) > 64:
         raise InputError("verification.timestamp must be a non-empty string of at most 64 characters")
-    if result not in VERIFICATION_RESULTS:
+    if not isinstance(result, str) or result not in VERIFICATION_RESULTS:
         raise InputError("verification.result must be a bounded outcome")
     return {"command": command, "label": label, "exit_status": exit_status, "timestamp": timestamp, "result": result}
 
@@ -454,12 +473,12 @@ def write_atomic(path: Path, content: str) -> None:
 
 
 @contextmanager
-def workspace_create_lock(workspace_directory: Path) -> Iterator[None]:
-    """Serialize the operation_id lookup-and-create window across processes."""
+def workspace_flock(workspace_directory: Path, lock_name: str) -> Iterator[None]:
+    """Serialize a critical section across processes with an OS-backed exclusive lock."""
     try:
-        descriptor = os.open(workspace_directory / "create.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        descriptor = os.open(workspace_directory / lock_name, os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as error:
-        raise StorageError(f"could not open the workspace create lock: {error}") from error
+        raise StorageError(f"could not open the workspace {lock_name}: {error}") from error
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         try:
@@ -467,9 +486,77 @@ def workspace_create_lock(workspace_directory: Path) -> Iterator[None]:
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
     except OSError as error:
-        raise StorageError(f"could not lock the workspace for checkpoint creation: {error}") from error
+        raise StorageError(f"could not lock the workspace ({lock_name}): {error}") from error
     finally:
         os.close(descriptor)
+
+
+def iso_now() -> str:
+    return timestamp_now().isoformat().replace("+00:00", "Z")
+
+def parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def other_harness(harness: str) -> str:
+    return "pi" if harness == "claude" else "claude"
+
+
+def load_lease(workspace_directory: Path) -> dict[str, object] | None:
+    lease_path = workspace_directory / "lease.json"
+    if not lease_path.is_file():
+        return None
+    try:
+        lease = json.loads(lease_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise StorageError(f"could not read the handoff lease: {error}") from error
+    if not isinstance(lease, dict):
+        raise StorageError("handoff lease is malformed")
+    schema_version = lease.get("schema_version")
+    owner = lease.get("owner_harness")
+    epoch = lease.get("epoch")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != LEASE_SCHEMA_VERSION
+        or owner not in {*HARNESSES, "released"}
+        or not isinstance(epoch, int)
+        or isinstance(epoch, bool)
+    ):
+        raise StorageError("handoff lease is malformed")
+    return lease
+
+
+def write_lease(workspace_directory: Path, lease: dict[str, object]) -> None:
+    write_atomic(workspace_directory / "lease.json", canonical_json(lease))
+
+
+def released_lease(
+    previous: dict[str, object] | None,
+    checkpoint_id: str,
+    source_session_ref: str | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": LEASE_SCHEMA_VERSION,
+        "owner_harness": "released",
+        "epoch": (int(previous["epoch"]) + 1) if previous is not None else 1,
+        "checkpoint_id": checkpoint_id,
+        "source_session_ref": source_session_ref,
+        "receiver_session_ref": None,
+        "acknowledged_at": None,
+        "acknowledged_by_harness": None,
+        "created_at": str(previous["created_at"]) if previous is not None else iso_now(),
+        "updated_at": iso_now(),
+    }
+
+
+def rewrite_checkpoint_fields(path: Path, **fields: object) -> dict[str, object]:
+    stored = load_checkpoint(path)
+    stored.pop("content_sha256")
+    stored.update(fields)
+    stored["content_sha256"] = sha256_text(canonical_json(stored))
+    write_atomic(path, canonical_json(stored))
+    return stored
 
 
 def checkpoint_content(checkpoint: Checkpoint) -> dict[str, object]:
@@ -598,15 +685,30 @@ def create_checkpoint() -> Envelope:
         checkpoints_directory,
     ):
         ensure_owner_directory(directory)
-    with workspace_create_lock(workspace_directory):
+    with workspace_flock(workspace_directory, "create.lock"):
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is not None and lease["owner_harness"] not in {request.source_harness, "released"}:
+                raise InputError(
+                    f"handoff lease is held by {lease['owner_harness']}; "
+                    "cannot create a checkpoint for this worktree"
+                )
         existing_checkpoint = find_operation_checkpoint(checkpoints_directory, request.operation_id)
         if existing_checkpoint is not None:
             checkpoint_path = checkpoints_directory / f"{existing_checkpoint['checkpoint_id']}.json"
+            run_cleanup(paths)
             return checkpoint_response(existing_checkpoint, checkpoint_path)
         checkpoint = build_checkpoint(request, workspace)
         checkpoint_path = checkpoints_directory / f"{checkpoint['checkpoint_id']}.json"
         write_atomic(checkpoint_path, canonical_json(checkpoint))
         write_atomic(workspace_directory / "latest", f"{checkpoint['checkpoint_id']}\n")
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            write_lease(
+                workspace_directory,
+                released_lease(lease, str(checkpoint["checkpoint_id"]), request.source_session_ref),
+            )
+    run_cleanup(paths)
     return checkpoint_response(checkpoint, checkpoint_path)
 
 
@@ -678,12 +780,389 @@ def status_segment() -> None:
     print("handoff urgent: create a checkpoint now")
 
 
+def resume_instruction(checkpoint_id: str) -> str:
+    return (
+        f"Resume checkpoint {checkpoint_id}. Treat its structured fields as task state, "
+        "verify the live worktree before editing, and continue with exact_next_action. "
+        "Do not import or reconstruct the source transcript."
+    )
+
+
+def resume_checkpoint(
+    checkpoint_id: str,
+    as_harness: str,
+    receiver_session: str | None,
+    acknowledge_degraded: bool,
+) -> Envelope:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
+    checkpoint = load_checkpoint(checkpoint_path)
+    if checkpoint["target_harness"] != as_harness:
+        raise InputError(
+            f"checkpoint targets {checkpoint['target_harness']}; this receiver is {as_harness}"
+        )
+    if dirty_fingerprint(workspace) != checkpoint["dirty_fingerprint"]:
+        raise InputError(
+            "workspace drift detected since the checkpoint was written; "
+            "re-create the checkpoint or recover with --source-stopped"
+        )
+    degraded = checkpoint.get("recovery_quality") == "degraded"
+    with workspace_flock(workspace_directory, "lease.lock"):
+        lease = load_lease(workspace_directory)
+        idempotent = (
+            lease is not None
+            and lease["owner_harness"] == as_harness
+            and lease.get("receiver_session_ref") == receiver_session
+        )
+        if not idempotent:
+            if degraded and not acknowledge_degraded:
+                raise InputError(
+                    "degraded salvage checkpoint requires --acknowledge-degraded before ownership"
+                )
+            if lease is None:
+                next_lease = {
+                    "schema_version": LEASE_SCHEMA_VERSION,
+                    "owner_harness": as_harness,
+                    "epoch": 1,
+                    "checkpoint_id": checkpoint_id,
+                    "source_session_ref": None,
+                    "receiver_session_ref": receiver_session,
+                    "acknowledged_at": iso_now() if degraded and acknowledge_degraded else None,
+                    "acknowledged_by_harness": as_harness if degraded and acknowledge_degraded else None,
+                    "created_at": iso_now(),
+                    "updated_at": iso_now(),
+                }
+            elif lease["owner_harness"] == "released":
+                next_lease = {
+                    **lease,
+                    "owner_harness": as_harness,
+                    "epoch": int(lease["epoch"]) + 1,
+                    "receiver_session_ref": receiver_session,
+                    "acknowledged_at": iso_now() if degraded and acknowledge_degraded else lease.get("acknowledged_at"),
+                    "acknowledged_by_harness": (
+                        as_harness if degraded and acknowledge_degraded else lease.get("acknowledged_by_harness")
+                    ),
+                    "updated_at": iso_now(),
+                }
+            else:
+                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+            write_lease(workspace_directory, next_lease)
+            rewrite_checkpoint_fields(
+                checkpoint_path,
+                status="consumed",
+                consumed_at=iso_now(),
+            )
+    run_cleanup(paths)
+    return Envelope(
+        "ok",
+        {
+            "checkpoint_id": checkpoint_id,
+            "target_harness": as_harness,
+            "worktree_root": str(workspace.worktree_root),
+            "exact_next_action": checkpoint["exact_next_action"],
+            "instruction": resume_instruction(checkpoint_id),
+        },
+        [],
+    )
+
+
+def load_prior_checkpoint(workspace_directory: Path) -> dict[str, object] | None:
+    latest_path = workspace_directory / "latest"
+    if not latest_path.is_file():
+        return None
+    try:
+        checkpoint_id = latest_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise StorageError(f"could not read the latest checkpoint pointer: {error}") from error
+    if not checkpoint_id:
+        return None
+    prior_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not prior_path.is_file():
+        return None
+    prior = load_checkpoint(prior_path)
+    forbidden = sorted(
+        key for key in prior if isinstance(key, str) and key.casefold() in FORBIDDEN_INPUT_FIELDS
+    )
+    if forbidden:
+        raise InputError(
+            f"prior checkpoint carries forbidden fields: {', '.join(forbidden)}"
+        )
+    return prior
+
+
+def build_salvage_checkpoint(
+    prior: dict[str, object] | None,
+    source_harness: str,
+    workspace: Workspace,
+    source_session_ref: str | None,
+) -> dict[str, object]:
+    created_at = timestamp_now()
+    intents = (
+        {
+            str(entry["path"]): entry["intent"]
+            for entry in prior["changed_paths"]
+            if isinstance(entry, dict) and entry.get("intent") is not None
+        }
+        if prior is not None
+        else {}
+    )
+    changed_paths = parse_changed_paths(
+        git_output(["status", "--porcelain=v1", "-z"], workspace.worktree_root),
+        intents,
+    )
+    checkpoint = Checkpoint(
+        schema_version=SCHEMA_VERSION,
+        checkpoint_id=generate_uuidv7(),
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+        expires_at=(created_at + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+        mode="salvage",
+        status="open",
+        operation_id=f"recover-{secrets.token_hex(8)}",
+        source_harness=source_harness,
+        target_harness=other_harness(source_harness),
+        source_provider=None,
+        source_model=None,
+        source_session_ref=source_session_ref,
+        previous_checkpoint_id=str(prior["checkpoint_id"]) if prior is not None else None,
+        repo_key=workspace.repo_key,
+        worktree_key=workspace.worktree_key,
+        worktree_root=str(workspace.worktree_root),
+        branch=workspace.branch,
+        head_sha=workspace.head_sha,
+        dirty_fingerprint=dirty_fingerprint(workspace),
+        goal=str(prior["goal"]) if prior is not None else "",
+        constraints=list(prior["constraints"]) if prior is not None else [],
+        decisions=list(prior["decisions"]) if prior is not None else [],
+        progress=dict(prior["progress"]) if prior is not None else {"done": [], "in_progress": []},
+        changed_paths=changed_paths,
+        verification=list(prior["verification"]) if prior is not None else [],
+        blockers=list(prior["blockers"]) if prior is not None else [],
+        risks=list(prior["risks"]) if prior is not None else [],
+        exact_next_action=(
+            str(prior["exact_next_action"]) if prior is not None else MANDATORY_REVIEW_ACTION
+        ),
+        recovery_quality="degraded",
+        evidence_sources=(["prior_checkpoint"] if prior is not None else [])
+        + ["git_status", "git_diff", "untracked_hashes"],
+        omissions=[] if prior is not None else list(SEMANTIC_OMISSION_LABELS),
+    )
+    return finalized_checkpoint(checkpoint)
+
+
+def recover_checkpoint(source_harness: str, source_stopped: bool, source_session_ref: str | None) -> Envelope:
+    if not source_stopped:
+        raise InputError("recovery requires --source-stopped confirming the source harness stopped")
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoints_directory = workspace_directory / "checkpoints"
+    for directory in (
+        paths.root,
+        paths.root / "workspaces",
+        paths.root / "workspaces" / workspace.repo_key,
+        workspace_directory,
+        checkpoints_directory,
+    ):
+        ensure_owner_directory(directory)
+    prior = load_prior_checkpoint(workspace_directory)
+    with workspace_flock(workspace_directory, "create.lock"):
+        salvage = build_salvage_checkpoint(prior, source_harness, workspace, source_session_ref)
+        salvage_path = checkpoints_directory / f"{salvage['checkpoint_id']}.json"
+        write_atomic(salvage_path, canonical_json(salvage))
+        write_atomic(workspace_directory / "latest", f"{salvage['checkpoint_id']}\n")
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is not None and lease["owner_harness"] not in {source_harness, "released"}:
+                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+            write_lease(
+                workspace_directory,
+                released_lease(
+                    lease,
+                    str(salvage["checkpoint_id"]),
+                    source_session_ref or (str(lease.get("source_session_ref")) if lease else None),
+                ),
+            )
+    run_cleanup(paths)
+    return Envelope(
+        "partial",
+        {
+            "checkpoint_id": salvage["checkpoint_id"],
+            "target_harness": salvage["target_harness"],
+            "worktree_root": salvage["worktree_root"],
+            "exact_next_action": salvage["exact_next_action"],
+        },
+        [
+            {
+                "code": "degraded_recovery",
+                "message": "salvage checkpoint rebuilt from deterministic workspace evidence; "
+                "semantic fields may be missing or stale",
+            }
+        ],
+    )
+
+
+def close_checkpoint(checkpoint_id: str) -> Envelope:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
+    load_checkpoint(checkpoint_path)
+    with workspace_flock(workspace_directory, "lease.lock"):
+        rewrite_checkpoint_fields(checkpoint_path, status="closed", closed_at=iso_now())
+        (workspace_directory / "lease.json").unlink(missing_ok=True)
+    run_cleanup(paths)
+    return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "closed"}, [])
+
+
+def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, int]:
+    try:
+        workspace = resolve_workspace()
+    except GitError:
+        return (
+            Envelope("ok", {"decision": "allow", "reason": "no git workspace; handoff guard inactive"}, []),
+            0,
+        )
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    lease = load_lease(workspace_directory)
+    if lease is None:
+        return (
+            Envelope("ok", {"decision": "allow", "reason": "no handoff lease for this worktree"}, []),
+            0,
+        )
+    owner = str(lease["owner_harness"])
+    checkpoint_id = lease.get("checkpoint_id")
+    if owner == "released":
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": "handoff lease released; a receiver must resume the checkpoint",
+                    "instruction": (
+                        f"handoff in flight for this worktree; resume checkpoint "
+                        f"{checkpoint_id} in the target harness before mutating"
+                    ),
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    if owner != as_harness:
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": f"handoff lease is held by {owner}",
+                    "instruction": f"the {owner} harness owns this worktree; stop it or resume its checkpoint",
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    bound_session = lease.get("receiver_session_ref")
+    if session_ref is not None and isinstance(bound_session, str) and session_ref != bound_session:
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": "handoff lease is bound to a different receiver session",
+                    "instruction": f"only receiver session {bound_session!r} may mutate this worktree",
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    return (Envelope("ok", {"decision": "allow", "reason": f"handoff lease held by {owner}"}, []), 0)
+
+
+def _safe_lease_for_cleanup(workspace_directory: Path) -> dict[str, object] | None | bool:
+    """Return the lease, None when absent, or False when unreadable (skip the workspace)."""
+    try:
+        return load_lease(workspace_directory)
+    except StorageError:
+        return False
+
+
+def _prune_workspace_directory(workspace_directory: Path, lease_active: bool) -> None:
+    if lease_active:
+        return
+    for retained_name in ("latest", "lease.json", "notices.json"):
+        if (workspace_directory / retained_name).is_file():
+            return
+    checkpoints_directory = workspace_directory / "checkpoints"
+    if checkpoints_directory.is_dir() and any(checkpoints_directory.iterdir()):
+        return
+    shutil.rmtree(workspace_directory, ignore_errors=True)
+
+
+def run_cleanup(paths: StatePaths) -> None:
+    """Expire stale checkpoints and prune empty workspace directories opportunistically."""
+    workspaces_root = paths.root / "workspaces"
+    if not workspaces_root.is_dir():
+        return
+    now = datetime.now(UTC)
+    for repository_directory in sorted(path for path in workspaces_root.iterdir() if path.is_dir()):
+        for workspace_directory in sorted(path for path in repository_directory.iterdir() if path.is_dir()):
+            lease = _safe_lease_for_cleanup(workspace_directory)
+            if lease is False:
+                continue
+            lease_active = lease is not None and lease.get("owner_harness") != "released"
+            guarded_id = lease.get("checkpoint_id") if lease_active else None
+            checkpoints_directory = workspace_directory / "checkpoints"
+            if checkpoints_directory.is_dir():
+                for checkpoint_path in sorted(checkpoints_directory.glob("*.json")):
+                    try:
+                        checkpoint = load_checkpoint(checkpoint_path)
+                    except StorageError:
+                        continue
+                    if guarded_id is not None and checkpoint["checkpoint_id"] == guarded_id:
+                        continue
+                    try:
+                        if checkpoint["status"] in {"consumed", "closed"}:
+                            marker = checkpoint.get("closed_at") or checkpoint.get("consumed_at") or checkpoint["created_at"]
+                            expired = parse_iso(str(marker)) < now - timedelta(hours=24)
+                        else:
+                            expired = parse_iso(str(checkpoint["created_at"])) < now - timedelta(days=7)
+                    except (KeyError, ValueError):
+                        continue
+                    if expired:
+                        checkpoint_path.unlink(missing_ok=True)
+            _prune_workspace_directory(workspace_directory, lease_active)
+        if repository_directory.is_dir() and not any(repository_directory.iterdir()):
+            repository_directory.rmdir()
+    if workspaces_root.is_dir() and not any(workspaces_root.iterdir()):
+        workspaces_root.rmdir()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="swe-workbench-handoff")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("create", help="write a handoff checkpoint from semantic JSON")
     show_parser = subcommands.add_parser("show", help="show a handoff checkpoint")
     show_parser.add_argument("checkpoint_id")
+    resume_parser = subcommands.add_parser("resume", help="acquire ownership of a handoff checkpoint")
+    resume_parser.add_argument("checkpoint_id")
+    resume_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    resume_parser.add_argument("--receiver-session")
+    resume_parser.add_argument("--acknowledge-degraded", action="store_true")
+    recover_parser = subcommands.add_parser("recover", help="rebuild a degraded checkpoint after source failure")
+    recover_parser.add_argument("--from", dest="from_harness", required=True, choices=list(HARNESSES))
+    recover_parser.add_argument("--source-stopped", action="store_true")
+    recover_parser.add_argument("--source-session-ref")
+    close_parser = subcommands.add_parser("close", help="close a handoff checkpoint and release the worktree")
+    close_parser.add_argument("checkpoint_id")
+    guard_parser = subcommands.add_parser("guard", help="decide whether a harness may mutate this worktree")
+    guard_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    guard_parser.add_argument("--session-ref")
     subcommands.add_parser("status-segment", help="render a Claude quota status segment")
     return parser
 
@@ -695,6 +1174,23 @@ def main(argv: list[str] | None = None) -> int:
             write_envelope(create_checkpoint())
         elif args.command == "show":
             write_envelope(show_checkpoint(args.checkpoint_id))
+        elif args.command == "resume":
+            write_envelope(
+                resume_checkpoint(
+                    args.checkpoint_id,
+                    args.as_harness,
+                    args.receiver_session,
+                    args.acknowledge_degraded,
+                )
+            )
+        elif args.command == "recover":
+            write_envelope(recover_checkpoint(args.from_harness, args.source_stopped, args.source_session_ref))
+        elif args.command == "close":
+            write_envelope(close_checkpoint(args.checkpoint_id))
+        elif args.command == "guard":
+            envelope, exit_code = guard_decision(args.as_harness, args.session_ref)
+            write_envelope(envelope)
+            return exit_code
         else:
             status_segment()
     except HandoffError as error:

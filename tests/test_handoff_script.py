@@ -7,6 +7,7 @@ import re
 import stat
 import subprocess
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -68,7 +69,7 @@ def test_help_documents_every_subcommand():
 
     assert result.returncode == 0
     assert "swe-workbench-handoff" in result.stdout
-    for subcommand in ("create", "show", "status-segment"):
+    for subcommand in ("create", "show", "status-segment", "resume", "recover", "close", "guard"):
         assert subcommand in result.stdout
 
 
@@ -608,3 +609,436 @@ def test_status_segment_fails_on_a_corrupt_notices_state(tmp_path, corrupt_state
     assert result.returncode != 0
     assert result.stdout == ""
     assert "notices" in result.stderr
+
+
+# ── Task 2: lease lifecycle and recovery ─────────────────────────────────────
+
+MANDATORY_REVIEW_ACTION = (
+    "Review the salvage manifest, reconcile it with the live worktree, "
+    "and obtain user confirmation of intent before editing."
+)
+
+
+def _env_for(state_dir: Path) -> dict[str, str]:
+    return {**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)}
+
+
+def _lease(state_dir: Path) -> dict[str, object]:
+    return json.loads(next(state_dir.glob("workspaces/*/*/lease.json")).read_text())
+
+
+def _lease_for_checkpoint(state_dir: Path, checkpoint_id: str) -> dict[str, object]:
+    checkpoint_path = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+    return json.loads((checkpoint_path.parent.parent / "lease.json").read_text())
+
+
+def _planned_checkpoint(repo: Path, state_dir: Path, operation_id: str = "planned") -> str:
+    envelope = _create_checkpoint(repo, state_dir, _create_input(operation_id))
+    return str(envelope["data"]["checkpoint_id"])
+
+
+def _checkpoint_id(state_dir: Path, operation_id: str) -> str:
+    for path in state_dir.glob("workspaces/*/*/checkpoints/*.json"):
+        checkpoint = json.loads(path.read_text())
+        if checkpoint["operation_id"] == operation_id:
+            return str(checkpoint["checkpoint_id"])
+    raise AssertionError(f"no checkpoint for operation {operation_id}")
+
+
+def _resume(repo: Path, state_dir: Path, checkpoint_id: str, *extra: str):
+    return _run_handoff("resume", checkpoint_id, *extra, cwd=repo, env=_env_for(state_dir))
+
+
+def _backdate(state_dir: Path, checkpoint_id: str, field: str, **offset) -> None:
+    def mutate(checkpoint: dict) -> None:
+        checkpoint[field] = (
+            (datetime.now(UTC) - timedelta(**offset)).isoformat().replace("+00:00", "Z")
+        )
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, mutate)
+
+
+def test_create_releases_the_source_lease_after_the_checkpoint_is_durable(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "release-lease")
+    lease = _lease(state_dir)
+
+    assert lease["owner_harness"] == "released"
+    assert lease["epoch"] == 1
+    assert lease["checkpoint_id"] == checkpoint_id
+    assert lease["source_session_ref"] is None
+
+
+def test_resume_acquires_ownership_for_the_target_harness(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-acquire")
+
+    result = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+
+    assert result.returncode == 0, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["data"]["checkpoint_id"] == checkpoint_id
+    assert envelope["data"]["exact_next_action"] == "Implement lease acquisition"
+    assert "Do not import or reconstruct the source transcript" in envelope["data"]["instruction"]
+    lease = _lease(state_dir)
+    assert lease["owner_harness"] == "pi"
+    assert lease["receiver_session_ref"] == "s1"
+    assert lease["epoch"] == 2
+    checkpoint = _checkpoint(state_dir, checkpoint_id)
+    assert checkpoint["status"] == "consumed"
+    assert checkpoint["consumed_at"]
+
+
+def test_resume_is_idempotent_for_the_same_receiver_session(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-idempotent")
+
+    first = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    second = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert json.loads(first.stdout)["data"]["checkpoint_id"] == json.loads(second.stdout)["data"]["checkpoint_id"]
+    assert _lease(state_dir)["epoch"] == 2
+
+
+def test_resume_rejects_a_second_receiver_session(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-second-session")
+
+    first = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    second = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s2")
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode != 0
+    assert second.stdout == ""
+    assert _lease(state_dir)["receiver_session_ref"] == "s1"
+
+
+def test_resume_rejects_a_harness_that_is_not_the_checkpoint_target(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-wrong-harness")
+
+    result = _resume(repo, state_dir, checkpoint_id, "--as", "claude", "--receiver-session", "s1")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "target" in result.stderr
+
+
+def test_resume_fails_on_workspace_drift(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "resume-drift")
+    (repo / "drift.txt").write_text("late mutation\n")
+
+    result = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "drift" in result.stderr
+    assert _lease(state_dir)["owner_harness"] == "released"
+
+
+def test_create_refuses_when_a_foreign_harness_owns_the_worktree(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "foreign-owner-first")
+    acquired = _resume(
+        repo, state_dir, _checkpoint_id(state_dir, "foreign-owner-first"), "--as", "pi", "--receiver-session", "s1"
+    )
+    assert acquired.returncode == 0, acquired.stderr
+
+    result = _run_handoff(
+        "create",
+        input_data=_create_input("foreign-owner-second"),
+        cwd=repo,
+        env=_env_for(state_dir),
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "lease" in result.stderr
+
+
+def test_guard_allows_mutation_when_no_state_exists(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(tmp_path / "state"))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"]["decision"] == "allow"
+
+
+def test_guard_allows_mutation_outside_a_git_workspace(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    result = _run_handoff("guard", "--as", "claude", cwd=plain, env=_env_for(tmp_path / "state"))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"]["decision"] == "allow"
+
+
+def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "guard-released")
+
+    for harness in ("claude", "pi"):
+        result = _run_handoff("guard", "--as", harness, cwd=repo, env=_env_for(state_dir))
+        assert result.returncode == 3, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["decision"] == "deny"
+        assert "resume" in envelope["data"]["instruction"].lower()
+
+
+def test_guard_allows_only_the_bound_owner_session(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "guard-owner")
+    acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+
+    allowed = _run_handoff("guard", "--as", "pi", "--session-ref", "s1", cwd=repo, env=_env_for(state_dir))
+    wrong_session = _run_handoff("guard", "--as", "pi", "--session-ref", "s2", cwd=repo, env=_env_for(state_dir))
+    foreign = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert allowed.returncode == 0, allowed.stderr
+    assert json.loads(allowed.stdout)["data"]["decision"] == "allow"
+    assert wrong_session.returncode == 3
+    assert json.loads(wrong_session.stdout)["data"]["decision"] == "deny"
+    assert foreign.returncode == 3
+    assert json.loads(foreign.stdout)["data"]["decision"] == "deny"
+
+
+def test_close_returns_the_worktree_to_normal(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "close-checkpoint")
+    acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+
+    closed = _run_handoff("close", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+
+    assert closed.returncode == 0, closed.stderr
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+    guard = _run_handoff("guard", "--as", "pi", "--session-ref", "s1", cwd=repo, env=_env_for(state_dir))
+    assert guard.returncode == 0, guard.stderr
+    checkpoint = _checkpoint(state_dir, checkpoint_id)
+    assert checkpoint["status"] == "closed"
+    assert checkpoint["closed_at"]
+
+
+def test_recover_requires_explicit_source_stopped(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "recover-gate")
+
+    result = _run_handoff("recover", "--from", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "source-stopped" in result.stderr
+
+
+def test_recover_builds_a_degraded_salvage_from_a_prior_semantic_checkpoint(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "recover-prior")
+
+    result = _run_handoff("recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "partial"
+    assert any(warning["code"] == "degraded_recovery" for warning in envelope["warnings"])
+    salvage_id = envelope["data"]["checkpoint_id"]
+    salvage = _checkpoint(state_dir, salvage_id)
+    assert salvage["mode"] == "salvage"
+    assert salvage["recovery_quality"] == "degraded"
+    assert salvage["status"] == "open"
+    assert salvage["target_harness"] == "pi"
+    assert salvage["goal"] == "Finish handoff support"
+    assert salvage["exact_next_action"] == "Implement lease acquisition"
+    assert salvage["evidence_sources"]
+    lease = _lease(state_dir)
+    assert lease["owner_harness"] == "released"
+    assert lease["checkpoint_id"] == salvage_id
+
+
+def test_recover_without_a_prior_checkpoint_omits_semantic_fields(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    (repo / "uncommitted.txt").write_text("live work\n")
+    state_dir = tmp_path / "state"
+
+    result = _run_handoff("recover", "--from", "pi", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "partial"
+    salvage = _checkpoint(state_dir, envelope["data"]["checkpoint_id"])
+    assert salvage["exact_next_action"] == MANDATORY_REVIEW_ACTION
+    assert "goal" in salvage["omissions"]
+    assert salvage["target_harness"] == "claude"
+    assert {entry["path"] for entry in salvage["changed_paths"]} == {"uncommitted.txt"}
+
+
+def test_recover_rejects_a_prior_checkpoint_carrying_transcript_fields(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "recover-transcript")
+
+    def inject_transcript(checkpoint: dict) -> None:
+        checkpoint["retainedTail"] = [{"role": "user", "content": "raw message"}]
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, inject_transcript)
+
+    result = _run_handoff("recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "retainedTail" in result.stderr
+
+
+def test_resume_requires_acknowledgement_for_degraded_checkpoints(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "acknowledge-prior")
+    recovered = _run_handoff(
+        "recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    salvage_id = json.loads(recovered.stdout)["data"]["checkpoint_id"]
+
+    refused = _resume(repo, state_dir, salvage_id, "--as", "pi", "--receiver-session", "s1")
+    acknowledged = _resume(
+        repo, state_dir, salvage_id, "--as", "pi", "--receiver-session", "s1", "--acknowledge-degraded"
+    )
+
+    assert refused.returncode != 0
+    assert refused.stdout == ""
+    assert "acknowledge-degraded" in refused.stderr
+    assert acknowledged.returncode == 0, acknowledged.stderr
+    lease = _lease(state_dir)
+    assert lease["acknowledged_at"]
+    assert lease["acknowledged_by_harness"] == "pi"
+
+
+def test_expired_open_checkpoints_are_cleaned_by_lifecycle_commands(tmp_path):
+    stale_repo = tmp_path / "stale-repo"
+    stale_repo.mkdir()
+    _initialize_repo(stale_repo)
+    live_repo = tmp_path / "live-repo"
+    live_repo.mkdir()
+    _initialize_repo(live_repo)
+    state_dir = tmp_path / "state"
+    stale_id = _planned_checkpoint(stale_repo, state_dir, "cleanup-expired")
+    _backdate(state_dir, stale_id, "created_at", days=8)
+
+    keep = _create_checkpoint(live_repo, state_dir, _create_input("cleanup-live"))
+
+    assert not list(state_dir.glob(f"workspaces/*/*/checkpoints/{stale_id}.json"))
+    assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{keep['data']['checkpoint_id']}.json"))
+
+
+def test_consumed_checkpoints_are_retained_then_cleaned(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "retention-consumed")
+    acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+    closed = _run_handoff("close", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+    assert closed.returncode == 0, closed.stderr
+    assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+
+    _backdate(state_dir, checkpoint_id, "closed_at", hours=25)
+    _create_checkpoint(other_repo, state_dir, _create_input("retention-trigger"))
+
+    assert not list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+
+
+def test_cleanup_preserves_an_active_lease_checkpoint(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "cleanup-active")
+    acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+    _backdate(state_dir, checkpoint_id, "consumed_at", hours=25)
+
+    _create_checkpoint(other_repo, state_dir, _create_input("cleanup-active-trigger"))
+
+    assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+    assert _lease_for_checkpoint(state_dir, checkpoint_id)["owner_harness"] == "pi"
+
+
+def test_verification_result_dict_rejection_is_a_clean_error_not_a_traceback(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    payload = _create_input("clean-rejection")
+    payload["semantic"]["verification"] = [
+        {
+            "command": "python3 -m pytest",
+            "label": "Focused suite",
+            "exit_status": 0,
+            "timestamp": "2026-08-30T12:00:00Z",
+            "result": {"outcome": "passed"},
+        }
+    ]
+
+    result = _run_handoff("create", input_data=payload, cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "verification.result must be a bounded outcome" in result.stderr
+    assert "Traceback" not in result.stderr
