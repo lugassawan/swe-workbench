@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -14,6 +15,8 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,6 +51,11 @@ FORBIDDEN_INPUT_FIELDS = frozenset(
         "toolresults",
         "transcript",
     }
+)
+VERIFICATION_FIELDS = frozenset({"command", "label", "exit_status", "timestamp", "result"})
+VERIFICATION_RESULTS = frozenset({"passed", "failed", "not_run", "skipped"})
+REQUIRED_CHECKPOINT_FIELDS = frozenset(
+    {"checkpoint_id", "created_at", "expires_at", "mode", "operation_id", "status"}
 )
 SEMANTIC_FIELDS = frozenset(
     {
@@ -248,12 +256,32 @@ def parse_changed_path_intents(raw_input: dict[str, object]) -> dict[str, str]:
     return intents
 
 
+def parse_verification_item(item: dict[str, object]) -> dict[str, object]:
+    if set(item) != VERIFICATION_FIELDS:
+        raise InputError("verification entries must use the bounded outcome schema")
+    command = item["command"]
+    label = item["label"]
+    exit_status = item["exit_status"]
+    timestamp = item["timestamp"]
+    result = item["result"]
+    if not isinstance(command, str) or not command or len(command) > 512:
+        raise InputError("verification.command must be a non-empty string of at most 512 characters")
+    if not isinstance(label, str) or not label or len(label) > 160:
+        raise InputError("verification.label must be a non-empty string of at most 160 characters")
+    if not isinstance(exit_status, int) or isinstance(exit_status, bool) or not 0 <= exit_status <= 255:
+        raise InputError("verification.exit_status must be an integer from 0 through 255")
+    if not isinstance(timestamp, str) or not timestamp or len(timestamp) > 64:
+        raise InputError("verification.timestamp must be a non-empty string of at most 64 characters")
+    if result not in VERIFICATION_RESULTS:
+        raise InputError("verification.result must be a bounded outcome")
+    return {"command": command, "label": label, "exit_status": exit_status, "timestamp": timestamp, "result": result}
+
+
 def parse_verification(raw_input: dict[str, object]) -> list[dict[str, object]]:
     verification = raw_input.get("verification")
     if not isinstance(verification, list) or not all(isinstance(item, dict) for item in verification):
         raise InputError("semantic.verification must be an array of objects")
-    allowed_fields = frozenset({"command", "label", "exit_status", "timestamp", "result"})
-    return [{key: value for key, value in item.items() if key in allowed_fields} for item in verification]
+    return [parse_verification_item(item) for item in verification]
 
 
 def parse_semantic_state(raw_input: dict[str, object]) -> SemanticState:
@@ -425,6 +453,25 @@ def write_atomic(path: Path, content: str) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+@contextmanager
+def workspace_create_lock(workspace_directory: Path) -> Iterator[None]:
+    """Serialize the operation_id lookup-and-create window across processes."""
+    try:
+        descriptor = os.open(workspace_directory / "create.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as error:
+        raise StorageError(f"could not open the workspace create lock: {error}") from error
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    except OSError as error:
+        raise StorageError(f"could not lock the workspace for checkpoint creation: {error}") from error
+    finally:
+        os.close(descriptor)
+
+
 def checkpoint_content(checkpoint: Checkpoint) -> dict[str, object]:
     content = asdict(checkpoint)
     content.pop("content_sha256")
@@ -443,6 +490,12 @@ def load_checkpoint(path: Path) -> dict[str, object]:
         raise StorageError(f"could not read checkpoint {path.name}: {error}") from error
     if not isinstance(stored, dict):
         raise StorageError(f"checkpoint {path.name} does not contain an object")
+    schema_version = stored.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version != SCHEMA_VERSION:
+        raise StorageError(f"checkpoint {path.name} has unsupported schema version {schema_version!r}")
+    for field in REQUIRED_CHECKPOINT_FIELDS:
+        if not isinstance(stored.get(field), str) or not stored[field]:
+            raise StorageError(f"checkpoint {path.name} is missing required field {field!r}")
     content_hash = stored.get("content_sha256")
     content = {key: value for key, value in stored.items() if key != "content_sha256"}
     if not isinstance(content_hash, str) or content_hash != sha256_text(canonical_json(content)):
@@ -537,11 +590,6 @@ def create_checkpoint() -> Envelope:
     paths = StatePaths.from_environment()
     workspace_directory = paths.workspace_directory(workspace)
     checkpoints_directory = workspace_directory / "checkpoints"
-    existing_checkpoint = find_operation_checkpoint(checkpoints_directory, request.operation_id)
-    if existing_checkpoint is not None:
-        checkpoint_path = checkpoints_directory / f"{existing_checkpoint['checkpoint_id']}.json"
-        return checkpoint_response(existing_checkpoint, checkpoint_path)
-
     for directory in (
         paths.root,
         paths.root / "workspaces",
@@ -550,10 +598,15 @@ def create_checkpoint() -> Envelope:
         checkpoints_directory,
     ):
         ensure_owner_directory(directory)
-    checkpoint = build_checkpoint(request, workspace)
-    checkpoint_path = checkpoints_directory / f"{checkpoint['checkpoint_id']}.json"
-    write_atomic(checkpoint_path, canonical_json(checkpoint))
-    write_atomic(workspace_directory / "latest", f"{checkpoint['checkpoint_id']}\n")
+    with workspace_create_lock(workspace_directory):
+        existing_checkpoint = find_operation_checkpoint(checkpoints_directory, request.operation_id)
+        if existing_checkpoint is not None:
+            checkpoint_path = checkpoints_directory / f"{existing_checkpoint['checkpoint_id']}.json"
+            return checkpoint_response(existing_checkpoint, checkpoint_path)
+        checkpoint = build_checkpoint(request, workspace)
+        checkpoint_path = checkpoints_directory / f"{checkpoint['checkpoint_id']}.json"
+        write_atomic(checkpoint_path, canonical_json(checkpoint))
+        write_atomic(workspace_directory / "latest", f"{checkpoint['checkpoint_id']}\n")
     return checkpoint_response(checkpoint, checkpoint_path)
 
 
@@ -584,6 +637,8 @@ def record_urgent_notice(reset_window: str) -> None:
             existing_notice = json.loads(notice_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise StorageError(f"could not read handoff notices: {error}") from error
+        if not isinstance(existing_notice, dict):
+            raise StorageError("handoff notices state is malformed")
         if existing_notice == notice:
             return
     write_atomic(notice_path, canonical_json(notice))
@@ -619,10 +674,7 @@ def status_segment() -> None:
         print("handoff available")
         return
     if reset_window is not None:
-        try:
-            record_urgent_notice(reset_window)
-        except HandoffError:
-            pass
+        record_urgent_notice(reset_window)
     print("handoff urgent: create a checkpoint now")
 
 

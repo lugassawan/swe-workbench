@@ -6,6 +6,7 @@ import os
 import re
 import stat
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -295,6 +296,109 @@ def test_create_rejects_secret_or_transcript_shaped_semantic_input(tmp_path, fie
     assert result.stdout == ""
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        "pytest output: 12 passed\ntraceback omitted",
+        {"outcome": "passed", "stdout": "raw tool output"},
+    ],
+)
+def test_create_rejects_unstructured_verification_result_bypasses(tmp_path, result):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    payload = _create_input("rejected-verification-result")
+    payload["semantic"]["verification"] = [
+        {
+            "command": "python3 -m pytest",
+            "label": "Focused test suite",
+            "exit_status": 0,
+            "timestamp": "2026-08-30T12:00:00Z",
+            "result": result,
+        }
+    ]
+
+    response = _run_handoff(
+        "create",
+        input_data=payload,
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+    assert response.returncode != 0
+    assert response.stdout == ""
+    assert not list(state_dir.glob("workspaces/*/*/checkpoints/*.json"))
+
+
+def test_create_persists_bounded_verification_entries(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    payload = _create_input("bounded-verification")
+    payload["semantic"]["verification"] = [
+        {
+            "command": "python3 -m pytest tests/",
+            "label": "Focused suite",
+            "exit_status": 0,
+            "timestamp": "2026-08-30T12:00:00Z",
+            "result": "passed",
+        }
+    ]
+
+    result = _create_checkpoint(repo, state_dir, payload)
+    checkpoint = _checkpoint(state_dir, result["data"]["checkpoint_id"])
+
+    assert checkpoint["verification"] == [
+        {
+            "command": "python3 -m pytest tests/",
+            "label": "Focused suite",
+            "exit_status": 0,
+            "timestamp": "2026-08-30T12:00:00Z",
+            "result": "passed",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("timestamp", "t" * 65),
+        ("command", "c" * 513),
+        ("label", "l" * 161),
+        ("exit_status", 256),
+    ],
+)
+def test_create_rejects_verification_entries_exceeding_field_bounds(tmp_path, field, value):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    payload = _create_input(f"rejected-verification-{field}")
+    payload["semantic"]["verification"] = [
+        {
+            "command": "python3 -m pytest",
+            "label": "Focused suite",
+            "exit_status": 0,
+            "timestamp": "2026-08-30T12:00:00Z",
+            "result": "passed",
+            field: value,
+        }
+    ]
+
+    response = _run_handoff(
+        "create",
+        input_data=payload,
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+    assert response.returncode != 0
+    assert response.stdout == ""
+    assert not list(state_dir.glob("workspaces/*/*/checkpoints/*.json"))
+
+
 def test_show_returns_the_persisted_checkpoint(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -311,6 +415,95 @@ def test_show_returns_the_persisted_checkpoint(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["data"]["checkpoint"]["checkpoint_id"] == created["data"]["checkpoint_id"]
+
+
+def test_concurrent_creates_for_one_operation_id_persist_a_single_checkpoint(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    env = {**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)}
+    _create_checkpoint(repo, state_dir, _create_input("warmup-operation"))
+
+    worker_count = 2
+    barrier = threading.Barrier(worker_count)
+    outcomes: list = []
+
+    def create_concurrently() -> None:
+        barrier.wait()
+        outcomes.append(_run_handoff("create", input_data=_create_input("raced-operation"), cwd=repo, env=env))
+
+    threads = [threading.Thread(target=create_concurrently) for _ in range(worker_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert all(outcome.returncode == 0 for outcome in outcomes), [outcome.stderr for outcome in outcomes]
+    envelopes = [json.loads(outcome.stdout) for outcome in outcomes]
+    assert {envelope["data"]["checkpoint_id"] for envelope in envelopes} == {
+        envelopes[0]["data"]["checkpoint_id"]
+    }
+    checkpoints = list(state_dir.glob("workspaces/*/*/checkpoints/*.json"))
+    assert len(checkpoints) == 2
+
+
+def _rewrite_checkpoint_with_valid_hash(state_dir: Path, checkpoint_id: str, mutate) -> None:
+    path = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+    checkpoint = json.loads(path.read_text())
+    mutate(checkpoint)
+    content = {key: value for key, value in checkpoint.items() if key != "content_sha256"}
+    checkpoint["content_sha256"] = hashlib.sha256(
+        json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path.write_text(json.dumps(checkpoint, sort_keys=True, separators=(",", ":")))
+
+
+def test_show_rejects_a_hash_valid_checkpoint_with_an_unsupported_major_version(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    created = _create_checkpoint(repo, state_dir, _create_input("future-major"))
+    checkpoint_id = created["data"]["checkpoint_id"]
+
+    def bump_schema_version(checkpoint: dict) -> None:
+        checkpoint["schema_version"] = 2
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, bump_schema_version)
+
+    result = _run_handoff(
+        "show",
+        checkpoint_id,
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "schema version" in result.stderr
+
+
+def test_show_rejects_a_hash_valid_checkpoint_with_a_missing_required_field(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    created = _create_checkpoint(repo, state_dir, _create_input("missing-shape"))
+    checkpoint_id = created["data"]["checkpoint_id"]
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, lambda checkpoint: checkpoint.pop("operation_id"))
+
+    result = _run_handoff(
+        "show",
+        checkpoint_id,
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "operation_id" in result.stderr
 
 
 def _claude_status(used_percentage: int | None, reset_window: str | None = None) -> dict[str, object]:
@@ -389,3 +582,29 @@ def test_status_segment_replaces_the_urgent_notice_for_a_new_reset_window(tmp_pa
     assert first.stdout == second.stdout == third.stdout == "handoff urgent: create a checkpoint now\n"
     assert first_notice == {"provider_key": "claude.five_hour", "reset_window": "2026-08-30T12:00:00Z", "threshold": 90}
     assert replaced_notice == {"provider_key": "claude.five_hour", "reset_window": "2026-08-30T17:00:00Z", "threshold": 90}
+
+
+@pytest.mark.parametrize("corrupt_state", ["not-json{", "[]"])
+def test_status_segment_fails_on_a_corrupt_notices_state(tmp_path, corrupt_state):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _run_handoff(
+        "status-segment",
+        input_data=_claude_status(90, "2026-08-30T12:00:00Z"),
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+    next(state_dir.glob("workspaces/*/*/notices.json")).write_text(corrupt_state)
+
+    result = _run_handoff(
+        "status-segment",
+        input_data=_claude_status(90, "2026-08-30T18:00:00Z"),
+        cwd=repo,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "notices" in result.stderr
