@@ -28,6 +28,7 @@ COMMANDS = [
     "document",
     "extend",
     "hotfix",
+    "handoff",
     "implement",
     "migrate",
     "refactor",
@@ -48,6 +49,17 @@ BARE_MENTION_RE = re.compile(
 
 SCAN_DIRS = ["skills", "docs", "agents", "commands"]
 
+# The one sanctioned exception: on the Pi Coding Agent, prompt templates are published under
+# their flat basename — the handoff template IS `/handoff` there, and its receiver instruction
+# must carry exactly that name. Bare `/handoff` is therefore allowed only in the files that
+# document the Pi receiver surface; everywhere else the /swe-workbench: prefix rule applies
+# unchanged (misrouting on Claude Code is the failure this test exists to prevent).
+_PI_TEMPLATE_NAME_ALLOWED_IN = {
+    Path("commands/handoff.md"),
+    Path("docs/cross-harness-handoff.md"),
+    Path("docs/plugin-platform-decisions.md"),
+}
+
 
 def _md_files():
     for d in SCAN_DIRS:
@@ -64,6 +76,8 @@ def test_no_bare_command_mentions():
         lines = path.read_text(encoding="utf-8").splitlines()
         for lineno, line in enumerate(lines, start=1):
             for match in BARE_MENTION_RE.finditer(line):
+                if match.group(0) == "/handoff" and rel in _PI_TEMPLATE_NAME_ALLOWED_IN:
+                    continue
                 offenders.append(f"{rel}:{lineno}: {match.group(0)!r} in: {line.strip()}")
 
     assert offenders == [], (

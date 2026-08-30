@@ -21,11 +21,14 @@
  *   - `ExtensionContext` (dist/core/extensions/types.d.ts) exposes no settings accessor. An
  *     extension that wants the user's `shellPath`/`shellCommandPrefix` would have to re-register
  *     the `bash` tool, which silently discards both — and a `commandPrefix` approach would
- *     overwrite the user's own `shellCommandPrefix`. This adapter only ever appends to
- *     `process.env.PATH`; it never touches the bash tool or `pi.on("tool_call")`.
+ *     overwrite the user's own `shellCommandPrefix`. The bin/ wiring only ever appends to
+ *     `process.env.PATH` and never re-registers the bash tool.
  *   - The shipped `examples/extensions/bash-spawn-hook.ts` wraps the bash tool by dropping its
  *     `_ctx` argument, which kills the `PI_SESSION_ID`/`PI_MODEL`/`PI_PROVIDER` env vars the bash
  *     tool's own guidelines tell the model to read. Do not copy that pattern verbatim.
+ *
+ * Scope note: tool_call handlers ARE registered by this adapter (handoff.ts — ownership,
+ * guards.ts — security); they observe and block, never replace the tool.
  */
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -34,6 +37,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { registerAskUser } from "./ask-user.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
+import { registerHandoff } from "./handoff.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
 
@@ -120,12 +124,17 @@ export default function (pi: ExtensionAPI): void {
     return { systemPrompt: event.systemPrompt + getPreamble() };
   });
 
-  // registerGuards must register first: emitToolCall (runner.js:701) runs tool_call handlers in
-  // registration order and short-circuits only on `block: true`, so a later-registered guard
-  // would be a silent security regression. registerAskUser adds no tool_call handler today, but
-  // a future one must be added after this line too — and emitToolCall has no try/catch around a
-  // handler's body (unlike emitUserBash), so any future tool_call handler must wrap its own body
-  // and return undefined on throw.
+  // registerGuards must register first among the *security* guards: emitToolCall (runner.js:701)
+  // runs tool_call handlers in registration order and short-circuits only on `block: true`, so
+  // a later-registered guard would be a silent security regression. registerAskUser adds no
+  // tool_call handler today, but a future one must be added after this line too — and
+  // emitToolCall has no try/catch around a handler's body (unlike emitUserBash), so any future
+  // tool_call handler must wrap its own body and return undefined on throw.
+  //
+  // registerHandoff is deliberately ABOVE registerGuards: an ownership denial must win the
+  // block reason (it carries the receiver resume instruction), and an allow is `undefined`,
+  // which never short-circuits — every security guard below still runs on each allowed call.
+  registerHandoff(pi, root);
   registerGuards(pi, root);
   registerAskUser(pi);
   registerSubagent(pi, root);

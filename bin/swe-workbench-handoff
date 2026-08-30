@@ -1,0 +1,1288 @@
+#!/usr/bin/env python3
+"""Create and inspect cross-harness handoff checkpoints."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+SCHEMA = "swb.handoff/1"
+SCHEMA_VERSION = 1
+STATE_DIRECTORY_NAME = Path("swe-workbench") / "handoff" / "v1"
+OPERATION_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+SECRET_PATTERNS = (
+    re.compile(r"\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic)\s+\S+", re.IGNORECASE),
+    re.compile(r"\b(?:ghp|sk)_[A-Za-z0-9_-]{8,}\b"),
+)
+FORBIDDEN_INPUT_FIELDS = frozenset(
+    {
+        "access_token",
+        "api-key",
+        "api_key",
+        "authorization",
+        "client_secret",
+        "cookie",
+        "credential",
+        "credentials",
+        "details",
+        "images",
+        "messages",
+        "password",
+        "private_key",
+        "retainedtail",
+        "secret",
+        "token",
+        "tool_results",
+        "toolresults",
+        "transcript",
+    }
+)
+VERIFICATION_FIELDS = frozenset({"command", "label", "exit_status", "timestamp", "result"})
+VERIFICATION_RESULTS = frozenset({"passed", "failed", "not_run", "skipped"})
+HARNESSES = ("claude", "pi")
+LEASE_SCHEMA_VERSION = 1
+MANDATORY_REVIEW_ACTION = (
+    "Review the salvage manifest, reconcile it with the live worktree, "
+    "and obtain user confirmation of intent before editing."
+)
+SEMANTIC_OMISSION_LABELS = (
+    "goal",
+    "constraints",
+    "decisions",
+    "progress",
+    "changed_path_intents",
+    "verification",
+    "blockers",
+    "risks",
+    "exact_next_action",
+)
+GUARD_DENY_EXIT_CODE = 3
+REQUIRED_CHECKPOINT_FIELDS = frozenset(
+    {"checkpoint_id", "created_at", "expires_at", "mode", "operation_id", "status"}
+)
+SEMANTIC_FIELDS = frozenset(
+    {
+        "goal",
+        "constraints",
+        "decisions",
+        "progress",
+        "changed_path_intents",
+        "verification",
+        "blockers",
+        "risks",
+        "exact_next_action",
+    }
+)
+
+
+class HandoffError(Exception):
+    """Base error for handoff command failures."""
+
+
+class InputError(HandoffError):
+    """Raised when a command receives invalid input."""
+
+
+class GitError(HandoffError):
+    """Raised when the current Git workspace cannot be identified."""
+
+
+class StorageError(HandoffError):
+    """Raised when checkpoint storage is unreadable or corrupt."""
+
+
+@dataclass(frozen=True)
+class Envelope:
+    status: str
+    data: dict[str, object]
+    warnings: list[dict[str, str]]
+    schema: str = SCHEMA
+
+
+@dataclass(frozen=True)
+class SemanticState:
+    goal: str
+    constraints: list[str]
+    decisions: list[str]
+    progress_done: list[str]
+    progress_in_progress: list[str]
+    changed_path_intents: dict[str, str]
+    verification: list[dict[str, object]]
+    blockers: list[str]
+    risks: list[str]
+    exact_next_action: str
+
+
+@dataclass(frozen=True)
+class CreateRequest:
+    operation_id: str
+    source_harness: str
+    target_harness: str
+    semantic: SemanticState
+    source_provider: str | None
+    source_model: str | None
+    source_session_ref: str | None
+    previous_checkpoint_id: str | None
+
+
+@dataclass(frozen=True)
+class Workspace:
+    repo_key: str
+    worktree_key: str
+    worktree_root: Path
+    branch: str
+    head_sha: str
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    schema_version: int
+    checkpoint_id: str
+    created_at: str
+    expires_at: str
+    mode: str
+    status: str
+    operation_id: str
+    source_harness: str
+    target_harness: str
+    source_provider: str | None
+    source_model: str | None
+    source_session_ref: str | None
+    previous_checkpoint_id: str | None
+    repo_key: str
+    worktree_key: str
+    worktree_root: str
+    branch: str
+    head_sha: str
+    dirty_fingerprint: str
+    goal: str
+    constraints: list[str]
+    decisions: list[str]
+    progress: dict[str, list[str]]
+    changed_paths: list[dict[str, object]]
+    verification: list[dict[str, object]]
+    blockers: list[str]
+    risks: list[str]
+    exact_next_action: str
+    recovery_quality: str
+    evidence_sources: list[str]
+    omissions: list[str]
+    content_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class StatePaths:
+    root: Path
+
+    @classmethod
+    def from_environment(cls) -> StatePaths:
+        override = os.environ.get("SWE_WORKBENCH_HANDOFF_STATE_DIR")
+        if override:
+            return cls(Path(override).expanduser())
+        xdg_state_home = os.environ.get("XDG_STATE_HOME")
+        state_home = Path(xdg_state_home).expanduser() if xdg_state_home else Path.home() / ".local" / "state"
+        return cls(state_home / STATE_DIRECTORY_NAME)
+
+    def workspace_directory(self, workspace: Workspace) -> Path:
+        return self.root / "workspaces" / workspace.repo_key / workspace.worktree_key
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def write_envelope(envelope: Envelope) -> None:
+    print(json.dumps(asdict(envelope), sort_keys=True))
+
+
+def parse_json_input() -> dict[str, object]:
+    try:
+        raw_input = json.load(sys.stdin)
+    except json.JSONDecodeError as error:
+        raise InputError("create requires a JSON object on stdin") from error
+    if not isinstance(raw_input, dict):
+        raise InputError("create requires a JSON object on stdin")
+    scan_forbidden_input(raw_input)
+    return raw_input
+
+
+def scan_forbidden_input(value: object) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(key, str) and key.casefold() in FORBIDDEN_INPUT_FIELDS:
+                raise InputError(f"input field {key!r} is not allowed in a handoff checkpoint")
+            scan_forbidden_input(child)
+        return
+    if isinstance(value, list):
+        for child in value:
+            scan_forbidden_input(child)
+        return
+    if isinstance(value, str) and any(pattern.search(value) for pattern in SECRET_PATTERNS):
+        raise InputError("secret-shaped input is not allowed in a handoff checkpoint")
+
+
+def parse_optional_string(raw_input: dict[str, object], field: str) -> str | None:
+    value = raw_input.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise InputError(f"{field} must be a non-empty string when provided")
+    return value
+
+
+def parse_string_list(raw_input: dict[str, object], field: str) -> list[str]:
+    value = raw_input.get(field)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise InputError(f"semantic.{field} must be an array of strings")
+    return value
+
+
+def parse_progress(raw_input: dict[str, object]) -> tuple[list[str], list[str]]:
+    progress = raw_input.get("progress")
+    if not isinstance(progress, dict):
+        raise InputError("semantic.progress must be an object")
+    done = progress.get("done")
+    in_progress = progress.get("in_progress")
+    if not isinstance(done, list) or not all(isinstance(item, str) for item in done):
+        raise InputError("semantic.progress.done must be an array of strings")
+    if not isinstance(in_progress, list) or not all(isinstance(item, str) for item in in_progress):
+        raise InputError("semantic.progress.in_progress must be an array of strings")
+    return done, in_progress
+
+
+def parse_changed_path_intents(raw_input: dict[str, object]) -> dict[str, str]:
+    intents = raw_input.get("changed_path_intents")
+    if not isinstance(intents, dict) or not all(
+        isinstance(path, str) and isinstance(intent, str) for path, intent in intents.items()
+    ):
+        raise InputError("semantic.changed_path_intents must map paths to strings")
+    return intents
+
+
+def parse_verification_item(item: dict[str, object]) -> dict[str, object]:
+    if set(item) != VERIFICATION_FIELDS:
+        raise InputError("verification entries must use the bounded outcome schema")
+    command = item["command"]
+    label = item["label"]
+    exit_status = item["exit_status"]
+    timestamp = item["timestamp"]
+    result = item["result"]
+    if not isinstance(command, str) or not command or len(command) > 512:
+        raise InputError("verification.command must be a non-empty string of at most 512 characters")
+    if not isinstance(label, str) or not label or len(label) > 160:
+        raise InputError("verification.label must be a non-empty string of at most 160 characters")
+    if not isinstance(exit_status, int) or isinstance(exit_status, bool) or not 0 <= exit_status <= 255:
+        raise InputError("verification.exit_status must be an integer from 0 through 255")
+    if not isinstance(timestamp, str) or not timestamp or len(timestamp) > 64:
+        raise InputError("verification.timestamp must be a non-empty string of at most 64 characters")
+    if not isinstance(result, str) or result not in VERIFICATION_RESULTS:
+        raise InputError("verification.result must be a bounded outcome")
+    return {"command": command, "label": label, "exit_status": exit_status, "timestamp": timestamp, "result": result}
+
+
+def parse_verification(raw_input: dict[str, object]) -> list[dict[str, object]]:
+    verification = raw_input.get("verification")
+    if not isinstance(verification, list) or not all(isinstance(item, dict) for item in verification):
+        raise InputError("semantic.verification must be an array of objects")
+    return [parse_verification_item(item) for item in verification]
+
+
+def parse_semantic_state(raw_input: dict[str, object]) -> SemanticState:
+    semantic_value = raw_input.get("semantic")
+    semantic = semantic_value if isinstance(semantic_value, dict) else raw_input
+    goal = semantic.get("goal")
+    exact_next_action = semantic.get("exact_next_action")
+    if not isinstance(goal, str) or not goal:
+        raise InputError("semantic.goal must be a non-empty string")
+    if not isinstance(exact_next_action, str) or not exact_next_action:
+        raise InputError("semantic.exact_next_action must be a non-empty string")
+    progress_done, progress_in_progress = parse_progress(semantic)
+    return SemanticState(
+        goal=goal,
+        constraints=parse_string_list(semantic, "constraints"),
+        decisions=parse_string_list(semantic, "decisions"),
+        progress_done=progress_done,
+        progress_in_progress=progress_in_progress,
+        changed_path_intents=parse_changed_path_intents(semantic),
+        verification=parse_verification(semantic),
+        blockers=parse_string_list(semantic, "blockers"),
+        risks=parse_string_list(semantic, "risks"),
+        exact_next_action=exact_next_action,
+    )
+
+
+def parse_create_request() -> CreateRequest:
+    raw_input = parse_json_input()
+    schema_version = raw_input.get("schema_version", SCHEMA_VERSION)
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version != SCHEMA_VERSION:
+        raise InputError(f"unsupported checkpoint schema version {schema_version!r}")
+    operation_id = raw_input.get("operation_id")
+    source_harness = raw_input.get("source_harness")
+    target_harness = raw_input.get("target_harness")
+    if not isinstance(operation_id, str) or not OPERATION_ID_PATTERN.fullmatch(operation_id):
+        raise InputError("operation_id must contain only letters, digits, '.', '_', ':', or '-'")
+    if source_harness not in {"claude", "pi"} or target_harness not in {"claude", "pi"}:
+        raise InputError("source_harness and target_harness must each be claude or pi")
+    return CreateRequest(
+        operation_id=operation_id,
+        source_harness=source_harness,
+        target_harness=target_harness,
+        semantic=parse_semantic_state(raw_input),
+        source_provider=parse_optional_string(raw_input, "source_provider"),
+        source_model=parse_optional_string(raw_input, "source_model"),
+        source_session_ref=parse_optional_string(raw_input, "source_session_ref"),
+        previous_checkpoint_id=parse_optional_string(raw_input, "previous_checkpoint_id"),
+    )
+
+
+def clean_git_environment() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
+def git_output(arguments: list[str], cwd: Path) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            capture_output=True,
+            cwd=cwd,
+            env=clean_git_environment(),
+        )
+    except OSError as error:
+        raise GitError(f"could not execute git: {error}") from error
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise GitError(message or f"git {' '.join(arguments)} failed")
+    return result.stdout
+
+
+def git_text(arguments: list[str], cwd: Path) -> str:
+    return git_output(arguments, cwd).decode("utf-8", errors="surrogateescape").strip()
+
+
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def resolve_workspace() -> Workspace:
+    current_directory = Path.cwd().resolve()
+    worktree_root = Path(git_text(["rev-parse", "--show-toplevel"], current_directory)).resolve()
+    common_directory = Path(git_text(["rev-parse", "--git-common-dir"], current_directory))
+    if not common_directory.is_absolute():
+        common_directory = current_directory / common_directory
+    common_directory = common_directory.resolve()
+    return Workspace(
+        repo_key=sha256_text(str(common_directory)),
+        worktree_key=sha256_text(str(worktree_root)),
+        worktree_root=worktree_root,
+        branch=git_text(["rev-parse", "--abbrev-ref", "HEAD"], worktree_root),
+        head_sha=git_text(["rev-parse", "HEAD"], worktree_root),
+    )
+
+
+def parse_changed_paths(status_output: bytes, intents: dict[str, str]) -> list[dict[str, object]]:
+    records = status_output.split(b"\0")
+    changed_paths: list[dict[str, object]] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        if not record:
+            index += 1
+            continue
+        if len(record) < 4:
+            raise GitError("git status returned an invalid porcelain record")
+        status = record[:2].decode("ascii")
+        path = record[3:].decode("utf-8", errors="surrogateescape")
+        changed_paths.append({"intent": intents.get(path), "path": path, "status": status})
+        index += 2 if status[0] in {"R", "C"} else 1
+    return changed_paths
+
+
+def dirty_fingerprint(workspace: Workspace) -> str:
+    digest = hashlib.sha256()
+    for label, arguments in (
+        (b"status", ["status", "--porcelain=v1", "-z"]),
+        (b"staged", ["diff", "--cached", "--binary"]),
+        (b"unstaged", ["diff", "--binary"]),
+    ):
+        digest.update(label + b"\0")
+        digest.update(git_output(arguments, workspace.worktree_root))
+    untracked = git_output(["ls-files", "--others", "--exclude-standard", "-z"], workspace.worktree_root)
+    for raw_path in sorted(path for path in untracked.split(b"\0") if path):
+        digest.update(b"untracked\0" + raw_path + b"\0")
+        path = workspace.worktree_root / raw_path.decode("utf-8", errors="surrogateescape")
+        try:
+            with path.open("rb") as file:
+                while chunk := file.read(65536):
+                    digest.update(chunk)
+        except OSError as error:
+            raise GitError(f"could not hash untracked file {path}: {error}") from error
+    return digest.hexdigest()
+
+
+def ensure_owner_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
+def fsync_directory(path: Path) -> None:
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError as error:
+        raise StorageError(f"could not open state directory for sync: {error}") from error
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        raise StorageError(f"could not sync state directory: {error}") from error
+    finally:
+        os.close(descriptor)
+
+
+def write_atomic(path: Path, content: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        temporary_path = Path(temporary_name)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+        fsync_directory(path.parent)
+    except OSError as error:
+        raise StorageError(f"could not write checkpoint state: {error}") from error
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def workspace_flock(workspace_directory: Path, lock_name: str) -> Iterator[None]:
+    """Serialize a critical section across processes with an OS-backed exclusive lock."""
+    try:
+        descriptor = os.open(workspace_directory / lock_name, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as error:
+        raise StorageError(f"could not open the workspace {lock_name}: {error}") from error
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    except OSError as error:
+        raise StorageError(f"could not lock the workspace ({lock_name}): {error}") from error
+    finally:
+        os.close(descriptor)
+
+
+def iso_now() -> str:
+    return timestamp_now().isoformat().replace("+00:00", "Z")
+
+def parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def other_harness(harness: str) -> str:
+    return "pi" if harness == "claude" else "claude"
+
+
+def valid_session_ref(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= 256
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+    )
+
+
+def load_lease(workspace_directory: Path) -> dict[str, object] | None:
+    lease_path = workspace_directory / "lease.json"
+    if not lease_path.is_file():
+        return None
+    try:
+        lease = json.loads(lease_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise StorageError(f"could not read the handoff lease: {error}") from error
+    if not isinstance(lease, dict):
+        raise StorageError("handoff lease is malformed")
+    schema_version = lease.get("schema_version")
+    owner = lease.get("owner_harness")
+    epoch = lease.get("epoch")
+    checkpoint_id = lease.get("checkpoint_id")
+    receiver_session_ref = lease.get("receiver_session_ref")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != LEASE_SCHEMA_VERSION
+        or not isinstance(owner, str)
+        or owner not in {*HARNESSES, "released"}
+        or not isinstance(epoch, int)
+        or isinstance(epoch, bool)
+        or not isinstance(checkpoint_id, str)
+        or not checkpoint_id
+        or (owner in HARNESSES and not valid_session_ref(receiver_session_ref))
+        or (owner == "released" and receiver_session_ref is not None)
+    ):
+        raise StorageError("handoff lease is malformed")
+    return lease
+
+
+def write_lease(workspace_directory: Path, lease: dict[str, object]) -> None:
+    write_atomic(workspace_directory / "lease.json", canonical_json(lease))
+
+
+def released_lease(
+    previous: dict[str, object] | None,
+    checkpoint_id: str,
+    source_session_ref: str | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": LEASE_SCHEMA_VERSION,
+        "owner_harness": "released",
+        "epoch": (int(previous["epoch"]) + 1) if previous is not None else 1,
+        "checkpoint_id": checkpoint_id,
+        "source_session_ref": source_session_ref,
+        "receiver_session_ref": None,
+        "acknowledged_at": None,
+        "acknowledged_by_harness": None,
+        "created_at": str(previous["created_at"]) if previous is not None else iso_now(),
+        "updated_at": iso_now(),
+    }
+
+
+def rewrite_checkpoint_fields(path: Path, **fields: object) -> dict[str, object]:
+    stored = load_checkpoint(path)
+    stored.pop("content_sha256")
+    stored.update(fields)
+    stored["content_sha256"] = sha256_text(canonical_json(stored))
+    write_atomic(path, canonical_json(stored))
+    return stored
+
+
+def checkpoint_content(checkpoint: Checkpoint) -> dict[str, object]:
+    content = asdict(checkpoint)
+    content.pop("content_sha256")
+    return content
+
+
+def finalized_checkpoint(checkpoint: Checkpoint) -> dict[str, object]:
+    content = checkpoint_content(checkpoint)
+    return {**content, "content_sha256": sha256_text(canonical_json(content))}
+
+
+def load_checkpoint(path: Path) -> dict[str, object]:
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise StorageError(f"could not read checkpoint {path.name}: {error}") from error
+    if not isinstance(stored, dict):
+        raise StorageError(f"checkpoint {path.name} does not contain an object")
+    schema_version = stored.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version != SCHEMA_VERSION:
+        raise StorageError(f"checkpoint {path.name} has unsupported schema version {schema_version!r}")
+    for field in REQUIRED_CHECKPOINT_FIELDS:
+        if not isinstance(stored.get(field), str) or not stored[field]:
+            raise StorageError(f"checkpoint {path.name} is missing required field {field!r}")
+    content_hash = stored.get("content_sha256")
+    content = {key: value for key, value in stored.items() if key != "content_sha256"}
+    if not isinstance(content_hash, str) or content_hash != sha256_text(canonical_json(content)):
+        raise StorageError(f"checkpoint {path.name} has an invalid content hash")
+    return stored
+
+
+def find_operation_checkpoint(checkpoints_directory: Path, operation_id: str) -> dict[str, object] | None:
+    if not checkpoints_directory.is_dir():
+        return None
+    for path in checkpoints_directory.glob("*.json"):
+        checkpoint = load_checkpoint(path)
+        if checkpoint.get("operation_id") == operation_id:
+            return checkpoint
+    return None
+
+
+def generate_uuidv7() -> str:
+    timestamp_milliseconds = int(time.time() * 1000)
+    identifier = (
+        (timestamp_milliseconds << 80)
+        | (0x7 << 76)
+        | (secrets.randbits(12) << 64)
+        | (0b10 << 62)
+        | secrets.randbits(62)
+    )
+    return str(uuid.UUID(int=identifier))
+
+
+def timestamp_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def build_checkpoint(request: CreateRequest, workspace: Workspace) -> dict[str, object]:
+    created_at = timestamp_now()
+    changed_paths = parse_changed_paths(
+        git_output(["status", "--porcelain=v1", "-z"], workspace.worktree_root),
+        request.semantic.changed_path_intents,
+    )
+    checkpoint = Checkpoint(
+        schema_version=SCHEMA_VERSION,
+        checkpoint_id=generate_uuidv7(),
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+        expires_at=(created_at + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+        mode="semantic",
+        status="open",
+        operation_id=request.operation_id,
+        source_harness=request.source_harness,
+        target_harness=request.target_harness,
+        source_provider=request.source_provider,
+        source_model=request.source_model,
+        source_session_ref=request.source_session_ref,
+        previous_checkpoint_id=request.previous_checkpoint_id,
+        repo_key=workspace.repo_key,
+        worktree_key=workspace.worktree_key,
+        worktree_root=str(workspace.worktree_root),
+        branch=workspace.branch,
+        head_sha=workspace.head_sha,
+        dirty_fingerprint=dirty_fingerprint(workspace),
+        goal=request.semantic.goal,
+        constraints=request.semantic.constraints,
+        decisions=request.semantic.decisions,
+        progress={"done": request.semantic.progress_done, "in_progress": request.semantic.progress_in_progress},
+        changed_paths=changed_paths,
+        verification=request.semantic.verification,
+        blockers=request.semantic.blockers,
+        risks=request.semantic.risks,
+        exact_next_action=request.semantic.exact_next_action,
+        recovery_quality="full",
+        evidence_sources=[],
+        omissions=[],
+    )
+    return finalized_checkpoint(checkpoint)
+
+
+def checkpoint_response(checkpoint: dict[str, object], path: Path) -> Envelope:
+    return Envelope(
+        "ok",
+        {
+            "checkpoint_id": checkpoint["checkpoint_id"],
+            "checkpoint_path": str(path),
+            "target_harness": checkpoint["target_harness"],
+            "worktree_root": checkpoint["worktree_root"],
+        },
+        [],
+    )
+
+
+def create_checkpoint() -> Envelope:
+    request = parse_create_request()
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoints_directory = workspace_directory / "checkpoints"
+    for directory in (
+        paths.root,
+        paths.root / "workspaces",
+        paths.root / "workspaces" / workspace.repo_key,
+        workspace_directory,
+        checkpoints_directory,
+    ):
+        ensure_owner_directory(directory)
+    with workspace_flock(workspace_directory, "create.lock"):
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is not None and lease["owner_harness"] not in {request.source_harness, "released"}:
+                raise InputError(
+                    f"handoff lease is held by {lease['owner_harness']}; "
+                    "cannot create a checkpoint for this worktree"
+                )
+        existing_checkpoint = find_operation_checkpoint(checkpoints_directory, request.operation_id)
+        if existing_checkpoint is not None:
+            checkpoint_path = checkpoints_directory / f"{existing_checkpoint['checkpoint_id']}.json"
+            run_cleanup(paths)
+            return checkpoint_response(existing_checkpoint, checkpoint_path)
+        checkpoint = build_checkpoint(request, workspace)
+        checkpoint_path = checkpoints_directory / f"{checkpoint['checkpoint_id']}.json"
+        write_atomic(checkpoint_path, canonical_json(checkpoint))
+        write_atomic(workspace_directory / "latest", f"{checkpoint['checkpoint_id']}\n")
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            write_lease(
+                workspace_directory,
+                released_lease(lease, str(checkpoint["checkpoint_id"]), request.source_session_ref),
+            )
+    run_cleanup(paths)
+    return checkpoint_response(checkpoint, checkpoint_path)
+
+
+def show_checkpoint(checkpoint_id: str) -> Envelope:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    checkpoint_path = paths.workspace_directory(workspace) / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
+    return Envelope("ok", {"checkpoint": load_checkpoint(checkpoint_path)}, [])
+
+
+def record_urgent_notice(reset_window: str) -> None:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    for directory in (
+        paths.root,
+        paths.root / "workspaces",
+        paths.root / "workspaces" / workspace.repo_key,
+        workspace_directory,
+    ):
+        ensure_owner_directory(directory)
+    notice = {"provider_key": "claude.five_hour", "reset_window": reset_window, "threshold": 90}
+    notice_path = workspace_directory / "notices.json"
+    if notice_path.is_file():
+        try:
+            existing_notice = json.loads(notice_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise StorageError(f"could not read handoff notices: {error}") from error
+        if not isinstance(existing_notice, dict):
+            raise StorageError("handoff notices state is malformed")
+        if existing_notice == notice:
+            return
+    write_atomic(notice_path, canonical_json(notice))
+
+
+def claude_quota_usage() -> tuple[float, str | None] | None:
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    rate_limits = payload.get("rate_limits")
+    if not isinstance(rate_limits, dict):
+        return None
+    five_hour = rate_limits.get("five_hour")
+    if not isinstance(five_hour, dict):
+        return None
+    used_percentage = five_hour.get("used_percentage")
+    if not isinstance(used_percentage, (int, float)) or isinstance(used_percentage, bool):
+        return None
+    reset_window = five_hour.get("resets_at")
+    return used_percentage, reset_window if isinstance(reset_window, str) and reset_window else None
+
+
+def status_segment() -> None:
+    quota_usage = claude_quota_usage()
+    if quota_usage is None or quota_usage[0] < 80:
+        print("")
+        return
+    used_percentage, reset_window = quota_usage
+    if used_percentage < 90:
+        print("handoff available")
+        return
+    if reset_window is not None:
+        record_urgent_notice(reset_window)
+    print("handoff urgent: create a checkpoint now")
+
+
+def resume_instruction(checkpoint_id: str) -> str:
+    return (
+        f"Resume checkpoint {checkpoint_id}. Treat its structured fields as task state, "
+        "verify the live worktree before editing, and continue with exact_next_action. "
+        "Do not import or reconstruct the source transcript."
+    )
+
+
+def resume_checkpoint(
+    checkpoint_id: str,
+    as_harness: str,
+    receiver_session: str | None,
+    acknowledge_degraded: bool,
+) -> Envelope:
+    if not valid_session_ref(receiver_session):
+        raise InputError("resume requires a non-empty bounded --receiver-session")
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
+    checkpoint = load_checkpoint(checkpoint_path)
+    if checkpoint["target_harness"] != as_harness:
+        raise InputError(
+            f"checkpoint targets {checkpoint['target_harness']}; this receiver is {as_harness}"
+        )
+    if dirty_fingerprint(workspace) != checkpoint["dirty_fingerprint"]:
+        raise InputError(
+            "workspace drift detected since the checkpoint was written; "
+            "re-create the checkpoint or recover with --source-stopped"
+        )
+    degraded = checkpoint.get("recovery_quality") == "degraded"
+    with workspace_flock(workspace_directory, "lease.lock"):
+        lease = load_lease(workspace_directory)
+        if lease is not None and lease["checkpoint_id"] != checkpoint_id:
+            raise InputError(
+                f"cannot resume stale checkpoint {checkpoint_id}; "
+                f"the active lease references {lease['checkpoint_id']}"
+            )
+        idempotent = (
+            lease is not None
+            and lease["owner_harness"] == as_harness
+            and lease.get("receiver_session_ref") == receiver_session
+        )
+        if not idempotent:
+            if degraded and not acknowledge_degraded:
+                raise InputError(
+                    "degraded salvage checkpoint requires --acknowledge-degraded before ownership"
+                )
+            if lease is None:
+                next_lease = {
+                    "schema_version": LEASE_SCHEMA_VERSION,
+                    "owner_harness": as_harness,
+                    "epoch": 1,
+                    "checkpoint_id": checkpoint_id,
+                    "source_session_ref": None,
+                    "receiver_session_ref": receiver_session,
+                    "acknowledged_at": iso_now() if degraded and acknowledge_degraded else None,
+                    "acknowledged_by_harness": as_harness if degraded and acknowledge_degraded else None,
+                    "created_at": iso_now(),
+                    "updated_at": iso_now(),
+                }
+            elif lease["owner_harness"] == "released":
+                next_lease = {
+                    **lease,
+                    "owner_harness": as_harness,
+                    "epoch": int(lease["epoch"]) + 1,
+                    "receiver_session_ref": receiver_session,
+                    "acknowledged_at": iso_now() if degraded and acknowledge_degraded else lease.get("acknowledged_at"),
+                    "acknowledged_by_harness": (
+                        as_harness if degraded and acknowledge_degraded else lease.get("acknowledged_by_harness")
+                    ),
+                    "updated_at": iso_now(),
+                }
+            else:
+                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+            write_lease(workspace_directory, next_lease)
+            rewrite_checkpoint_fields(
+                checkpoint_path,
+                status="consumed",
+                consumed_at=iso_now(),
+            )
+    run_cleanup(paths)
+    return Envelope(
+        "ok",
+        {
+            "checkpoint_id": checkpoint_id,
+            "target_harness": as_harness,
+            "worktree_root": str(workspace.worktree_root),
+            "exact_next_action": checkpoint["exact_next_action"],
+            "instruction": resume_instruction(checkpoint_id),
+        },
+        [],
+    )
+
+
+def load_prior_checkpoint(workspace_directory: Path) -> dict[str, object] | None:
+    latest_path = workspace_directory / "latest"
+    if not latest_path.is_file():
+        return None
+    try:
+        checkpoint_id = latest_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise StorageError(f"could not read the latest checkpoint pointer: {error}") from error
+    if not checkpoint_id:
+        return None
+    prior_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not prior_path.is_file():
+        return None
+    prior = load_checkpoint(prior_path)
+    forbidden = sorted(
+        key for key in prior if isinstance(key, str) and key.casefold() in FORBIDDEN_INPUT_FIELDS
+    )
+    if forbidden:
+        raise InputError(
+            f"prior checkpoint carries forbidden fields: {', '.join(forbidden)}"
+        )
+    return prior
+
+
+def build_salvage_checkpoint(
+    prior: dict[str, object] | None,
+    source_harness: str,
+    workspace: Workspace,
+    source_session_ref: str | None,
+) -> dict[str, object]:
+    created_at = timestamp_now()
+    intents = (
+        {
+            str(entry["path"]): entry["intent"]
+            for entry in prior["changed_paths"]
+            if isinstance(entry, dict) and entry.get("intent") is not None
+        }
+        if prior is not None
+        else {}
+    )
+    changed_paths = parse_changed_paths(
+        git_output(["status", "--porcelain=v1", "-z"], workspace.worktree_root),
+        intents,
+    )
+    checkpoint = Checkpoint(
+        schema_version=SCHEMA_VERSION,
+        checkpoint_id=generate_uuidv7(),
+        created_at=created_at.isoformat().replace("+00:00", "Z"),
+        expires_at=(created_at + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+        mode="salvage",
+        status="open",
+        operation_id=f"recover-{secrets.token_hex(8)}",
+        source_harness=source_harness,
+        target_harness=other_harness(source_harness),
+        source_provider=None,
+        source_model=None,
+        source_session_ref=source_session_ref,
+        previous_checkpoint_id=str(prior["checkpoint_id"]) if prior is not None else None,
+        repo_key=workspace.repo_key,
+        worktree_key=workspace.worktree_key,
+        worktree_root=str(workspace.worktree_root),
+        branch=workspace.branch,
+        head_sha=workspace.head_sha,
+        dirty_fingerprint=dirty_fingerprint(workspace),
+        goal=str(prior["goal"]) if prior is not None else "",
+        constraints=list(prior["constraints"]) if prior is not None else [],
+        decisions=list(prior["decisions"]) if prior is not None else [],
+        progress=dict(prior["progress"]) if prior is not None else {"done": [], "in_progress": []},
+        changed_paths=changed_paths,
+        verification=list(prior["verification"]) if prior is not None else [],
+        blockers=list(prior["blockers"]) if prior is not None else [],
+        risks=list(prior["risks"]) if prior is not None else [],
+        exact_next_action=(
+            str(prior["exact_next_action"]) if prior is not None else MANDATORY_REVIEW_ACTION
+        ),
+        recovery_quality="degraded",
+        evidence_sources=(["prior_checkpoint"] if prior is not None else [])
+        + ["git_status", "git_diff", "untracked_hashes"],
+        omissions=[] if prior is not None else list(SEMANTIC_OMISSION_LABELS),
+    )
+    return finalized_checkpoint(checkpoint)
+
+
+def recover_checkpoint(source_harness: str, source_stopped: bool, source_session_ref: str | None) -> Envelope:
+    if not source_stopped:
+        raise InputError("recovery requires --source-stopped confirming the source harness stopped")
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoints_directory = workspace_directory / "checkpoints"
+    for directory in (
+        paths.root,
+        paths.root / "workspaces",
+        paths.root / "workspaces" / workspace.repo_key,
+        workspace_directory,
+        checkpoints_directory,
+    ):
+        ensure_owner_directory(directory)
+    prior = load_prior_checkpoint(workspace_directory)
+    with workspace_flock(workspace_directory, "create.lock"):
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is not None and lease["owner_harness"] not in {source_harness, "released"}:
+                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+        salvage = build_salvage_checkpoint(prior, source_harness, workspace, source_session_ref)
+        salvage_path = checkpoints_directory / f"{salvage['checkpoint_id']}.json"
+        write_atomic(salvage_path, canonical_json(salvage))
+        write_atomic(workspace_directory / "latest", f"{salvage['checkpoint_id']}\n")
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            write_lease(
+                workspace_directory,
+                released_lease(
+                    lease,
+                    str(salvage["checkpoint_id"]),
+                    source_session_ref or (str(lease.get("source_session_ref")) if lease else None),
+                ),
+            )
+    run_cleanup(paths)
+    return Envelope(
+        "partial",
+        {
+            "checkpoint_id": salvage["checkpoint_id"],
+            "target_harness": salvage["target_harness"],
+            "worktree_root": salvage["worktree_root"],
+            "exact_next_action": salvage["exact_next_action"],
+        },
+        [
+            {
+                "code": "degraded_recovery",
+                "message": "salvage checkpoint rebuilt from deterministic workspace evidence; "
+                "semantic fields may be missing or stale",
+            }
+        ],
+    )
+
+
+def close_checkpoint(checkpoint_id: str, as_harness: str, session_ref: str) -> Envelope:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
+    load_checkpoint(checkpoint_path)
+    if not valid_session_ref(session_ref):
+        raise InputError("close requires a non-empty bounded --session-ref")
+    with workspace_flock(workspace_directory, "lease.lock"):
+        lease = load_lease(workspace_directory)
+        if lease is None:
+            raise InputError("cannot close a checkpoint without an active handoff lease")
+        if lease.get("checkpoint_id") != checkpoint_id:
+            raise InputError(
+                f"cannot close stale checkpoint {checkpoint_id}; "
+                f"the active lease references {lease.get('checkpoint_id')}"
+            )
+        if lease["owner_harness"] != as_harness:
+            raise InputError(f"handoff lease is held by {lease['owner_harness']}")
+        if lease["receiver_session_ref"] != session_ref:
+            raise InputError("handoff lease is bound to a different receiver session")
+        rewrite_checkpoint_fields(checkpoint_path, status="closed", closed_at=iso_now())
+        (workspace_directory / "lease.json").unlink(missing_ok=True)
+    run_cleanup(paths)
+    return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "closed"}, [])
+
+
+def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, int]:
+    try:
+        workspace = resolve_workspace()
+    except GitError:
+        return (
+            Envelope("ok", {"decision": "allow", "reason": "no git workspace; handoff guard inactive"}, []),
+            0,
+        )
+    paths = StatePaths.from_environment()
+    workspace_directory = paths.workspace_directory(workspace)
+    lease = load_lease(workspace_directory)
+    if lease is None:
+        return (
+            Envelope("ok", {"decision": "allow", "reason": "no handoff lease for this worktree"}, []),
+            0,
+        )
+    owner = str(lease["owner_harness"])
+    checkpoint_id = lease.get("checkpoint_id")
+    if owner == "released":
+        if not isinstance(checkpoint_id, str):
+            raise StorageError("released handoff lease has no checkpoint id")
+        checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+        if not checkpoint_path.is_file():
+            raise StorageError(f"released handoff checkpoint {checkpoint_id} was not found")
+        checkpoint = load_checkpoint(checkpoint_path)
+        target_harness = checkpoint.get("target_harness")
+        if target_harness not in HARNESSES:
+            raise StorageError("released handoff checkpoint has an invalid target harness")
+        command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": "handoff lease released; a receiver must resume the checkpoint",
+                    "checkpoint_id": checkpoint_id,
+                    "target_harness": target_harness,
+                    "instruction": f"{command_name} resume {checkpoint_id}",
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    if owner != as_harness:
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": f"handoff lease is held by {owner}",
+                    "instruction": f"the {owner} harness owns this worktree; stop it or resume its checkpoint",
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    bound_session = lease.get("receiver_session_ref")
+    if isinstance(bound_session, str) and session_ref != bound_session:
+        return (
+            Envelope(
+                "ok",
+                {
+                    "decision": "deny",
+                    "reason": "handoff lease is bound to a different receiver session",
+                    "instruction": f"only receiver session {bound_session!r} may mutate this worktree",
+                },
+                [],
+            ),
+            GUARD_DENY_EXIT_CODE,
+        )
+    return (Envelope("ok", {"decision": "allow", "reason": f"handoff lease held by {owner}"}, []), 0)
+
+
+def _safe_lease_for_cleanup(workspace_directory: Path) -> dict[str, object] | None | bool:
+    """Return the lease, None when absent, or False when unreadable (skip the workspace)."""
+    try:
+        return load_lease(workspace_directory)
+    except StorageError:
+        return False
+
+
+def _prune_workspace_directory(workspace_directory: Path, lease_active: bool) -> None:
+    if lease_active:
+        return
+    for retained_name in ("latest", "lease.json", "notices.json"):
+        if (workspace_directory / retained_name).is_file():
+            return
+    checkpoints_directory = workspace_directory / "checkpoints"
+    if checkpoints_directory.is_dir() and any(checkpoints_directory.iterdir()):
+        return
+    shutil.rmtree(workspace_directory, ignore_errors=True)
+
+
+def _recorded_worktree_exists(workspace_directory: Path, checkpoint_id: object) -> bool:
+    """Return whether the lease's recorded worktree still exists.
+
+    A worktree removed mid-handoff (e.g. by post-merge cleanup) would otherwise leave its XDG
+    lease markers forever. Unreadable or missing evidence conservatively keeps the state.
+    """
+    if not isinstance(checkpoint_id, str):
+        return True
+    checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+    if not checkpoint_path.is_file():
+        return True
+    try:
+        checkpoint = load_checkpoint(checkpoint_path)
+    except StorageError:
+        return True
+    root = checkpoint.get("worktree_root")
+    if not isinstance(root, str) or not root:
+        return True
+    return Path(root).is_dir()
+
+
+def run_cleanup(paths: StatePaths) -> None:
+    """Expire stale checkpoints and prune empty workspace directories opportunistically."""
+    workspaces_root = paths.root / "workspaces"
+    if not workspaces_root.is_dir():
+        return
+    now = datetime.now(UTC)
+    for repository_directory in sorted(path for path in workspaces_root.iterdir() if path.is_dir()):
+        for workspace_directory in sorted(path for path in repository_directory.iterdir() if path.is_dir()):
+            lease = _safe_lease_for_cleanup(workspace_directory)
+            if lease is False:
+                continue
+            lease_active = lease is not None and lease.get("owner_harness") != "released"
+            lease_checkpoint_id = lease.get("checkpoint_id") if lease is not None else None
+            guarded_id = lease_checkpoint_id if lease_active else None
+            orphaned = lease is not None and not _recorded_worktree_exists(
+                workspace_directory, lease_checkpoint_id
+            )
+            if lease_active and orphaned:
+                lease_active = False
+                guarded_id = None
+            checkpoints_directory = workspace_directory / "checkpoints"
+            if checkpoints_directory.is_dir():
+                for checkpoint_path in sorted(checkpoints_directory.glob("*.json")):
+                    try:
+                        checkpoint = load_checkpoint(checkpoint_path)
+                    except StorageError:
+                        continue
+                    if guarded_id is not None and checkpoint["checkpoint_id"] == guarded_id:
+                        continue
+                    try:
+                        if checkpoint["status"] in {"consumed", "closed"}:
+                            marker = checkpoint.get("closed_at") or checkpoint.get("consumed_at") or checkpoint["created_at"]
+                            expired = parse_iso(str(marker)) < now - timedelta(hours=24)
+                        else:
+                            expired = parse_iso(str(checkpoint["created_at"])) < now - timedelta(days=7)
+                    except (KeyError, ValueError):
+                        continue
+                    if expired:
+                        checkpoint_path.unlink(missing_ok=True)
+            if orphaned:
+                checkpoints_directory = workspace_directory / "checkpoints"
+                if not (checkpoints_directory.is_dir() and any(checkpoints_directory.iterdir())):
+                    # No close will ever run for a vanished worktree — drop the stale markers
+                    # so the empty workspace directory can be pruned.
+                    for stale_name in ("lease.json", "latest", "notices.json"):
+                        (workspace_directory / stale_name).unlink(missing_ok=True)
+            _prune_workspace_directory(workspace_directory, lease_active)
+        if repository_directory.is_dir() and not any(repository_directory.iterdir()):
+            repository_directory.rmdir()
+    if workspaces_root.is_dir() and not any(workspaces_root.iterdir()):
+        workspaces_root.rmdir()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="swe-workbench-handoff")
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands.add_parser("create", help="write a handoff checkpoint from semantic JSON")
+    show_parser = subcommands.add_parser("show", help="show a handoff checkpoint")
+    show_parser.add_argument("checkpoint_id")
+    resume_parser = subcommands.add_parser("resume", help="acquire ownership of a handoff checkpoint")
+    resume_parser.add_argument("checkpoint_id")
+    resume_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    resume_parser.add_argument("--receiver-session", required=True)
+    resume_parser.add_argument("--acknowledge-degraded", action="store_true")
+    recover_parser = subcommands.add_parser("recover", help="rebuild a degraded checkpoint after source failure")
+    recover_parser.add_argument("--from", dest="from_harness", required=True, choices=list(HARNESSES))
+    recover_parser.add_argument("--source-stopped", action="store_true")
+    recover_parser.add_argument("--source-session-ref")
+    close_parser = subcommands.add_parser("close", help="close a handoff checkpoint and release the worktree")
+    close_parser.add_argument("checkpoint_id")
+    close_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    close_parser.add_argument("--session-ref", required=True)
+    guard_parser = subcommands.add_parser("guard", help="decide whether a harness may mutate this worktree")
+    guard_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
+    guard_parser.add_argument("--session-ref")
+    subcommands.add_parser("status-segment", help="render a Claude quota status segment")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "create":
+            write_envelope(create_checkpoint())
+        elif args.command == "show":
+            write_envelope(show_checkpoint(args.checkpoint_id))
+        elif args.command == "resume":
+            write_envelope(
+                resume_checkpoint(
+                    args.checkpoint_id,
+                    args.as_harness,
+                    args.receiver_session,
+                    args.acknowledge_degraded,
+                )
+            )
+        elif args.command == "recover":
+            write_envelope(recover_checkpoint(args.from_harness, args.source_stopped, args.source_session_ref))
+        elif args.command == "close":
+            write_envelope(close_checkpoint(args.checkpoint_id, args.as_harness, args.session_ref))
+        elif args.command == "guard":
+            envelope, exit_code = guard_decision(args.as_harness, args.session_ref)
+            write_envelope(envelope)
+            return exit_code
+        else:
+            status_segment()
+    except HandoffError as error:
+        print(f"swe-workbench-handoff: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
