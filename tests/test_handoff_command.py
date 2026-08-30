@@ -92,3 +92,39 @@ def test_command_never_imports_native_transcripts():
     text = _text()
     assert "/export" not in text
     assert "--input-file" not in text
+
+
+# ── Task 5: docs discoverability ─────────────────────────────────────────────
+
+
+def test_catalog_lists_the_handoff_command():
+    catalog = (ROOT / "docs" / "catalog.md").read_text(encoding="utf-8")
+    assert "| `/swe-workbench:handoff" in catalog, "docs/catalog.md must list the handoff command"
+
+
+def test_readme_commands_bullet_lists_the_handoff_command():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "`/swe-workbench:handoff`" in readme
+
+
+def test_reference_docs_index_links_the_handoff_page():
+    index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
+    assert "cross-harness-handoff.md" in index
+
+
+def test_handoff_reference_doc_exists_and_covers_the_contract():
+    page = ROOT / "docs" / "cross-harness-handoff.md"
+    assert page.is_file(), "docs/cross-harness-handoff.md must exist"
+    text = page.read_text(encoding="utf-8")
+    for marker in (
+        "XDG_STATE_HOME",
+        "--source-stopped",
+        "--acknowledge-degraded",
+        "status-segment",
+        "429",
+        "resume",
+        "recover",
+        "close",
+    ):
+        assert marker in text, f"handoff doc must cover {marker!r}"
+    assert "swb.handoff/1" in text

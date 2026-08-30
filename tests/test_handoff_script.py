@@ -1203,3 +1203,80 @@ def test_recover_leaves_no_salvage_when_a_foreign_harness_holds_the_lease(tmp_pa
     assert len(checkpoint_files) == 1
     assert _checkpoint(state_dir, checkpoint_id)["status"] == "consumed"
     assert _lease_for_checkpoint(state_dir, checkpoint_id)["owner_harness"] == "pi"
+
+
+def test_end_to_end_claude_to_pi_planned_handoff_flow(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+
+    created = _create_checkpoint(
+        repo, state_dir, _create_input("e2e-claude-to-pi")
+    )
+    checkpoint_id = created["data"]["checkpoint_id"]
+
+    resumed = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "pi-e2e")
+    assert resumed.returncode == 0, resumed.stderr
+    allowed = _run_handoff(
+        "guard", "--as", "pi", "--session-ref", "pi-e2e", cwd=repo, env=_env_for(state_dir)
+    )
+    denied = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+    assert json.loads(allowed.stdout)["data"]["decision"] == "allow"
+    assert denied.returncode == 3
+
+    closed = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "pi-e2e",
+        cwd=repo, env=_env_for(state_dir),
+    )
+    assert closed.returncode == 0, closed.stderr
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+    stored = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).read_text()
+    assert stored.count('"checkpoint_id"') >= 1
+    for forbidden in ("diff --git", "GIT_AUTHOR", "$PATH", '"content"'):
+        assert forbidden not in stored, f"checkpoint leaked {forbidden!r}"
+
+
+def test_end_to_end_pi_to_claude_recovery_flow(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    payload = _create_input("e2e-pi-to-claude")
+    payload["source_harness"] = "pi"
+    payload["target_harness"] = "claude"
+    created = _create_checkpoint(repo, state_dir, payload)
+    checkpoint_id = created["data"]["checkpoint_id"]
+    (repo / "dirty.txt").write_text("uncommitted work\n")
+
+    recovered = _run_handoff(
+        "recover", "--from", "pi", "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    salvage = json.loads(recovered.stdout)
+    assert salvage["status"] == "partial"
+    salvage_id = salvage["data"]["checkpoint_id"]
+
+    refused = _resume(
+        repo, state_dir, salvage_id, "--as", "claude", "--receiver-session", "claude-e2e"
+    )
+    assert refused.returncode != 0
+
+    acknowledged = _resume(
+        repo, state_dir, salvage_id, "--as", "claude",
+        "--receiver-session", "claude-e2e", "--acknowledge-degraded",
+    )
+    assert acknowledged.returncode == 0, acknowledged.stderr
+    lease = _lease_for_checkpoint(state_dir, salvage_id)
+    assert lease["acknowledged_by_harness"] == "claude"
+    assert lease["owner_harness"] == "claude"
+
+    closed = _run_handoff(
+        "close", salvage_id, "--as", "claude", "--session-ref", "claude-e2e",
+        cwd=repo, env=_env_for(state_dir),
+    )
+    assert closed.returncode == 0, closed.stderr
+    stored = next(state_dir.glob(f"workspaces/*/*/checkpoints/{salvage_id}.json")).read_text()
+    for forbidden in ("diff --git", "GIT_AUTHOR", "$PATH", '"content"'):
+        assert forbidden not in stored, f"salvage checkpoint leaked {forbidden!r}"
