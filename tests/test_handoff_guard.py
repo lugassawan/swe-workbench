@@ -193,29 +193,68 @@ def test_allows_exact_resume_pipeline_through_a_released_lease(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_allows_exact_recovery_and_close_pipelines_through_ownership_gate(tmp_path):
+def test_allows_exact_pi_source_recovery_pipeline_through_ownership_gate(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)
     state_dir = tmp_path / "state"
-    checkpoint_id = _create(repo, state_dir, target="pi", source="claude")
-
-    recover_payload = _payload(repo, "Bash")
-    recover_payload["tool_input"] = {
+    _create(repo, state_dir, target="pi", source="claude")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
         "command": (
             'swe-workbench-handoff recover --from "pi" --source-stopped '
             '| swe-workbench-result-check swb.handoff/1'
         )
     }
-    close_payload = _payload(repo, "Bash")
-    close_payload["tool_input"] = {
+
+    assert _run_hook(payload, state_dir=state_dir).returncode == 0
+
+
+def test_blocks_close_pipeline_under_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
         "command": (
             f'swe-workbench-handoff close "{checkpoint_id}" '
             '| swe-workbench-result-check swb.handoff/1'
         )
     }
 
-    assert _run_hook(recover_payload, state_dir=state_dir).returncode == 0
-    assert _run_hook(close_payload, state_dir=state_dir).returncode == 0
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+
+
+def test_allows_close_pipeline_for_the_bound_owner_session(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    acquired = _runtime(
+        "resume",
+        checkpoint_id,
+        "--as",
+        "claude",
+        "--receiver-session",
+        "sess-1",
+        cwd=repo,
+        state_dir=state_dir,
+    )
+    assert acquired.returncode == 0, acquired.stderr
+    payload = _payload(repo, "Bash", session_id="sess-1")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff close "{checkpoint_id}" '
+            '| swe-workbench-result-check swb.handoff/1'
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_rejects_lifecycle_pipeline_with_a_shell_suffix(tmp_path):

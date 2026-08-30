@@ -34,7 +34,6 @@ _CONTROL_COMMANDS = (
     re.compile(
         rf'^swe-workbench-handoff recover --from "?pi"? --source-stopped {_CHECKED_PIPE}$'
     ),
-    re.compile(rf'^swe-workbench-handoff close "?{_UUID}"? {_CHECKED_PIPE}$'),
 )
 
 
