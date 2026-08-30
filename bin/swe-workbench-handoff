@@ -831,6 +831,11 @@ def resume_checkpoint(
     degraded = checkpoint.get("recovery_quality") == "degraded"
     with workspace_flock(workspace_directory, "lease.lock"):
         lease = load_lease(workspace_directory)
+        if lease is not None and lease["checkpoint_id"] != checkpoint_id:
+            raise InputError(
+                f"cannot resume stale checkpoint {checkpoint_id}; "
+                f"the active lease references {lease['checkpoint_id']}"
+            )
         idempotent = (
             lease is not None
             and lease["owner_harness"] == as_harness

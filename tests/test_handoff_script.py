@@ -693,6 +693,26 @@ def test_resume_requires_a_nonempty_receiver_session(tmp_path, session_args):
     assert lease["owner_harness"] == "released"
 
 
+def test_resume_rejects_a_stale_checkpoint_without_rebinding_the_latest_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    stale_id = _planned_checkpoint(repo, state_dir, "resume-stale-first")
+    latest_id = _planned_checkpoint(repo, state_dir, "resume-stale-latest")
+
+    result = _resume(
+        repo, state_dir, stale_id, "--as", "pi", "--receiver-session", "pi-receiver"
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    lease = _lease_for_checkpoint(state_dir, latest_id)
+    assert lease["checkpoint_id"] == latest_id
+    assert lease["owner_harness"] == "released"
+    assert _checkpoint(state_dir, stale_id)["status"] == "open"
+
+
 def test_resume_acquires_ownership_for_the_target_harness(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
