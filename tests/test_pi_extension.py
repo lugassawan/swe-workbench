@@ -367,6 +367,7 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "guards.ts",
         "cc-payload.ts",
         "guard-runner.ts",
+        "handoff.ts",
         "tool-vocab.ts",
         "bin-scripts.ts",
         "ask-user.ts",
@@ -543,7 +544,7 @@ try {
 """
 
 
-def _run_node(driver_src, args, tmp_path_factory, *, label):
+def _run_node(driver_src, args, tmp_path_factory, *, label, env=None):
     if _NODE_MAJOR is None or _NODE_MAJOR < 22:
         pytest.skip("requires Node >= 22")
     driver = tmp_path_factory.mktemp(label) / "driver.mjs"
@@ -554,7 +555,7 @@ def _run_node(driver_src, args, tmp_path_factory, *, label):
         [node, "--experimental-strip-types", str(driver), *args],
         capture_output=True,
         text=True,
-        env=_CLEAN_ENV,
+        env=dict(_CLEAN_ENV) if env is None else env,
         timeout=30,
     )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
@@ -2565,3 +2566,338 @@ def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
     assert cell["thinking"] == "medium", "the parent's own ctx.thinkingLevel must survive unchanged"
     assert cell["policySource"] == "parent-fallback"
     assert cell["fallbackReason"] == reason
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Handoff ownership + quota safeguards (pi/extensions/handoff.ts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+HANDOFF_TS = ROOT / "pi" / "extensions" / "handoff.ts"
+
+_HANDOFF_DRIVER = """
+import { pathToFileURL } from "node:url";
+import fs from "node:fs";
+
+const [, , handoffPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerHandoff } = await import(pathToFileURL(handoffPath).href);
+
+const handlers = {};
+const statuses = [];
+const notifications = [];
+const stubPi = { on(event, handler) { handlers[event] = handler; } };
+
+function makeCtx(repo, overrides = {}) {
+  return {
+    hasUI: true,
+    cwd: repo,
+    signal: undefined,
+    ui: {
+      notify: (msg, level) => notifications.push({ msg, level }),
+      setStatus: (key, value) => statuses.push({ key, value }),
+    },
+    sessionManager: { getSessionId: () => config.sessionId },
+    ...overrides,
+  };
+}
+
+registerHandoff(stubPi, config.root);
+
+async function toolCall(repo, toolName, input, overrides = {}) {
+  return handlers["tool_call"](
+    { type: "tool_call", toolCallId: "t", toolName, input },
+    makeCtx(repo, overrides),
+  );
+}
+
+const out = {};
+
+out.noState = [
+  await toolCall(config.repos.noState, "bash", { command: "ls -la" }),
+  await toolCall(config.repos.noState, "write", { path: "/tmp/f", content: "x" }),
+  await toolCall(config.repos.noState, "edit", { path: "/tmp/f", edits: [{ oldText: "a", newText: "b" }] }),
+];
+
+out.releasedBash = await toolCall(config.repos.released, "bash", { command: "git status --short" });
+out.releasedEdit = await toolCall(config.repos.released, "edit", { path: "/tmp/f", edits: [{ oldText: "a", newText: "b" }] });
+out.releasedWrite = await toolCall(config.repos.released, "write", { path: "/tmp/f", content: "x" });
+out.releasedRead = await toolCall(config.repos.released, "read", { path: "/tmp/f" });
+
+out.resumePipeline = await toolCall(config.repos.released, "bash", { command: config.resumePipeline });
+out.resumeDegradedPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeDegradedPipeline });
+out.recoverPipeline = await toolCall(config.repos.released, "bash", { command: config.recoverPipeline });
+out.injectedPipeline = await toolCall(config.repos.released, "bash", { command: config.injectedPipeline });
+out.closePipeline = await toolCall(config.repos.released, "bash", { command: config.closePipeline });
+
+out.ownedSameSession = await toolCall(config.repos.owned, "bash", { command: "ls -la" });
+out.ownedOtherSession = await toolCall(
+  config.repos.owned, "bash", { command: "ls -la" },
+  { sessionManager: { getSessionId: () => "pi-other-session" } },
+);
+out.foreignOwner = await toolCall(config.repos.foreign, "bash", { command: "ls -la" });
+
+fs.writeFileSync(config.leasePath, "not-json{");
+out.corruptLease = await toolCall(config.repos.released, "bash", { command: "ls -la" });
+
+const emit = (status) =>
+  handlers["after_provider_response"]({ type: "after_provider_response", status, headers: {} }, makeCtx(config.repos.noState));
+
+await emit(200);
+out.after200 = { statuses: statuses.slice(), notifications: notifications.slice() };
+
+await emit(429);
+out.after429 = { statuses: statuses.slice(), notifications: notifications.slice() };
+
+await emit(429);
+out.after429Again = { statusCount: statuses.length, notifications: notifications.slice() };
+
+statuses.length = 0;
+notifications.length = 0;
+await handlers["after_provider_response"](
+  { type: "after_provider_response", status: 429, headers: {} },
+  makeCtx(config.repos.noState, { hasUI: false }),
+);
+out.after429NoUI = { statuses: statuses.slice(), notifications: notifications.slice() };
+
+// Missing runtime (broken install): fail OPEN, warn exactly once. Re-registration replaces
+// the stub's tool_call handler, so this must run after every lease-dependent assertion.
+const notificationsBeforeMissing = notifications.length;
+registerHandoff(stubPi, config.fakeRoot);
+out.missingRuntimeFirst = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+out.missingRuntimeSecond = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+out.missingRuntimeWarnings = notifications.length - notificationsBeforeMissing;
+
+// Unspawnable runtime (bin/swe-workbench-handoff is a directory): exists, but python3 cannot
+// execute it — non-zero exit, no envelope on stdout — must fail CLOSED with the generic reason.
+registerHandoff(stubPi, config.brokenRuntimeRoot);
+out.brokenRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+
+console.log(JSON.stringify({ out }));
+"""
+
+
+def _handoff_runtime(*args, cwd, state_dir, input_data=None):
+    return subprocess.run(
+        [str(BIN_DIR / "swe-workbench-handoff"), *args],
+        input=json.dumps(input_data) if input_data is not None else None,
+        capture_output=True,
+        text=True,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+        cwd=cwd,
+    )
+
+
+def _handoff_semantic():
+    return {
+        "goal": "Finish handoff support",
+        "constraints": [],
+        "decisions": [],
+        "progress": {"done": [], "in_progress": []},
+        "changed_path_intents": {},
+        "verification": [],
+        "blockers": [],
+        "risks": [],
+        "exact_next_action": "Continue implementation",
+    }
+
+
+def _handoff_repo(tmp_path, name):
+    repo = tmp_path / name
+    repo.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(repo)], check=True, env=dict(_CLEAN_ENV))
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "initial"],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    return repo
+
+
+def _handoff_create(repo, state_dir, operation_id, source, target):
+    result = _handoff_runtime(
+        "create",
+        cwd=repo,
+        state_dir=state_dir,
+        input_data={
+            "operation_id": operation_id,
+            "source_harness": source,
+            "target_harness": target,
+            "semantic": _handoff_semantic(),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["data"]["checkpoint_id"]
+
+
+def _handoff_driver_result(tmp_path_factory, label, mutate=None):
+    """Builds four repos sharing one state root, runs _HANDOFF_DRIVER, returns parsed out."""
+    base = tmp_path_factory.mktemp(label)
+    state_dir = base / "state"
+    repos = {
+        "noState": _handoff_repo(base, "no-state"),
+        "released": _handoff_repo(base, "released"),
+        "owned": _handoff_repo(base, "owned"),
+        "foreign": _handoff_repo(base, "foreign"),
+    }
+    released_id = _handoff_create(repos["released"], state_dir, "pi-released", "claude", "pi")
+    # Captured immediately: only the released repo's workspace exists at this point, so the
+    # glob deterministically resolves to ITS lease — later creates must not reshuffle it.
+    released_lease_path = next(state_dir.glob("workspaces/*/*/lease.json"))
+    owned_id = _handoff_create(repos["owned"], state_dir, "pi-owned", "claude", "pi")
+    acquired = _handoff_runtime(
+        "resume", owned_id, "--as", "pi", "--receiver-session", "pi-session-1",
+        cwd=repos["owned"], state_dir=state_dir,
+    )
+    assert acquired.returncode == 0, acquired.stderr
+    foreign_id = _handoff_create(repos["foreign"], state_dir, "pi-foreign", "pi", "claude")
+    acquired_foreign = _handoff_runtime(
+        "resume", foreign_id, "--as", "claude", "--receiver-session", "claude-session-1",
+        cwd=repos["foreign"], state_dir=state_dir,
+    )
+    assert acquired_foreign.returncode == 0, acquired_foreign.stderr
+
+    if mutate is not None:
+        mutate(state_dir)
+
+    fake_root = base / "fake-root"
+    fake_root.mkdir()
+    broken_runtime_root = base / "broken-runtime-root"
+    (broken_runtime_root / "bin" / "swe-workbench-handoff").mkdir(parents=True)
+    session_arg = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"'
+    config = {
+        "root": str(ROOT),
+        "sessionId": "pi-session-1",
+        "repos": {name: str(path) for name, path in repos.items()},
+        "leasePath": str(released_lease_path),
+        "fakeRoot": str(fake_root),
+        "brokenRuntimeRoot": str(broken_runtime_root),
+        "resumePipeline": (
+            f'swe-workbench-handoff resume "{released_id}" --as pi '
+            f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1'
+        ),
+        "resumeDegradedPipeline": (
+            f'swe-workbench-handoff resume "{released_id}" --as pi '
+            f'--receiver-session {session_arg} --acknowledge-degraded '
+            f'| swe-workbench-result-check swb.handoff/1'
+        ),
+        "recoverPipeline": (
+            'swe-workbench-handoff recover --from "claude" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        ),
+        "injectedPipeline": (
+            f'swe-workbench-handoff resume "{released_id}" --as pi '
+            f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1; touch /tmp/nope'
+        ),
+        "closePipeline": (
+            f'swe-workbench-handoff close "{released_id}" --as pi '
+            f'--session-ref {session_arg} | swe-workbench-result-check swb.handoff/1'
+        ),
+    }
+    return _run_node(
+        _HANDOFF_DRIVER,
+        [str(HANDOFF_TS), json.dumps(config)],
+        tmp_path_factory,
+        label=label,
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+
+
+def test_handoff_module_exists():
+    assert HANDOFF_TS.is_file(), "pi/extensions/handoff.ts must exist"
+
+
+def test_index_registers_handoff_before_guards():
+    source = INDEX_TS.read_text(encoding="utf-8")
+    handoff = source.find("registerHandoff(pi, root)")
+    guards = source.find("registerGuards(pi, root)")
+    assert handoff != -1, "index.ts must call registerHandoff(pi, root)"
+    assert guards != -1, "index.ts must still call registerGuards(pi, root)"
+    assert handoff < guards, "ownership checks must register before the general guard handlers"
+
+
+def test_handoff_never_registers_a_duplicate_command_surface():
+    source = HANDOFF_TS.read_text(encoding="utf-8")
+    assert "registerCommand" not in source, "command discovery must stay commands/handoff.md via promptPaths"
+    assert "pi.prompts" not in source
+
+
+def test_handoff_never_reads_context_usage_for_quota_copy():
+    source = HANDOFF_TS.read_text(encoding="utf-8")
+    assert "getContextUsage" not in source, (
+        "context-window usage is not subscription quota; it must never drive handoff warnings"
+    )
+
+
+@requires_node
+def test_handoff_allows_mutation_when_no_state_exists(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-no-state")["out"]
+    assert out["noState"] == [None, None, None]
+
+
+@requires_node
+def test_handoff_blocks_mutating_tools_under_a_released_lease(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-released")["out"]
+    for key in ("releasedBash", "releasedEdit", "releasedWrite"):
+        assert out[key]["block"] is True, f"{key}: {out[key]}"
+    assert "/handoff resume" in out["releasedBash"]["reason"]
+    assert out.get("releasedRead") is None
+
+
+@requires_node
+def test_handoff_permits_only_the_exact_lifecycle_pipelines(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-lifecycle")["out"]
+    assert out.get("resumePipeline") is None
+    assert out.get("resumeDegradedPipeline") is None, "degraded recovery is the only resume path for salvage checkpoints"
+    assert out.get("recoverPipeline") is None
+    assert out["injectedPipeline"]["block"] is True
+    assert out["closePipeline"]["block"] is True
+
+
+@requires_node
+def test_handoff_respects_owner_session_and_foreign_ownership(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-ownership")["out"]
+    assert out.get("ownedSameSession") is None
+    assert out["ownedOtherSession"]["block"] is True
+    assert out["foreignOwner"]["block"] is True
+
+
+@requires_node
+def test_handoff_fails_closed_on_corrupt_lease_state(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-corrupt")["out"]
+    assert out["corruptLease"]["block"] is True
+    # The generic fail-closed reason distinguishes the corrupt-state path from an ordinary
+    # lease deny — the released repo's lease is the one corrupted, deterministically.
+    assert "could not be verified" in out["corruptLease"]["reason"]
+
+
+@requires_node
+def test_handoff_missing_runtime_fails_open_with_one_warning(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-missing-runtime")["out"]
+    assert out.get("missingRuntimeFirst") is None
+    assert out.get("missingRuntimeSecond") is None
+    assert out["missingRuntimeWarnings"] == 1
+
+
+@requires_node
+def test_handoff_unspawnable_runtime_fails_closed(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-broken-runtime")["out"]
+    assert out["brokenRuntime"]["block"] is True
+    assert "could not be verified" in out["brokenRuntime"]["reason"]
+
+
+@requires_node
+def test_handoff_quota_recovery_on_http_429_only(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-quota")["out"]
+    assert out["after200"] == {"statuses": [], "notifications": []}
+
+    statuses = out["after429"]["statuses"]
+    assert statuses and statuses[-1]["key"] == "swb-handoff"
+    assert "swe-workbench-handoff recover --from pi --source-stopped" in statuses[-1]["value"]
+    notifications = out["after429"]["notifications"]
+    assert len(notifications) == 1
+    assert notifications[0]["level"] == "warning"
+
+    assert out["after429Again"]["statusCount"] >= 1
+    assert len(out["after429Again"]["notifications"]) == 1
+
+    assert out["after429NoUI"] == {"statuses": [], "notifications": []}

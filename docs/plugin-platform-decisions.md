@@ -431,3 +431,32 @@ needs a list, nested records, or a partial-status distinction a bare exit code c
 already express. Hardened with a golden-literal ratchet test pinning its exact 6-field
 contract instead of migrating it — the S/Q/J decision test in
 `shared/docs/runtime-result-contract.md` generalizes this call for any future producer.
+
+## 12. `handoff_guard.py` — native mirror, never spawned on Pi
+
+The Claude-side PreToolUse hook `hooks/handoff_guard.py` enforces cross-harness handoff
+ownership for Claude Code sessions. On Pi the SAME decisions are enforced by
+`pi/extensions/handoff.ts`, natively — the hook script is never spawned.
+
+**Why not wire the script (like bash_guard/secret_guard)?** The hook's input contract is
+Claude-shaped: `tool_name`/`tool_input`/`session_id` from a PreToolUse payload, plus
+`CLAUDE_PLUGIN_ROOT`-based runtime resolution. Pi's equivalents live elsewhere — tool
+identity and inputs come from `tool_call` events, session identity from
+`ctx.sessionManager.getSessionId()`, and quota exhaustion only ever surfaces as an HTTP
+status on `after_provider_response`, an event the Claude hook cannot see. A cc-payload
+adapter could fake the first two, but the third has no Claude-side counterpart at all, so
+half the adapter would still need a native module.
+
+**What is shared vs native:** every ownership decision funnels through the same
+harness-neutral runtime (`bin/swe-workbench-handoff guard`), so the lease rules never
+fork. Native code is confined to: event-shape translation, the same anchored
+lifecycle-pipeline allowlist (mirrored per harness: Pi may bypass for `resume --as pi`
+and `recover --from claude`, Claude for `resume --as claude` and `recover --from pi`),
+identical failure postures (missing runtime install fails open; spawn error, timeout,
+corrupt state, or undecidable output fails closed), and the 429 recovery affordance
+(persistent footer status + once-per-session warning with the exact recovery command).
+
+**Quota warnings stay asymmetric by design.** Pi has no trustworthy subscription-quota
+signal — context-window usage accessors are explicitly NOT quota — so Pi warns only after
+an actual HTTP 429. Pre-limit percentage warnings remain a Claude-only affordance driven
+by Claude's five-hour quota fields (`status-segment`).

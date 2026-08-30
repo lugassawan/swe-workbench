@@ -641,13 +641,15 @@ def test_referenced_fields_actually_appear_in_hook_source():
 
 
 # hooks/*.sh|py -> Pi wiring status. "wired": translated by guards.ts this phase. "n/a": the
-# concept the hook manipulates does not exist on Pi (documented in
-# docs/plugin-platform-decisions.md §6). "deferred": not wired, but the missing Pi capability
-# is expected to arrive and unblock wiring — currently no rows sit in this bucket.
+# concept the hook manipulates either does not exist on Pi (documented in
+# docs/plugin-platform-decisions.md §6) or is implemented natively by a Pi extension module
+# instead of spawning the Claude hook script (documented in §12 for handoff_guard.py).
+# "deferred": not wired, but the missing Pi capability is expected to arrive and unblock wiring
+# — currently no rows sit in this bucket.
 HOOK_PI_STATUS = {
     "bash_guard.sh": "wired",
     "secret_guard.py": "wired",
-    "handoff_guard.py": "deferred",
+    "handoff_guard.py": "n/a",
     "workflow_resume_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",
@@ -670,6 +672,15 @@ def test_worktree_permission_grant_is_explicitly_not_applicable():
         "worktree_permission_grant.sh's PreToolUse permissionDecision output has no target on "
         "Pi (README.md: 'No permission popups') — this must stay an explicit N/A, not silently "
         "absent from the inventory"
+    )
+
+
+def test_handoff_guard_is_explicitly_not_applicable():
+    assert HOOK_PI_STATUS["handoff_guard.py"] == "n/a", (
+        "Pi-side handoff ownership and quota recovery are implemented natively in "
+        "pi/extensions/handoff.ts (tool_call + after_provider_response); the Claude hook script "
+        "is Claude-payload-shaped and is never spawned on Pi. This must stay an explicit N/A "
+        "row, not silently absent from the inventory"
     )
 
 
