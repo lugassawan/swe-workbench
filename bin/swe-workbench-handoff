@@ -970,14 +970,16 @@ def recover_checkpoint(source_harness: str, source_stopped: bool, source_session
         ensure_owner_directory(directory)
     prior = load_prior_checkpoint(workspace_directory)
     with workspace_flock(workspace_directory, "create.lock"):
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is not None and lease["owner_harness"] not in {source_harness, "released"}:
+                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
         salvage = build_salvage_checkpoint(prior, source_harness, workspace, source_session_ref)
         salvage_path = checkpoints_directory / f"{salvage['checkpoint_id']}.json"
         write_atomic(salvage_path, canonical_json(salvage))
         write_atomic(workspace_directory / "latest", f"{salvage['checkpoint_id']}\n")
         with workspace_flock(workspace_directory, "lease.lock"):
             lease = load_lease(workspace_directory)
-            if lease is not None and lease["owner_harness"] not in {source_harness, "released"}:
-                raise InputError(f"handoff lease is held by {lease['owner_harness']}")
             write_lease(
                 workspace_directory,
                 released_lease(

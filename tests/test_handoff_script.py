@@ -1042,3 +1042,23 @@ def test_verification_result_dict_rejection_is_a_clean_error_not_a_traceback(tmp
     assert result.stdout == ""
     assert "verification.result must be a bounded outcome" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_recover_leaves_no_salvage_when_a_foreign_harness_holds_the_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "recover-foreign-owner")
+    acquired = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+
+    result = _run_handoff("recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "lease" in result.stderr
+    checkpoint_files = list(state_dir.glob("workspaces/*/*/checkpoints/*.json"))
+    assert len(checkpoint_files) == 1
+    assert _checkpoint(state_dir, checkpoint_id)["status"] == "consumed"
+    assert _lease_for_checkpoint(state_dir, checkpoint_id)["owner_harness"] == "pi"
