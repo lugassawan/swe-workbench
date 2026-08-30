@@ -175,3 +175,25 @@ def test_sh_scripts_use_bash():
     assert cmds, "no .sh hook commands found in hooks.json"
     for cmd in cmds:
         assert cmd.startswith("bash "), f"expected bash interpreter, got: {cmd!r}"
+
+
+def test_handoff_guard_registered_after_secret_guard_for_mutating_tools():
+    """The handoff guard must cover Bash|Edit|Write and sit after secret_guard.py
+    so the secret gate vets content before ownership is evaluated."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    pre_tool_use = data["hooks"]["PreToolUse"]
+    commands = [
+        hook["command"]
+        for entry in pre_tool_use
+        for hook in entry.get("hooks", [])
+    ]
+    secret_index = next(i for i, cmd in enumerate(commands) if "secret_guard.py" in cmd)
+    handoff_commands = [i for i, cmd in enumerate(commands) if "handoff_guard.py" in cmd]
+    assert handoff_commands, "handoff_guard.py not registered in PreToolUse"
+    assert all(i > secret_index for i in handoff_commands)
+    matchers = [entry.get("matcher") for entry in pre_tool_use]
+    assert "Bash|Edit|Write" in matchers, (
+        f"expected a Bash|Edit|Write matcher for the handoff guard, got: {matchers!r}"
+    )
+    handoff_entry = next(entry for entry in pre_tool_use if "handoff_guard.py" in str(entry))
+    assert handoff_entry["matcher"] == "Bash|Edit|Write"
