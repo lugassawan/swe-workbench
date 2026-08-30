@@ -33,6 +33,7 @@ SCRIPTS = {
     "swe-workbench-doctor": "bash",
     "swe-workbench-fetch-pr": "bash",
     "swe-workbench-gh-timeout": "bash",
+    "swe-workbench-handoff": "python3",
     "swe-workbench-lsp": "python3",
     "swe-workbench-new-run-dir": "bash",
     "swe-workbench-preflight-commit": "python3",
