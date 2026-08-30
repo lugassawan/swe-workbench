@@ -1,5 +1,6 @@
 ---
 description: Hand work to Claude Code or Pi through a bounded semantic checkpoint, resume or recover a checkpoint, inspect status, or close a completed handoff.
+argument-hint: "[pi | claude] [--next <exact next action>] | resume <checkpoint-id> [--acknowledge-degraded] | recover --from <pi | claude> --source-stopped | close <checkpoint-id>"
 ---
 
 Manage a Claude Code ↔ Pi handoff in the current git worktree. Parse `$ARGUMENTS` as exactly one of:

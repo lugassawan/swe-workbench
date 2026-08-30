@@ -128,3 +128,13 @@ def test_handoff_reference_doc_exists_and_covers_the_contract():
     ):
         assert marker in text, f"handoff doc must cover {marker!r}"
     assert "swb.handoff/1" in text
+
+
+def test_frontmatter_carries_an_argument_hint_covering_every_route():
+    text = _text()
+    frontmatter = text.split("\n---\n", 1)[0]
+    hint_lines = [line for line in frontmatter.splitlines() if line.startswith("argument-hint:")]
+    assert hint_lines, "commands/handoff.md must include an 'argument-hint:' frontmatter field"
+    hint = hint_lines[0]
+    for marker in ("pi", "claude", "resume", "recover", "--source-stopped", "close"):
+        assert marker in hint, f"argument-hint must document {marker!r}"
