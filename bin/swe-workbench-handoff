@@ -1152,6 +1152,28 @@ def _prune_workspace_directory(workspace_directory: Path, lease_active: bool) ->
     shutil.rmtree(workspace_directory, ignore_errors=True)
 
 
+def _guarded_worktree_exists(workspace_directory: Path, guarded_id: object) -> bool:
+    """Active-lease protection applies only while the worktree still exists on disk.
+
+    A worktree removed mid-handoff (e.g. by post-merge cleanup) would otherwise hold its
+    guarded checkpoint and lease forever — cleanup-merged removes the worktree, not the XDG
+    handoff state. Unreadable or missing evidence conservatively keeps the protection.
+    """
+    if not isinstance(guarded_id, str):
+        return True
+    checkpoint_path = workspace_directory / "checkpoints" / f"{guarded_id}.json"
+    if not checkpoint_path.is_file():
+        return True
+    try:
+        checkpoint = load_checkpoint(checkpoint_path)
+    except StorageError:
+        return True
+    root = checkpoint.get("worktree_root")
+    if not isinstance(root, str) or not root:
+        return True
+    return Path(root).is_dir()
+
+
 def run_cleanup(paths: StatePaths) -> None:
     """Expire stale checkpoints and prune empty workspace directories opportunistically."""
     workspaces_root = paths.root / "workspaces"
@@ -1165,6 +1187,11 @@ def run_cleanup(paths: StatePaths) -> None:
                 continue
             lease_active = lease is not None and lease.get("owner_harness") != "released"
             guarded_id = lease.get("checkpoint_id") if lease_active else None
+            orphaned = False
+            if lease_active and not _guarded_worktree_exists(workspace_directory, guarded_id):
+                lease_active = False
+                guarded_id = None
+                orphaned = True
             checkpoints_directory = workspace_directory / "checkpoints"
             if checkpoints_directory.is_dir():
                 for checkpoint_path in sorted(checkpoints_directory.glob("*.json")):
@@ -1184,6 +1211,13 @@ def run_cleanup(paths: StatePaths) -> None:
                         continue
                     if expired:
                         checkpoint_path.unlink(missing_ok=True)
+            if orphaned:
+                checkpoints_directory = workspace_directory / "checkpoints"
+                if not (checkpoints_directory.is_dir() and any(checkpoints_directory.iterdir())):
+                    # No close will ever run for a vanished worktree — drop the stale markers
+                    # so the empty workspace directory can be pruned.
+                    for stale_name in ("lease.json", "latest", "notices.json"):
+                        (workspace_directory / stale_name).unlink(missing_ok=True)
             _prune_workspace_directory(workspace_directory, lease_active)
         if repository_directory.is_dir() and not any(repository_directory.iterdir()):
             repository_directory.rmdir()

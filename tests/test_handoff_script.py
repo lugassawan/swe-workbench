@@ -1280,3 +1280,52 @@ def test_end_to_end_pi_to_claude_recovery_flow(tmp_path):
     stored = next(state_dir.glob(f"workspaces/*/*/checkpoints/{salvage_id}.json")).read_text()
     for forbidden in ("diff --git", "GIT_AUTHOR", "$PATH", '"content"'):
         assert forbidden not in stored, f"salvage checkpoint leaked {forbidden!r}"
+
+
+def test_cleanup_reclaims_an_orphaned_workspace_after_expiry(tmp_path):
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    orphan_repo = tmp_path / "orphan-repo"
+    orphan_repo.mkdir()
+    _initialize_repo(orphan_repo)
+    checkpoint_id = _planned_checkpoint(orphan_repo, state_dir, "cleanup-orphan")
+    orphan_workspace = next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).parent.parent
+    acquired = _resume(orphan_repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+    import shutil as _shutil
+    _shutil.rmtree(orphan_repo)
+    _backdate(state_dir, checkpoint_id, "consumed_at", hours=25)
+
+    trigger = _create_checkpoint(other_repo, state_dir, _create_input("cleanup-orphan-trigger"))
+
+    assert trigger["data"]["checkpoint_id"]
+    assert not orphan_workspace.exists(), (
+        "a workspace whose worktree root no longer exists must lose active-lease protection "
+        "and be reclaimed once its retention window lapses"
+    )
+    assert not list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
+
+
+def test_cleanup_retains_an_orphaned_workspace_before_expiry(tmp_path):
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    orphan_repo = tmp_path / "orphan-repo"
+    orphan_repo.mkdir()
+    _initialize_repo(orphan_repo)
+    checkpoint_id = _planned_checkpoint(orphan_repo, state_dir, "cleanup-orphan-fresh")
+    acquired = _resume(orphan_repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "s1")
+    assert acquired.returncode == 0, acquired.stderr
+    import shutil as _shutil
+    _shutil.rmtree(orphan_repo)
+
+    trigger = _create_checkpoint(other_repo, state_dir, _create_input("cleanup-orphan-fresh-trigger"))
+
+    assert trigger["data"]["checkpoint_id"]
+    assert list(state_dir.glob("workspaces/*/*/lease.json")), (
+        "an orphaned workspace within its normal retention window must stay reclaimable"
+    )
+    assert list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
