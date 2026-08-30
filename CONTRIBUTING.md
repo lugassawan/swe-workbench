@@ -118,7 +118,7 @@ Run the release script from a clean `main`:
 ./scripts/release.sh patch   # or minor / major
 ```
 
-It bumps every file declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and the root `package.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+It bumps every version field declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, the root `package.json`, and both root-package fields in `package-lock.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
 
 The `bump-version.sh --audit` check described above (see "Validator") is enforced per-PR, so a stray
 hardcoded version literal is caught well before the release script ever runs.
@@ -149,7 +149,7 @@ pytest tests/test_pi_extension.py tests/test_pi_contract.py -v
 
 `test_pi_extension.py` drives the real `pi/extensions/*.ts` under `node --experimental-strip-types` against a stub `ExtensionAPI` — no `pi` CLI or `node_modules` install required, since every `@earendil-works/*` import is type-only and elided by the stripper. `test_pi_contract.py` ratchets the frontmatter/tool-vocabulary boundary between this repo's `agents/*.md`/`commands/*.md` and Pi's own (stricter) YAML parser — a golden-inventory contract, not a schema, per `docs/plugin-platform-decisions.md` §2.
 
-**Release:** the root `package.json`'s `version` field is one of the three files `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
+**Release:** the root `package.json` and `package-lock.json` version fields are among the fields `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
 
 ## Adding a new interactive command
 
