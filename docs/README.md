@@ -5,6 +5,7 @@ live in [`shared/docs/`](../shared/docs/), which ships with the plugin via the n
 allowlist. This directory is repo-governance only and never ships.
 
 - [catalog.md](catalog.md) — commands, subagents, and skills (full tables).
+- [cross-harness-handoff.md](cross-harness-handoff.md) — Claude Code ↔ Pi worktree handoff: checkpoints, leases, degraded recovery, and quota warnings.
 - [extending.md](extending.md) — how to add new skills; philosophy behind the design.
 - [dependencies.md](dependencies.md) — runtime plugin dependencies.
 - [cost-audit.md](cost-audit.md) — point-in-time model-tier audits: initial snapshot at #160, re-tier pass at #612.

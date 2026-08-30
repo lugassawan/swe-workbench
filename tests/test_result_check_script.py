@@ -92,6 +92,7 @@ EXPECTED_REGISTRY = {
         "branch_preserved": "bool",
         "method": "str",
     },
+    "swb.handoff/1": {},
     "swb.address-feedback-fetch/1": {
         "state": "str",
         "owner": "str",
@@ -137,6 +138,21 @@ def _valid_envelope(schema="swb.preflight-commit/1", **overrides):
 
 def test_valid_envelope_has_no_problems():
     assert rc.validate_envelope("swb.preflight-commit/1", _valid_envelope()) == []
+
+
+def test_handoff_schema_accepts_each_subcommand_data_shape():
+    for data in (
+        {"checkpoint_id": "cp", "target_harness": "pi"},
+        {"checkpoint": {"checkpoint_id": "cp"}},
+        {"decision": "allow", "reason": "owned"},
+    ):
+        envelope = {
+            "schema": "swb.handoff/1",
+            "status": "ok",
+            "data": data,
+            "warnings": [],
+        }
+        assert rc.validate_envelope("swb.handoff/1", envelope) == []
 
 
 def test_non_dict_envelope_is_rejected():
@@ -241,6 +257,18 @@ def test_bool_is_not_accepted_as_int():
 def test_valid_envelope_passes_through_unchanged_exit_0():
     envelope = _valid_envelope()
     result = _run(["swb.preflight-commit/1"], stdin=json.dumps(envelope))
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == envelope
+
+
+def test_handoff_envelope_passes_through_the_cli_unchanged():
+    envelope = {
+        "schema": "swb.handoff/1",
+        "status": "ok",
+        "data": {"checkpoint_id": "01992e64-4cc8-7000-8000-000000000001"},
+        "warnings": [],
+    }
+    result = _run(["swb.handoff/1"], stdin=json.dumps(envelope))
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == envelope
 
