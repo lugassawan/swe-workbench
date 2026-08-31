@@ -31,6 +31,25 @@ BIN_DIR = ROOT / "bin"
 ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
 SKILLS_DIR = ROOT / "skills"
 
+# Preamble-section char ratchets (issue #700): the two always-on sections
+# pi/extensions/index.ts composes into every Pi system prompt. Unlike the
+# description budgets in scripts/validate.py (static frontmatter, measured by
+# reading files), these sections are composed at runtime from the bin/ and
+# skills/ directory listings, so the only faithful measure is the rendered
+# `## {title}\n\n{body}` text composePreamble actually injects — what the
+# Node drivers below produce. Caps pin the measured totals exactly (repo
+# precedent: SKILL_DESCRIPTION_BUDGET_CHARS). Any growth — a new bin/ script
+# (~30 chars), a new skill id in the legend, a longer paragraph — fails the
+# ratchet and requires consciously raising the constant here with the reason
+# recorded in that commit; that friction is the point. Both taskToolRegistered
+# variants are pinned separately: each is a distinct live surface (index.ts
+# derives the flag from the session's active tool registry). One-directional
+# like validate.py's budgets: a deliberate shrink leaves headroom — growth,
+# not shrink, is what issue #700 targets.
+TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL = 3606
+TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL = 3526
+BIN_SCRIPTS_SECTION_CHAR_CAP = 1299
+
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
 # file's own source — this file is not on secret_guard.py's allowlist (unlike
 # tests/test_secret_guard.py), and the live PreToolUse:Write hook on the session authoring this
@@ -970,6 +989,33 @@ def test_tool_vocab_generated_skill_id_list_matches_disk(tmp_path_factory):
         assert skill_id in section["body"], f"{skill_id} missing from the generated skill legend"
 
 
+@requires_node
+@pytest.mark.parametrize(
+    "task_tool_registered, cap",
+    [
+        (True, TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL),
+        (False, TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL),
+    ],
+)
+def test_tool_vocab_section_rendered_chars_ratcheted(tmp_path_factory, task_tool_registered, cap):
+    """The tool-vocab section ships in every Pi system prompt — its rendered size
+    must stay at or under the pinned ratchet (issue #700). Growth is a deliberate
+    decision: compress, or raise the cap with a recorded reason."""
+    cap_name = (
+        "TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL"
+        if task_tool_registered
+        else "TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL"
+    )
+    section = _tool_vocab_section(ROOT, tmp_path_factory, task_tool_registered=task_tool_registered)
+    rendered_len = len(f"## {section['title']}\n\n{section['body']}")
+    assert rendered_len <= cap, (
+        f"tool-vocab section (taskToolRegistered={task_tool_registered}) grew to "
+        f"{rendered_len} rendered chars (ratchet {cap}). This text ships in every Pi "
+        f"system prompt — compress it, or raise {cap_name} with a recorded reason "
+        "(issue #700)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Behavioural: bin-scripts.ts. Pure text generation from the real bin/ directory — no stub
 # `pi`/`ctx` needed, but still imported through Node under --experimental-strip-types since it
@@ -1001,6 +1047,22 @@ def test_bin_scripts_section_lists_every_script_on_disk(tmp_path_factory):
     )
     for script_id in on_disk:
         assert script_id in section["body"], f"{script_id} missing from the generated bin-scripts section"
+
+
+@requires_node
+def test_bin_scripts_section_rendered_chars_ratcheted(tmp_path_factory):
+    """The bin-scripts section ships in every Pi system prompt whenever bin/ has
+    swe-workbench-* entries — its rendered size must stay at or under the pinned
+    ratchet (issue #700). Growth is a deliberate decision: compress, or raise the
+    cap with a recorded reason."""
+    section = _bin_scripts_section(ROOT, tmp_path_factory)
+    rendered_len = len(f"## {section['title']}\n\n{section['body']}")
+    assert rendered_len <= BIN_SCRIPTS_SECTION_CHAR_CAP, (
+        f"bin-scripts section grew to {rendered_len} rendered chars (ratchet "
+        f"{BIN_SCRIPTS_SECTION_CHAR_CAP}). Adding a bin/ script or a CAPABILITY_ROWS "
+        "entry lengthens every Pi system prompt — compress elsewhere, or raise "
+        "BIN_SCRIPTS_SECTION_CHAR_CAP with a recorded reason (issue #700)."
+    )
 
 
 @requires_node
