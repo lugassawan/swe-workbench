@@ -36,6 +36,15 @@ const QUOTA_RECOVERY_TEXT =
   "swe-workbench-handoff recover --from pi --source-stopped " +
   "| swe-workbench-result-check swb.handoff/1";
 
+/** Startup-failure text — names the runtime requirement and remediation so a downstream
+ *  repo's Python pin (the #696 Mise case) is diagnosable instead of a blanket mutation block. */
+const INTERPRETER_FAILURE_TEXT =
+  "swe-workbench handoff runtime could not start: bin/swe-workbench-handoff requires " +
+  "Python 3.9+, and this repository's `python3` could not run it. Check the repository's " +
+  "Python version pin (mise/asdf/pyenv/.python-version), launch pi with a compatible " +
+  "interpreter (e.g. mise exec python@3.11 -- pi), or repair the swe-workbench plugin " +
+  "install before mutating this worktree";
+
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.handoff/1`;
 const PI_SESSION_ARGUMENT = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"';
@@ -147,6 +156,9 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
       if (result.code === 0 && data !== undefined && data.decision === "allow") return undefined;
       if (data !== undefined && data.decision === "deny") {
         return { block: true, reason: blockReason(data, "handoff lease denies mutation from this Pi session") };
+      }
+      if (data === undefined && (result.code === null || result.stderr.includes("Traceback"))) {
+        return { block: true, reason: INTERPRETER_FAILURE_TEXT };
       }
       return {
         block: true,

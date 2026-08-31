@@ -2672,6 +2672,12 @@ out.missingRuntimeWarnings = notifications.length - notificationsBeforeMissing;
 registerHandoff(stubPi, config.brokenRuntimeRoot);
 out.brokenRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
 
+// Incompatible-interpreter crash (#696 signature): runtime exists, python3 executes it, but
+// it dies with a traceback on stderr and no envelope on stdout — the block reason must name
+// the required runtime and remediation instead of the generic fail-closed text.
+registerHandoff(stubPi, config.crashingRuntimeRoot);
+out.crashingRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+
 console.log(JSON.stringify({ out }));
 """
 
@@ -2763,6 +2769,17 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
     fake_root.mkdir()
     broken_runtime_root = base / "broken-runtime-root"
     (broken_runtime_root / "bin" / "swe-workbench-handoff").mkdir(parents=True)
+    crashing_runtime_root = base / "crashing-runtime-root"
+    (crashing_runtime_root / "bin").mkdir(parents=True)
+    (crashing_runtime_root / "bin" / "swe-workbench-handoff").write_text(
+        "import sys\n"
+        "sys.stderr.write('Traceback (most recent call last):\\n"
+        "  File \"bin/swe-workbench-handoff\", line 22, in <module>\\n"
+        "    from datetime import UTC, datetime, timedelta\\n"
+        "ImportError: cannot import name UTC from datetime\\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
     session_arg = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"'
     config = {
         "root": str(ROOT),
@@ -2771,6 +2788,7 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
         "leasePath": str(released_lease_path),
         "fakeRoot": str(fake_root),
         "brokenRuntimeRoot": str(broken_runtime_root),
+        "crashingRuntimeRoot": str(crashing_runtime_root),
         "resumePipeline": (
             f'swe-workbench-handoff resume "{released_id}" --as pi '
             f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1'
@@ -2883,6 +2901,15 @@ def test_handoff_unspawnable_runtime_fails_closed(tmp_path_factory):
     out = _handoff_driver_result(tmp_path_factory, "pi-handoff-broken-runtime")["out"]
     assert out["brokenRuntime"]["block"] is True
     assert "could not be verified" in out["brokenRuntime"]["reason"]
+
+
+@requires_node
+def test_handoff_interpreter_startup_failure_names_the_required_runtime(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-py-crash")["out"]
+    blocked = out["crashingRuntime"]
+    assert blocked["block"] is True, "startup failure must still fail closed"
+    assert "Python 3.9" in blocked["reason"]
+    assert "pin" in blocked["reason"], "reason must carry remediation, not just the requirement"
 
 
 @requires_node
