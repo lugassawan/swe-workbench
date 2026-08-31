@@ -81,7 +81,7 @@ PiCompatibleYamlLoader.add_implicit_resolver(
 )
 
 # Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
-# @earendil-works/pi-coding-agent@0.84.2's dist/core/prompt-templates.js (also present,
+# @earendil-works/pi-coding-agent@0.84.3's dist/core/prompt-templates.js (also present,
 # unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
 # against the installed package (`grep -n substituteArgs node_modules/@earendil-works/
 # pi-coding-agent/dist/core/prompt-templates.js`) whenever the root `package.json`'s
@@ -190,7 +190,7 @@ def _body_after_frontmatter(path):
     and so cannot be offset from directly by counting its own newlines alone.
 
     Mirrors dist/utils/frontmatter.js's extractFrontmatter exactly (source at
-    @earendil-works/pi-coding-agent@0.84.2): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
+    @earendil-works/pi-coding-agent@0.84.3): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
     same as Pi's normalizeNewlines) before any offset math, find the closing '---' via
     indexOf from index 3, slice from 4 chars past that match, then strip(). Do NOT reuse
     _frontmatter_block's delimiter logic here — it requires an exact '\\n---\\n' match and
@@ -718,7 +718,7 @@ def test_no_pi_argument_substitution_hazard_in_commands():
                 violations.append(f"{path.relative_to(ROOT)}:{line_no}: {match.group(0)!r}")
     assert not violations, (
         "Pi's substituteArgs (dist/core/prompt-templates.js, "
-        "@earendil-works/pi-coding-agent@0.84.2) would rewrite these tokens — every "
+        "@earendil-works/pi-coding-agent@0.84.3) would rewrite these tokens — every "
         "alternative it matches other than literal `$ARGUMENTS` is replaced with the "
         "matched positional arg or, if unset, the empty string, silently corrupting the "
         "command body when swe-workbench's own commands are loaded as Pi prompt templates. "
@@ -747,8 +747,8 @@ def test_pi_extension_wires_commands_as_prompt_paths():
 # ---------------------------------------------------------------------------
 # ask_user_question schema-as-data ratchet. Pins pi/extensions/ask-user.ts's parameters to a
 # plain JSON-Schema object literal — never a TypeBox value import — since
-# @earendil-works/pi-ai's constrained-sampling.js (getJsonSchemaToolParameters, ~line 112 as of
-# pi-coding-agent@0.84.2) returns `tool.parameters` verbatim to the provider and nothing on the
+# @earendil-works/pi-ai's constrained-sampling.js (getJsonSchemaToolParameters, ~line 111 as of
+# pi-coding-agent@0.84.3) returns `tool.parameters` verbatim to the provider and nothing on the
 # registration path (dist/core/tools/tool-definition-wrapper.js) runs TypeBox's
 # Value.Check/Compile against it. Re-diff that citation directly if this test ever needs to
 # change: `grep -n getJsonSchemaToolParameters` against the installed pi-ai package.
@@ -1139,18 +1139,23 @@ console.log(JSON.stringify({
 
 @requires_node
 @requires_pi_ai_catalog
-def test_zai_glm_5_3_clamps_nominal_max_to_high_in_pinned_catalog():
-    """Pins the Z.AI clamp this repo's MODEL_POLICY deliberately ships ahead of: the pinned Pi
-    SDK's bundled catalog *entry* for `glm-5.3` declares no `thinkingLevelMap` today (a gap in
-    that dependency's data, not in glm-5.3 itself — per Z.AI's own spec the model always reasons
-    and genuinely supports "max" as one of its three real effort levels: low/high/max), so the
-    installed SDK's own `clampThinkingLevel` (dist/models.js, @earendil-works/pi-coding-agent@
-    0.84.2's bundled pi-ai) reduces MODEL_POLICY.zai.opus's nominal "max" down to "high" at
-    dispatch time — identical to zai.sonnet's nominal "high". This drives the REAL SDK clamp
-    function against the REAL pinned catalog data, not a reimplementation of its logic. When a
-    future catalog bump adds a proper thinkingLevelMap for glm-5.3, this test fails loudly — the
-    signal that the opus/sonnet thinking-level split on Z.AI has become real and worth revisiting
-    docs/cost-tiers.md's Z.AI clamp caveat over, not a silent behavior change to discover later."""
+def test_zai_glm_5_3_dispatches_real_max_thinking_in_pinned_catalog():
+    """Successor to the signal test this replaces (`..._clamps_nominal_max_to_high_...`), which
+    pinned the Z.AI clamp this repo's MODEL_POLICY deliberately shipped ahead of: through
+    @earendil-works/pi-coding-agent@0.84.2, the pinned Pi SDK's bundled catalog *entry* for
+    `glm-5.3` declared no `thinkingLevelMap` at all (a gap in that dependency's data, not in
+    glm-5.3 itself — per Z.AI's own spec the model always reasons and genuinely supports "max" as
+    one of its three real effort levels: low/high/max), so the installed SDK's own
+    `clampThinkingLevel` (dist/models.js) reduced MODEL_POLICY.zai.opus's nominal "max" down to
+    "high" at dispatch time — identical to zai.sonnet's nominal "high". As of the 0.84.3 bump, the
+    pinned catalog now ships a real `thinkingLevelMap` for `glm-5.3` (low/high/max), so that clamp
+    no longer applies: zai.opus's nominal "max" dispatches as genuine "max", strictly deeper than
+    zai.sonnet's "high" — the opus/sonnet split documented in docs/cost-tiers.md's Z.AI clamp
+    caveat is now real, dispatch-visible behavior, not purely nominal. This drives the REAL SDK
+    clamp function against the REAL pinned catalog data, not a reimplementation of its logic. If a
+    future catalog change drops glm-5.3's thinkingLevelMap again, this test fails loudly — the
+    signal to revisit docs/cost-tiers.md's Z.AI clamp caveat once more, not a silent behavior
+    change to discover later."""
     node = shutil.which("node")
     assert node is not None
     assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
@@ -1168,12 +1173,12 @@ def test_zai_glm_5_3_clamps_nominal_max_to_high_in_pinned_catalog():
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
-    assert "xhigh" not in dumped["supported"] and "max" not in dumped["supported"], (
-        f"glm-5.3 now declares xhigh/max support ({dumped['supported']}) in the pinned catalog — "
-        "the zai opus/sonnet thinking-level split in MODEL_POLICY is no longer purely nominal; "
-        "revisit docs/cost-tiers.md's Z.AI clamp caveat and this test"
+    assert {"low", "high", "max"} <= set(dumped["supported"]), (
+        f"glm-5.3 no longer declares low/high/max support ({dumped['supported']}) in the pinned "
+        "catalog — the zai opus/sonnet thinking-level split in MODEL_POLICY may have reverted to "
+        "purely nominal; revisit docs/cost-tiers.md's Z.AI clamp caveat and this test"
     )
-    assert dumped["clampedMax"] == "high"
+    assert dumped["clampedMax"] == "max", "zai.opus's nominal max should dispatch as real max now"
     assert dumped["clampedHigh"] == "high"
 
 
