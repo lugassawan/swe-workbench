@@ -31,13 +31,27 @@ def _write_stub(stub_dir: Path, name: str, body: str) -> None:
 
 
 def _run_snippet(
-    snippet: str, stub_dir: Path, extra_env: dict | None = None
+    snippet: str,
+    stub_dir: Path,
+    extra_env: dict | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess:
+    """Run a bash snippet under stubbed PATH.
+
+    Snippets that read repo-relative files (.version-bump.json) or whose
+    stubs write relative artifacts (push_log) must pass cwd= explicitly —
+    bash -c otherwise inherits the pytest process cwd.
+    """
     env = {**_CLEAN_ENV, "PATH": f"{stub_dir}:{_CLEAN_ENV.get('PATH', '')}"}
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
-        ["bash", "-c", snippet], capture_output=True, text=True, env=env, timeout=30
+        ["bash", "-c", snippet],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+        cwd=cwd,
     )
 
 
@@ -101,6 +115,213 @@ class TestRetryTransportStatic:
             assert re.search(
                 r"retry_transport\s+\d+\s+\"git pull[^\"]*\"\s+git pull --ff-only", ln
             ), f"Bare 'git pull --ff-only' outside retry_transport: {ln.strip()!r}"
+
+
+_RESUME_SNIPPET = textwrap.dedent("""\
+    set -euo pipefail
+    GH_REPO="owner/repo"
+    RESUME_TAG="v0.1.36"
+    retry_transport() {
+      local max_attempts=$1 desc=$2
+      shift 2
+      local attempt=0
+      while true; do
+        if "$@"; then
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        if [[ "$attempt" -ge "$max_attempts" ]]; then
+          echo "Error: ${desc} failed after ${attempt} attempts." >&2
+          return 1
+        fi
+        sleep 10
+      done
+    }
+    resume_release() {
+      local tag=$1
+      local ver=${tag#v}
+      local branch="chore/bump-${tag}"
+      echo "Resuming release ${tag}..."
+      local pr_json
+      pr_json=$(retry_transport 5 "gh pr list (${branch})" \\
+        gh pr list --state merged --limit 20 \\
+          --json number,headRefName,mergeCommit \\
+          --jq "[.[] | select(.headRefName == \\"${branch}\\")][0]") || return 1
+      if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+        echo "Error: no merged PR found for branch '${branch}'." >&2
+        return 1
+      fi
+      local pr_num merge_sha
+      pr_num=$(printf '%s' "$pr_json" | jq -r '.number')
+      merge_sha=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
+      if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+        echo "Error: merge SHA ${merge_sha} of PR #${pr_num} is not reachable from origin/main." >&2
+        return 1
+      fi
+      while IFS=$'\\t' read -r path field; do
+        local at_sha
+        at_sha=$(git show "${merge_sha}:${path}" | jq -r "$field")
+        if [[ "$at_sha" != "$ver" ]]; then
+          echo "Error: ${path} at ${merge_sha} reports '${at_sha}', expected '${ver}'." >&2
+          return 1
+        fi
+      done < <(jq -r '.files[] | [.path, .field] | @tsv' .version-bump.json)
+      local remote_tag remote_tag_commit
+      remote_tag=$(retry_transport 5 "tag lookup ${tag}" \\
+        git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}") || return 1
+      remote_tag_commit=$(printf '%s' "$remote_tag" | grep '\\^{}' | awk '{print $1}' || true)
+      [[ -z "$remote_tag_commit" ]] && remote_tag_commit=$(printf '%s' "$remote_tag" | awk '{print $1}' | head -1)
+      if [[ -n "$remote_tag_commit" ]]; then
+        if [[ "$remote_tag_commit" != "$merge_sha" ]]; then
+          echo "Error: remote tag ${tag} points to ${remote_tag_commit}, not merge commit ${merge_sha}." >&2
+          return 1
+        fi
+        echo "Tag ${tag} already published at ${merge_sha} — nothing to do."
+        return 0
+      fi
+      if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+        git tag -a "$tag" -m "Release ${tag}" "$merge_sha"
+      elif [[ "$(git rev-parse "${tag}^{commit}")" == "$merge_sha" ]]; then
+        echo "Tag ${tag} exists locally at ${merge_sha} — pushing."
+      else
+        echo "Error: local tag ${tag} points elsewhere." >&2
+        return 1
+      fi
+      retry_transport 5 "tag push" git push --no-verify origin "$tag"
+      echo "Resumed release complete!"
+      return 0
+    }
+    resume_release "$RESUME_TAG"
+""")
+
+
+def _resume_env(tmp_path: Path, gh_body: str, git_body: str) -> None:
+    _write_stub(tmp_path, "gh", gh_body)
+    _write_stub(tmp_path, "git", git_body)
+    (tmp_path / ".version-bump.json").write_text(
+        '{"files":[{"path":".claude-plugin/plugin.json","field":".version"}]}'
+    )
+
+
+class TestResumeStatic:
+    def test_resume_flag_usage_documented(self):
+        assert any(
+            "--resume vX.Y.Z" in ln and not _is_comment(ln)
+            for ln in _script_lines()
+        ), "usage text does not document --resume"
+
+    def test_resume_flag_validated(self):
+        assert any(
+            re.search(r"RESUME_TAG.*=~.*\^v\[0-9\]", ln) and not _is_comment(ln)
+            for ln in _script_lines()
+        ), "--resume argument is not regex-validated against vX.Y.Z"
+
+    def test_no_verify_appears_exactly_once_on_resume_push(self):
+        hits = [
+            ln.strip()
+            for ln in _script_lines()
+            if "--no-verify" in ln and not _is_comment(ln)
+        ]
+        assert len(hits) == 1, f"expected exactly 1 --no-verify line, got {hits}"
+        assert re.search(r"git push --no-verify", hits[0]), (
+            "--no-verify must live on the resume-path tag push"
+        )
+
+
+class TestResumeDynamic:
+    def test_happy_path_pushes_with_no_verify(self, tmp_path):
+        """Verified tuple → tag pushed with --no-verify (CI already validated the tree)."""
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf \'{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}\'; fi',
+            textwrap.dedent("""\
+            case "$1" in
+              merge-base) exit 0 ;;
+              show) printf '{"version":"0.1.36"}' ;;
+              ls-remote) printf '' ;;
+              rev-parse) exit 1 ;;
+              tag|push) printf '%s\\n' "$*" >> push_log ;;
+            esac
+            exit 0
+        """),
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        push_log = (tmp_path / "push_log").read_text()
+        assert "--no-verify" in push_log, f"push args: {push_log!r}"
+
+    def test_no_merged_pr_fails_closed(self, tmp_path):
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf "null"; fi',
+            "exit 0",
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "no merged PR found" in result.stderr
+
+    def test_merge_sha_not_on_main_fails_closed(self, tmp_path):
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf \'{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}\'; fi',
+            'case "$1" in merge-base) exit 1 ;; *) exit 0 ;; esac',
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "not reachable from origin/main" in result.stderr
+
+    def test_manifest_mismatch_fails_closed(self, tmp_path):
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf \'{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}\'; fi',
+            textwrap.dedent("""\
+            case "$1" in
+              merge-base) exit 0 ;;
+              show) printf '{"version":"0.1.35"}' ;;
+              *) exit 0 ;;
+            esac
+        """),
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "expected '0.1.36'" in result.stderr
+
+    def test_tag_already_published_is_success_no_push(self, tmp_path):
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf \'{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}\'; fi',
+            textwrap.dedent("""\
+            case "$1" in
+              merge-base) exit 0 ;;
+              show) printf '{"version":"0.1.36"}' ;;
+              ls-remote) printf 'c9035a0\\trefs/tags/v0.1.36\\nc9035a0\\trefs/tags/v0.1.36^{}\\n' ;;
+              *) exit 0 ;;
+            esac
+        """),
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "already published" in result.stdout
+        assert not (tmp_path / "push_log").exists(), (
+            "must not push when the tag is already published"
+        )
+
+    def test_remote_tag_wrong_sha_fails_closed(self, tmp_path):
+        _resume_env(
+            tmp_path,
+            'if [ "$1" = "pr" ]; then printf \'{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}\'; fi',
+            textwrap.dedent("""\
+            case "$1" in
+              merge-base) exit 0 ;;
+              show) printf '{"version":"0.1.36"}' ;;
+              ls-remote) printf 'deadbeef\\trefs/tags/v0.1.36\\ndeadbeef\\trefs/tags/v0.1.36^{}\\n' ;;
+              *) exit 0 ;;
+            esac
+        """),
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "not merge commit" in result.stderr
 
 
 class TestRetryTransportDynamic:

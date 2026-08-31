@@ -3,10 +3,21 @@ set -euo pipefail
 
 # ── Preflight ────────────────────────────────────────────────
 
-BUMP="${1:-}"
-if [[ ! "$BUMP" =~ ^(patch|minor|major)$ ]]; then
-  echo "Usage: $0 <patch|minor|major>" >&2
-  exit 1
+RESUME_TAG=""
+if [[ "${1:-}" == "--resume" ]]; then
+  RESUME_TAG="${2:-}"
+  if [[ ! "$RESUME_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Usage: $0 <patch|minor|major>" >&2
+    echo "       $0 --resume vX.Y.Z   (finish a merged-but-untagged release)" >&2
+    exit 1
+  fi
+else
+  BUMP="${1:-}"
+  if [[ ! "$BUMP" =~ ^(patch|minor|major)$ ]]; then
+    echo "Usage: $0 <patch|minor|major>" >&2
+    echo "       $0 --resume vX.Y.Z   (finish a merged-but-untagged release)" >&2
+    exit 1
+  fi
 fi
 
 if ! gh auth status &>/dev/null; then
@@ -89,6 +100,109 @@ retry_transport() {
 
 retry_transport 5 "git fetch origin" git fetch origin
 retry_transport 5 "git pull" git pull --ff-only origin main
+
+# ── Resume an unfinished release ─────────────────────────────
+# A bump PR can merge and then lose its tag publication to a transport
+# failure. GitHub is the single source of truth for reconstruction — no local
+# checkpoint: headRefName survives branch deletion, mergeCommit pins the SHA,
+# and remote tag presence decides what is left to do. Fails closed on any
+# unverifiable field; never tags a commit the remote state does not prove.
+resume_release() {
+  local tag=$1
+  local ver=${tag#v}
+  local branch="chore/bump-${tag}"
+
+  echo "Resuming release ${tag}..."
+
+  local pr_json
+  pr_json=$(retry_transport 5 "gh pr list (${branch})" \
+    gh pr list --state merged --limit 20 \
+      --json number,headRefName,mergeCommit \
+      --jq "[.[] | select(.headRefName == \"${branch}\")][0]") || return 1
+  if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+    echo "Error: no merged PR found for branch '${branch}' — cannot resume ${tag}." >&2
+    echo "  Inspect: https://github.com/${GH_REPO}/pulls?q=is%3Apr+is%3Amerged+head%3A${branch}" >&2
+    return 1
+  fi
+
+  local pr_num merge_sha
+  pr_num=$(printf '%s' "$pr_json" | jq -r '.number')
+  merge_sha=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
+  if [[ -z "$merge_sha" || "$merge_sha" == "null" ]]; then
+    echo "Error: GitHub returned no merge commit for the '${branch}' PR." >&2
+    return 1
+  fi
+
+  # The merge SHA must be reachable from origin/main — never tag an
+  # unmerged or reverted commit.
+  if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+    echo "Error: merge SHA ${merge_sha} of PR #${pr_num} is not reachable from origin/main." >&2
+    echo "  Was the release reverted? Inspect before resuming." >&2
+    return 1
+  fi
+
+  # Every declared manifest at the merge SHA must carry the release version
+  # (mirrors the publication gate in .github/workflows/release.yml).
+  while IFS=$'\t' read -r path field; do
+    local at_sha
+    at_sha=$(git show "${merge_sha}:${path}" | jq -r "$field")
+    if [[ "$at_sha" != "$ver" ]]; then
+      echo "Error: ${path} at ${merge_sha} reports '${at_sha}', expected '${ver}'." >&2
+      return 1
+    fi
+  done < <(jq -r '.files[] | [.path, .field] | @tsv' .version-bump.json)
+
+  local remote_tag remote_tag_commit
+  remote_tag=$(retry_transport 5 "tag lookup ${tag}" \
+    git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}") || return 1
+  # || true: grep exits 1 on no-match; pipefail would otherwise abort here.
+  remote_tag_commit=$(printf '%s' "$remote_tag" | grep '\^{}' | awk '{print $1}' || true)
+  [[ -z "$remote_tag_commit" ]] && remote_tag_commit=$(printf '%s' "$remote_tag" | awk '{print $1}' | head -1)
+  if [[ -n "$remote_tag_commit" ]]; then
+    if [[ "$remote_tag_commit" != "$merge_sha" ]]; then
+      echo "Error: remote tag ${tag} points to ${remote_tag_commit}, not merge commit ${merge_sha}." >&2
+      echo "  Inspect and delete the stale tag before re-running: git push origin :refs/tags/${tag}" >&2
+      return 1
+    fi
+    echo "Tag ${tag} already published at ${merge_sha} — nothing to do."
+    echo ""
+    echo "Resumed release complete!"
+    echo "  PR:       https://github.com/${GH_REPO}/pull/${pr_num}"
+    echo "  Tag:      ${tag}"
+    echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${tag}"
+    return 0
+  fi
+
+  # --no-verify is safe ONLY here: the tuple above was verified against
+  # GitHub, and the PR's CI ran green on exactly this tree (a squash merge
+  # preserves the branch-head tree), so the pre-push hook would re-run
+  # validation that already passed. Fresh releases never skip the hook.
+  if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    git tag -a "$tag" -m "Release ${tag}" "$merge_sha"
+  elif [[ "$(git rev-parse "${tag}^{commit}")" == "$merge_sha" ]]; then
+    echo "Tag ${tag} exists locally at ${merge_sha} — pushing."
+  else
+    echo "Error: local tag ${tag} points to $(git rev-parse "${tag}^{commit}"), not ${merge_sha}." >&2
+    echo "  Delete it before re-running: git tag -d ${tag}" >&2
+    return 1
+  fi
+  retry_transport 5 "tag push" git push --no-verify origin "$tag"
+
+  git branch -D "$branch" 2>/dev/null || true
+
+  echo ""
+  echo "Resumed release complete!"
+  echo "  PR:       https://github.com/${GH_REPO}/pull/${pr_num}"
+  echo "  Tag:      ${tag}"
+  echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${tag}"
+  echo "  Re-run:   $0 <patch|minor|major> to start the next release"
+  return 0
+}
+
+if [[ -n "$RESUME_TAG" ]]; then
+  resume_release "$RESUME_TAG"
+  exit 0
+fi
 
 # ── Compute next version ─────────────────────────────────────
 
@@ -376,7 +490,7 @@ fi
 if git ls-remote --tags --exit-code origin "$TAG" >/dev/null 2>&1; then
   # Verify the existing tag targets the expected merge commit
   REMOTE_TAG_INFO=$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" 2>/dev/null || true)
-  REMOTE_TAG_COMMIT=$(echo "$REMOTE_TAG_INFO" | grep '\^{}' | awk '{print $1}')
+  REMOTE_TAG_COMMIT=$(printf '%s' "$REMOTE_TAG_INFO" | grep '\^{}' | awk '{print $1}' || true)
   [[ -z "$REMOTE_TAG_COMMIT" ]] && REMOTE_TAG_COMMIT=$(echo "$REMOTE_TAG_INFO" | awk '{print $1}' | head -1)
   if [[ -n "$REMOTE_TAG_COMMIT" && "$REMOTE_TAG_COMMIT" != "$MERGE_SHA" ]]; then
     echo "Error: remote tag ${TAG} exists but points to ${REMOTE_TAG_COMMIT}, not merge commit ${MERGE_SHA}." >&2
