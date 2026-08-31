@@ -3,10 +3,21 @@ set -euo pipefail
 
 # ── Preflight ────────────────────────────────────────────────
 
-BUMP="${1:-}"
-if [[ ! "$BUMP" =~ ^(patch|minor|major)$ ]]; then
-  echo "Usage: $0 <patch|minor|major>" >&2
-  exit 1
+RESUME_TAG=""
+if [[ "${1:-}" == "--resume" ]]; then
+  RESUME_TAG="${2:-}"
+  if [[ ! "$RESUME_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Usage: $0 <patch|minor|major>" >&2
+    echo "       $0 --resume vX.Y.Z   (finish a merged-but-untagged release)" >&2
+    exit 1
+  fi
+else
+  BUMP="${1:-}"
+  if [[ ! "$BUMP" =~ ^(patch|minor|major)$ ]]; then
+    echo "Usage: $0 <patch|minor|major>" >&2
+    echo "       $0 --resume vX.Y.Z   (finish a merged-but-untagged release)" >&2
+    exit 1
+  fi
 fi
 
 if ! gh auth status &>/dev/null; then
@@ -61,8 +72,218 @@ case "$CURRENT_BRANCH" in
     ;;
 esac
 
-git fetch origin
-git pull --ff-only origin main
+# ── Transport retry helper ─────────────────────────────
+# One-shot git transport calls abort the whole release on a transient SSH
+# reset. Wrap them with the same bounded-retry contract as the CI-wait loop
+# below: classify (any non-zero exit = retryable transient), cap attempts,
+# sleep between attempts. Every wrapped command is safe to re-run — fetch
+# and ff-only pulls are read-only syncs, and pushes are idempotent ref
+# updates the remote rejects on mismatch.
+retry_transport() {
+  local max_attempts=$1 desc=$2
+  shift 2
+  local attempt=0 out rc errfile
+  errfile=$(mktemp)
+  while true; do
+    set +e
+    out=$("$@" 2>"$errfile")
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
+      # Replay stdout only — callers parse it. stderr (progress, ssh
+      # warnings) must never leak into parsed output.
+      [[ -n "$out" ]] && printf '%s\n' "$out"
+      rm -f "$errfile"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    if [[ "$attempt" -ge "$max_attempts" ]]; then
+      echo "Error: ${desc} failed after ${attempt} attempts (transient failure cap reached)." >&2
+      [[ -s "$errfile" ]] && cat "$errfile" >&2
+      rm -f "$errfile"
+      echo "  Re-run this script — it resumes the unfinished release." >&2
+      return 1
+    fi
+    echo "[$(date '+%H:%M:%S')] ${desc} transient failure (attempt ${attempt}/${max_attempts}); retrying in 10s..." >&2
+    sleep 10
+  done
+}
+
+retry_transport 5 "git fetch origin" git fetch origin
+retry_transport 5 "git pull" git pull --ff-only origin main
+
+# ── Resume an unfinished release ─────────────────────────────
+# A bump PR can merge and then lose its tag publication to a transport
+# failure. GitHub is the single source of truth for reconstruction — no local
+# checkpoint: headRefName survives branch deletion, mergeCommit pins the SHA,
+# and remote tag presence decides what is left to do. Fails closed on any
+# unverifiable field; never tags a commit the remote state does not prove.
+resume_release() {
+  local tag=$1
+  local ver=${tag#v}
+  local branch="chore/bump-${tag}"
+
+  echo "Resuming release ${tag}..."
+
+  local pr_json
+  pr_json=$(retry_transport 5 "gh pr list (${branch})" \
+    gh pr list --state merged --limit 100 \
+      --json number,headRefName,mergeCommit \
+      --jq "[.[] | select(.headRefName == \"${branch}\")][0]") || return 1
+  if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+    echo "Error: no merged PR found for branch '${branch}' — cannot resume ${tag}." >&2
+    echo "  Inspect: https://github.com/${GH_REPO}/pulls?q=is%3Apr+is%3Amerged+head%3A${branch}" >&2
+    return 1
+  fi
+
+  local pr_num merge_sha
+  pr_num=$(printf '%s' "$pr_json" | jq -r '.number')
+  merge_sha=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
+  if [[ -z "$merge_sha" || "$merge_sha" == "null" ]]; then
+    echo "Error: GitHub returned no merge commit for the '${branch}' PR." >&2
+    return 1
+  fi
+
+  # The merge SHA must be reachable from origin/main — never tag an
+  # unmerged or reverted commit.
+  if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+    echo "Error: merge SHA ${merge_sha} of PR #${pr_num} is not reachable from origin/main." >&2
+    echo "  Was the release reverted? Inspect before resuming." >&2
+    return 1
+  fi
+
+  # The PR's CI must have been green: the --no-verify shortcut below skips
+  # the pre-push hook precisely because CI validated this exact tree. A PR
+  # merged over red checks (admin override) loses that justification.
+  local failed_checks
+  failed_checks=$(retry_transport 5 "gh pr view (${pr_num})" \
+    gh pr view "$pr_num" --json statusCheckRollup \
+      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .conclusion == "STARTUP_FAILURE" or .state == "FAILURE" or .state == "ERROR")] | length') || return 1
+  if [[ "$failed_checks" != "0" ]]; then
+    echo "Error: PR #${pr_num} has failed CI checks — refusing to resume ${tag}." >&2
+    echo "  The tag-push shortcut assumes CI ran green on this tree; inspect ${GH_REPO}/pull/${pr_num}." >&2
+    return 1
+  fi
+
+  # Every declared manifest at the merge SHA must carry the release version
+  # (mirrors the publication gate in .github/workflows/release.yml). The
+  # manifest LIST is also read at the SHA: reading the working-tree copy
+  # would judge an old release against files declared after it merged.
+  local declared_rows
+  if ! declared_rows=$(git show "${merge_sha}:.version-bump.json" 2>/dev/null \
+    | jq -r '.files[] | [.path, .field] | @tsv'); then
+    echo "Error: cannot read .version-bump.json at ${merge_sha} — refusing to skip manifest verification." >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r path field; do
+    local at_sha
+    if ! at_sha=$(git show "${merge_sha}:${path}" 2>/dev/null | jq -r "$field"); then
+      echo "Error: cannot read ${path} at ${merge_sha} (declared in .version-bump.json)." >&2
+      return 1
+    fi
+    if [[ "$at_sha" != "$ver" ]]; then
+      echo "Error: ${path} at ${merge_sha} reports '${at_sha}', expected '${ver}'." >&2
+      return 1
+    fi
+  done <<<"$declared_rows"
+
+  local remote_tag remote_tag_commit
+  remote_tag=$(retry_transport 5 "tag lookup ${tag}" \
+    git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}") || return 1
+  # || true: grep exits 1 on no-match; pipefail would otherwise abort here.
+  remote_tag_commit=$(printf '%s' "$remote_tag" | grep '\^{}' | awk '{print $1}' || true)
+  [[ -z "$remote_tag_commit" ]] && remote_tag_commit=$(printf '%s' "$remote_tag" | awk '{print $1}' | head -1)
+  if [[ -n "$remote_tag_commit" ]]; then
+    if [[ "$remote_tag_commit" != "$merge_sha" ]]; then
+      echo "Error: remote tag ${tag} points to ${remote_tag_commit}, not merge commit ${merge_sha}." >&2
+      echo "  Inspect and delete the stale tag before re-running: git push origin :refs/tags/${tag}" >&2
+      return 1
+    fi
+    echo "Tag ${tag} already published at ${merge_sha} — nothing to do."
+    echo ""
+    echo "Resumed release complete!"
+    echo "  PR:       https://github.com/${GH_REPO}/pull/${pr_num}"
+    echo "  Tag:      ${tag}"
+    echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${tag}"
+    return 0
+  fi
+
+  # --no-verify is safe ONLY here: the tuple above was verified against
+  # GitHub, and the PR's CI ran green on exactly this tree (a squash merge
+  # preserves the branch-head tree), so the pre-push hook would re-run
+  # validation that already passed. Fresh releases never skip the hook.
+  if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    git tag -a "$tag" -m "Release ${tag}" "$merge_sha"
+  elif [[ "$(git rev-parse "${tag}^{commit}")" == "$merge_sha" ]]; then
+    echo "Tag ${tag} exists locally at ${merge_sha} — pushing."
+  else
+    echo "Error: local tag ${tag} points to $(git rev-parse "${tag}^{commit}"), not ${merge_sha}." >&2
+    echo "  Delete it before re-running: git tag -d ${tag}" >&2
+    return 1
+  fi
+  retry_transport 5 "tag push" git push --no-verify origin "$tag"
+
+  git branch -D "$branch" 2>/dev/null || true
+
+  echo ""
+  echo "Resumed release complete!"
+  echo "  PR:       https://github.com/${GH_REPO}/pull/${pr_num}"
+  echo "  Tag:      ${tag}"
+  echo "  Release:  https://github.com/${GH_REPO}/releases/tag/${tag}"
+  echo "  Re-run:   $0 <patch|minor|major> to start the next release"
+  return 0
+}
+
+if [[ -n "$RESUME_TAG" ]]; then
+  resume_release "$RESUME_TAG"
+  exit 0
+fi
+
+# discover_untagged_releases: emit "<tag>\t<pr>\t<merge-sha>" per merged bump
+# PR whose tag is absent from origin. headRefName is the primary key — it is
+# machine-generated and survives branch deletion. A tag deleted manually is
+# indistinguishable from an unpublished one; deletion is not an unpublish
+# intent this script can honor.
+discover_untagged_releases() {
+  local merged_prs tag num sha tag_out
+  merged_prs=$(retry_transport 5 "gh pr list" \
+    gh pr list --state merged --limit 100 \
+      --json number,headRefName,mergeCommit \
+      --jq '.[] | select(.headRefName | test("^chore/bump-v[0-9]+[.][0-9]+[.][0-9]+$")) | select(.mergeCommit.oid != null and .mergeCommit.oid != "") | [(.headRefName | sub("^chore/bump-"; "")), (.number | tostring), .mergeCommit.oid] | @tsv') || return 1
+  while IFS=$'\t' read -r tag num sha; do
+    [[ -n "$tag" ]] || continue
+    tag_out=$(retry_transport 5 "tag lookup ${tag}" \
+      git ls-remote --tags origin "refs/tags/${tag}") || return 1
+    if [[ -z "$tag_out" ]]; then
+      printf '%s\t%s\t%s\n' "$tag" "$num" "$sha"
+    fi
+  done <<<"$merged_prs"
+}
+
+# ── Resume unfinished releases (before computing a new version) ─
+# A rerun must finish a stranded release before deriving NEXT (issue #695).
+UNTAGGED=$(discover_untagged_releases) || {
+  echo "Error: could not query GitHub for unfinished releases." >&2
+  exit 1
+}
+UNTAGGED_COUNT=0
+if [[ -n "$UNTAGGED" ]]; then
+  UNTAGGED_COUNT=$(printf '%s\n' "$UNTAGGED" | grep -c .)
+fi
+if [[ "$UNTAGGED_COUNT" -ge 2 ]]; then
+  echo "Error: multiple merged-but-untagged releases found — refusing to guess." >&2
+  printf '%s\n' "$UNTAGGED" | while IFS=$'\t' read -r ver num sha; do
+    echo "  ${ver}  PR #${num}  ${sha}" >&2
+  done
+  echo "Finish one explicitly with: $0 --resume vX.Y.Z" >&2
+  exit 1
+elif [[ "$UNTAGGED_COUNT" -eq 1 ]]; then
+  RESUME_TAG=$(printf '%s\n' "$UNTAGGED" | head -1 | cut -f1)
+  echo "Found unfinished release ${RESUME_TAG} (merged PR, missing tag) — resuming before starting a new release."
+  resume_release "$RESUME_TAG"
+  exit 0
+fi
+# No unfinished releases — fall through to a fresh release.
 
 # ── Compute next version ─────────────────────────────────────
 
@@ -141,9 +362,9 @@ REMOTE_BRANCH_SHA=$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1
 LOCAL_BRANCH_SHA=$(git rev-parse "$BRANCH")
 
 if [[ "$REBASED" -eq 1 ]] || [[ "$COMMITTED" -eq 1 && -n "$REMOTE_BRANCH_SHA" ]]; then
-  git push --force-with-lease -u origin "$BRANCH"
+  retry_transport 5 "branch push" git push --force-with-lease -u origin "$BRANCH"
 elif [[ -z "$REMOTE_BRANCH_SHA" ]] || [[ "$LOCAL_BRANCH_SHA" != "$REMOTE_BRANCH_SHA" ]]; then
-  git push -u origin "$BRANCH"
+  retry_transport 5 "branch push" git push -u origin "$BRANCH"
 else
   echo "Remote branch already up to date — skipping push."
 fi
@@ -202,9 +423,9 @@ else
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
       echo "Error: timed out waiting for CI on PR #${PR_NUM} after $((TIMEOUT / 60)) minutes." >&2
       echo "Check status at: ${PR_URL}" >&2
-      echo "Once CI passes, manually merge and tag with:" >&2
+      echo "Once CI passes, recover with:" >&2
       echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-      echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+      echo "  $0 --resume ${TAG}" >&2
       exit 1
     fi
 
@@ -218,9 +439,9 @@ else
       if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
         echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
         echo "Check status at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
       echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}, attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
@@ -234,9 +455,9 @@ else
       if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
         echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
         echo "Check status at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
       echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output (attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
@@ -257,9 +478,9 @@ else
       if [[ "$FAILED" -gt 0 ]]; then
         echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
         echo "Fix the failures at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
 
@@ -318,7 +539,7 @@ if ! git checkout main; then
   echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
   exit 1
 fi
-git pull --ff-only origin main
+retry_transport 5 "git pull" git pull --ff-only origin main
 
 MERGE_SHA=""
 POLL_TIMEOUT=60
@@ -333,7 +554,7 @@ done
 
 if [[ -z "$MERGE_SHA" ]]; then
   echo "Error: GitHub did not return mergeCommit.oid for PR #${PR_NUM} within ${POLL_TIMEOUT}s." >&2
-  echo "PR is merged; tagging skipped. Re-run this script — it is safe and idempotent." >&2
+  echo "PR is merged; tagging skipped. Re-run this script — it discovers the merged release and finishes it." >&2
   exit 1
 fi
 
@@ -350,7 +571,7 @@ fi
 if git ls-remote --tags --exit-code origin "$TAG" >/dev/null 2>&1; then
   # Verify the existing tag targets the expected merge commit
   REMOTE_TAG_INFO=$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" 2>/dev/null || true)
-  REMOTE_TAG_COMMIT=$(echo "$REMOTE_TAG_INFO" | grep '\^{}' | awk '{print $1}')
+  REMOTE_TAG_COMMIT=$(printf '%s' "$REMOTE_TAG_INFO" | grep '\^{}' | awk '{print $1}' || true)
   [[ -z "$REMOTE_TAG_COMMIT" ]] && REMOTE_TAG_COMMIT=$(echo "$REMOTE_TAG_INFO" | awk '{print $1}' | head -1)
   if [[ -n "$REMOTE_TAG_COMMIT" && "$REMOTE_TAG_COMMIT" != "$MERGE_SHA" ]]; then
     echo "Error: remote tag ${TAG} exists but points to ${REMOTE_TAG_COMMIT}, not merge commit ${MERGE_SHA}." >&2
@@ -360,10 +581,10 @@ if git ls-remote --tags --exit-code origin "$TAG" >/dev/null 2>&1; then
   echo "Tag ${TAG} already exists on origin — skipping."
 elif git rev-parse -q --verify "${TAG}^{tag}" >/dev/null 2>&1; then
   echo "Tag ${TAG} exists locally — pushing to origin."
-  git push origin "$TAG"
+  retry_transport 5 "tag push" git push origin "$TAG"
 else
   git tag -a "$TAG" -m "Release ${TAG}"
-  git push origin "$TAG"
+  retry_transport 5 "tag push" git push origin "$TAG"
 fi
 
 # Clean up local release branch (remote already deleted by --delete-branch)
