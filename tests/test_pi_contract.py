@@ -81,7 +81,7 @@ PiCompatibleYamlLoader.add_implicit_resolver(
 )
 
 # Transcribed byte-for-byte from `substituteArgs`'s replacement regex in
-# @earendil-works/pi-coding-agent@0.84.2's dist/core/prompt-templates.js (also present,
+# @earendil-works/pi-coding-agent@0.84.3's dist/core/prompt-templates.js (also present,
 # unchanged, on that package's `src/core/prompt-templates.ts` at the same pin). Re-diff this
 # against the installed package (`grep -n substituteArgs node_modules/@earendil-works/
 # pi-coding-agent/dist/core/prompt-templates.js`) whenever the root `package.json`'s
@@ -190,7 +190,7 @@ def _body_after_frontmatter(path):
     and so cannot be offset from directly by counting its own newlines alone.
 
     Mirrors dist/utils/frontmatter.js's extractFrontmatter exactly (source at
-    @earendil-works/pi-coding-agent@0.84.2): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
+    @earendil-works/pi-coding-agent@0.84.3): normalize newlines ('\\r\\n' then '\\r' -> '\\n',
     same as Pi's normalizeNewlines) before any offset math, find the closing '---' via
     indexOf from index 3, slice from 4 chars past that match, then strip(). Do NOT reuse
     _frontmatter_block's delimiter logic here — it requires an exact '\\n---\\n' match and
@@ -718,7 +718,7 @@ def test_no_pi_argument_substitution_hazard_in_commands():
                 violations.append(f"{path.relative_to(ROOT)}:{line_no}: {match.group(0)!r}")
     assert not violations, (
         "Pi's substituteArgs (dist/core/prompt-templates.js, "
-        "@earendil-works/pi-coding-agent@0.84.2) would rewrite these tokens — every "
+        "@earendil-works/pi-coding-agent@0.84.3) would rewrite these tokens — every "
         "alternative it matches other than literal `$ARGUMENTS` is replaced with the "
         "matched positional arg or, if unset, the empty string, silently corrupting the "
         "command body when swe-workbench's own commands are loaded as Pi prompt templates. "
@@ -747,8 +747,8 @@ def test_pi_extension_wires_commands_as_prompt_paths():
 # ---------------------------------------------------------------------------
 # ask_user_question schema-as-data ratchet. Pins pi/extensions/ask-user.ts's parameters to a
 # plain JSON-Schema object literal — never a TypeBox value import — since
-# @earendil-works/pi-ai's constrained-sampling.js (getJsonSchemaToolParameters, ~line 112 as of
-# pi-coding-agent@0.84.2) returns `tool.parameters` verbatim to the provider and nothing on the
+# @earendil-works/pi-ai's constrained-sampling.js (getJsonSchemaToolParameters, ~line 111 as of
+# pi-coding-agent@0.84.3) returns `tool.parameters` verbatim to the provider and nothing on the
 # registration path (dist/core/tools/tool-definition-wrapper.js) runs TypeBox's
 # Value.Check/Compile against it. Re-diff that citation directly if this test ever needs to
 # change: `grep -n getJsonSchemaToolParameters` against the installed pi-ai package.

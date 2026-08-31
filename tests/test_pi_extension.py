@@ -166,7 +166,7 @@ def test_package_json_values():
         f"peerDependencies range must have an explicit floor and ceiling, got {peer_range!r}"
     )
     floor, ceiling = parts
-    assert floor == ">=0.84.2", (
+    assert floor == f">={dev_pin}", (
         f"peerDependencies floor must equal the devDependencies pin ({dev_pin!r}), got {floor!r}"
     )
     assert ceiling == "<1", (
