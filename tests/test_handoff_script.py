@@ -1402,9 +1402,6 @@ def _python39() -> str | None:
     return None
 
 
-_PY39 = _python39()
-
-
 def test_handoff_script_avoids_post_3_9_datetime_imports():
     source = SCRIPT.read_text(encoding="utf-8")
     assert re.search(r"^from datetime import .*\bUTC\b", source, re.MULTILINE) is None, (
@@ -1414,7 +1411,8 @@ def test_handoff_script_avoids_post_3_9_datetime_imports():
 
 
 def test_handoff_guard_returns_allow_under_python_3_9(tmp_path):
-    if _PY39 is None:
+    interpreter = _python39()
+    if interpreter is None:
         if os.environ.get("CI"):
             pytest.fail("CI must expose python3.9 for this regression (see pr.yml handoff-py39 job)")
         pytest.skip("no Python 3.9 interpreter available")
@@ -1423,7 +1421,7 @@ def test_handoff_guard_returns_allow_under_python_3_9(tmp_path):
     _initialize_repo(repo)
     state_dir = tmp_path / "state"
     result = subprocess.run(
-        [_PY39, str(SCRIPT), "guard", "--as", "pi"],
+        [interpreter, str(SCRIPT), "guard", "--as", "pi"],
         capture_output=True,
         text=True,
         env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},

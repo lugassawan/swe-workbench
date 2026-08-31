@@ -175,7 +175,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install --require-hashes -r tests/requirements.lock
-      - run: pytest tests/test_handoff_script.py -k "3_9" -v
+      # Explicit node IDs, not -k: a single-test rename must fail this job loudly at
+      # collection instead of silently shrinking the selection to the surviving match.
+      - run: >-
+          pytest tests/test_handoff_script.py::test_handoff_script_avoids_post_3_9_datetime_imports
+          tests/test_handoff_script.py::test_handoff_guard_returns_allow_under_python_3_9 -v
 
   typecheck-pi:
     name: "typecheck:pi"
