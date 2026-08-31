@@ -157,7 +157,13 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
       if (data !== undefined && data.decision === "deny") {
         return { block: true, reason: blockReason(data, "handoff lease denies mutation from this Pi session") };
       }
-      if (data === undefined && (result.code === null || result.stderr.includes("Traceback"))) {
+      // Startup failure = python3 missing (spawn ENOENT) or a startup crash (non-zero exit,
+      // traceback, no envelope); timeouts and HandoffError state failures keep the generic reason.
+      if (
+        data === undefined &&
+        ((result.code === null && result.stderr.includes("ENOENT")) ||
+          (result.code !== 0 && result.stderr.includes("Traceback")))
+      ) {
         return { block: true, reason: INTERPRETER_FAILURE_TEXT };
       }
       return {

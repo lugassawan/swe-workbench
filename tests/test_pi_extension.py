@@ -2912,6 +2912,69 @@ def test_handoff_interpreter_startup_failure_names_the_required_runtime(tmp_path
     assert "pin" in blocked["reason"], "reason must carry remediation, not just the requirement"
 
 
+_HANDOFF_SINGLE_CALL_DRIVER = """
+import { pathToFileURL } from "node:url";
+import fs from "node:fs";
+
+const [, , handoffPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerHandoff } = await import(pathToFileURL(handoffPath).href);
+
+const handlers = {};
+registerHandoff({ on(event, handler) { handlers[event] = handler; } }, config.root);
+const result = await handlers["tool_call"](
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "ls -la" } },
+  {
+    hasUI: true,
+    cwd: config.repo,
+    signal: undefined,
+    ui: { notify: () => {}, setStatus: () => {} },
+    sessionManager: { getSessionId: () => "pi-session-1" },
+  },
+);
+fs.writeFileSync(config.outPath, JSON.stringify(result));
+console.log(JSON.stringify({ ok: true }));
+"""
+
+
+@requires_node
+def test_handoff_missing_interpreter_fails_closed_with_runtime_requirement(tmp_path, tmp_path_factory):
+    repo = _handoff_repo(tmp_path, "no-python")
+    out_path = tmp_path / "out.json"
+    # PATH is stripped (the absolute node binary still spawns — _run_node resolves it first),
+    # so the extension's `python3` spawn hits ENOENT: the true interpreter-missing signature.
+    _run_node(
+        _HANDOFF_SINGLE_CALL_DRIVER,
+        [str(HANDOFF_TS), json.dumps({"root": str(ROOT), "repo": str(repo), "outPath": str(out_path)})],
+        tmp_path_factory,
+        label="pi-handoff-enoent",
+        env={**_CLEAN_ENV, "PATH": ""},
+    )
+    result = json.loads(out_path.read_text(encoding="utf-8"))
+    assert result["block"] is True, "a missing interpreter must still fail closed"
+    assert "Python 3.9" in result["reason"]
+
+
+@requires_node
+def test_handoff_guard_timeout_keeps_the_generic_fail_closed_reason(tmp_path, tmp_path_factory):
+    base = tmp_path_factory.mktemp("pi-handoff-timeout")
+    repo = _handoff_repo(base, "slow")
+    hung_runtime_root = base / "hung-runtime-root"
+    (hung_runtime_root / "bin").mkdir(parents=True)
+    (hung_runtime_root / "bin" / "swe-workbench-handoff").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    out_path = base / "out.json"
+    _run_node(
+        _HANDOFF_SINGLE_CALL_DRIVER,
+        [str(HANDOFF_TS), json.dumps({"root": str(hung_runtime_root), "repo": str(repo), "outPath": str(out_path)})],
+        tmp_path_factory,
+        label="pi-handoff-timeout",
+    )
+    result = json.loads(out_path.read_text(encoding="utf-8"))
+    assert result["block"] is True, "a hung guard must still fail closed"
+    assert "could not be verified" in result["reason"], "a timeout is not an interpreter problem"
+    assert "Python 3.9" not in result["reason"]
+
+
 @requires_node
 def test_handoff_quota_recovery_on_http_429_only(tmp_path_factory):
     out = _handoff_driver_result(tmp_path_factory, "pi-handoff-quota")["out"]
