@@ -78,12 +78,13 @@ const IDENTITY: Readonly<Record<Effort, ThinkingLevel>> = {
  *  clamped at `max` — reproducing the ticket-pinned `high -> max` translation (opus's default
  *  effort per DEFAULT_TIER_EFFORT is "high") while staying monotone and gapless over all five
  *  efforts. Per Z.AI's own spec, `glm-5.3` always reasons and genuinely supports `max` as one of
- *  its three real effort levels (`low`/`high`/`max`) — the currently-pinned Pi SDK's bundled
- *  catalog entry for it just has no `thinkingLevelMap` yet, so *that dependency's* clamp logic
- *  (not a limitation of the model itself) reduces `high`/`xhigh`/`max` all down to `high` at
- *  dispatch time today (see the pinned-catalog test in tests/test_pi_contract.py) —
- *  nominal-vs-effective divergence is expected and doesn't need runtime handling here (see this
- *  file's header). */
+ *  its three real effort levels (`low`/`high`/`max`) — the pinned Pi SDK's bundled catalog entry
+ *  for it now ships a real `thinkingLevelMap` for those three levels (see the pinned-catalog test
+ *  in tests/test_pi_contract.py), so this nominal `high -> max` shift dispatches as genuine `max`
+ *  thinking, no longer clamped down to `high` the way it was before that catalog bump.
+ *  `medium`/`xhigh` aren't directly supported and still round up to the nearest real level
+ *  (`high`/`max`) — that narrower nominal-vs-effective divergence is expected and doesn't need
+ *  runtime handling here (see this file's header). */
 const ZAI_OPUS_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "high",
   medium: "xhigh",

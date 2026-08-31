@@ -122,18 +122,20 @@ this translation is the identity (portable effort passes straight through). For 
 `opus` dispatch strictly deeper than `sonnet` dispatch for the same nominal effort — `opus`'s table
 shifts effort up toward `max`, `sonnet`'s shifts it down toward `low`, both clamped at their end.
 
-**Z.AI clamp caveat.** The effective thinking level `MODEL_POLICY` emits is *nominal* — the
-installed Pi SDK clamps it further per what its own bundled catalog *declares* the target model
-supports, which is not the same thing as what the model actually supports. Per Z.AI's own spec,
-`glm-5.3` always reasons and genuinely supports `max` as one of its three real effort levels
-(`low`/`high`/`max`) — but the catalog pin as of `@earendil-works/pi-coding-agent` 0.84.2 carries
-no `thinkingLevelMap` for it at all, so *that dependency's* clamp logic reduces the nominal
-`zai.opus` value of `max` down to `high` at dispatch time — identical, today, to `zai.sonnet`'s
-nominal (and already-recognized) `high`. This is a limitation of the pinned catalog data, not of
-`glm-5.3` itself, and it's expected, not a bug: `MODEL_POLICY` encodes the forward-looking policy,
-and `tests/test_pi_contract.py` pins the current clamp directly against the bundled catalog data,
-so a future catalog bump that adds a proper `thinkingLevelMap` for `glm-5.3` fails that test
-loudly — the signal to revisit, not silently drift past.
+**Z.AI clamp caveat (resolved).** The effective thinking level `MODEL_POLICY` emits used to be
+*nominal only* — the installed Pi SDK clamped it further per what its own bundled catalog
+*declared* the target model supports, which didn't match what the model actually supports. Per
+Z.AI's own spec, `glm-5.3` always reasons and genuinely supports `max` as one of its three real
+effort levels (`low`/`high`/`max`); through `@earendil-works/pi-coding-agent` 0.84.2 the catalog
+pin carried no `thinkingLevelMap` for it at all, so *that dependency's* clamp logic reduced the
+nominal `zai.opus` value of `max` down to `high` at dispatch time — identical, then, to
+`zai.sonnet`'s nominal (and already-recognized) `high`. As of the 0.84.3 bump, the pinned catalog
+now ships a real `thinkingLevelMap` for `glm-5.3` (`low`/`high`/`max`), so `zai.opus`'s nominal
+`max` dispatches as genuine `max` — strictly deeper than `zai.sonnet`'s `high`, no longer clamped
+down to it. The opus/sonnet split on Z.AI is therefore real, dispatch-visible behavior now, not
+purely nominal. `tests/test_pi_contract.py` pins this directly against the bundled catalog data,
+so a future catalog change that drops `glm-5.3`'s `thinkingLevelMap` again fails that test
+loudly — the signal to revisit this caveat once more, not silently drift past.
 
 **Fallback.** For any provider outside the three above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in

@@ -166,7 +166,7 @@ nothing:
 
 - Active marker: non-empty `PI_SESSION_ID`; the marker is rejected if it contains control
   characters.
-- Pi (through 0.84.2) documents session metadata (`PI_SESSION_ID`, optional
+- Pi (through 0.84.3) documents session metadata (`PI_SESSION_ID`, optional
   `PI_SESSION_FILE`, configurable session storage) and JSONL session files — but no
   sanctioned session scratch directory. The adapter therefore returns its
   active-but-unsupported status and cleanup reports `SWEPT_SESSION_FILES=0`.
