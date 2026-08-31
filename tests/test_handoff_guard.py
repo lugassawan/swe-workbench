@@ -354,6 +354,26 @@ def test_fails_open_when_the_runtime_is_unreachable(tmp_path):
     assert result.stderr == ""
 
 
+def test_interpreter_startup_failure_names_the_required_runtime(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    crashing_root = tmp_path / "crashing-plugin-root"
+    (crashing_root / "bin").mkdir(parents=True)
+    (crashing_root / "bin" / "swe-workbench-handoff").write_text(
+        "import sys\n"
+        "sys.stderr.write('Traceback (most recent call last):\n"
+        "ImportError: cannot import name UTC from datetime\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+
+    result = _run_hook(_payload(repo, "Bash"), state_dir=tmp_path / "state", plugin_root=crashing_root)
+
+    assert result.returncode == 2
+    assert "Python 3.9" in result.stderr
+    assert "pin" in result.stderr
+
+
 def test_no_secrets_in_blocking_output(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

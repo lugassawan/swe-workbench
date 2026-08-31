@@ -160,7 +160,18 @@ def main() -> None:
             _block(reason)
         _block("the handoff lease denies mutation from this Claude session")
 
+    if result.returncode != 0 and "Traceback" in result.stderr:
+        _interpreter_failure()
     _block("handoff ownership state is unreadable or corrupt; repair it before mutating")
+
+
+def _interpreter_failure() -> None:
+    _block(
+        "handoff runtime could not start: bin/swe-workbench-handoff requires Python 3.9+, "
+        "and this repository's python3 could not run it. Check the repository's Python "
+        "version pin (mise/asdf/pyenv/.python-version), ensure a Python 3.9+ interpreter "
+        "is on PATH, or repair the swe-workbench plugin install"
+    )
 
 
 if __name__ == "__main__":

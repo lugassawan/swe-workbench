@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SCHEMA = "swb.handoff/1"
@@ -629,7 +629,7 @@ def generate_uuidv7() -> str:
 
 
 def timestamp_now() -> datetime:
-    return datetime.now(UTC).replace(microsecond=0)
+    return datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def build_checkpoint(request: CreateRequest, workspace: Workspace) -> dict[str, object]:
@@ -1178,7 +1178,7 @@ def run_cleanup(paths: StatePaths) -> None:
     workspaces_root = paths.root / "workspaces"
     if not workspaces_root.is_dir():
         return
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     for repository_directory in sorted(path for path in workspaces_root.iterdir() if path.is_dir()):
         for workspace_directory in sorted(path for path in repository_directory.iterdir() if path.is_dir()):
             lease = _safe_lease_for_cleanup(workspace_directory)
