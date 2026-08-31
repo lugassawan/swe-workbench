@@ -82,20 +82,25 @@ esac
 retry_transport() {
   local max_attempts=$1 desc=$2
   shift 2
-  local attempt=0 out rc
+  local attempt=0 out rc errfile
+  errfile=$(mktemp)
   while true; do
     set +e
-    out=$("$@" 2>&1)
+    out=$("$@" 2>"$errfile")
     rc=$?
     set -e
     if [[ "$rc" -eq 0 ]]; then
+      # Replay stdout only — callers parse it. stderr (progress, ssh
+      # warnings) must never leak into parsed output.
       [[ -n "$out" ]] && printf '%s\n' "$out"
+      rm -f "$errfile"
       return 0
     fi
     attempt=$((attempt + 1))
     if [[ "$attempt" -ge "$max_attempts" ]]; then
       echo "Error: ${desc} failed after ${attempt} attempts (transient failure cap reached)." >&2
-      [[ -n "$out" ]] && printf '%s\n' "$out" >&2
+      [[ -s "$errfile" ]] && cat "$errfile" >&2
+      rm -f "$errfile"
       echo "  Re-run this script — it resumes the unfinished release." >&2
       return 1
     fi
@@ -153,7 +158,7 @@ resume_release() {
   local failed_checks
   failed_checks=$(retry_transport 5 "gh pr view (${pr_num})" \
     gh pr view "$pr_num" --json statusCheckRollup \
-      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .state == "FAILURE")] | length') || return 1
+      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .state == "FAILURE" or .state == "ERROR")] | length') || return 1
   if [[ "$failed_checks" != "0" ]]; then
     echo "Error: PR #${pr_num} has failed CI checks — refusing to resume ${tag}." >&2
     echo "  The tag-push shortcut assumes CI ran green on this tree; inspect ${GH_REPO}/pull/${pr_num}." >&2

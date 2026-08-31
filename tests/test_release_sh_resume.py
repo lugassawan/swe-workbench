@@ -267,17 +267,33 @@ class TestResumeDynamic:
         assert "failed CI checks" in result.stderr
         assert not (tmp_path / "push_log").exists()
 
+    def test_timed_out_ci_check_fails_closed(self, tmp_path):
+        """Non-FAILURE terminal conclusions (TIMED_OUT, CANCELLED) must not
+        pass the CI gate — the fresh path treats cancel as failing too."""
+        _resume_env(
+            tmp_path,
+            _gh_stub(
+                _PR_JSON_OK,
+                rollup='{"statusCheckRollup":[{"conclusion":"TIMED_OUT"}]}',
+            ),
+            _git_stub_ok(tmp_path),
+        )
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "failed CI checks" in result.stderr
+
     def test_manifest_list_unreadable_at_sha_fails_closed(self, tmp_path):
         """.version-bump.json itself missing at the merge SHA must fail loudly,
         not silently skip the manifest verification (fail-open guard)."""
         git_body = _git_stub_ok(tmp_path).replace(
-            "*.version-bump.json)",
+            """*.version-bump.json) printf '%s' '{"files":[{"path":".claude-plugin/plugin.json","field":".version"}]}' ;;""",
             '*.version-bump.json) echo "fatal: not found" >&2; exit 128 ;;',
         )
+        assert "exit 128" in git_body, "stub arm replacement failed to apply"
         _resume_env(tmp_path, _gh_stub(_PR_JSON_OK), git_body)
         result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
         assert result.returncode == 1
-        assert ".version-bump.json" in result.stderr
+        assert "refusing to skip manifest verification" in result.stderr
 
     def test_manifest_mismatch_fails_closed(self, tmp_path):
         _resume_env(
@@ -301,6 +317,21 @@ class TestResumeDynamic:
         assert not (
             tmp_path / "push_log"
         ).exists(), "must not push when the tag is already published"
+
+    def test_stderr_noise_on_success_does_not_pollute_tag_lookup(self, tmp_path):
+        """A successful ls-remote that also writes an ssh warning to stderr
+        must not corrupt the parsed tag state (false refusal / phantom tag)."""
+        git_body = _git_stub_ok(tmp_path).replace(
+            "ls-remote) printf ''",
+            "ls-remote) printf 'ssh: Warning: Permanently added host\\n' >&2; printf ''",
+        )
+        _resume_env(tmp_path, _gh_stub(_PR_JSON_OK), git_body)
+        result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        push_log = (tmp_path / "push_log").read_text()
+        assert (
+            "--no-verify" in push_log
+        ), "stderr noise on a successful lookup must not be parsed as tag state"
 
     def test_remote_tag_wrong_sha_fails_closed(self, tmp_path):
         git_body = _git_stub_ok(tmp_path).replace(
@@ -492,6 +523,26 @@ class TestDiscoveryDynamic:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Found unfinished release v0.1.36" in result.stdout
+        assert (tmp_path / "discovery_log").read_text() == "resume v0.1.36\n"
+
+    def test_stderr_noise_on_success_does_not_defeat_discovery(self, tmp_path):
+        """gh succeeding while printing a warning must still surface the
+        untagged candidate — merged stderr would read as a phantom tag."""
+        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35"])
+        gh = tmp_path / "gh"
+        gh.write_text(
+            gh.read_text().replace(
+                'jq -r "$prog"',
+                'jq -r "$prog" 2>/dev/null; printf "ssh: Warning\\n" >&2',
+            )
+        )
+        result = _run_snippet(
+            _DISCOVERY_SNIPPET,
+            tmp_path,
+            {"MERGED_PRS_JSON": _MERGED_PRS_JSON},
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
         assert (tmp_path / "discovery_log").read_text() == "resume v0.1.36\n"
 
     def test_two_stacked_refuse_and_list(self, tmp_path):
