@@ -362,9 +362,8 @@ class TestRetryTransportDynamic:
         ), "cap(3) allows 2 sleeps, then the 3rd failure aborts"
 
 
-# The exact gh --jq program used by discovery. Duplicated here so the tests
-# exercise the real filter; a static test below pins the copy in release.sh
-# to this string so the two cannot drift.
+# The exact gh --jq program used by discovery; a static test pins the script
+# copy to this string so the two cannot drift.
 _DISCOVERY_JQ = (
     '.[] | select(.headRefName | test("^chore/bump-v[0-9]+[.][0-9]+[.][0-9]+$")) '
     '| select(.mergeCommit.oid != null and .mergeCommit.oid != "") '
@@ -468,9 +467,8 @@ class TestDiscoveryStatic:
 
 class TestDiscoveryDynamic:
     def _make_stubs(self, tmp_path: Path, tagged: list[str]) -> None:
-        # The gh stub honors --jq by piping the sample JSON through real jq,
-        # so the snippet's post-processing sees genuinely filtered TSV — the
-        # same shape real gh emits.
+        # gh stub honors --jq by piping the sample JSON through real jq, so the
+        # snippet consumes genuinely filtered TSV, the shape real gh emits.
         _write_stub(
             tmp_path,
             "gh",
