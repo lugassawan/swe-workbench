@@ -157,11 +157,14 @@ A place to record what the live instruments actually reported, since the raw JSO
   ($0.1828), run 2 input=36452 cacheRead=0 ($0.1829).
   On the default model the full ~30–36k-token preloaded prefix is billed fresh at full input
   price on every back-to-back dispatch — zero cache reads, unchanged cost run over run.
-- **C3 decision: proceed (2026-08-31)** — R1 assessment: on the configured default model
-  (openai-codex/gpt-5.6-sol) the repeat-dispatch cache-read fraction is 0.0000 for all three
-  probed agents — ≤ 0.5, so R1 survives, demotion condition 4 becomes usable, and per issue
-  #689's rule C3 (real-diff ablation corpus + sweep) proceeds. Recorded deliberately: the
-  zai/glm-5.3 run above shows the opposite extreme (≥ 0.998, ~5× cost drop) — prefix caching is
+- **C3 decision: proceed (re-scoped) (2026-08-31)** — R1 assessment: on the configured default
+  model (openai-codex/gpt-5.6-sol) the repeat-dispatch cache-read fraction is 0.0000 for all
+  three probed agents — ≤ 0.5, so R1 survives, demotion condition 4 becomes usable, and per
+  issue #689's rule C3 proceeds. The corpus (10 real diffs, `tests/fixtures/ablation_corpus/`)
+  and the instruments landed under #689; the sweep itself is re-scoped to per-agent follow-up
+  #702 per acceptance (c) — an all-pairs sweep across the three heaviest agents alone is
+  ~740 paid dispatches on the uncached default provider. Recorded deliberately: the zai/glm-5.3
+  run above shows the opposite extreme (≥ 0.998, ~5× cost drop) — prefix caching is
   provider-dependent, so any future demotion decision resting on condition 4 must name the
   dispatch provider it was measured on. Both measurements are back-to-back dispatches inside
   the cache TTL — the caching-best-case shape the issue prescribed.
@@ -170,6 +173,7 @@ The cache-read fraction (condition 4) has now been collected (zai and default-mo
 2026-08-31) — the condition is satisfiable going forward. The citation rate (condition 2)
 remains uncollected — it still requires a human-run instrument in an interactive terminal and
 ≥ 20 sampled dispatches, tracked in its follow-up. Condition 3 (ablation) is underway via the
-C3 proceed decision above. All four conditions must still hold together before any demotion,
+re-scoped sweep follow-up (#702). All four conditions must still hold together before any
+demotion,
 so **no skill can legitimately be demoted yet** — that is a statement about what hasn't been
 measured, not that nothing should be.
