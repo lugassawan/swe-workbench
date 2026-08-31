@@ -82,14 +82,20 @@ esac
 retry_transport() {
   local max_attempts=$1 desc=$2
   shift 2
-  local attempt=0
+  local attempt=0 out rc
   while true; do
-    if "$@"; then
+    set +e
+    out=$("$@" 2>&1)
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
+      [[ -n "$out" ]] && printf '%s\n' "$out"
       return 0
     fi
     attempt=$((attempt + 1))
     if [[ "$attempt" -ge "$max_attempts" ]]; then
       echo "Error: ${desc} failed after ${attempt} attempts (transient failure cap reached)." >&2
+      [[ -n "$out" ]] && printf '%s\n' "$out" >&2
       echo "  Re-run this script — it resumes the unfinished release." >&2
       return 1
     fi
@@ -116,7 +122,7 @@ resume_release() {
 
   local pr_json
   pr_json=$(retry_transport 5 "gh pr list (${branch})" \
-    gh pr list --state merged --limit 20 \
+    gh pr list --state merged --limit 100 \
       --json number,headRefName,mergeCommit \
       --jq "[.[] | select(.headRefName == \"${branch}\")][0]") || return 1
   if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
@@ -141,16 +147,40 @@ resume_release() {
     return 1
   fi
 
+  # The PR's CI must have been green: the --no-verify shortcut below skips
+  # the pre-push hook precisely because CI validated this exact tree. A PR
+  # merged over red checks (admin override) loses that justification.
+  local failed_checks
+  failed_checks=$(retry_transport 5 "gh pr view (${pr_num})" \
+    gh pr view "$pr_num" --json statusCheckRollup \
+      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .state == "FAILURE")] | length') || return 1
+  if [[ "$failed_checks" != "0" ]]; then
+    echo "Error: PR #${pr_num} has failed CI checks — refusing to resume ${tag}." >&2
+    echo "  The tag-push shortcut assumes CI ran green on this tree; inspect ${GH_REPO}/pull/${pr_num}." >&2
+    return 1
+  fi
+
   # Every declared manifest at the merge SHA must carry the release version
-  # (mirrors the publication gate in .github/workflows/release.yml).
+  # (mirrors the publication gate in .github/workflows/release.yml). The
+  # manifest LIST is also read at the SHA: reading the working-tree copy
+  # would judge an old release against files declared after it merged.
+  local declared_rows
+  if ! declared_rows=$(git show "${merge_sha}:.version-bump.json" 2>/dev/null \
+    | jq -r '.files[] | [.path, .field] | @tsv'); then
+    echo "Error: cannot read .version-bump.json at ${merge_sha} — refusing to skip manifest verification." >&2
+    return 1
+  fi
   while IFS=$'\t' read -r path field; do
     local at_sha
-    at_sha=$(git show "${merge_sha}:${path}" | jq -r "$field")
+    if ! at_sha=$(git show "${merge_sha}:${path}" 2>/dev/null | jq -r "$field"); then
+      echo "Error: cannot read ${path} at ${merge_sha} (declared in .version-bump.json)." >&2
+      return 1
+    fi
     if [[ "$at_sha" != "$ver" ]]; then
       echo "Error: ${path} at ${merge_sha} reports '${at_sha}', expected '${ver}'." >&2
       return 1
     fi
-  done < <(jq -r '.files[] | [.path, .field] | @tsv' .version-bump.json)
+  done <<<"$declared_rows"
 
   local remote_tag remote_tag_commit
   remote_tag=$(retry_transport 5 "tag lookup ${tag}" \
@@ -210,17 +240,17 @@ fi
 # indistinguishable from an unpublished one; deletion is not an unpublish
 # intent this script can honor.
 discover_untagged_releases() {
-  local merged_prs ver num sha tag_out
+  local merged_prs tag num sha tag_out
   merged_prs=$(retry_transport 5 "gh pr list" \
-    gh pr list --state merged --limit 20 \
+    gh pr list --state merged --limit 100 \
       --json number,headRefName,mergeCommit \
       --jq '.[] | select(.headRefName | test("^chore/bump-v[0-9]+[.][0-9]+[.][0-9]+$")) | select(.mergeCommit.oid != null and .mergeCommit.oid != "") | [(.headRefName | sub("^chore/bump-"; "")), (.number | tostring), .mergeCommit.oid] | @tsv') || return 1
-  while IFS=$'\t' read -r ver num sha; do
-    [[ -n "$ver" ]] || continue
-    tag_out=$(retry_transport 5 "tag lookup ${ver}" \
-      git ls-remote --tags origin "refs/tags/${ver}") || return 1
+  while IFS=$'\t' read -r tag num sha; do
+    [[ -n "$tag" ]] || continue
+    tag_out=$(retry_transport 5 "tag lookup ${tag}" \
+      git ls-remote --tags origin "refs/tags/${tag}") || return 1
     if [[ -z "$tag_out" ]]; then
-      printf '%s\t%s\t%s\n' "$ver" "$num" "$sha"
+      printf '%s\t%s\t%s\n' "$tag" "$num" "$sha"
     fi
   done <<<"$merged_prs"
 }
