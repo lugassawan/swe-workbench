@@ -128,7 +128,7 @@ _RESUME_SNIPPET = "\n".join(
     [
         "set -euo pipefail",
         'GH_REPO="owner/repo"',
-        'RESUME_TAG="v0.1.36"',
+        'RESUME_TAG="v9.9.9"',
         _extract_functions("retry_transport", "resume_release"),
         'resume_release "$RESUME_TAG"',
     ]
@@ -136,7 +136,7 @@ _RESUME_SNIPPET = "\n".join(
 
 
 _PR_JSON_OK = (
-    '{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":{"oid":"c9035a0"}}'
+    '{"number":694,"headRefName":"chore/bump-v9.9.9","mergeCommit":{"oid":"c9035a0"}}'
 )
 
 
@@ -173,7 +173,7 @@ def _gh_stub(pr_list_json: str, rollup: str = '{"statusCheckRollup":[]}') -> str
     )
 
 
-def _git_stub_ok(tmp_path: Path, manifest_json: str = '{"version":"0.1.36"}') -> str:
+def _git_stub_ok(tmp_path: Path, manifest_json: str = '{"version":"9.9.9"}') -> str:
     return textwrap.dedent(
         f"""\
         case "$1" in
@@ -236,7 +236,7 @@ class TestResumeDynamic:
         _resume_env(
             tmp_path,
             _gh_stub(
-                '{"number":694,"headRefName":"chore/bump-v0.1.36","mergeCommit":null}'
+                '{"number":694,"headRefName":"chore/bump-v9.9.9","mergeCommit":null}'
             ),
             _git_stub_ok(tmp_path),
         )
@@ -299,16 +299,16 @@ class TestResumeDynamic:
         _resume_env(
             tmp_path,
             _gh_stub(_PR_JSON_OK),
-            _git_stub_ok(tmp_path, manifest_json='{"version":"0.1.35"}'),
+            _git_stub_ok(tmp_path, manifest_json='{"version":"9.9.8"}'),
         )
         result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
         assert result.returncode == 1
-        assert "expected '0.1.36'" in result.stderr
+        assert "expected '9.9.9'" in result.stderr
 
     def test_tag_already_published_is_success_no_push(self, tmp_path):
         git_body = _git_stub_ok(tmp_path).replace(
             "ls-remote) printf ''",
-            "ls-remote) printf 'c9035a0\\trefs/tags/v0.1.36\\nc9035a0\\trefs/tags/v0.1.36^{}\\n'",
+            "ls-remote) printf 'c9035a0\\trefs/tags/v9.9.9\\nc9035a0\\trefs/tags/v9.9.9^{}\\n'",
         )
         _resume_env(tmp_path, _gh_stub(_PR_JSON_OK), git_body)
         result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
@@ -336,7 +336,7 @@ class TestResumeDynamic:
     def test_remote_tag_wrong_sha_fails_closed(self, tmp_path):
         git_body = _git_stub_ok(tmp_path).replace(
             "ls-remote) printf ''",
-            "ls-remote) printf 'deadbeef\\trefs/tags/v0.1.36\\ndeadbeef\\trefs/tags/v0.1.36^{}\\n'",
+            "ls-remote) printf 'deadbeef\\trefs/tags/v9.9.9\\ndeadbeef\\trefs/tags/v9.9.9^{}\\n'",
         )
         _resume_env(tmp_path, _gh_stub(_PR_JSON_OK), git_body)
         result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
@@ -416,8 +416,8 @@ _DISCOVERY_SNIPPET = "\n".join(
 )
 
 _MERGED_PRS_JSON = """[
-  {"number": 691, "headRefName": "chore/bump-v0.1.35", "mergeCommit": {"oid": "59c9208"}},
-  {"number": 694, "headRefName": "chore/bump-v0.1.36", "mergeCommit": {"oid": "c9035a0"}},
+  {"number": 691, "headRefName": "chore/bump-v9.9.8", "mergeCommit": {"oid": "59c9208"}},
+  {"number": 694, "headRefName": "chore/bump-v9.9.9", "mergeCommit": {"oid": "c9035a0"}},
   {"number": 690, "headRefName": "chore/close-umbrella", "mergeCommit": {"oid": "c7fed0e"}}
 ]"""
 
@@ -514,7 +514,7 @@ class TestDiscoveryDynamic:
         _write_stub(tmp_path, "sleep", "exit 0")
 
     def test_single_untagged_auto_resumes(self, tmp_path):
-        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35"])
+        self._make_stubs(tmp_path, tagged=["refs/tags/v9.9.8"])
         result = _run_snippet(
             _DISCOVERY_SNIPPET,
             tmp_path,
@@ -522,13 +522,13 @@ class TestDiscoveryDynamic:
             cwd=tmp_path,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "Found unfinished release v0.1.36" in result.stdout
-        assert (tmp_path / "discovery_log").read_text() == "resume v0.1.36\n"
+        assert "Found unfinished release v9.9.9" in result.stdout
+        assert (tmp_path / "discovery_log").read_text() == "resume v9.9.9\n"
 
     def test_stderr_noise_on_success_does_not_defeat_discovery(self, tmp_path):
         """gh succeeding while printing a warning must still surface the
         untagged candidate — merged stderr would read as a phantom tag."""
-        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35"])
+        self._make_stubs(tmp_path, tagged=["refs/tags/v9.9.8"])
         gh = tmp_path / "gh"
         gh.write_text(
             gh.read_text().replace(
@@ -544,7 +544,7 @@ class TestDiscoveryDynamic:
             cwd=tmp_path,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert (tmp_path / "discovery_log").read_text() == "resume v0.1.36\n"
+        assert (tmp_path / "discovery_log").read_text() == "resume v9.9.9\n"
 
     def test_two_stacked_refuse_and_list(self, tmp_path):
         self._make_stubs(tmp_path, tagged=[])
@@ -556,11 +556,11 @@ class TestDiscoveryDynamic:
         )
         assert result.returncode == 1
         assert "multiple merged-but-untagged releases" in result.stderr
-        assert "v0.1.35" in result.stderr and "v0.1.36" in result.stderr
+        assert "v9.9.8" in result.stderr and "v9.9.9" in result.stderr
         assert "--resume" in result.stderr
 
     def test_all_tagged_fresh_release(self, tmp_path):
-        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35", "refs/tags/v0.1.36"])
+        self._make_stubs(tmp_path, tagged=["refs/tags/v9.9.8", "refs/tags/v9.9.9"])
         result = _run_snippet(
             _DISCOVERY_SNIPPET,
             tmp_path,
@@ -599,8 +599,8 @@ class TestDiscoveryDynamic:
         assert proc.returncode == 0, proc.stderr
         rows = [ln for ln in proc.stdout.splitlines() if ln]
         assert rows == [
-            "v0.1.35\t691\t59c9208",
-            "v0.1.36\t694\tc9035a0",
+            "v9.9.8\t691\t59c9208",
+            "v9.9.9\t694\tc9035a0",
         ]
 
 
