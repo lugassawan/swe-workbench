@@ -35,7 +35,13 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { compareArm, extractDispatchError, extractFinalAssistantText, parsePipeDelimitedFindings } from "./preload-probe-lib.mjs";
+import {
+  compareArm,
+  extractDispatchError,
+  extractFinalAssistantText,
+  extractFinalUsage,
+  parsePipeDelimitedFindings,
+} from "./preload-probe-lib.mjs";
 
 /** Fixed, deterministic prompt for the `cache` subcommand's two dispatches — trivial on purpose
  *  (see file header: the point is measuring prefix caching, not exercising real tool-using
@@ -307,32 +313,12 @@ function withTempSystemPromptFile(systemPrompt, fn) {
   }
 }
 
-/** Parses `pi --mode json` NDJSON output and returns the usage object from the LAST
- *  `message_update` line (usage is cumulative per turn, so the last line carries the turn's final
- *  usage). Lines that aren't valid JSON, or JSON without the right shape, are skipped
- *  defensively — never crash on a stray non-JSON line. Returns null if no message_update line was
- *  found. */
-function lastMessageUpdateUsage(ndjson) {
-  let lastUsage = null;
-  for (const line of ndjson.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (obj && obj.type === "message_update" && obj.usage) {
-      lastUsage = obj.usage;
-    }
-  }
-  return lastUsage;
-}
-
 // extractFinalAssistantText, parsePipeDelimitedFindings, and SEVERITY_RANK now live in
 // ./preload-probe-lib.mjs (imported above) — factored out so the pipe-delimited finding parser
-// is a standalone, independently-testable pure function.
+// is a standalone, independently-testable pure function. extractFinalUsage and
+// extractDispatchError joined them there for the same reason (see the lib for their
+// ground-truth citations); this file's former lastMessageUpdateUsage was superseded by
+// extractFinalUsage — message_update snapshots are zeroed mid-stream on some providers.
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
@@ -405,13 +391,23 @@ function cacheReadFraction(usage) {
 
 /** Parses one dispatch's NDJSON into its final usage, hard-failing when the turn died before
  *  reporting any — a dispatch with no usage is not a measurement (see extractDispatchError in
- *  preload-probe-lib.mjs for the exit-0-despite-provider-error ground truth). The provider's own
- *  errorMessage is surfaced verbatim when present. */
+ *  preload-probe-lib.mjs for the exit-0-despite-provider-error ground truth). Usage is read
+ *  from the authoritative assistant message_end (extractFinalUsage), NOT the last
+ *  message_update snapshot — codex zeroes those mid-stream (see extractFinalUsage's own docs).
+ *  A usage block that reports zero billed tokens on all three axes is equally unmeasurable and
+ *  fails the same way. The provider's own errorMessage is surfaced verbatim when present. */
 function usageOrDispatchError(ndjson, label) {
-  const usage = lastMessageUpdateUsage(ndjson);
-  if (usage) return usage;
+  const usage = extractFinalUsage(ndjson);
+  if (usage) {
+    const billedTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+    if (billedTokens > 0) return usage;
+    throw new Error(
+      `${label}: usage reported zero billed tokens (input/cacheRead/cacheWrite all 0) — ` +
+        `${extractDispatchError(ndjson) ?? "not a measurable dispatch"}`,
+    );
+  }
   const dispatchError = extractDispatchError(ndjson);
-  throw new Error(`${label}: ${dispatchError ?? "no message_update usage found in this run's output"}`);
+  throw new Error(`${label}: ${dispatchError ?? "no usage found in this run's output"}`);
 }
 
 function formatRunSummary(label, usage) {
@@ -542,7 +538,7 @@ async function mainAblateRun({ agent, corpus, omit, dryRun, model }) {
 /** Reads ablation-runs.jsonl back into an array of records. Returns null (distinct from an empty
  *  array) when the file doesn't exist at all — the "no data yet" case report mode needs to
  *  distinguish from "data exists but nothing matched the --agent filter". Malformed lines are
- *  skipped defensively, same posture as lastMessageUpdateUsage. */
+ *  skipped defensively, same posture as extractFinalUsage. */
 function readAblationRecords() {
   const path = ablationRunsFilePath();
   if (!existsSync(path)) return null;

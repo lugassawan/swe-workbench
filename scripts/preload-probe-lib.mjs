@@ -161,6 +161,50 @@ export function extractDispatchError(ndjson) {
   return null;
 }
 
+/** Extracts the turn's final usage from a `pi --mode json` NDJSON stream: the usage block of
+ *  the LAST assistant `message_end` whose stopReason isn't "error" — the authoritative,
+ *  post-billing snapshot — falling back to the last `message_update` usage snapshot only when
+ *  no assistant message_end carried usage.
+ *
+ *  Why message_end, not message_update (ground truth, captured live 2026-08-31, pi 0.84.4,
+ *  openai-codex/gpt-5.6-sol): codex's message_update events carry ZEROED usage snapshots for
+ *  the whole stream — the provider reports no interim usage — so reading the last snapshot
+ *  recorded 0/0/0 and $0.00 for a turn whose final message_end billed input=13580 / $0.068.
+ *  Providers that DO report cumulative usage mid-stream (zai/glm-5.3) produce identical
+ *  message_end and message_update numbers, so preferring message_end costs nothing there.
+ *  An ERRORED message_end (stopReason "error") is skipped — failure reporting belongs to
+ *  extractDispatchError, which callers consult when usage is missing or implausible.
+ *
+ *  Returns null when neither source yielded a usage object. */
+export function extractFinalUsage(ndjson) {
+  let lastEndUsage = null;
+  let lastUpdateUsage = null;
+  for (const line of ndjson.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!obj || typeof obj !== "object") continue;
+    if (
+      obj.type === "message_end" &&
+      obj.message &&
+      typeof obj.message === "object" &&
+      obj.message.role === "assistant" &&
+      obj.message.stopReason !== "error" &&
+      obj.message.usage
+    ) {
+      lastEndUsage = obj.message.usage;
+    } else if (obj.type === "message_update" && obj.usage) {
+      lastUpdateUsage = obj.usage;
+    }
+  }
+  return lastEndUsage ?? lastUpdateUsage;
+}
+
 /** Compares one omit-arm's findings against the matching baseline's findings for the same diff.
  *
  *  Matching heuristic (approximate BY DESIGN — two independent LLM dispatches reviewing the same
