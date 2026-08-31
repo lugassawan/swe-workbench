@@ -252,11 +252,45 @@ def test_recorded_measurements_document_cache_read_fraction_and_c3_decision():
     text = (ROOT / "docs" / "skill-preload.md").read_text()
     assert "## Recorded measurements" in text, "docs/skill-preload.md lost its Recorded measurements section"
 
-    section = text.split("## Recorded measurements", 1)[1]
+    section = text.split("\n## Recorded measurements\n", 1)[1]
     assert re.search(r"cache-read fraction 0\.\d+.*\(\d{4}-\d{2}-\d{2}\)", section), (
         "expected at least one dated cache-read fraction line under ## Recorded measurements"
     )
     assert "C3 decision:" in section, "expected a written C3 proceed/drop decision line"
+
+
+SWEEP_MANDATED_AGENTS = {"senior-engineer", "architect", "reviewer"}
+TRIAGE_REQUIRED_AGENTS = sorted(
+    p.stem for p in (ROOT / "agents").glob("*.md") if p.stem not in SWEEP_MANDATED_AGENTS
+)
+
+
+@pytest.mark.parametrize("agent", TRIAGE_REQUIRED_AGENTS)
+def test_c3_sweep_triage_covers_every_non_mandated_agent(agent):
+    """Acceptance criterion (d) of issue #702: every agent beyond the three heaviest (which are
+    swept by ticket mandate) must appear in the C3 sweep triage table. The agent list is
+    discovered live from agents/*.md so the table stays complete as agents are added."""
+    text = (ROOT / "docs" / "skill-preload.md").read_text()
+    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section (#702)"
+
+    # Newline-anchored: the runbook's backticked `## Recorded measurements` mention must not
+    # truncate the slice before the section's real tail.
+    section = text.split("### C3 sweep triage", 1)[1].split("\n## Recorded measurements\n", 1)[0]
+    assert f"| {agent} |" in section, (
+        f"agent '{agent}' missing from the C3 sweep triage table (#702 acceptance (d))"
+    )
+
+
+def test_c3_sweep_triage_section_carries_the_human_runbook():
+    """The triage section must include the human sweep runbook — the paste-able ablate loop with
+    its --omit flag — so the #702 sweeps don't require reconstructing the invocation from the
+    instrument's usage string. Pins presence and shape only, never the figures."""
+    text = (ROOT / "docs" / "skill-preload.md").read_text()
+    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section (#702)"
+
+    section = text.split("### C3 sweep triage", 1)[1].split("\n## Recorded measurements\n", 1)[0]
+    assert "preload-probe.mjs ablate" in section, "triage section must carry the sweep runbook command"
+    assert "--omit" in section, "triage section must show the --omit flag the sweep loop uses"
 
 
 def test_citation_instruction_does_not_claim_the_sections_are_above_it():
