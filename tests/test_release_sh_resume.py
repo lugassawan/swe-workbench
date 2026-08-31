@@ -96,9 +96,9 @@ class TestRetryTransportStatic:
             r"retry_transport\s+\d+\s+\"branch push[^\"]*\"\s+git push\b",
             r"retry_transport\s+\d+\s+\"tag push[^\"]*\"\s+git push\b",
         ):
-            assert any(re.search(pattern, ln) for ln in lines), (
-                f"No line matches required wrapper pattern: {pattern}"
-            )
+            assert any(
+                re.search(pattern, ln) for ln in lines
+            ), f"No line matches required wrapper pattern: {pattern}"
 
     def test_git_pull_always_wrapped(self):
         """Every executable 'git pull --ff-only' runs via retry_transport.
@@ -206,8 +206,7 @@ def _resume_env(tmp_path: Path, gh_body: str, git_body: str) -> None:
 class TestResumeStatic:
     def test_resume_flag_usage_documented(self):
         assert any(
-            "--resume vX.Y.Z" in ln and not _is_comment(ln)
-            for ln in _script_lines()
+            "--resume vX.Y.Z" in ln and not _is_comment(ln) for ln in _script_lines()
         ), "usage text does not document --resume"
 
     def test_resume_flag_validated(self):
@@ -223,9 +222,9 @@ class TestResumeStatic:
             if "--no-verify" in ln and not _is_comment(ln)
         ]
         assert len(hits) == 1, f"expected exactly 1 --no-verify line, got {hits}"
-        assert re.search(r"git push --no-verify", hits[0]), (
-            "--no-verify must live on the resume-path tag push"
-        )
+        assert re.search(
+            r"git push --no-verify", hits[0]
+        ), "--no-verify must live on the resume-path tag push"
 
 
 class TestResumeDynamic:
@@ -302,9 +301,9 @@ class TestResumeDynamic:
         result = _run_snippet(_RESUME_SNIPPET, tmp_path, cwd=tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "already published" in result.stdout
-        assert not (tmp_path / "push_log").exists(), (
-            "must not push when the tag is already published"
-        )
+        assert not (
+            tmp_path / "push_log"
+        ).exists(), "must not push when the tag is already published"
 
     def test_remote_tag_wrong_sha_fails_closed(self, tmp_path):
         _resume_env(
@@ -358,9 +357,9 @@ class TestRetryTransportDynamic:
         result = _run_snippet(_RETRY_SNIPPET, tmp_path)
         assert result.returncode == 1
         assert "transient failure cap reached" in result.stderr
-        assert (tmp_path / "sleeps").read_text().strip() == "2", (
-            "cap(3) allows 2 sleeps, then the 3rd failure aborts"
-        )
+        assert (
+            (tmp_path / "sleeps").read_text().strip() == "2"
+        ), "cap(3) allows 2 sleeps, then the 3rd failure aborts"
 
 
 # The exact gh --jq program used by discovery. Duplicated here so the tests
@@ -450,9 +449,9 @@ class TestDiscoveryStatic:
             and "()" not in ln
             and not _is_comment(ln)
         )
-        assert wiring_idx < compute_idx, (
-            "discovery wiring must run before the 'Compute next version' section"
-        )
+        assert (
+            wiring_idx < compute_idx
+        ), "discovery wiring must run before the 'Compute next version' section"
 
     def test_discovery_jq_program_pinned(self):
         assert any(
@@ -530,9 +529,7 @@ class TestDiscoveryDynamic:
         assert "--resume" in result.stderr
 
     def test_all_tagged_fresh_release(self, tmp_path):
-        self._make_stubs(
-            tmp_path, tagged=["refs/tags/v0.1.35", "refs/tags/v0.1.36"]
-        )
+        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35", "refs/tags/v0.1.36"])
         result = _run_snippet(
             _DISCOVERY_SNIPPET,
             tmp_path,
@@ -584,9 +581,9 @@ class TestFailurePathMessaging:
         for ln in _script_lines():
             if _is_comment(ln) or "echo" not in ln:
                 continue
-            assert "git tag -a" not in ln, (
-                f"Guidance still teaches manual tagging: {ln.strip()!r}"
-            )
+            assert (
+                "git tag -a" not in ln
+            ), f"Guidance still teaches manual tagging: {ln.strip()!r}"
 
     def test_ci_failure_paths_advertise_resume(self):
         """Every 'Once CI passes' guidance must offer the --resume path."""
