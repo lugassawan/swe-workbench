@@ -125,6 +125,42 @@ export function extractFinalAssistantText(ndjson) {
   return lastText;
 }
 
+/** Extracts the provider-level failure reason from a `pi --mode json` NDJSON stream, or null
+ *  when every turn completed without error.
+ *
+ *  Why this exists (ground truth, captured live 2026-08-31 against pi 0.84.4 with an
+ *  openai-codex quota exhaustion): a dispatch whose provider call fails NEVER emits
+ *  `message_update` events — the turn dies before streaming — so `lastMessageUpdateUsage`
+ *  sees nothing while `pi` STILL EXITS 0 (dist/modes/print-mode.js only returns non-zero when
+ *  the prompt loop itself throws; a provider failure surfaces as message-level events carrying
+ *  `stopReason:"error"` + `errorMessage` on `message_start`/`message_end`/`turn_end`). The only
+ *  reliable failure signal is therefore in the event stream, not the exit code — and a dispatch
+ *  with no usage is not a measurement: reporting it as "cache: NO" would read as a real zero
+ *  cache-read fraction. Callers hard-fail on this function's non-null result.
+ *
+ *  Defensive line parsing mirrors extractFinalAssistantText: non-JSON lines are skipped, never
+ *  fatal. An errored message with no `errorMessage` string still returns a non-empty fallback
+ *  (stopReason:"error" alone is a failure worth failing on). */
+export function extractDispatchError(ndjson) {
+  for (const line of ndjson.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const message = obj && typeof obj === "object" ? obj.message : null;
+    if (obj && typeof obj === "object" && message && typeof message === "object" && message.stopReason === "error") {
+      return typeof message.errorMessage === "string" && message.errorMessage
+        ? message.errorMessage
+        : "dispatch failed (stopReason=error, no errorMessage)";
+    }
+  }
+  return null;
+}
+
 /** Compares one omit-arm's findings against the matching baseline's findings for the same diff.
  *
  *  Matching heuristic (approximate BY DESIGN — two independent LLM dispatches reviewing the same

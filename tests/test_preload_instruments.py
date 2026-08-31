@@ -211,6 +211,21 @@ def test_all_agents_carry_the_preload_canary_citation_block():
         assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"
 
 
+def test_recorded_measurements_document_cache_read_fraction_and_c3_decision():
+    """Acceptance criteria (a)+(b) of issue #689: the Recorded measurements section must carry
+    at least one dated cache-read fraction line, and a written C3 proceed/drop decision. The
+    figures themselves are human-run instrument output recorded verbatim — this ratchet only
+    pins their presence and shape, never their values."""
+    text = (ROOT / "docs" / "skill-preload.md").read_text()
+    assert "## Recorded measurements" in text, "docs/skill-preload.md lost its Recorded measurements section"
+
+    section = text.split("## Recorded measurements", 1)[1]
+    assert re.search(r"cache-read fraction 0\.\d+.*\(\d{4}-\d{2}-\d{2}\)", section), (
+        "expected at least one dated cache-read fraction line under ## Recorded measurements"
+    )
+    assert "C3 decision:" in section, "expected a written C3 proceed/drop decision line"
+
+
 def test_citation_instruction_does_not_claim_the_sections_are_above_it():
     """composeSystemPrompt (pi/extensions/agent-spec.ts) appends each `## Preloaded skill:`
     section AFTER the agent body, and this fragment is inlined at the very end of that body — so
@@ -776,6 +791,61 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 # helpers factored into preload-probe-lib.mjs. No test spawns real `pi` — same constraint the
 # `cache` subcommand's own tests above follow.
 # ---------------------------------------------------------------------------
+
+
+class TestExtractDispatchError:
+    """extractDispatchError — the guard that keeps a failed provider dispatch from being read
+    as a measurement. Ground truth (captured live 2026-08-31, pi 0.84.4, openai-codex quota
+    exhaustion): the failed turn emits message-level events carrying stopReason:"error" +
+    errorMessage while `pi --mode json` still exits 0 — so the ONLY reliable failure signal is
+    in the event stream, not the exit code."""
+
+    ERROR_STREAM = "\n".join(
+        [
+            '{"type":"session","version":3,"id":"x","timestamp":"2026-08-31T04:55:32.714Z","cwd":"/repo"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.6-sol","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"stopReason":"error","timestamp":2,"errorMessage":"Codex error: The usage limit has been reached"}}',
+            '{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.6-sol","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"stopReason":"error","timestamp":2,"errorMessage":"Codex error: The usage limit has been reached"}}',
+            '{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Codex error: The usage limit has been reached"},"toolResults":[]}',
+            '{"type":"agent_end","messages":[],"willRetry":false}',
+            '{"type":"agent_settled"}',
+        ]
+    )
+
+    HEALTHY_STREAM = "\n".join(
+        [
+            '{"type":"session","version":3,"id":"x","timestamp":"2026-08-31T04:55:32.714Z","cwd":"/repo"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"message_update","usage":{"input":100,"output":5,"cacheRead":900,"cacheWrite":0,"cost":{"total":0.004}}}',
+            '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack."}],"stopReason":"stop","usage":{"input":100,"output":5,"cacheRead":900,"cacheWrite":0,"cost":{"total":0.004}}}}',
+            '{"type":"agent_settled"}',
+        ]
+    )
+
+    @requires_node
+    def test_provider_error_stream_returns_error_message(self):
+        result = _call_lib_function("extractDispatchError", self.ERROR_STREAM)
+        assert result == "Codex error: The usage limit has been reached"
+
+    @requires_node
+    def test_healthy_stream_returns_none(self):
+        result = _call_lib_function("extractDispatchError", self.HEALTHY_STREAM)
+        assert result is None
+
+    @requires_node
+    def test_malformed_lines_are_skipped_not_fatal(self):
+        result = _call_lib_function("extractDispatchError", "not json {\n" + self.ERROR_STREAM)
+        assert result == "Codex error: The usage limit has been reached"
+
+    @requires_node
+    def test_error_without_message_gets_fallback_string(self):
+        stream = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}'
+        result = _call_lib_function("extractDispatchError", stream)
+        assert isinstance(result, str) and result
 
 
 class TestParsePipeDelimitedFindings:

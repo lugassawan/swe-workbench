@@ -35,7 +35,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { compareArm, extractFinalAssistantText, parsePipeDelimitedFindings } from "./preload-probe-lib.mjs";
+import { compareArm, extractDispatchError, extractFinalAssistantText, parsePipeDelimitedFindings } from "./preload-probe-lib.mjs";
 
 /** Fixed, deterministic prompt for the `cache` subcommand's two dispatches — trivial on purpose
  *  (see file header: the point is measuring prefix caching, not exercising real tool-using
@@ -403,6 +403,17 @@ function cacheReadFraction(usage) {
   return denom === 0 ? 0 : usage.cacheRead / denom;
 }
 
+/** Parses one dispatch's NDJSON into its final usage, hard-failing when the turn died before
+ *  reporting any — a dispatch with no usage is not a measurement (see extractDispatchError in
+ *  preload-probe-lib.mjs for the exit-0-despite-provider-error ground truth). The provider's own
+ *  errorMessage is surfaced verbatim when present. */
+function usageOrDispatchError(ndjson, label) {
+  const usage = lastMessageUpdateUsage(ndjson);
+  if (usage) return usage;
+  const dispatchError = extractDispatchError(ndjson);
+  throw new Error(`${label}: ${dispatchError ?? "no message_update usage found in this run's output"}`);
+}
+
 function formatRunSummary(label, usage) {
   const lines = [`${label}:`];
   if (!usage) {
@@ -426,6 +437,12 @@ function dispatchArmFindings({ systemPrompt, prompt, model }) {
   return withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ prompt, promptFilePath, model });
     const stdout = runPiOnce(args);
+    // An errored dispatch would otherwise parse as "" here and be recorded as a clean
+    // zero-findings arm — silently corrupting the ablation comparison.
+    const dispatchError = extractDispatchError(stdout);
+    if (dispatchError) {
+      throw new Error(`dispatch failed before producing findings — ${dispatchError}`);
+    }
     const text = extractFinalAssistantText(stdout);
     if (text === null) {
       console.error("preload-probe: warning: no assistant message_end found in this run's output");
@@ -475,11 +492,9 @@ async function mainCache({ agent, dryRun, model }) {
 
   const { firstUsage, secondUsage } = withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ promptFilePath, model });
-    const firstStdout = runPiOnce(args);
-    const secondStdout = runPiOnce(args);
     return {
-      firstUsage: lastMessageUpdateUsage(firstStdout),
-      secondUsage: lastMessageUpdateUsage(secondStdout),
+      firstUsage: usageOrDispatchError(runPiOnce(args), "run 1 (cold)"),
+      secondUsage: usageOrDispatchError(runPiOnce(args), "run 2 (repeat, same prefix)"),
     };
   });
 
