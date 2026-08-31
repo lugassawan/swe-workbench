@@ -574,3 +574,26 @@ class TestDiscoveryDynamic:
             "v0.1.35\t691\t59c9208",
             "v0.1.36\t694\tc9035a0",
         ]
+
+
+class TestFailurePathMessaging:
+    def test_no_manual_tag_recipe_in_guidance(self):
+        """Echo'd guidance must not teach manual `git tag -a` — recovery goes
+        through --resume, which verifies the tuple instead of trusting the
+        operator's local state."""
+        for ln in _script_lines():
+            if _is_comment(ln) or "echo" not in ln:
+                continue
+            assert "git tag -a" not in ln, (
+                f"Guidance still teaches manual tagging: {ln.strip()!r}"
+            )
+
+    def test_ci_failure_paths_advertise_resume(self):
+        """Every 'Once CI passes' guidance must offer the --resume path."""
+        resume_lines = [
+            ln for ln in _script_lines() if not _is_comment(ln) and "--resume" in ln
+        ]
+        assert len(resume_lines) >= 4, (
+            "expected --resume advertised in usage + >=3 failure paths, "
+            f"found {len(resume_lines)}: {[ln.strip() for l in resume_lines]}"
+        )

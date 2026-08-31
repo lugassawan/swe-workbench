@@ -390,9 +390,9 @@ else
     if [[ $ELAPSED -ge $TIMEOUT ]]; then
       echo "Error: timed out waiting for CI on PR #${PR_NUM} after $((TIMEOUT / 60)) minutes." >&2
       echo "Check status at: ${PR_URL}" >&2
-      echo "Once CI passes, manually merge and tag with:" >&2
+      echo "Once CI passes, recover with:" >&2
       echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-      echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+      echo "  $0 --resume ${TAG}" >&2
       exit 1
     fi
 
@@ -406,9 +406,9 @@ else
       if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
         echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
         echo "Check status at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
       echo "[$(date '+%H:%M:%S')] gh pr checks transient failure (rc=${CHECKS_RC}, attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
@@ -422,9 +422,9 @@ else
       if [[ $TRANSIENT_COUNT -ge $MAX_TRANSIENT ]]; then
         echo "Error: gh pr checks failed ${TRANSIENT_COUNT} times in a row (transient failure cap reached)." >&2
         echo "Check status at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
       echo "[$(date '+%H:%M:%S')] gh pr checks rc=8 but no output (attempt ${TRANSIENT_COUNT}/${MAX_TRANSIENT}); retrying in 10s..."
@@ -445,9 +445,9 @@ else
       if [[ "$FAILED" -gt 0 ]]; then
         echo "Error: ${FAILED} CI check(s) failed on PR #${PR_NUM}." >&2
         echo "Fix the failures at: ${PR_URL}" >&2
-        echo "Once CI passes, manually merge and tag with:" >&2
+        echo "Once CI passes, recover with:" >&2
         echo "  gh pr merge --squash --delete-branch ${PR_NUM}" >&2
-        echo "  git checkout main && git pull --ff-only && git tag -a ${TAG} -m 'Release ${TAG}' && git push origin ${TAG}" >&2
+        echo "  $0 --resume ${TAG}" >&2
         exit 1
       fi
 
@@ -521,7 +521,7 @@ done
 
 if [[ -z "$MERGE_SHA" ]]; then
   echo "Error: GitHub did not return mergeCommit.oid for PR #${PR_NUM} within ${POLL_TIMEOUT}s." >&2
-  echo "PR is merged; tagging skipped. Re-run this script — it is safe and idempotent." >&2
+  echo "PR is merged; tagging skipped. Re-run this script — it discovers the merged release and finishes it." >&2
   exit 1
 fi
 
