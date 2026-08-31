@@ -211,6 +211,14 @@ def test_all_agents_carry_the_preload_canary_citation_block():
         assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"
 
 
+def test_ablation_corpus_holds_at_least_ten_real_diffs():
+    """Issue #689's C3 premise: the corpus must hold at least 10 real diffs from the repo's
+    history — the 2 hand-authored synthetic fixtures were explicitly judged insufficient to
+    trust an ablation sweep."""
+    files = sorted(ABLATION_CORPUS.glob("*.diff"))
+    assert len(files) >= 10, f"expected >= 10 corpus diffs, found {len(files)}"
+
+
 def test_recorded_measurements_document_cache_read_fraction_and_c3_decision():
     """Acceptance criteria (a)+(b) of issue #689: the Recorded measurements section must carry
     at least one dated cache-read fraction line, and a written C3 proceed/drop decision. The

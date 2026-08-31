@@ -1,0 +1,91 @@
+diff --git a/docs/plugin-platform-decisions.md b/docs/plugin-platform-decisions.md
+index df14248..ed1f71d 100644
+--- a/docs/plugin-platform-decisions.md
++++ b/docs/plugin-platform-decisions.md
+@@ -125,8 +125,9 @@ is no prompt surface for a `tool_call` handler to target, so a port would have n
+ permission *for*.
+ 
+ Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
+-— distinct from `"deferred"` (`skill_usage_record.sh`/`skill_usage_flush.sh`, unwired only until
+-`Skill`/subagents exist on Pi). `"n/a"` never graduates to `"wired"`.
++— as are `skill_usage_record.sh`/`skill_usage_flush.sh` (§10 records why their concept, runtime
++Skill invocation by a dispatched subagent, has no Pi counterpart either). `"n/a"` never
++graduates to `"wired"`.
+ 
+ ## 7. `EnterWorktree`/`ExitWorktree` have no Pi equivalent — documented N/A, not deferred
+ 
+@@ -331,10 +332,23 @@ golden-inventory ratchet standing in for the type safety a generation step would
+   Tier-1 vocabulary prose (`tool-vocab.ts`) stays unconditional regardless of which Tier-2 tools
+   actually register.
+ 
+-**`HOOK_PI_STATUS`'s `"deferred"` rationale is now half-stale.** `tests/test_pi_contract.py`'s
+-inventory marks `skill_usage_record.sh`/`skill_usage_flush.sh` `"deferred"`, with the comment
+-"not wired yet because the Pi capability it needs (subagents) doesn't exist yet." The `task`
+-subagent-dispatch tool has since shipped (`pi/extensions/subagent.ts`) — the trigger condition is
+-now half-true, not fully unmet. Whether to wire these two hooks up now that subagents exist is a
+-real question, not resolved here — filed as a post-merge follow-up rather than decided or
+-implemented in this docs pass.
++**`skill_usage_record.sh`/`skill_usage_flush.sh`: `"deferred"` → `"n/a"`.** The original
++deferral rationale ("not wired yet because the Pi capability it needs (subagents) doesn't exist
++yet") went half-stale when the `task` subagent-dispatch tool shipped (`pi/extensions/subagent.ts`)
++— and re-examination showed the remaining gap is architectural, not a capability arrival away.
++The hooks measure *runtime Skill invocations inside a dispatched subagent*; on Pi there is no
++`Skill` tool in any process, dispatched children receive skill bodies preloaded into their system
++prompt (`pi/extensions/agent-spec.ts`, per `docs/skill-preload.md`), and children run as separate
++`pi.exec` processes whose events never reach the parent's extension instance. The observable is
++structurally zero, so wiring would register handlers that can never carry real data: `record` has
++no trigger event carrying `tool_input.skill`, and `flush` — whose trigger *is* synthesizable after
++`pi.exec` resolves — would read input buffers that are never written, emitting a permanent `{}`
++no-op while implying telemetry exists. Graduation to `"wired"` would require Pi to gain a runtime
++Skill-invocation observable — a model-invocable tool whose call event carries the skill id,
++which Pi's on-demand `read`-based skill loading does not provide — plus cross-process event
++visibility into dispatched children, or this repo reversing the preload convention with a
++child-side telemetry subsystem. None is a capability tick-box. The one genuine Pi-native
++skill-usage signal — a top-level `read` of `skills/*/SKILL.md`, visible as a `tool_call` — sits
++outside these hooks' measured population (they deliberately ignore the top-level orchestrator)
++and would be a different feature. Neither branch of the wire-or-defer enumeration that framed
++this re-examination was taken: the deferral premise had fired without enabling wiring.
+diff --git a/tests/test_pi_contract.py b/tests/test_pi_contract.py
+index e287f5f..d349f8f 100644
+--- a/tests/test_pi_contract.py
++++ b/tests/test_pi_contract.py
+@@ -619,16 +619,16 @@ def test_referenced_fields_actually_appear_in_hook_source():
+ 
+ # hooks/*.sh|py -> Pi wiring status. "wired": translated by guards.ts this phase. "n/a": the
+ # concept the hook manipulates does not exist on Pi (documented in
+-# docs/plugin-platform-decisions.md §6). "deferred": not wired yet because the Pi capability it
+-# needs (subagents) doesn't exist yet — tracked on the follow-up issue, not here.
++# docs/plugin-platform-decisions.md §6). "deferred": not wired, but the missing Pi capability
++# is expected to arrive and unblock wiring — currently no rows sit in this bucket.
+ HOOK_PI_STATUS = {
+     "bash_guard.sh": "wired",
+     "secret_guard.py": "wired",
+     "workflow_resume_hint.sh": "wired",
+     "skill_autoload_hint.sh": "wired",
+     "worktree_permission_grant.sh": "n/a",
+-    "skill_usage_record.sh": "deferred",
+-    "skill_usage_flush.sh": "deferred",
++    "skill_usage_record.sh": "n/a",
++    "skill_usage_flush.sh": "n/a",
+ }
+ 
+ 
+@@ -649,6 +649,18 @@ def test_worktree_permission_grant_is_explicitly_not_applicable():
+     )
+ 
+ 
++@pytest.mark.parametrize("hook", ["skill_usage_record.sh", "skill_usage_flush.sh"])
++def test_skill_usage_hooks_are_explicitly_not_applicable(hook):
++    assert HOOK_PI_STATUS[hook] == "n/a", (
++        f"{hook} measures runtime Skill invocations inside a dispatched subagent — an observable "
++        "Pi structurally lacks: no Skill tool exists in any Pi process, dispatched children get "
++        "skill bodies preloaded into their system prompt (pi/extensions/agent-spec.ts), and "
++        "child pi.exec processes expose no events to the parent. This must stay an explicit "
++        "N/A row (docs/plugin-platform-decisions.md §6, §10), not silently re-deferred on a "
++        "capability-arrival rationale"
++    )
++
++
+ def test_no_pi_argument_substitution_hazard_in_commands():
+     """Every $-token Pi's substituteArgs regex would match, across commands/*.md and
+     shared/**/*.md, must be exactly `$ARGUMENTS` — the one substitution swe-workbench's
