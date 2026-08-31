@@ -143,15 +143,33 @@ A place to record what the live instruments actually reported, since the raw JSO
 - **reviewer: cache-read fraction 0.9995 on zai/glm-5.3 (2026-08-31)** — run 2 (repeat dispatch,
   same prefix); cold run 0.0527. run 1 input=34515 cacheRead=1920 ($0.0491), run 2 input=19
   cacheRead=36416 ($0.0095).
-  All three heaviest preloads: repeat-dispatch cost dropped ~5× vs. cold, and the repeat-run
+  All three heaviest preloads on zai: repeat-dispatch cost dropped ~5× vs. cold, and the repeat-run
   cache-read fraction is ≥ 0.998 — the preloaded prefix is served almost entirely from cache on
-  a back-to-back dispatch. Measured on zai/glm-5.3; the default-model run (openai-codex) is the
-  decision basis and follows once its quota window resets.
+  a back-to-back dispatch.
+- **senior-engineer: cache-read fraction 0.0000 on openai-codex/gpt-5.6-sol, the configured
+  default (2026-08-31)** — run 2 (repeat dispatch, same prefix); cold run also 0.0000. run 1
+  input=29891 cacheRead=0 ($0.1525), run 2 input=29891 cacheRead=0 ($0.1566).
+- **architect: cache-read fraction 0.0000 on openai-codex/gpt-5.6-sol, the configured default
+  (2026-08-31)** — run 2 (repeat dispatch); cold run 0.0000. run 1 input=32803 cacheRead=0
+  ($0.1715), run 2 input=32803 cacheRead=0 ($0.1646).
+- **reviewer: cache-read fraction 0.0000 on openai-codex/gpt-5.6-sol, the configured default
+  (2026-08-31)** — run 2 (repeat dispatch); cold run 0.0000. run 1 input=36452 cacheRead=0
+  ($0.1828), run 2 input=36452 cacheRead=0 ($0.1829).
+  On the default model the full ~30–36k-token preloaded prefix is billed fresh at full input
+  price on every back-to-back dispatch — zero cache reads, unchanged cost run over run.
+- **C3 decision: proceed (2026-08-31)** — R1 assessment: on the configured default model
+  (openai-codex/gpt-5.6-sol) the repeat-dispatch cache-read fraction is 0.0000 for all three
+  probed agents — ≤ 0.5, so R1 survives, demotion condition 4 becomes usable, and per issue
+  #689's rule C3 (real-diff ablation corpus + sweep) proceeds. Recorded deliberately: the
+  zai/glm-5.3 run above shows the opposite extreme (≥ 0.998, ~5× cost drop) — prefix caching is
+  provider-dependent, so any future demotion decision resting on condition 4 must name the
+  dispatch provider it was measured on. Both measurements are back-to-back dispatches inside
+  the cache TTL — the caching-best-case shape the issue prescribed.
 
-The cache-read fraction (condition 4) has been collected on zai/glm-5.3 for the three heaviest
-agents (see above); the default-model confirmation and the resulting R1/C3 decision are pending,
-and the citation rate (condition 2) remains uncollected — it still requires a human-run
-instrument in an interactive terminal and ≥ 20 sampled dispatches, tracked in its follow-up.
-Until the remaining figures land, conditions 2 and 3 are unsatisfied, and all four conditions
-must hold together before any demotion, so **no skill can legitimately be demoted yet** — that
-is a statement about what hasn't been measured, not that nothing should be.
+The cache-read fraction (condition 4) has now been collected (zai and default-model runs above,
+2026-08-31) — the condition is satisfiable going forward. The citation rate (condition 2)
+remains uncollected — it still requires a human-run instrument in an interactive terminal and
+≥ 20 sampled dispatches, tracked in its follow-up. Condition 3 (ablation) is underway via the
+C3 proceed decision above. All four conditions must still hold together before any demotion,
+so **no skill can legitimately be demoted yet** — that is a statement about what hasn't been
+measured, not that nothing should be.
