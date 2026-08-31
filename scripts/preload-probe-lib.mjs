@@ -126,21 +126,11 @@ export function extractFinalAssistantText(ndjson) {
 }
 
 /** Extracts the provider-level failure reason from a `pi --mode json` NDJSON stream, or null
- *  when every turn completed without error.
- *
- *  Why this exists (ground truth, captured live 2026-08-31 against pi 0.84.4 with an
- *  openai-codex quota exhaustion): a dispatch whose provider call fails NEVER emits
- *  `message_update` events — the turn dies before streaming — so a usage reader sees nothing
- *  while `pi` STILL EXITS 0 (dist/modes/print-mode.js only returns non-zero when
- *  the prompt loop itself throws; a provider failure surfaces as message-level events carrying
- *  `stopReason:"error"` + `errorMessage` on `message_start`/`message_end`/`turn_end`). The only
- *  reliable failure signal is therefore in the event stream, not the exit code — and a dispatch
- *  with no usage is not a measurement: reporting it as "cache: NO" would read as a real zero
- *  cache-read fraction. Callers hard-fail on this function's non-null result.
- *
- *  Defensive line parsing mirrors extractFinalAssistantText: non-JSON lines are skipped, never
- *  fatal. An errored message with no `errorMessage` string still returns a non-empty fallback
- *  (stopReason:"error" alone is a failure worth failing on). */
+ *  when every turn completed without error. A failed provider call never emits `message_update`
+ *  events and `pi` still exits 0 — the only reliable failure signal is the message-level
+ *  `stopReason:"error"` events — so callers hard-fail on a non-null result rather than read a
+ *  broken dispatch as a zero measurement. Non-JSON lines are skipped, never fatal; an errored
+ *  message with no `errorMessage` string still returns a non-empty fallback. */
 export function extractDispatchError(ndjson) {
   for (const line of ndjson.split("\n")) {
     const trimmed = line.trim();
@@ -164,17 +154,10 @@ export function extractDispatchError(ndjson) {
 /** Extracts the turn's final usage from a `pi --mode json` NDJSON stream: the usage block of
  *  the LAST assistant `message_end` whose stopReason isn't "error" — the authoritative,
  *  post-billing snapshot — falling back to the last `message_update` usage snapshot only when
- *  no assistant message_end carried usage.
- *
- *  Why message_end, not message_update (ground truth, captured live 2026-08-31, pi 0.84.4,
- *  openai-codex/gpt-5.6-sol): codex's message_update events carry ZEROED usage snapshots for
- *  the whole stream — the provider reports no interim usage — so reading the last snapshot
- *  recorded 0/0/0 and $0.00 for a turn whose final message_end billed input=13580 / $0.068.
- *  Providers that DO report cumulative usage mid-stream (zai/glm-5.3) produce identical
- *  message_end and message_update numbers, so preferring message_end costs nothing there.
- *  An ERRORED message_end (stopReason "error") is skipped — failure reporting belongs to
- *  extractDispatchError, which callers consult when usage is missing or implausible.
- *
+ *  no assistant message_end carried usage. Some providers (openai-codex) zero their
+ *  message_update snapshots for the whole stream, so a snapshot-only read can report 0/0/0
+ *  and $0.00 for a turn that actually billed; message_end is authoritative everywhere. An
+ *  errored message_end is skipped — failure reporting belongs to extractDispatchError.
  *  Returns null when neither source yielded a usage object. */
 export function extractFinalUsage(ndjson) {
   let lastEndUsage = null;
@@ -210,7 +193,7 @@ export function extractFinalUsage(ndjson) {
  *  Three loud failure branches: no usage object at all; a usage object reporting zero billed
  *  tokens on all three axes (input+cacheRead+cacheWrite); and, decorating either, the
  *  provider's own errorMessage when the stream carries one. A dispatch that didn't bill
- *  tokens is not a measurement — see both extractors' docs for the ground truth behind this. */
+ *  tokens is not a measurement. */
 export function usageOrDispatchError(ndjson, label) {
   const usage = extractFinalUsage(ndjson);
   if (usage) {

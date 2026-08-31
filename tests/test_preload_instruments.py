@@ -862,7 +862,7 @@ class TestExtractFinalAssistantText:
 
     @requires_node
     def test_quota_exhaustion_shape_throws_through_the_usage_gate(self):
-        """The captured quota-exhaustion ground truth (ERROR_STREAM) through the composed gate:
+        """The quota-exhaustion stream shape (ERROR_STREAM) through the composed gate:
         no usage + provider error must throw naming the provider's message."""
         outcome = _call_lib_function_outcome(
             "usageOrDispatchError", TestExtractDispatchError.ERROR_STREAM, "run 1 (cold)"
@@ -931,9 +931,8 @@ class TestUsageOrDispatchError:
 
 class TestExtractDispatchError:
     """extractDispatchError — the guard that keeps a failed provider dispatch from being read
-    as a measurement. Ground truth (captured live 2026-08-31, pi 0.84.4, openai-codex quota
-    exhaustion): the failed turn emits message-level events carrying stopReason:"error" +
-    errorMessage while `pi --mode json` still exits 0 — so the ONLY reliable failure signal is
+    as a measurement. A failed turn emits message-level events carrying stopReason "error" +
+    errorMessage while `pi --mode json` still exits 0 — so the only reliable failure signal is
     in the event stream, not the exit code."""
 
     ERROR_STREAM = "\n".join(
@@ -986,11 +985,9 @@ class TestExtractDispatchError:
 
 class TestExtractFinalUsage:
     """extractFinalUsage — usage must come from the authoritative final assistant message_end,
-    not from message_update streaming snapshots. Ground truth (captured live 2026-08-31, pi
-    0.84.4, openai-codex/gpt-5.6-sol): codex's message_update events carry ZEROED usage
-    snapshots during streaming; the real numbers land only on the final message_end.
-    lastMessageUpdateUsage's snapshot read recorded 0/0/0 and $0.00 for a turn that actually
-    billed input=13580 / $0.068. Fixtures below are the codex-shaped stream.
+    not from message_update streaming snapshots: codex-shaped streams carry ZEROED usage
+    snapshots during streaming while the real numbers land only on the final message_end.
+    Fixtures below are that codex-shaped stream.
     """
 
     CODEX_STREAM = "\n".join(
