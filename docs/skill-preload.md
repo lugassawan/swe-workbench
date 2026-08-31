@@ -134,10 +134,24 @@ A place to record what the live instruments actually reported, since the raw JSO
   ~147,445 est. preload tokens across 22 agents) (2026-08-28)** — the static figure
   (`docs/dispatch-ledger.md`, condition 1). Worst offenders: `swe-workbench:senior-engineer` 90.8%,
   `swe-workbench:architect` 89.7%, `swe-workbench:reviewer` 86.9%.
+- **senior-engineer: cache-read fraction 0.9982 on zai/glm-5.3 (2026-08-31)** — run 2 (repeat
+  dispatch, same prefix) of the cache probe; cold run 0.0643. run 1 input=27959 cacheRead=1920
+  ($0.0397), run 2 input=55 cacheRead=29824 ($0.0078).
+- **architect: cache-read fraction 0.9994 on zai/glm-5.3 (2026-08-31)** — run 2 (repeat dispatch,
+  same prefix); cold run 0.0586. run 1 input=30869 cacheRead=1920 ($0.0440), run 2 input=21
+  cacheRead=32768 ($0.0088).
+- **reviewer: cache-read fraction 0.9995 on zai/glm-5.3 (2026-08-31)** — run 2 (repeat dispatch,
+  same prefix); cold run 0.0527. run 1 input=34515 cacheRead=1920 ($0.0491), run 2 input=19
+  cacheRead=36416 ($0.0095).
+  All three heaviest preloads: repeat-dispatch cost dropped ~5× vs. cold, and the repeat-run
+  cache-read fraction is ≥ 0.998 — the preloaded prefix is served almost entirely from cache on
+  a back-to-back dispatch. Measured on zai/glm-5.3; the default-model run (openai-codex) is the
+  decision basis and follows once its quota window resets.
 
-The two **live** figures — citation rate (condition 2) and cache-read fraction (condition 4) —
-remain uncollected; both require a human-run instrument in an interactive terminal (see "Running
-the instruments" above) and are tracked in a filed follow-up issue. Until they're collected,
-conditions 2 and 4 of the `## Demotion decision rule` above are unsatisfiable, so **no skill can
-legitimately be demoted yet** — that is a statement about what hasn't been measured, not that
-nothing has.
+The cache-read fraction (condition 4) has been collected on zai/glm-5.3 for the three heaviest
+agents (see above); the default-model confirmation and the resulting R1/C3 decision are pending,
+and the citation rate (condition 2) remains uncollected — it still requires a human-run
+instrument in an interactive terminal and ≥ 20 sampled dispatches, tracked in its follow-up.
+Until the remaining figures land, conditions 2 and 3 are unsatisfied, and all four conditions
+must hold together before any demotion, so **no skill can legitimately be demoted yet** — that
+is a statement about what hasn't been measured, not that nothing should be.
