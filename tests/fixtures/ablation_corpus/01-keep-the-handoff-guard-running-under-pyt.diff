@@ -1,0 +1,395 @@
+diff --git a/.github/workflows/pr.yml b/.github/workflows/pr.yml
+index 0efdec8..e56f961 100644
+--- a/.github/workflows/pr.yml
++++ b/.github/workflows/pr.yml
+@@ -140,6 +140,12 @@ jobs:
+       contents: read
+     steps:
+       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
++      # 3.9 installs FIRST so the later 3.12 setup owns `python3`/`pip`, while `python3.9`
++      # stays addressable — the guard regression test (CI=true) fail-loudly demands it on
++      # every CI pytest run, mirroring the requires_node ratchet's provisioning contract.
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
++        with:
++          python-version: '3.9'
+       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+         with:
+           python-version: '3.12'
+@@ -157,6 +163,30 @@ jobs:
+       - run: pip install --require-hashes -r tests/requirements.lock
+       - run: pytest tests/ -v
+ 
++  handoff-py39:
++    name: "handoff:python3.9"
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    permissions:
++      contents: read
++    steps:
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
++      # 3.9 installs FIRST so the later 3.12 setup owns `python3`/`pip` for pytest, while the
++      # 3.9 toolchain stays addressable as `python3.9` — what the guard regression test
++      # discovers. CI=true makes that test fail loudly (not skip) if this job ever disappears.
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
++        with:
++          python-version: '3.9'
++      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
++        with:
++          python-version: '3.12'
++      - run: pip install --require-hashes -r tests/requirements.lock
++      # Explicit node IDs, not -k: a single-test rename must fail this job loudly at
++      # collection instead of silently shrinking the selection to the surviving match.
++      - run: >-
++          pytest tests/test_handoff_script.py::test_handoff_script_avoids_post_3_9_datetime_imports
++          tests/test_handoff_script.py::test_handoff_guard_returns_allow_under_python_3_9 -v
++
+   typecheck-pi:
+     name: "typecheck:pi"
+     runs-on: ubuntu-latest
+diff --git a/bin/swe-workbench-handoff b/bin/swe-workbench-handoff
+index 966a35d..46d3830 100755
+--- a/bin/swe-workbench-handoff
++++ b/bin/swe-workbench-handoff
+@@ -19,7 +19,7 @@ import uuid
+ from collections.abc import Iterator
+ from contextlib import contextmanager
+ from dataclasses import asdict, dataclass
+-from datetime import UTC, datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ 
+ SCHEMA = "swb.handoff/1"
+@@ -629,7 +629,7 @@ def generate_uuidv7() -> str:
+ 
+ 
+ def timestamp_now() -> datetime:
+-    return datetime.now(UTC).replace(microsecond=0)
++    return datetime.now(timezone.utc).replace(microsecond=0)
+ 
+ 
+ def build_checkpoint(request: CreateRequest, workspace: Workspace) -> dict[str, object]:
+@@ -1178,7 +1178,7 @@ def run_cleanup(paths: StatePaths) -> None:
+     workspaces_root = paths.root / "workspaces"
+     if not workspaces_root.is_dir():
+         return
+-    now = datetime.now(UTC)
++    now = datetime.now(timezone.utc)
+     for repository_directory in sorted(path for path in workspaces_root.iterdir() if path.is_dir()):
+         for workspace_directory in sorted(path for path in repository_directory.iterdir() if path.is_dir()):
+             lease = _safe_lease_for_cleanup(workspace_directory)
+diff --git a/hooks/handoff_guard.py b/hooks/handoff_guard.py
+index ba2ceda..d3e37b5 100755
+--- a/hooks/handoff_guard.py
++++ b/hooks/handoff_guard.py
+@@ -160,8 +160,19 @@ def main() -> None:
+             _block(reason)
+         _block("the handoff lease denies mutation from this Claude session")
+ 
++    if result.returncode != 0 and "Traceback" in result.stderr:
++        _interpreter_failure()
+     _block("handoff ownership state is unreadable or corrupt; repair it before mutating")
+ 
+ 
++def _interpreter_failure() -> None:
++    _block(
++        "handoff runtime could not start: bin/swe-workbench-handoff requires Python 3.9+, "
++        "and this repository's python3 could not run it. Check the repository's Python "
++        "version pin (mise/asdf/pyenv/.python-version), ensure a Python 3.9+ interpreter "
++        "is on PATH, or repair the swe-workbench plugin install"
++    )
++
++
+ if __name__ == "__main__":
+     main()
+diff --git a/pi/extensions/handoff.ts b/pi/extensions/handoff.ts
+index 60d8f54..87b7508 100644
+--- a/pi/extensions/handoff.ts
++++ b/pi/extensions/handoff.ts
+@@ -36,6 +36,15 @@ const QUOTA_RECOVERY_TEXT =
+   "swe-workbench-handoff recover --from pi --source-stopped " +
+   "| swe-workbench-result-check swb.handoff/1";
+ 
++/** Startup-failure text — names the runtime requirement and remediation so a downstream
++ *  repo's Python pin (the #696 Mise case) is diagnosable instead of a blanket mutation block. */
++const INTERPRETER_FAILURE_TEXT =
++  "swe-workbench handoff runtime could not start: bin/swe-workbench-handoff requires " +
++  "Python 3.9+, and this repository's `python3` could not run it. Check the repository's " +
++  "Python version pin (mise/asdf/pyenv/.python-version), launch pi with a compatible " +
++  "interpreter (e.g. mise exec python@3.11 -- pi), or repair the swe-workbench plugin " +
++  "install before mutating this worktree";
++
+ const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+ const CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.handoff/1`;
+ const PI_SESSION_ARGUMENT = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"';
+@@ -148,6 +157,15 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
+       if (data !== undefined && data.decision === "deny") {
+         return { block: true, reason: blockReason(data, "handoff lease denies mutation from this Pi session") };
+       }
++      // Startup failure = python3 missing (spawn ENOENT) or a startup crash (non-zero exit,
++      // traceback, no envelope); timeouts and HandoffError state failures keep the generic reason.
++      if (
++        data === undefined &&
++        ((result.code === null && result.stderr.includes("ENOENT")) ||
++          (result.code !== 0 && result.stderr.includes("Traceback")))
++      ) {
++        return { block: true, reason: INTERPRETER_FAILURE_TEXT };
++      }
+       return {
+         block: true,
+         reason:
+diff --git a/tests/test_handoff_guard.py b/tests/test_handoff_guard.py
+index 47b97a1..b8b8d21 100644
+--- a/tests/test_handoff_guard.py
++++ b/tests/test_handoff_guard.py
+@@ -354,6 +354,26 @@ def test_fails_open_when_the_runtime_is_unreachable(tmp_path):
+     assert result.stderr == ""
+ 
+ 
++def test_interpreter_startup_failure_names_the_required_runtime(tmp_path):
++    repo = tmp_path / "repo"
++    _initialize_repo(repo)
++    crashing_root = tmp_path / "crashing-plugin-root"
++    (crashing_root / "bin").mkdir(parents=True)
++    (crashing_root / "bin" / "swe-workbench-handoff").write_text(
++        "import sys\n"
++        "sys.stderr.write('Traceback (most recent call last):\n"
++        "ImportError: cannot import name UTC from datetime\n')\n"
++        "sys.exit(1)\n",
++        encoding="utf-8",
++    )
++
++    result = _run_hook(_payload(repo, "Bash"), state_dir=tmp_path / "state", plugin_root=crashing_root)
++
++    assert result.returncode == 2
++    assert "Python 3.9" in result.stderr
++    assert "pin" in result.stderr
++
++
+ def test_no_secrets_in_blocking_output(tmp_path):
+     repo = tmp_path / "repo"
+     _initialize_repo(repo)
+diff --git a/tests/test_handoff_script.py b/tests/test_handoff_script.py
+index c0a2938..c06eeff 100644
+--- a/tests/test_handoff_script.py
++++ b/tests/test_handoff_script.py
+@@ -4,6 +4,7 @@ import hashlib
+ import json
+ import os
+ import re
++import shutil
+ import stat
+ import subprocess
+ import threading
+@@ -1366,3 +1367,66 @@ def test_cleanup_retains_a_released_orphan_before_expiry(tmp_path):
+     _create_checkpoint(other_repo, state_dir, _create_input("cleanup-released-orphan-fresh-trigger"))
+ 
+     assert orphan_workspace.exists()
++
++
++def _python39() -> str | None:
++    """Locate a runnable Python 3.9 interpreter (env override > PATH > mise/pyenv installs)."""
++    candidates: list[str] = []
++    override = os.environ.get("SWE_WORKBENCH_TEST_PY39")
++    if override:
++        candidates.append(override)
++    found = shutil.which("python3.9")
++    if found:
++        candidates.append(found)
++    for base in (
++        Path.home() / ".local" / "share" / "mise" / "installs" / "python",
++        Path.home() / ".pyenv" / "versions",
++    ):
++        if base.is_dir():
++            candidates.extend(
++                str(entry / "bin" / "python3.9") for entry in sorted(base.glob("3.9*"), reverse=True)
++            )
++    for candidate in candidates:
++        try:
++            probe = subprocess.run(
++                [candidate, "--version"],
++                capture_output=True,
++                text=True,
++                env=dict(_CLEAN_ENV),
++                timeout=15,
++            )
++        except (OSError, subprocess.SubprocessError):
++            continue
++        if probe.returncode == 0 and probe.stdout.startswith("Python 3.9"):
++            return candidate
++    return None
++
++
++def test_handoff_script_avoids_post_3_9_datetime_imports():
++    source = SCRIPT.read_text(encoding="utf-8")
++    assert re.search(r"^from datetime import .*\bUTC\b", source, re.MULTILINE) is None, (
++        "datetime.UTC requires Python 3.11; the runtime must stay importable under 3.9 "
++        "(use timezone.utc instead)"
++    )
++
++
++def test_handoff_guard_returns_allow_under_python_3_9(tmp_path):
++    interpreter = _python39()
++    if interpreter is None:
++        if os.environ.get("CI"):
++            pytest.fail("CI must expose python3.9 for this regression (see pr.yml handoff-py39 job)")
++        pytest.skip("no Python 3.9 interpreter available")
++    repo = tmp_path / "repo"
++    repo.mkdir()
++    _initialize_repo(repo)
++    state_dir = tmp_path / "state"
++    result = subprocess.run(
++        [interpreter, str(SCRIPT), "guard", "--as", "pi"],
++        capture_output=True,
++        text=True,
++        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
++        cwd=repo,
++    )
++    assert result.returncode == 0, result.stderr
++    envelope = json.loads(result.stdout)
++    assert envelope["data"]["decision"] == "allow"
+diff --git a/tests/test_pi_extension.py b/tests/test_pi_extension.py
+index 39fb74f..05ca5d0 100644
+--- a/tests/test_pi_extension.py
++++ b/tests/test_pi_extension.py
+@@ -2672,6 +2672,12 @@ out.missingRuntimeWarnings = notifications.length - notificationsBeforeMissing;
+ registerHandoff(stubPi, config.brokenRuntimeRoot);
+ out.brokenRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+ 
++// Incompatible-interpreter crash (#696 signature): runtime exists, python3 executes it, but
++// it dies with a traceback on stderr and no envelope on stdout — the block reason must name
++// the required runtime and remediation instead of the generic fail-closed text.
++registerHandoff(stubPi, config.crashingRuntimeRoot);
++out.crashingRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
++
+ console.log(JSON.stringify({ out }));
+ """
+ 
+@@ -2763,6 +2769,17 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
+     fake_root.mkdir()
+     broken_runtime_root = base / "broken-runtime-root"
+     (broken_runtime_root / "bin" / "swe-workbench-handoff").mkdir(parents=True)
++    crashing_runtime_root = base / "crashing-runtime-root"
++    (crashing_runtime_root / "bin").mkdir(parents=True)
++    (crashing_runtime_root / "bin" / "swe-workbench-handoff").write_text(
++        "import sys\n"
++        "sys.stderr.write('Traceback (most recent call last):\\n"
++        "  File \"bin/swe-workbench-handoff\", line 22, in <module>\\n"
++        "    from datetime import UTC, datetime, timedelta\\n"
++        "ImportError: cannot import name UTC from datetime\\n')\n"
++        "sys.exit(1)\n",
++        encoding="utf-8",
++    )
+     session_arg = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"'
+     config = {
+         "root": str(ROOT),
+@@ -2771,6 +2788,7 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
+         "leasePath": str(released_lease_path),
+         "fakeRoot": str(fake_root),
+         "brokenRuntimeRoot": str(broken_runtime_root),
++        "crashingRuntimeRoot": str(crashing_runtime_root),
+         "resumePipeline": (
+             f'swe-workbench-handoff resume "{released_id}" --as pi '
+             f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1'
+@@ -2885,6 +2903,78 @@ def test_handoff_unspawnable_runtime_fails_closed(tmp_path_factory):
+     assert "could not be verified" in out["brokenRuntime"]["reason"]
+ 
+ 
++@requires_node
++def test_handoff_interpreter_startup_failure_names_the_required_runtime(tmp_path_factory):
++    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-py-crash")["out"]
++    blocked = out["crashingRuntime"]
++    assert blocked["block"] is True, "startup failure must still fail closed"
++    assert "Python 3.9" in blocked["reason"]
++    assert "pin" in blocked["reason"], "reason must carry remediation, not just the requirement"
++
++
++_HANDOFF_SINGLE_CALL_DRIVER = """
++import { pathToFileURL } from "node:url";
++import fs from "node:fs";
++
++const [, , handoffPath, configJson] = process.argv;
++const config = JSON.parse(configJson);
++const { registerHandoff } = await import(pathToFileURL(handoffPath).href);
++
++const handlers = {};
++registerHandoff({ on(event, handler) { handlers[event] = handler; } }, config.root);
++const result = await handlers["tool_call"](
++  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "ls -la" } },
++  {
++    hasUI: true,
++    cwd: config.repo,
++    signal: undefined,
++    ui: { notify: () => {}, setStatus: () => {} },
++    sessionManager: { getSessionId: () => "pi-session-1" },
++  },
++);
++fs.writeFileSync(config.outPath, JSON.stringify(result));
++console.log(JSON.stringify({ ok: true }));
++"""
++
++
++@requires_node
++def test_handoff_missing_interpreter_fails_closed_with_runtime_requirement(tmp_path, tmp_path_factory):
++    repo = _handoff_repo(tmp_path, "no-python")
++    out_path = tmp_path / "out.json"
++    # PATH is stripped (the absolute node binary still spawns — _run_node resolves it first),
++    # so the extension's `python3` spawn hits ENOENT: the true interpreter-missing signature.
++    _run_node(
++        _HANDOFF_SINGLE_CALL_DRIVER,
++        [str(HANDOFF_TS), json.dumps({"root": str(ROOT), "repo": str(repo), "outPath": str(out_path)})],
++        tmp_path_factory,
++        label="pi-handoff-enoent",
++        env={**_CLEAN_ENV, "PATH": ""},
++    )
++    result = json.loads(out_path.read_text(encoding="utf-8"))
++    assert result["block"] is True, "a missing interpreter must still fail closed"
++    assert "Python 3.9" in result["reason"]
++
++
++@requires_node
++def test_handoff_guard_timeout_keeps_the_generic_fail_closed_reason(tmp_path, tmp_path_factory):
++    base = tmp_path_factory.mktemp("pi-handoff-timeout")
++    repo = _handoff_repo(base, "slow")
++    hung_runtime_root = base / "hung-runtime-root"
++    (hung_runtime_root / "bin").mkdir(parents=True)
++    (hung_runtime_root / "bin" / "swe-workbench-handoff").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
++    out_path = base / "out.json"
++    _run_node(
++        _HANDOFF_SINGLE_CALL_DRIVER,
++        [str(HANDOFF_TS), json.dumps({"root": str(hung_runtime_root), "repo": str(repo), "outPath": str(out_path)})],
++        tmp_path_factory,
++        label="pi-handoff-timeout",
++    )
++    result = json.loads(out_path.read_text(encoding="utf-8"))
++    assert result["block"] is True, "a hung guard must still fail closed"
++    assert "could not be verified" in result["reason"], "a timeout is not an interpreter problem"
++    assert "Python 3.9" not in result["reason"]
++
++
+ @requires_node
+ def test_handoff_quota_recovery_on_http_429_only(tmp_path_factory):
+     out = _handoff_driver_result(tmp_path_factory, "pi-handoff-quota")["out"]
+diff --git a/tests/test_python_version_pin.py b/tests/test_python_version_pin.py
+index 6002972..1d8eeec 100644
+--- a/tests/test_python_version_pin.py
++++ b/tests/test_python_version_pin.py
+@@ -17,11 +17,13 @@ def test_python_version_file_matches_pr_yml():
+     pin = (ROOT / ".python-version").read_text().strip()
+ 
+     pr_yml = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
+-    match = re.search(r"python-version:\s*['\"]?(\d+(?:\.\d+)+)['\"]?", pr_yml)
+-    assert match, "Could not find python-version in .github/workflows/pr.yml"
+-    ci_version = match.group(1)
+-
+-    assert pin == ci_version, (
+-        f".python-version pins {pin!r} but pr.yml uses {ci_version!r}; "
++    ci_versions = re.findall(r"python-version:\s*['\"]?(\d+(?:\.\d+)+)['\"]?", pr_yml)
++    assert ci_versions, "Could not find python-version in .github/workflows/pr.yml"
++
++    # Multi-interpreter workflows carry auxiliary versions (e.g. a 3.9 floor check
++    # alongside the primary 3.12), so parity means the pin runs SOMEWHERE in CI —
++    # a pin absent from every CI job is still the drift this guard exists to catch.
++    assert pin in ci_versions, (
++        f".python-version pins {pin!r} but pr.yml uses {sorted(set(ci_versions))!r}; "
+         "update .python-version to match"
+     )

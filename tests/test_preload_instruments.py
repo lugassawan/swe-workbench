@@ -90,6 +90,31 @@ def _call_lib_function(fn_name, *fn_args):
     return json.loads(result.stdout)
 
 
+def _call_lib_function_outcome(fn_name, *fn_args):
+    """Like _call_lib_function, but never asserts success: invokes one exported lib function
+    and returns {"thrown": False, "value": ...} or {"thrown": True, "message": ...} — for
+    testing functions whose CONTRACT is to throw (usageOrDispatchError's measurement gate)."""
+    node = shutil.which("node")
+    assert node is not None
+    snippet = (
+        "import(process.argv[1]).then((m) => {"
+        f"const result = m.{fn_name}(...JSON.parse(process.argv[2]));"
+        "process.stdout.write(JSON.stringify({thrown: false, value: result}));"
+        "}).catch((e) => {"
+        "process.stdout.write(JSON.stringify({thrown: true, message: String(e.message)}));"
+        "});"
+    )
+    result = subprocess.run(
+        [node, "--experimental-strip-types", "-e", snippet, str(PROBE_LIB), json.dumps(list(fn_args))],
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+        timeout=15,
+    )
+    assert result.returncode == 0, f"lib call to {fn_name} failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
 @pytest.fixture(scope="module")
 def real_agent_id():
     """A real agents/*.md id, asserted to exist rather than assumed — an agent can be renamed or
@@ -209,6 +234,29 @@ def test_all_agents_carry_the_preload_canary_citation_block():
 
         inner = text[begin_idx:end_idx].strip()
         assert inner, f"{path.name} has an empty preload-canary-citation block (sync not run?)"
+
+
+def test_ablation_corpus_holds_at_least_ten_real_diffs():
+    """Issue #689's C3 premise: the corpus must hold at least 10 real diffs from the repo's
+    history — the 2 hand-authored synthetic fixtures were explicitly judged insufficient to
+    trust an ablation sweep."""
+    files = sorted(ABLATION_CORPUS.glob("*.diff"))
+    assert len(files) >= 10, f"expected >= 10 corpus diffs, found {len(files)}"
+
+
+def test_recorded_measurements_document_cache_read_fraction_and_c3_decision():
+    """Acceptance criteria (a)+(b) of issue #689: the Recorded measurements section must carry
+    at least one dated cache-read fraction line, and a written C3 proceed/drop decision. The
+    figures themselves are human-run instrument output recorded verbatim — this ratchet only
+    pins their presence and shape, never their values."""
+    text = (ROOT / "docs" / "skill-preload.md").read_text()
+    assert "## Recorded measurements" in text, "docs/skill-preload.md lost its Recorded measurements section"
+
+    section = text.split("## Recorded measurements", 1)[1]
+    assert re.search(r"cache-read fraction 0\.\d+.*\(\d{4}-\d{2}-\d{2}\)", section), (
+        "expected at least one dated cache-read fraction line under ## Recorded measurements"
+    )
+    assert "C3 decision:" in section, "expected a written C3 proceed/drop decision line"
 
 
 def test_citation_instruction_does_not_claim_the_sections_are_above_it():
@@ -776,6 +824,238 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 # helpers factored into preload-probe-lib.mjs. No test spawns real `pi` — same constraint the
 # `cache` subcommand's own tests above follow.
 # ---------------------------------------------------------------------------
+
+
+class TestExtractFinalAssistantText:
+    """Pins the retry-recovery contract dispatchArmFindings depends on: the LAST assistant
+    message_end wins over an earlier errored empty one. If this regresses (first-wins, or
+    empty-content ends mishandled), recovered retries would abort paid-for ablation sweeps."""
+
+    RECOVERED_RETRY_STREAM = "\n".join(
+        [
+            '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"}}',
+            '{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"},"toolResults":[]}',
+            '{"type":"agent_end","messages":[],"willRetry":true}',
+            '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Medium | a.ts:1 | x | y | z"}],"stopReason":"stop"}}',
+        ]
+    )
+
+    ERRORED_LAST_STREAM = (
+        '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ignored"}],"stopReason":"stop"}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"}}'
+    )
+
+    @requires_node
+    def test_recovered_retry_returns_the_successful_turn_text(self):
+        result = _call_lib_function("extractFinalAssistantText", self.RECOVERED_RETRY_STREAM)
+        assert result == "Medium | a.ts:1 | x | y | z"
+
+    @requires_node
+    def test_errored_last_yields_empty_string_not_the_earlier_text(self):
+        result = _call_lib_function("extractFinalAssistantText", self.ERRORED_LAST_STREAM)
+        assert result == ""
+
+    @requires_node
+    def test_no_assistant_message_end_returns_none(self):
+        stream = '{"type":"message_end","message":{"role":"user","content":[]}}'
+        assert _call_lib_function("extractFinalAssistantText", stream) is None
+
+    @requires_node
+    def test_quota_exhaustion_shape_throws_through_the_usage_gate(self):
+        """The quota-exhaustion stream shape (ERROR_STREAM) through the composed gate:
+        no usage + provider error must throw naming the provider's message."""
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", TestExtractDispatchError.ERROR_STREAM, "run 1 (cold)"
+        )
+        assert outcome["thrown"] is True
+        assert "Codex error: The usage limit has been reached" in outcome["message"]
+
+
+class TestUsageOrDispatchError:
+    """usageOrDispatchError — the cache probe's measurement gate, composed from the two
+    extractors above. Its contract is to THROW on any unmeasurable dispatch, so these tests
+    capture outcomes rather than assert exit 0."""
+
+    VALID_STREAM = (
+        '{"type":"message_update","usage":{"input":0,"cacheRead":0,"cacheWrite":0}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack"}],'
+        '"usage":{"input":13580,"output":5,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.06805}},'
+        '"stopReason":"stop"}}'
+    )
+    ZERO_WITH_ERROR_STREAM = (
+        '{"type":"message_update","usage":{"input":0,"cacheRead":0,"cacheWrite":0}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[],'
+        '"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},'
+        '"stopReason":"error","errorMessage":"Codex error: The usage limit has been reached"}}'
+    )
+    ZERO_NO_ERROR_STREAM = (
+        '{"type":"message_end","message":{"role":"assistant","content":[],'
+        '"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},'
+        '"stopReason":"stop"}}'
+    )
+
+    @requires_node
+    def test_valid_usage_passes_through(self):
+        outcome = _call_lib_function_outcome("usageOrDispatchError", self.VALID_STREAM, "run 1")
+        assert outcome["thrown"] is False
+        assert outcome["value"]["input"] == 13580
+
+    @requires_node
+    def test_zero_billed_with_provider_error_throws_both_facts(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", self.ZERO_WITH_ERROR_STREAM, "run 1 (cold)"
+        )
+        assert outcome["thrown"] is True
+        assert "run 1 (cold)" in outcome["message"]
+        assert "zero billed tokens" in outcome["message"]
+        assert "Codex error: The usage limit has been reached" in outcome["message"]
+
+    @requires_node
+    def test_zero_billed_without_error_throws_fallback(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", self.ZERO_NO_ERROR_STREAM, "run 2"
+        )
+        assert outcome["thrown"] is True
+        assert "zero billed tokens" in outcome["message"]
+        assert "not a measurable dispatch" in outcome["message"]
+
+    @requires_node
+    def test_no_usage_at_all_throws_with_label(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", '{"type":"agent_start"}', "run 1"
+        )
+        assert outcome["thrown"] is True
+        assert "run 1" in outcome["message"]
+        assert "no usage found" in outcome["message"]
+
+
+class TestExtractDispatchError:
+    """extractDispatchError — the guard that keeps a failed provider dispatch from being read
+    as a measurement. A failed turn emits message-level events carrying stopReason "error" +
+    errorMessage while `pi --mode json` still exits 0 — so the only reliable failure signal is
+    in the event stream, not the exit code."""
+
+    ERROR_STREAM = "\n".join(
+        [
+            '{"type":"session","version":3,"id":"x","timestamp":"2026-08-31T04:55:32.714Z","cwd":"/repo"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.6-sol","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"stopReason":"error","timestamp":2,"errorMessage":"Codex error: The usage limit has been reached"}}',
+            '{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-codex-responses","provider":"openai-codex","model":"gpt-5.6-sol","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"stopReason":"error","timestamp":2,"errorMessage":"Codex error: The usage limit has been reached"}}',
+            '{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Codex error: The usage limit has been reached"},"toolResults":[]}',
+            '{"type":"agent_end","messages":[],"willRetry":false}',
+            '{"type":"agent_settled"}',
+        ]
+    )
+
+    HEALTHY_STREAM = "\n".join(
+        [
+            '{"type":"session","version":3,"id":"x","timestamp":"2026-08-31T04:55:32.714Z","cwd":"/repo"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"message_update","usage":{"input":100,"output":5,"cacheRead":900,"cacheWrite":0,"cost":{"total":0.004}}}',
+            '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack."}],"stopReason":"stop","usage":{"input":100,"output":5,"cacheRead":900,"cacheWrite":0,"cost":{"total":0.004}}}}',
+            '{"type":"agent_settled"}',
+        ]
+    )
+
+    @requires_node
+    def test_provider_error_stream_returns_error_message(self):
+        result = _call_lib_function("extractDispatchError", self.ERROR_STREAM)
+        assert result == "Codex error: The usage limit has been reached"
+
+    @requires_node
+    def test_healthy_stream_returns_none(self):
+        result = _call_lib_function("extractDispatchError", self.HEALTHY_STREAM)
+        assert result is None
+
+    @requires_node
+    def test_malformed_lines_are_skipped_not_fatal(self):
+        result = _call_lib_function("extractDispatchError", "not json {\n" + self.ERROR_STREAM)
+        assert result == "Codex error: The usage limit has been reached"
+
+    @requires_node
+    def test_error_without_message_gets_fallback_string(self):
+        stream = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}'
+        result = _call_lib_function("extractDispatchError", stream)
+        assert isinstance(result, str) and result
+
+
+class TestExtractFinalUsage:
+    """extractFinalUsage — usage must come from the authoritative final assistant message_end,
+    not from message_update streaming snapshots: codex-shaped streams carry ZEROED usage
+    snapshots during streaming while the real numbers land only on the final message_end.
+    Fixtures below are that codex-shaped stream.
+    """
+
+    CODEX_STREAM = "\n".join(
+        [
+            '{"type":"session","version":3,"id":"x","timestamp":"2026-08-31T12:46:59.233Z","cwd":"/repo"}',
+            '{"type":"agent_start"}',
+            '{"type":"turn_start"}',
+            '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ack"}],"timestamp":1}}',
+            '{"type":"message_start","message":{"role":"assistant","content":[],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"stopReason":"pending","timestamp":2}}',
+            '{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}',
+            '{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"ack"}}',
+            '{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"total":0}},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"ack"}}',
+            '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack"}],"usage":{"input":13580,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":13585,"cost":{"input":0.0679,"output":0.00015,"cacheRead":0,"cacheWrite":0,"total":0.06805}},"stopReason":"stop","timestamp":2}}',
+            '{"type":"agent_settled"}',
+        ]
+    )
+
+    @requires_node
+    def test_codex_zeroed_snapshots_yield_authoritative_message_end_usage(self):
+        result = _call_lib_function("extractFinalUsage", self.CODEX_STREAM)
+        assert result is not None
+        assert result["input"] == 13580
+        assert result["cacheRead"] == 0
+        assert result["cost"]["total"] == 0.06805
+
+    @requires_node
+    def test_message_end_preferred_over_earlier_message_update_snapshots(self):
+        """Even when message_update carries real cumulative usage (the zai shape), the final
+        assistant message_end remains the authoritative source and must win."""
+        stream = "\n".join(
+            [
+                '{"type":"message_update","usage":{"input":55,"cacheRead":29824,"cacheWrite":0,"cost":{"total":0.0078}}}',
+                '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack"}],"usage":{"input":55,"cacheRead":29824,"cacheWrite":0,"cost":{"total":0.00784444}},"stopReason":"stop"}}',
+            ]
+        )
+        result = _call_lib_function("extractFinalUsage", stream)
+        assert result["cost"]["total"] == 0.00784444
+
+    @requires_node
+    def test_falls_back_to_message_update_when_no_assistant_message_end(self):
+        stream = "\n".join(
+            [
+                '{"type":"message_update","usage":{"input":10,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.001}}}',
+                '{"type":"message_update","usage":{"input":20,"cacheRead":5,"cacheWrite":0,"cost":{"total":0.002}}}',
+            ]
+        )
+        result = _call_lib_function("extractFinalUsage", stream)
+        assert result["input"] == 20
+        assert result["cacheRead"] == 5
+
+    @requires_node
+    def test_errored_message_end_is_not_used_as_authoritative(self):
+        """An errored final message_end (stopReason error, zeroed usage) must not override an
+        earlier usable usage — the dispatch-error path owns failure reporting."""
+        stream = "\n".join(
+            [
+                '{"type":"message_update","usage":{"input":20,"cacheRead":5,"cacheWrite":0,"cost":{"total":0.002}}}',
+                '{"type":"message_end","message":{"role":"assistant","content":[],"usage":{"input":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},"stopReason":"error","errorMessage":"boom"}}',
+            ]
+        )
+        result = _call_lib_function("extractFinalUsage", stream)
+        assert result["input"] == 20
+
+    @requires_node
+    def test_no_usage_anywhere_returns_none(self):
+        stream = '{"type":"agent_start"}\n{"type":"agent_settled"}'
+        assert _call_lib_function("extractFinalUsage", stream) is None
 
 
 class TestParsePipeDelimitedFindings:

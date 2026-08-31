@@ -1,0 +1,116 @@
+diff --git a/.version-bump.json b/.version-bump.json
+index 93526de..e26046a 100644
+--- a/.version-bump.json
++++ b/.version-bump.json
+@@ -2,14 +2,15 @@
+   "files": [
+     { "path": ".claude-plugin/plugin.json", "field": ".version" },
+     { "path": ".claude-plugin/marketplace.json", "field": ".plugins[0].version" },
+-    { "path": "package.json", "field": ".version" }
++    { "path": "package.json", "field": ".version" },
++    { "path": "package-lock.json", "field": ".version" },
++    { "path": "package-lock.json", "field": ".packages[\"\"].version" }
+   ],
+   "audit": {
+     "exclude": [
+       ".git",
+       "node_modules",
+-      ".venv",
+-      "package-lock.json"
++      ".venv"
+     ]
+   }
+ }
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index b20dc8c..87f5b2e 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -118,7 +118,7 @@ Run the release script from a clean `main`:
+ ./scripts/release.sh patch   # or minor / major
+ ```
+ 
+-It bumps every file declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and the root `package.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
++It bumps every version field declared in `.version-bump.json` (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, the root `package.json`, and both root-package fields in `package-lock.json`), opens a PR, waits for CI to pass, auto-merges, then pushes a `v*.*.*` tag. The tag push triggers `.github/workflows/release.yml`, which validates the manifests and publishes a GitHub Release with auto-generated notes.
+ 
+ The `bump-version.sh --audit` check described above (see "Validator") is enforced per-PR, so a stray
+ hardcoded version literal is caught well before the release script ever runs.
+@@ -149,7 +149,7 @@ pytest tests/test_pi_extension.py tests/test_pi_contract.py -v
+ 
+ `test_pi_extension.py` drives the real `pi/extensions/*.ts` under `node --experimental-strip-types` against a stub `ExtensionAPI` — no `pi` CLI or `node_modules` install required, since every `@earendil-works/*` import is type-only and elided by the stripper. `test_pi_contract.py` ratchets the frontmatter/tool-vocabulary boundary between this repo's `agents/*.md`/`commands/*.md` and Pi's own (stricter) YAML parser — a golden-inventory contract, not a schema, per `docs/plugin-platform-decisions.md` §2.
+ 
+-**Release:** the root `package.json`'s `version` field is one of the three files `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
++**Release:** the root `package.json` and `package-lock.json` version fields are among the fields `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
+ 
+ ## Adding a new interactive command
+ 
+diff --git a/package-lock.json b/package-lock.json
+index 1d249c6..480eebb 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "swe-workbench-pi",
+-  "version": "0.1.32",
++  "version": "0.1.35",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "swe-workbench-pi",
+-      "version": "0.1.32",
++      "version": "0.1.35",
+       "devDependencies": {
+         "@earendil-works/pi-coding-agent": "0.84.2",
+         "@earendil-works/pi-tui": "0.84.2",
+diff --git a/scripts/bump-version.sh b/scripts/bump-version.sh
+index 1e7f147..7922114 100755
+--- a/scripts/bump-version.sh
++++ b/scripts/bump-version.sh
+@@ -2,8 +2,7 @@
+ set -euo pipefail
+ 
+ # Keeps every manifest declared in .version-bump.json in sync on a single version string.
+-# Adapted from obra/superpowers' bump-version.sh for this repo's own declared-file list
+-# (.claude-plugin/plugin.json, .claude-plugin/marketplace.json, package.json).
++# Adapted from obra/superpowers' bump-version.sh for this repo's plugin and npm manifests.
+ #
+ # Usage:
+ #   scripts/bump-version.sh <X.Y.Z>   # write <X.Y.Z> into every declared file's field
+diff --git a/tests/test_bump_version_sh.py b/tests/test_bump_version_sh.py
+index 7ae0004..4749e1b 100644
+--- a/tests/test_bump_version_sh.py
++++ b/tests/test_bump_version_sh.py
+@@ -205,6 +205,33 @@ class TestAuditMode:
+         assert "vendor/package.json" in result.stderr
+ 
+ 
++class TestRepositoryVersionConfig:
++    def test_bump_updates_both_package_lock_root_versions(self, tmp_path):
++        _make_fixture_tree(tmp_path)
++        (tmp_path / ".version-bump.json").write_text(
++            (ROOT / ".version-bump.json").read_text(encoding="utf-8"),
++            encoding="utf-8",
++        )
++        (tmp_path / "package-lock.json").write_text(
++            json.dumps(
++                {
++                    "name": "test-plugin",
++                    "version": "0.9.0",
++                    "lockfileVersion": 3,
++                    "packages": {"": {"name": "test-plugin", "version": "0.9.0"}},
++                }
++            ),
++            encoding="utf-8",
++        )
++
++        result = _run(tmp_path, "9.9.9")
++
++        assert result.returncode == 0, result.stderr
++        package_lock = json.loads((tmp_path / "package-lock.json").read_text(encoding="utf-8"))
++        assert package_lock["version"] == "9.9.9"
++        assert package_lock["packages"][""]["version"] == "9.9.9"
++
++
+ class TestCiWiring:
+     def test_audit_is_wired_into_pr_validation_workflow(self):
+         workflow_path = ROOT / ".github" / "workflows" / "pr.yml"

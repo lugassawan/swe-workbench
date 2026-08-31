@@ -35,7 +35,13 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { compareArm, extractFinalAssistantText, parsePipeDelimitedFindings } from "./preload-probe-lib.mjs";
+import {
+  compareArm,
+  extractDispatchError,
+  extractFinalAssistantText,
+  parsePipeDelimitedFindings,
+  usageOrDispatchError,
+} from "./preload-probe-lib.mjs";
 
 /** Fixed, deterministic prompt for the `cache` subcommand's two dispatches — trivial on purpose
  *  (see file header: the point is measuring prefix caching, not exercising real tool-using
@@ -307,32 +313,8 @@ function withTempSystemPromptFile(systemPrompt, fn) {
   }
 }
 
-/** Parses `pi --mode json` NDJSON output and returns the usage object from the LAST
- *  `message_update` line (usage is cumulative per turn, so the last line carries the turn's final
- *  usage). Lines that aren't valid JSON, or JSON without the right shape, are skipped
- *  defensively — never crash on a stray non-JSON line. Returns null if no message_update line was
- *  found. */
-function lastMessageUpdateUsage(ndjson) {
-  let lastUsage = null;
-  for (const line of ndjson.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (obj && obj.type === "message_update" && obj.usage) {
-      lastUsage = obj.usage;
-    }
-  }
-  return lastUsage;
-}
-
-// extractFinalAssistantText, parsePipeDelimitedFindings, and SEVERITY_RANK now live in
-// ./preload-probe-lib.mjs (imported above) — factored out so the pipe-delimited finding parser
-// is a standalone, independently-testable pure function.
+// extractFinalAssistantText, parsePipeDelimitedFindings, SEVERITY_RANK, extractFinalUsage,
+// extractDispatchError, and usageOrDispatchError live in ./preload-probe-lib.mjs (testability).
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
@@ -350,8 +332,8 @@ function cacheRunsDir() {
  *  single-invocation summary this script prints. Never throws: an append failure (permissions,
  *  disk) is a warning on stderr, not a reason to fail the whole probe — the human-readable
  *  summary this script already prints to stdout is still the primary output. No-ops (nothing to
- *  record, nothing to warn about) when `usage` is null, i.e. no message_update line was found
- *  for that run. */
+ *  record, nothing to warn about) when `usage` is null — unreachable via the cache path's
+ *  usageOrDispatchError gate (which throws first); kept as defense-in-depth for future callers. */
 function appendCacheRunRecord(agent, run, usage) {
   if (!usage) return;
   const record = {
@@ -406,7 +388,7 @@ function cacheReadFraction(usage) {
 function formatRunSummary(label, usage) {
   const lines = [`${label}:`];
   if (!usage) {
-    lines.push("  no message_update usage found in this run's output");
+    lines.push("  no usage block found in this run's output");
     return lines.join("\n");
   }
   lines.push(`  input=${usage.input} cacheRead=${usage.cacheRead} cacheWrite=${usage.cacheWrite}`);
@@ -419,14 +401,25 @@ function formatRunSummary(label, usage) {
  *  Reuses withTempSystemPromptFile (temp-file handling), buildDispatchArgv (argv construction),
  *  and runPiOnce (spawn) — the exact same helpers the `cache` subcommand's dispatch uses, just
  *  with an explicit `prompt` (the diff-review prompt) instead of the default TRIVIAL_PROMPT, and
- *  a text extractor instead of a usage extractor. A missing assistant `message_end` (extractor
- *  returns null) is a warning, not a hard failure — treated as zero findings, consistent with
- *  `cache`'s own "no usage found" being reported rather than thrown. */
+ *  a text extractor instead of a usage extractor. Failure posture deliberately differs from
+ *  `cache`'s usage gate: missing findings TEXT degrades to zero findings (with a warning only
+ *  when no assistant message_end was found at all — an empty-but-present response degrades
+ *  silently), because a review that said nothing is a reportable outcome — but an errored
+ *  dispatch that produced no
+ *  text at all throws, because recording it as a clean zero-findings arm would corrupt the
+ *  ablation comparison. Retry-aware: pi retries retryable provider errors by default, so an
+ *  early errored turn followed by a successful one is a RECOVERED dispatch and must not throw. */
 function dispatchArmFindings({ systemPrompt, prompt, model }) {
   return withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ prompt, promptFilePath, model });
     const stdout = runPiOnce(args);
     const text = extractFinalAssistantText(stdout);
+    if (text === null || text === "") {
+      const dispatchError = extractDispatchError(stdout);
+      if (dispatchError) {
+        throw new Error(`dispatch failed before producing findings — ${dispatchError}`);
+      }
+    }
     if (text === null) {
       console.error("preload-probe: warning: no assistant message_end found in this run's output");
     }
@@ -475,11 +468,9 @@ async function mainCache({ agent, dryRun, model }) {
 
   const { firstUsage, secondUsage } = withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ promptFilePath, model });
-    const firstStdout = runPiOnce(args);
-    const secondStdout = runPiOnce(args);
     return {
-      firstUsage: lastMessageUpdateUsage(firstStdout),
-      secondUsage: lastMessageUpdateUsage(secondStdout),
+      firstUsage: usageOrDispatchError(runPiOnce(args), "run 1 (cold)"),
+      secondUsage: usageOrDispatchError(runPiOnce(args), "run 2 (repeat, same prefix)"),
     };
   });
 
@@ -527,7 +518,7 @@ async function mainAblateRun({ agent, corpus, omit, dryRun, model }) {
 /** Reads ablation-runs.jsonl back into an array of records. Returns null (distinct from an empty
  *  array) when the file doesn't exist at all — the "no data yet" case report mode needs to
  *  distinguish from "data exists but nothing matched the --agent filter". Malformed lines are
- *  skipped defensively, same posture as lastMessageUpdateUsage. */
+ *  skipped defensively, same posture as extractFinalUsage. */
 function readAblationRecords() {
   const path = ablationRunsFilePath();
   if (!existsSync(path)) return null;
