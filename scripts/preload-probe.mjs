@@ -39,8 +39,8 @@ import {
   compareArm,
   extractDispatchError,
   extractFinalAssistantText,
-  extractFinalUsage,
   parsePipeDelimitedFindings,
+  usageOrDispatchError,
 } from "./preload-probe-lib.mjs";
 
 /** Fixed, deterministic prompt for the `cache` subcommand's two dispatches — trivial on purpose
@@ -332,8 +332,8 @@ function cacheRunsDir() {
  *  single-invocation summary this script prints. Never throws: an append failure (permissions,
  *  disk) is a warning on stderr, not a reason to fail the whole probe — the human-readable
  *  summary this script already prints to stdout is still the primary output. No-ops (nothing to
- *  record, nothing to warn about) when `usage` is null, i.e. no message_update line was found
- *  for that run. */
+ *  record, nothing to warn about) when `usage` is null — unreachable via the cache path's
+ *  usageOrDispatchError gate (which throws first); kept as defense-in-depth for future callers. */
 function appendCacheRunRecord(agent, run, usage) {
   if (!usage) return;
   const record = {
@@ -385,31 +385,10 @@ function cacheReadFraction(usage) {
   return denom === 0 ? 0 : usage.cacheRead / denom;
 }
 
-/** Parses one dispatch's NDJSON into its final usage, hard-failing when the turn died before
- *  reporting any — a dispatch with no usage is not a measurement (see extractDispatchError in
- *  preload-probe-lib.mjs for the exit-0-despite-provider-error ground truth). Usage is read
- *  from the authoritative assistant message_end (extractFinalUsage), NOT the last
- *  message_update snapshot — codex zeroes those mid-stream (see extractFinalUsage's own docs).
- *  A usage block that reports zero billed tokens on all three axes is equally unmeasurable and
- *  fails the same way. The provider's own errorMessage is surfaced verbatim when present. */
-function usageOrDispatchError(ndjson, label) {
-  const usage = extractFinalUsage(ndjson);
-  if (usage) {
-    const billedTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-    if (billedTokens > 0) return usage;
-    throw new Error(
-      `${label}: usage reported zero billed tokens (input/cacheRead/cacheWrite all 0) — ` +
-        `${extractDispatchError(ndjson) ?? "not a measurable dispatch"}`,
-    );
-  }
-  const dispatchError = extractDispatchError(ndjson);
-  throw new Error(`${label}: ${dispatchError ?? "no usage found in this run's output"}`);
-}
-
 function formatRunSummary(label, usage) {
   const lines = [`${label}:`];
   if (!usage) {
-    lines.push("  no message_update usage found in this run's output");
+    lines.push("  no usage block found in this run's output");
     return lines.join("\n");
   }
   lines.push(`  input=${usage.input} cacheRead=${usage.cacheRead} cacheWrite=${usage.cacheWrite}`);
@@ -422,20 +401,23 @@ function formatRunSummary(label, usage) {
  *  Reuses withTempSystemPromptFile (temp-file handling), buildDispatchArgv (argv construction),
  *  and runPiOnce (spawn) — the exact same helpers the `cache` subcommand's dispatch uses, just
  *  with an explicit `prompt` (the diff-review prompt) instead of the default TRIVIAL_PROMPT, and
- *  a text extractor instead of a usage extractor. A missing assistant `message_end` (extractor
- *  returns null) is a warning, not a hard failure — treated as zero findings, consistent with
- *  `cache`'s own "no usage found" being reported rather than thrown. */
+ *  a text extractor instead of a usage extractor. Failure posture deliberately differs from
+ *  `cache`'s usage gate: missing findings TEXT degrades to zero findings (warning), because a
+ *  review that said nothing is a reportable outcome — but an errored dispatch that produced no
+ *  text at all throws, because recording it as a clean zero-findings arm would corrupt the
+ *  ablation comparison. Retry-aware: pi retries retryable provider errors by default, so an
+ *  early errored turn followed by a successful one is a RECOVERED dispatch and must not throw. */
 function dispatchArmFindings({ systemPrompt, prompt, model }) {
   return withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ prompt, promptFilePath, model });
     const stdout = runPiOnce(args);
-    // An errored dispatch would otherwise parse as "" here and be recorded as a clean
-    // zero-findings arm — silently corrupting the ablation comparison.
-    const dispatchError = extractDispatchError(stdout);
-    if (dispatchError) {
-      throw new Error(`dispatch failed before producing findings — ${dispatchError}`);
-    }
     const text = extractFinalAssistantText(stdout);
+    if (text === null || text === "") {
+      const dispatchError = extractDispatchError(stdout);
+      if (dispatchError) {
+        throw new Error(`dispatch failed before producing findings — ${dispatchError}`);
+      }
+    }
     if (text === null) {
       console.error("preload-probe: warning: no assistant message_end found in this run's output");
     }

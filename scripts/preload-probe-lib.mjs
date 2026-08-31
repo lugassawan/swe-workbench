@@ -77,7 +77,7 @@ export function parsePipeDelimitedFindings(responseText) {
 
 /** Extracts the final assistant response TEXT from a `pi --mode json` NDJSON stream — what
  *  `ablate` needs (the pipe-delimited findings live in this text), as opposed to
- *  preload-probe.mjs's `lastMessageUpdateUsage`, which only needs the numeric usage block.
+ *  extractFinalUsage, which only needs the numeric usage block.
  *
  *  Event-shape source (inspected directly, since nothing in this repo already extracted final
  *  assistant text from a JSON-mode event stream):
@@ -98,7 +98,7 @@ export function parsePipeDelimitedFindings(responseText) {
  *
  *  So: scan every NDJSON line for `type === "message_end"` whose `message.role === "assistant"`,
  *  concatenate that message's `content` entries where `type === "text"` (in order), and keep the
- *  LAST such message_end found (mirroring `lastMessageUpdateUsage`'s "last wins" posture — this
+ *  LAST such message_end found (mirroring extractFinalUsage's "last wins" posture — this
  *  probe's `-p` dispatch has no tool calls, so in practice there is exactly one assistant turn,
  *  but "last" is still the correct tie-breaker if that ever changes). Returns null (not an
  *  empty string) when no assistant `message_end` was found at all, so callers can distinguish
@@ -130,8 +130,8 @@ export function extractFinalAssistantText(ndjson) {
  *
  *  Why this exists (ground truth, captured live 2026-08-31 against pi 0.84.4 with an
  *  openai-codex quota exhaustion): a dispatch whose provider call fails NEVER emits
- *  `message_update` events — the turn dies before streaming — so `lastMessageUpdateUsage`
- *  sees nothing while `pi` STILL EXITS 0 (dist/modes/print-mode.js only returns non-zero when
+ *  `message_update` events — the turn dies before streaming — so a usage reader sees nothing
+ *  while `pi` STILL EXITS 0 (dist/modes/print-mode.js only returns non-zero when
  *  the prompt loop itself throws; a provider failure surfaces as message-level events carrying
  *  `stopReason:"error"` + `errorMessage` on `message_start`/`message_end`/`turn_end`). The only
  *  reliable failure signal is therefore in the event stream, not the exit code — and a dispatch
@@ -203,6 +203,26 @@ export function extractFinalUsage(ndjson) {
     }
   }
   return lastEndUsage ?? lastUpdateUsage;
+}
+
+/** Composes extractFinalUsage + extractDispatchError into the cache probe's measurement
+ *  gate: returns the turn's final usage, or throws — it never returns null or zero usage.
+ *  Three loud failure branches: no usage object at all; a usage object reporting zero billed
+ *  tokens on all three axes (input+cacheRead+cacheWrite); and, decorating either, the
+ *  provider's own errorMessage when the stream carries one. A dispatch that didn't bill
+ *  tokens is not a measurement — see both extractors' docs for the ground truth behind this. */
+export function usageOrDispatchError(ndjson, label) {
+  const usage = extractFinalUsage(ndjson);
+  if (usage) {
+    const billedTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+    if (billedTokens > 0) return usage;
+    throw new Error(
+      `${label}: usage reported zero billed tokens (input/cacheRead/cacheWrite all 0) — ` +
+        `${extractDispatchError(ndjson) ?? "not a measurable dispatch"}`,
+    );
+  }
+  const dispatchError = extractDispatchError(ndjson);
+  throw new Error(`${label}: ${dispatchError ?? "no usage found in this run's output"}`);
 }
 
 /** Compares one omit-arm's findings against the matching baseline's findings for the same diff.

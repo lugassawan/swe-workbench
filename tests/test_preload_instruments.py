@@ -90,6 +90,31 @@ def _call_lib_function(fn_name, *fn_args):
     return json.loads(result.stdout)
 
 
+def _call_lib_function_outcome(fn_name, *fn_args):
+    """Like _call_lib_function, but never asserts success: invokes one exported lib function
+    and returns {"thrown": False, "value": ...} or {"thrown": True, "message": ...} — for
+    testing functions whose CONTRACT is to throw (usageOrDispatchError's measurement gate)."""
+    node = shutil.which("node")
+    assert node is not None
+    snippet = (
+        "import(process.argv[1]).then((m) => {"
+        f"const result = m.{fn_name}(...JSON.parse(process.argv[2]));"
+        "process.stdout.write(JSON.stringify({thrown: false, value: result}));"
+        "}).catch((e) => {"
+        "process.stdout.write(JSON.stringify({thrown: true, message: String(e.message)}));"
+        "});"
+    )
+    result = subprocess.run(
+        [node, "--experimental-strip-types", "-e", snippet, str(PROBE_LIB), json.dumps(list(fn_args))],
+        capture_output=True,
+        text=True,
+        env=_CLEAN_ENV,
+        timeout=15,
+    )
+    assert result.returncode == 0, f"lib call to {fn_name} failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
 @pytest.fixture(scope="module")
 def real_agent_id():
     """A real agents/*.md id, asserted to exist rather than assumed — an agent can be renamed or
@@ -799,6 +824,64 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 # helpers factored into preload-probe-lib.mjs. No test spawns real `pi` — same constraint the
 # `cache` subcommand's own tests above follow.
 # ---------------------------------------------------------------------------
+
+
+class TestUsageOrDispatchError:
+    """usageOrDispatchError — the cache probe's measurement gate, composed from the two
+    extractors above. Its contract is to THROW on any unmeasurable dispatch, so these tests
+    capture outcomes rather than assert exit 0."""
+
+    VALID_STREAM = (
+        '{"type":"message_update","usage":{"input":0,"cacheRead":0,"cacheWrite":0}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ack"}],'
+        '"usage":{"input":13580,"output":5,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.06805}},'
+        '"stopReason":"stop"}}'
+    )
+    ZERO_WITH_ERROR_STREAM = (
+        '{"type":"message_update","usage":{"input":0,"cacheRead":0,"cacheWrite":0}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[],'
+        '"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},'
+        '"stopReason":"error","errorMessage":"Codex error: The usage limit has been reached"}}'
+    )
+    ZERO_NO_ERROR_STREAM = (
+        '{"type":"message_end","message":{"role":"assistant","content":[],'
+        '"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":{"total":0}},'
+        '"stopReason":"stop"}}'
+    )
+
+    @requires_node
+    def test_valid_usage_passes_through(self):
+        outcome = _call_lib_function_outcome("usageOrDispatchError", self.VALID_STREAM, "run 1")
+        assert outcome["thrown"] is False
+        assert outcome["value"]["input"] == 13580
+
+    @requires_node
+    def test_zero_billed_with_provider_error_throws_both_facts(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", self.ZERO_WITH_ERROR_STREAM, "run 1 (cold)"
+        )
+        assert outcome["thrown"] is True
+        assert "run 1 (cold)" in outcome["message"]
+        assert "zero billed tokens" in outcome["message"]
+        assert "Codex error: The usage limit has been reached" in outcome["message"]
+
+    @requires_node
+    def test_zero_billed_without_error_throws_fallback(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", self.ZERO_NO_ERROR_STREAM, "run 2"
+        )
+        assert outcome["thrown"] is True
+        assert "zero billed tokens" in outcome["message"]
+        assert "not a measurable dispatch" in outcome["message"]
+
+    @requires_node
+    def test_no_usage_at_all_throws_with_label(self):
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", '{"type":"agent_start"}', "run 1"
+        )
+        assert outcome["thrown"] is True
+        assert "run 1" in outcome["message"]
+        assert "no usage found" in outcome["message"]
 
 
 class TestExtractDispatchError:
