@@ -61,8 +61,34 @@ case "$CURRENT_BRANCH" in
     ;;
 esac
 
-git fetch origin
-git pull --ff-only origin main
+# ── Transport retry helper ─────────────────────────────
+# One-shot git transport calls abort the whole release on a transient SSH
+# reset. Wrap them with the same bounded-retry contract as the CI-wait loop
+# below: classify (any non-zero exit = retryable transient), cap attempts,
+# sleep between attempts. Every wrapped command is safe to re-run — fetch
+# and ff-only pulls are read-only syncs, and pushes are idempotent ref
+# updates the remote rejects on mismatch.
+retry_transport() {
+  local max_attempts=$1 desc=$2
+  shift 2
+  local attempt=0
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    if [[ "$attempt" -ge "$max_attempts" ]]; then
+      echo "Error: ${desc} failed after ${attempt} attempts (transient failure cap reached)." >&2
+      echo "  Re-run this script — it resumes the unfinished release." >&2
+      return 1
+    fi
+    echo "[$(date '+%H:%M:%S')] ${desc} transient failure (attempt ${attempt}/${max_attempts}); retrying in 10s..." >&2
+    sleep 10
+  done
+}
+
+retry_transport 5 "git fetch origin" git fetch origin
+retry_transport 5 "git pull" git pull --ff-only origin main
 
 # ── Compute next version ─────────────────────────────────────
 
@@ -141,9 +167,9 @@ REMOTE_BRANCH_SHA=$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1
 LOCAL_BRANCH_SHA=$(git rev-parse "$BRANCH")
 
 if [[ "$REBASED" -eq 1 ]] || [[ "$COMMITTED" -eq 1 && -n "$REMOTE_BRANCH_SHA" ]]; then
-  git push --force-with-lease -u origin "$BRANCH"
+  retry_transport 5 "branch push" git push --force-with-lease -u origin "$BRANCH"
 elif [[ -z "$REMOTE_BRANCH_SHA" ]] || [[ "$LOCAL_BRANCH_SHA" != "$REMOTE_BRANCH_SHA" ]]; then
-  git push -u origin "$BRANCH"
+  retry_transport 5 "branch push" git push -u origin "$BRANCH"
 else
   echo "Remote branch already up to date — skipping push."
 fi
@@ -318,7 +344,7 @@ if ! git checkout main; then
   echo "  Remedy: cd to the main worktree, switch off main, then re-run this script." >&2
   exit 1
 fi
-git pull --ff-only origin main
+retry_transport 5 "git pull" git pull --ff-only origin main
 
 MERGE_SHA=""
 POLL_TIMEOUT=60
@@ -360,10 +386,10 @@ if git ls-remote --tags --exit-code origin "$TAG" >/dev/null 2>&1; then
   echo "Tag ${TAG} already exists on origin — skipping."
 elif git rev-parse -q --verify "${TAG}^{tag}" >/dev/null 2>&1; then
   echo "Tag ${TAG} exists locally — pushing to origin."
-  git push origin "$TAG"
+  retry_transport 5 "tag push" git push origin "$TAG"
 else
   git tag -a "$TAG" -m "Release ${TAG}"
-  git push origin "$TAG"
+  retry_transport 5 "tag push" git push origin "$TAG"
 fi
 
 # Clean up local release branch (remote already deleted by --delete-branch)
