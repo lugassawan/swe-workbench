@@ -267,26 +267,26 @@ TRIAGE_REQUIRED_AGENTS = sorted(
 
 @pytest.mark.parametrize("agent", TRIAGE_REQUIRED_AGENTS)
 def test_c3_sweep_triage_covers_every_non_mandated_agent(agent):
-    """Acceptance criterion (d) of issue #702: every agent beyond the three heaviest (which are
-    swept by ticket mandate) must appear in the C3 sweep triage table. The agent list is
-    discovered live from agents/*.md so the table stays complete as agents are added."""
+    """Every agent beyond the three heaviest (which are swept by ticket mandate) must appear
+    in the C3 sweep triage table. The agent list is discovered live from agents/*.md so the
+    table stays complete as agents are added."""
     text = (ROOT / "docs" / "skill-preload.md").read_text()
-    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section (#702)"
+    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section"
 
     # Newline-anchored: the runbook's backticked `## Recorded measurements` mention must not
     # truncate the slice before the section's real tail.
     section = text.split("### C3 sweep triage", 1)[1].split("\n## Recorded measurements\n", 1)[0]
     assert f"| {agent} |" in section, (
-        f"agent '{agent}' missing from the C3 sweep triage table (#702 acceptance (d))"
+        f"agent '{agent}' missing from the C3 sweep triage table"
     )
 
 
 def test_c3_sweep_triage_section_carries_the_human_runbook():
     """The triage section must include the human sweep runbook — the paste-able ablate loop with
-    its --omit flag — so the #702 sweeps don't require reconstructing the invocation from the
-    instrument's usage string. Pins presence and shape only, never the figures."""
+    its --omit flag — so the ablation sweeps don't require reconstructing the invocation from
+    the instrument's usage string. Pins presence and shape only, never the figures."""
     text = (ROOT / "docs" / "skill-preload.md").read_text()
-    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section (#702)"
+    assert "### C3 sweep triage" in text, "docs/skill-preload.md lost its C3 sweep triage section"
 
     section = text.split("### C3 sweep triage", 1)[1].split("\n## Recorded measurements\n", 1)[0]
     assert "preload-probe.mjs ablate" in section, "triage section must carry the sweep runbook command"

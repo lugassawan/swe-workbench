@@ -126,9 +126,10 @@ only print a `USAGE` block on an unrecognized argument; `preload-telemetry.py` h
 
 Everything the last three write accumulates under `.claude/cache/` (`skill-usage/canary-citations.jsonl`, `dispatch-probes/cache-runs.jsonl`, `dispatch-probes/ablation-runs.jsonl`), which is gitignored — that raw data is local to whoever ran the command and is never committed or shared. Only a short human-written summary of a run makes it into the repo, in the section below.
 
-### C3 sweep triage (#702)
+### C3 sweep triage
 
-Issue #702's last acceptance criterion: triage the 19 agents beyond the three heaviest
+The remaining acceptance criterion from the C3 re-scope: triage the 19 agents beyond the
+three heaviest
 (`senior-engineer`, `architect`, `reviewer`) and sweep only those whose dispatch-ledger <!-- validate: prose-ref -->
 preload share makes them plausible demotion candidates. Condition 1's ≥ 500-token floor
 filters nothing here — the smallest preloaded skill anywhere is `principle-design-patterns` <!-- validate: prose-ref -->
@@ -168,8 +169,9 @@ agent (refactorer) sits 11.5 share-points below migrator and ~4.4k tokens below 
 clean break, not a boundary judgment call. Added cost on the uncached default provider:
 300 dispatches ≈ $22 on a prefix-only basis (ledger prefix × the observed ~$5.1/M input
 rate) — but on the three heavy agents the *measured full dispatch input* ran ~1.4–1.7× the
-ledger prefix (e.g. reviewer 36,452 measured vs 25,113 est. prefix), and #702's own
-per-agent estimates ($35–50) are on that fuller basis — so budget roughly $30–40. ~5×
+ledger prefix (e.g. reviewer 36,452 measured vs 25,113 est. prefix), and the re-scoping
+ticket's own per-agent estimates ($35–50) are on that fuller basis — so budget roughly
+$30–40. ~5×
 cheaper on a prefix-caching provider (zai, per the 2026-08-31 cache measurements below).
 
 **Defer — refactorer, debugger, code-impl.** Share 69–73% with ~6.5–7k est. preload tokens:
@@ -194,7 +196,7 @@ contributor-trust, ux) — so treat the tier ordering as provisional until frequ
 measured. The defer tier is the first place to re-examine once it is. Recorded deliberately
 — the four demotion conditions still gate every actual demotion.
 
-#### Human sweep runbook (#702)
+#### Human sweep runbook
 
 The ablation harness spawns nested `pi` — run it from an interactive terminal, never from
 CI or an agent context (`hooks/bash_guard.sh` blocks nested pi). Smoke-test with `--dry-run`
@@ -229,7 +231,7 @@ all ≥ 500 est. tokens:
 - **auditor** (7): principle-code-review principle-security principle-performance
   principle-resiliency principle-observability principle-tdd principle-testing
 
-Running order: the three #702-mandated agents first (senior-engineer → architect →
+Running order: the three heaviest agents first (senior-engineer → architect →
 reviewer), then the triaged-in pair (migrator → auditor). Name the provider in every
 recorded line — condition 4 is provider-dependent (0.0000 on the uncached default provider
 vs ≥ 0.998 on zai, both 2026-08-31), so a lost/downgraded figure is only interpretable
