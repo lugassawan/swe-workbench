@@ -158,7 +158,7 @@ resume_release() {
   local failed_checks
   failed_checks=$(retry_transport 5 "gh pr view (${pr_num})" \
     gh pr view "$pr_num" --json statusCheckRollup \
-      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .state == "FAILURE" or .state == "ERROR")] | length') || return 1
+      --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .conclusion == "STARTUP_FAILURE" or .state == "FAILURE" or .state == "ERROR")] | length') || return 1
   if [[ "$failed_checks" != "0" ]]; then
     echo "Error: PR #${pr_num} has failed CI checks — refusing to resume ${tag}." >&2
     echo "  The tag-push shortcut assumes CI ran green on this tree; inspect ${GH_REPO}/pull/${pr_num}." >&2

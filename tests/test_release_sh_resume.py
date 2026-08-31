@@ -536,6 +536,7 @@ class TestDiscoveryDynamic:
                 'jq -r "$prog" 2>/dev/null; printf "ssh: Warning\\n" >&2',
             )
         )
+        assert "ssh: Warning" in gh.read_text(), "stub noise injection failed to apply"
         result = _run_snippet(
             _DISCOVERY_SNIPPET,
             tmp_path,
