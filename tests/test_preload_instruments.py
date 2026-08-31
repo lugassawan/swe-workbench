@@ -860,12 +860,9 @@ class TestExtractFinalUsage:
     """extractFinalUsage — usage must come from the authoritative final assistant message_end,
     not from message_update streaming snapshots. Ground truth (captured live 2026-08-31, pi
     0.84.4, openai-codex/gpt-5.6-sol): codex's message_update events carry ZEROED usage
-    snapshots during streaming (provider reports no interim usage); the real numbers land only
-    on the final assistant message_end. lastMessageUpdateUsage's snapshot read recorded 0/0/0
-    and $0.00 for a turn that actually billed input=13580 / $0.068.
-
-    Fixtures below are the codex-shaped stream: zeroed message_update snapshots, authoritative
-    message_end.
+    snapshots during streaming; the real numbers land only on the final message_end.
+    lastMessageUpdateUsage's snapshot read recorded 0/0/0 and $0.00 for a turn that actually
+    billed input=13580 / $0.068. Fixtures below are the codex-shaped stream.
     """
 
     CODEX_STREAM = "\n".join(

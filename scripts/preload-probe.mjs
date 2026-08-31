@@ -313,12 +313,8 @@ function withTempSystemPromptFile(systemPrompt, fn) {
   }
 }
 
-// extractFinalAssistantText, parsePipeDelimitedFindings, and SEVERITY_RANK now live in
-// ./preload-probe-lib.mjs (imported above) — factored out so the pipe-delimited finding parser
-// is a standalone, independently-testable pure function. extractFinalUsage and
-// extractDispatchError joined them there for the same reason (see the lib for their
-// ground-truth citations); this file's former lastMessageUpdateUsage was superseded by
-// extractFinalUsage — message_update snapshots are zeroed mid-stream on some providers.
+// extractFinalAssistantText, parsePipeDelimitedFindings, SEVERITY_RANK, extractFinalUsage, and
+// extractDispatchError live in ./preload-probe-lib.mjs — factored out for independent testability.
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
