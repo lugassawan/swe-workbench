@@ -226,8 +226,7 @@ discover_untagged_releases() {
 }
 
 # ── Resume unfinished releases (before computing a new version) ─
-# A rerun must finish a stranded release before deriving NEXT, or it forks
-# a new release on top of an unpublished one (issue #695).
+# A rerun must finish a stranded release before deriving NEXT (issue #695).
 UNTAGGED=$(discover_untagged_releases) || {
   echo "Error: could not query GitHub for unfinished releases." >&2
   exit 1
