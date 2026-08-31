@@ -313,8 +313,8 @@ function withTempSystemPromptFile(systemPrompt, fn) {
   }
 }
 
-// extractFinalAssistantText, parsePipeDelimitedFindings, SEVERITY_RANK, extractFinalUsage, and
-// extractDispatchError live in ./preload-probe-lib.mjs — factored out for independent testability.
+// extractFinalAssistantText, parsePipeDelimitedFindings, SEVERITY_RANK, extractFinalUsage,
+// extractDispatchError, and usageOrDispatchError live in ./preload-probe-lib.mjs (testability).
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
@@ -402,8 +402,10 @@ function formatRunSummary(label, usage) {
  *  and runPiOnce (spawn) — the exact same helpers the `cache` subcommand's dispatch uses, just
  *  with an explicit `prompt` (the diff-review prompt) instead of the default TRIVIAL_PROMPT, and
  *  a text extractor instead of a usage extractor. Failure posture deliberately differs from
- *  `cache`'s usage gate: missing findings TEXT degrades to zero findings (warning), because a
- *  review that said nothing is a reportable outcome — but an errored dispatch that produced no
+ *  `cache`'s usage gate: missing findings TEXT degrades to zero findings (with a warning only
+ *  when no assistant message_end was found at all — an empty-but-present response degrades
+ *  silently), because a review that said nothing is a reportable outcome — but an errored
+ *  dispatch that produced no
  *  text at all throws, because recording it as a clean zero-findings arm would corrupt the
  *  ablation comparison. Retry-aware: pi retries retryable provider errors by default, so an
  *  early errored turn followed by a successful one is a RECOVERED dispatch and must not throw. */

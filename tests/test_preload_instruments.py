@@ -826,6 +826,51 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 # ---------------------------------------------------------------------------
 
 
+class TestExtractFinalAssistantText:
+    """Pins the retry-recovery contract dispatchArmFindings depends on: the LAST assistant
+    message_end wins over an earlier errored empty one. If this regresses (first-wins, or
+    empty-content ends mishandled), recovered retries would abort paid-for ablation sweeps."""
+
+    RECOVERED_RETRY_STREAM = "\n".join(
+        [
+            '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"}}',
+            '{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"},"toolResults":[]}',
+            '{"type":"agent_end","messages":[],"willRetry":true}',
+            '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Medium | a.ts:1 | x | y | z"}],"stopReason":"stop"}}',
+        ]
+    )
+
+    ERRORED_LAST_STREAM = (
+        '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ignored"}],"stopReason":"stop"}}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider 5xx"}}'
+    )
+
+    @requires_node
+    def test_recovered_retry_returns_the_successful_turn_text(self):
+        result = _call_lib_function("extractFinalAssistantText", self.RECOVERED_RETRY_STREAM)
+        assert result == "Medium | a.ts:1 | x | y | z"
+
+    @requires_node
+    def test_errored_last_yields_empty_string_not_the_earlier_text(self):
+        result = _call_lib_function("extractFinalAssistantText", self.ERRORED_LAST_STREAM)
+        assert result == ""
+
+    @requires_node
+    def test_no_assistant_message_end_returns_none(self):
+        stream = '{"type":"message_end","message":{"role":"user","content":[]}}'
+        assert _call_lib_function("extractFinalAssistantText", stream) is None
+
+    @requires_node
+    def test_quota_exhaustion_shape_throws_through_the_usage_gate(self):
+        """The captured quota-exhaustion ground truth (ERROR_STREAM) through the composed gate:
+        no usage + provider error must throw naming the provider's message."""
+        outcome = _call_lib_function_outcome(
+            "usageOrDispatchError", TestExtractDispatchError.ERROR_STREAM, "run 1 (cold)"
+        )
+        assert outcome["thrown"] is True
+        assert "Codex error: The usage limit has been reached" in outcome["message"]
+
+
 class TestUsageOrDispatchError:
     """usageOrDispatchError — the cache probe's measurement gate, composed from the two
     extractors above. Its contract is to THROW on any unmeasurable dispatch, so these tests
