@@ -2672,6 +2672,12 @@ out.missingRuntimeWarnings = notifications.length - notificationsBeforeMissing;
 registerHandoff(stubPi, config.brokenRuntimeRoot);
 out.brokenRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
 
+// Incompatible-interpreter crash (#696 signature): runtime exists, python3 executes it, but
+// it dies with a traceback on stderr and no envelope on stdout — the block reason must name
+// the required runtime and remediation instead of the generic fail-closed text.
+registerHandoff(stubPi, config.crashingRuntimeRoot);
+out.crashingRuntime = await toolCall(config.repos.noState, "bash", { command: "ls -la" });
+
 console.log(JSON.stringify({ out }));
 """
 
@@ -2763,6 +2769,17 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
     fake_root.mkdir()
     broken_runtime_root = base / "broken-runtime-root"
     (broken_runtime_root / "bin" / "swe-workbench-handoff").mkdir(parents=True)
+    crashing_runtime_root = base / "crashing-runtime-root"
+    (crashing_runtime_root / "bin").mkdir(parents=True)
+    (crashing_runtime_root / "bin" / "swe-workbench-handoff").write_text(
+        "import sys\n"
+        "sys.stderr.write('Traceback (most recent call last):\\n"
+        "  File \"bin/swe-workbench-handoff\", line 22, in <module>\\n"
+        "    from datetime import UTC, datetime, timedelta\\n"
+        "ImportError: cannot import name UTC from datetime\\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
     session_arg = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"'
     config = {
         "root": str(ROOT),
@@ -2771,6 +2788,7 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
         "leasePath": str(released_lease_path),
         "fakeRoot": str(fake_root),
         "brokenRuntimeRoot": str(broken_runtime_root),
+        "crashingRuntimeRoot": str(crashing_runtime_root),
         "resumePipeline": (
             f'swe-workbench-handoff resume "{released_id}" --as pi '
             f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1'
@@ -2883,6 +2901,78 @@ def test_handoff_unspawnable_runtime_fails_closed(tmp_path_factory):
     out = _handoff_driver_result(tmp_path_factory, "pi-handoff-broken-runtime")["out"]
     assert out["brokenRuntime"]["block"] is True
     assert "could not be verified" in out["brokenRuntime"]["reason"]
+
+
+@requires_node
+def test_handoff_interpreter_startup_failure_names_the_required_runtime(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-py-crash")["out"]
+    blocked = out["crashingRuntime"]
+    assert blocked["block"] is True, "startup failure must still fail closed"
+    assert "Python 3.9" in blocked["reason"]
+    assert "pin" in blocked["reason"], "reason must carry remediation, not just the requirement"
+
+
+_HANDOFF_SINGLE_CALL_DRIVER = """
+import { pathToFileURL } from "node:url";
+import fs from "node:fs";
+
+const [, , handoffPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerHandoff } = await import(pathToFileURL(handoffPath).href);
+
+const handlers = {};
+registerHandoff({ on(event, handler) { handlers[event] = handler; } }, config.root);
+const result = await handlers["tool_call"](
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "ls -la" } },
+  {
+    hasUI: true,
+    cwd: config.repo,
+    signal: undefined,
+    ui: { notify: () => {}, setStatus: () => {} },
+    sessionManager: { getSessionId: () => "pi-session-1" },
+  },
+);
+fs.writeFileSync(config.outPath, JSON.stringify(result));
+console.log(JSON.stringify({ ok: true }));
+"""
+
+
+@requires_node
+def test_handoff_missing_interpreter_fails_closed_with_runtime_requirement(tmp_path, tmp_path_factory):
+    repo = _handoff_repo(tmp_path, "no-python")
+    out_path = tmp_path / "out.json"
+    # PATH is stripped (the absolute node binary still spawns — _run_node resolves it first),
+    # so the extension's `python3` spawn hits ENOENT: the true interpreter-missing signature.
+    _run_node(
+        _HANDOFF_SINGLE_CALL_DRIVER,
+        [str(HANDOFF_TS), json.dumps({"root": str(ROOT), "repo": str(repo), "outPath": str(out_path)})],
+        tmp_path_factory,
+        label="pi-handoff-enoent",
+        env={**_CLEAN_ENV, "PATH": ""},
+    )
+    result = json.loads(out_path.read_text(encoding="utf-8"))
+    assert result["block"] is True, "a missing interpreter must still fail closed"
+    assert "Python 3.9" in result["reason"]
+
+
+@requires_node
+def test_handoff_guard_timeout_keeps_the_generic_fail_closed_reason(tmp_path, tmp_path_factory):
+    base = tmp_path_factory.mktemp("pi-handoff-timeout")
+    repo = _handoff_repo(base, "slow")
+    hung_runtime_root = base / "hung-runtime-root"
+    (hung_runtime_root / "bin").mkdir(parents=True)
+    (hung_runtime_root / "bin" / "swe-workbench-handoff").write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    out_path = base / "out.json"
+    _run_node(
+        _HANDOFF_SINGLE_CALL_DRIVER,
+        [str(HANDOFF_TS), json.dumps({"root": str(hung_runtime_root), "repo": str(repo), "outPath": str(out_path)})],
+        tmp_path_factory,
+        label="pi-handoff-timeout",
+    )
+    result = json.loads(out_path.read_text(encoding="utf-8"))
+    assert result["block"] is True, "a hung guard must still fail closed"
+    assert "could not be verified" in result["reason"], "a timeout is not an interpreter problem"
+    assert "Python 3.9" not in result["reason"]
 
 
 @requires_node
