@@ -204,6 +204,54 @@ if [[ -n "$RESUME_TAG" ]]; then
   exit 0
 fi
 
+# discover_untagged_releases: emit "<tag>\t<pr>\t<merge-sha>" per merged bump
+# PR whose tag is absent from origin. headRefName is the primary key — it is
+# machine-generated and survives branch deletion. A tag deleted manually is
+# indistinguishable from an unpublished one; deletion is not an unpublish
+# intent this script can honor.
+discover_untagged_releases() {
+  local merged_prs ver num sha tag_out
+  merged_prs=$(retry_transport 5 "gh pr list" \
+    gh pr list --state merged --limit 20 \
+      --json number,headRefName,mergeCommit \
+      --jq '.[] | select(.headRefName | test("^chore/bump-v[0-9]+[.][0-9]+[.][0-9]+$")) | select(.mergeCommit.oid != null and .mergeCommit.oid != "") | [(.headRefName | sub("^chore/bump-"; "")), (.number | tostring), .mergeCommit.oid] | @tsv') || return 1
+  while IFS=$'\t' read -r ver num sha; do
+    [[ -n "$ver" ]] || continue
+    tag_out=$(retry_transport 5 "tag lookup ${ver}" \
+      git ls-remote --tags origin "refs/tags/${ver}") || return 1
+    if [[ -z "$tag_out" ]]; then
+      printf '%s\t%s\t%s\n' "$ver" "$num" "$sha"
+    fi
+  done <<<"$merged_prs"
+}
+
+# ── Resume unfinished releases (before computing a new version) ─
+# A rerun must finish a stranded release before deriving the next version —
+# otherwise it would compute NEXT from the already-bumped manifest and fork
+# a new release on top of an unpublished one (issue #695).
+UNTAGGED=$(discover_untagged_releases) || {
+  echo "Error: could not query GitHub for unfinished releases." >&2
+  exit 1
+}
+UNTAGGED_COUNT=0
+if [[ -n "$UNTAGGED" ]]; then
+  UNTAGGED_COUNT=$(printf '%s\n' "$UNTAGGED" | grep -c .)
+fi
+if [[ "$UNTAGGED_COUNT" -ge 2 ]]; then
+  echo "Error: multiple merged-but-untagged releases found — refusing to guess." >&2
+  printf '%s\n' "$UNTAGGED" | while IFS=$'\t' read -r ver num sha; do
+    echo "  ${ver}  PR #${num}  ${sha}" >&2
+  done
+  echo "Finish one explicitly with: $0 --resume vX.Y.Z" >&2
+  exit 1
+elif [[ "$UNTAGGED_COUNT" -eq 1 ]]; then
+  RESUME_TAG=$(printf '%s\n' "$UNTAGGED" | head -1 | cut -f1)
+  echo "Found unfinished release ${RESUME_TAG} (merged PR, missing tag) — resuming before starting a new release."
+  resume_release "$RESUME_TAG"
+  exit 0
+fi
+# No unfinished releases — fall through to a fresh release.
+
 # ── Compute next version ─────────────────────────────────────
 
 CURRENT=$(jq -r .version .claude-plugin/plugin.json)

@@ -361,3 +361,216 @@ class TestRetryTransportDynamic:
         assert (tmp_path / "sleeps").read_text().strip() == "2", (
             "cap(3) allows 2 sleeps, then the 3rd failure aborts"
         )
+
+
+# The exact gh --jq program used by discovery. Duplicated here so the tests
+# exercise the real filter; a static test below pins the copy in release.sh
+# to this string so the two cannot drift.
+_DISCOVERY_JQ = (
+    '.[] | select(.headRefName | test("^chore/bump-v[0-9]+[.][0-9]+[.][0-9]+$")) '
+    '| select(.mergeCommit.oid != null and .mergeCommit.oid != "") '
+    '| [(.headRefName | sub("^chore/bump-"; "")), (.number | tostring), .mergeCommit.oid] | @tsv'
+)
+
+_DISCOVERY_SNIPPET = textwrap.dedent("""\
+    set -euo pipefail
+    retry_transport() {
+      local max_attempts=$1 desc=$2
+      shift 2
+      local attempt=0
+      while true; do
+        if "$@"; then
+          return 0
+        fi
+        attempt=$((attempt + 1))
+        if [[ "$attempt" -ge "$max_attempts" ]]; then
+          return 1
+        fi
+        sleep 10
+      done
+    }
+    discover_untagged_releases() {
+      local merged_prs ver num sha tag_out
+      merged_prs=$(retry_transport 5 "gh pr list" \\
+        gh pr list --state merged --limit 20 \\
+          --json number,headRefName,mergeCommit \\
+          --jq '__DISCOVERY_JQ__') || return 1
+      while IFS=$'\\t' read -r ver num sha; do
+        [[ -n "$ver" ]] || continue
+        tag_out=$(retry_transport 5 "tag lookup ${ver}" \\
+          git ls-remote --tags origin "refs/tags/${ver}") || return 1
+        if [[ -z "$tag_out" ]]; then
+          printf '%s\\t%s\\t%s\\n' "$ver" "$num" "$sha"
+        fi
+      done <<<"$merged_prs"
+    }
+    UNTAGGED=$(discover_untagged_releases) || { echo "Error: could not query GitHub for unfinished releases." >&2; exit 1; }
+    UNTAGGED_COUNT=0
+    if [[ -n "$UNTAGGED" ]]; then
+      UNTAGGED_COUNT=$(printf '%s\\n' "$UNTAGGED" | grep -c .)
+    fi
+    if [[ "$UNTAGGED_COUNT" -ge 2 ]]; then
+      echo "Error: multiple merged-but-untagged releases found — refusing to guess." >&2
+      printf '%s\\n' "$UNTAGGED" | while IFS=$'\\t' read -r ver num sha; do
+        echo "  ${ver}  PR #${num}  ${sha}" >&2
+      done
+      echo "Finish one explicitly with: release.sh --resume vX.Y.Z" >&2
+      exit 1
+    elif [[ "$UNTAGGED_COUNT" -eq 1 ]]; then
+      RESUME_TAG=$(printf '%s\\n' "$UNTAGGED" | head -1 | cut -f1)
+      echo "Found unfinished release ${RESUME_TAG} — resuming before starting a new release."
+      printf 'resume %s\\n' "$RESUME_TAG" >> discovery_log
+      exit 0
+    fi
+    echo "No unfinished releases — starting a fresh one."
+    exit 0
+""").replace("__DISCOVERY_JQ__", _DISCOVERY_JQ)
+
+_MERGED_PRS_JSON = """[
+  {"number": 691, "headRefName": "chore/bump-v0.1.35", "mergeCommit": {"oid": "59c9208"}},
+  {"number": 694, "headRefName": "chore/bump-v0.1.36", "mergeCommit": {"oid": "c9035a0"}},
+  {"number": 690, "headRefName": "chore/close-umbrella", "mergeCommit": {"oid": "c7fed0e"}}
+]"""
+
+
+class TestDiscoveryStatic:
+    def test_discovery_precedes_version_computation(self):
+        lines = _script_lines()
+        compute_idx = next(
+            i for i, ln in enumerate(lines) if "Compute next version" in ln
+        )
+        discovery_idx = next(
+            i for i, ln in enumerate(lines) if "discover_untagged_releases() {" in ln
+        )
+        wiring_idx = next(
+            i
+            for i, ln in enumerate(lines)
+            if i > discovery_idx
+            and "discover_untagged_releases" in ln
+            and "()" not in ln
+            and not _is_comment(ln)
+        )
+        assert wiring_idx < compute_idx, (
+            "discovery wiring must run before the 'Compute next version' section"
+        )
+
+    def test_discovery_jq_program_pinned(self):
+        assert any(
+            _DISCOVERY_JQ.split("| select(.mergeCommit")[0].rstrip() in ln
+            for ln in _script_lines()
+        ), "release.sh discovery --jq program drifted from the pinned test copy"
+
+    def test_ambiguity_guard_requires_resume(self):
+        assert any(
+            "multiple merged-but-untagged releases" in ln and not _is_comment(ln)
+            for ln in _script_lines()
+        )
+
+
+class TestDiscoveryDynamic:
+    def _make_stubs(self, tmp_path: Path, tagged: list[str]) -> None:
+        # The gh stub honors --jq by piping the sample JSON through real jq,
+        # so the snippet's post-processing sees genuinely filtered TSV — the
+        # same shape real gh emits.
+        _write_stub(
+            tmp_path,
+            "gh",
+            textwrap.dedent("""\
+            if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+              prog=""
+              prev=""
+              for a in "$@"; do
+                if [ "$prev" = "--jq" ]; then prog=$a; fi
+                prev=$a
+              done
+              printf '%s' "$MERGED_PRS_JSON" | jq -r "$prog"
+              exit $?
+            fi
+            exit 0
+        """),
+        )
+        _write_stub(
+            tmp_path,
+            "git",
+            textwrap.dedent("""\
+            if [ "$1" = "ls-remote" ]; then
+              for t in TAGGED_LIST; do
+                case "$*" in *"$t"*) printf '%s\\t%s\\n' "sha-$t" "$t"; exit 0 ;; esac
+              done
+              exit 0
+            fi
+            exit 0
+        """).replace("TAGGED_LIST", " ".join(tagged)),
+        )
+        _write_stub(tmp_path, "sleep", "exit 0")
+
+    def test_single_untagged_auto_resumes(self, tmp_path):
+        self._make_stubs(tmp_path, tagged=["refs/tags/v0.1.35"])
+        result = _run_snippet(
+            _DISCOVERY_SNIPPET,
+            tmp_path,
+            {"MERGED_PRS_JSON": _MERGED_PRS_JSON},
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "Found unfinished release v0.1.36" in result.stdout
+        assert (tmp_path / "discovery_log").read_text() == "resume v0.1.36\n"
+
+    def test_two_stacked_refuse_and_list(self, tmp_path):
+        self._make_stubs(tmp_path, tagged=[])
+        result = _run_snippet(
+            _DISCOVERY_SNIPPET,
+            tmp_path,
+            {"MERGED_PRS_JSON": _MERGED_PRS_JSON},
+            cwd=tmp_path,
+        )
+        assert result.returncode == 1
+        assert "multiple merged-but-untagged releases" in result.stderr
+        assert "v0.1.35" in result.stderr and "v0.1.36" in result.stderr
+        assert "--resume" in result.stderr
+
+    def test_all_tagged_fresh_release(self, tmp_path):
+        self._make_stubs(
+            tmp_path, tagged=["refs/tags/v0.1.35", "refs/tags/v0.1.36"]
+        )
+        result = _run_snippet(
+            _DISCOVERY_SNIPPET,
+            tmp_path,
+            {"MERGED_PRS_JSON": _MERGED_PRS_JSON},
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0
+        assert "No unfinished releases" in result.stdout
+
+    def test_non_bump_prs_ignored(self, tmp_path):
+        """headRefName without the chore/bump-vX.Y.Z shape is not a candidate."""
+        self._make_stubs(tmp_path, tagged=[])
+        result = _run_snippet(
+            _DISCOVERY_SNIPPET,
+            tmp_path,
+            {
+                "MERGED_PRS_JSON": (
+                    '[{"number": 690, "headRefName": "chore/close-umbrella", '
+                    '"mergeCommit": {"oid": "c7fed0e"}}]'
+                )
+            },
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0
+        assert "No unfinished releases" in result.stdout
+
+    def test_discovery_jq_program_filters_correctly(self):
+        """The pinned jq program emits exactly the bump rows as TSV."""
+        proc = subprocess.run(
+            ["jq", "-r", _DISCOVERY_JQ],
+            input=_MERGED_PRS_JSON,
+            capture_output=True,
+            text=True,
+            env=dict(_CLEAN_ENV),
+        )
+        assert proc.returncode == 0, proc.stderr
+        rows = [ln for ln in proc.stdout.splitlines() if ln]
+        assert rows == [
+            "v0.1.35\t691\t59c9208",
+            "v0.1.36\t694\tc9035a0",
+        ]
