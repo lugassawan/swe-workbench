@@ -1123,29 +1123,49 @@ const out = { registered: registered !== undefined };
 if (registered) {
   const inputCalls = [];
   const selectCalls = [];
+  // Per-scenario steering: "__DISMISS__" -> undefined, "__LAST__" -> last rendered option;
+  // absent -> options[0] (select) / "TYPED-ANSWER" (input).
+  let behavior = {};
   function makeCtx(hasUI) {
     return {
       hasUI,
       ui: {
-        select: async (title, options) => { selectCalls.push({ title, options }); return options[0]; },
-        input: async (...args) => { inputCalls.push(args); return "SHOULD-NEVER-HAPPEN"; },
+        select: async (title, options) => {
+          selectCalls.push({ title, options });
+          if (behavior.selectReturn === "__DISMISS__") return undefined;
+          if (behavior.selectReturn === "__LAST__") return options[options.length - 1];
+          return behavior.selectReturn ?? options[0];
+        },
+        input: async (...args) => {
+          inputCalls.push(args);
+          if (behavior.inputReturn === "__DISMISS__") return undefined;
+          return behavior.inputReturn ?? "TYPED-ANSWER";
+        },
       },
     };
   }
-  async function run(hasUI, params) {
+  async function run(hasUI, params, b) {
+    behavior = b;
+    const beforeInputs = inputCalls.length;
+    const beforeSelects = selectCalls.length;
     try {
       const result = await registered.execute("tc1", params, undefined, undefined, makeCtx(hasUI));
-      return { ok: true, result };
+      return { ok: true, result, inputCalls: inputCalls.slice(beforeInputs), selectCalls: selectCalls.slice(beforeSelects) };
     } catch (err) {
-      return { ok: false, message: String(err && err.message) };
+      return { ok: false, message: String(err && err.message), inputCalls: inputCalls.slice(beforeInputs), selectCalls: selectCalls.slice(beforeSelects) };
+    } finally {
+      behavior = {};
     }
   }
-  out.singleSelect = await run(true, config.singleParams);
-  out.multiSelect = await run(true, config.multiParams);
-  out.duplicate = await run(true, config.duplicateParams);
-  out.noUI = await run(false, config.singleParams);
-  out.selectCalls = selectCalls;
-  out.inputCalls = inputCalls;
+  out.singleSelect = await run(true, config.singleParams, {});
+  out.multiSelect = await run(true, config.multiParams, {});
+  out.duplicate = await run(true, config.duplicateParams, {});
+  out.noUI = await run(false, config.singleParams, {});
+  out.otherChosen = await run(true, config.singleParams, { selectReturn: "__LAST__" });
+  out.otherDismissInput = await run(true, config.singleParams, { selectReturn: "__LAST__", inputReturn: "__DISMISS__" });
+  out.otherEmptyInput = await run(true, config.singleParams, { selectReturn: "__LAST__", inputReturn: "" });
+  out.dismissed = await run(true, config.singleParams, { selectReturn: "__DISMISS__" });
+  out.collision = await run(true, config.collisionParams, {});
 }
 console.log(JSON.stringify(out));
 """
@@ -1165,6 +1185,12 @@ def _ask_user_result(env, tmp_path_factory):
             "questions": [
                 {"question": "Same text", "header": "Q1", "multiSelect": False, "options": [{"label": "A"}, {"label": "B"}]},
                 {"question": "Same text", "header": "Q2", "multiSelect": False, "options": [{"label": "C"}, {"label": "D"}]},
+            ]
+        },
+        "collisionParams": {
+            "questions": [
+                {"question": "Trap", "header": "Trap", "multiSelect": False,
+                 "options": [{"label": "A"}, {"label": "Other", "description": "type your own answer"}]},
             ]
         },
     }
@@ -1199,8 +1225,67 @@ def test_ask_user_single_select_returns_the_choice_via_ctx_ui_select(tmp_path_fa
     result = _ask_user_result({}, tmp_path_factory)
     assert result["singleSelect"]["ok"] is True
     assert result["singleSelect"]["result"]["details"] == {"Pick one": "A — desc A"}
-    assert result["selectCalls"][0]["options"] == ["A — desc A", "B"]
-    assert result["inputCalls"] == [], "ask_user_question must never fall back to ctx.ui.input"
+    assert result["singleSelect"]["selectCalls"][0]["options"] == ["A — desc A", "B", "Other — type your own answer"]
+    assert result["singleSelect"]["inputCalls"] == [], "ctx.ui.input must only open after the Other row is chosen"
+
+
+@requires_node
+def test_ask_user_options_always_end_with_free_text_other_row(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    options = result["singleSelect"]["selectCalls"][0]["options"]
+    assert options[-1] == "Other — type your own answer", (
+        "an Other row must always be appended so the user is never trapped "
+        "in the fixed choices"
+    )
+    assert options[:-1] == ["A — desc A", "B"], "author-supplied options stay in order, untouched"
+
+
+@requires_node
+def test_ask_user_other_row_opens_ctx_ui_input_and_returns_typed_answer(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["otherChosen"]["ok"] is True
+    assert result["otherChosen"]["result"]["details"] == {"Pick one": "TYPED-ANSWER"}
+    assert len(result["otherChosen"]["inputCalls"]) == 1
+    assert result["otherChosen"]["inputCalls"][0][0] == "Pick one", (
+        "input() must be titled with the question text"
+    )
+
+
+@requires_node
+def test_ask_user_dismissing_select_still_errors(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["dismissed"]["ok"] is False
+    assert "dismissed" in result["dismissed"]["message"]
+    assert "Pick one" in result["dismissed"]["message"]
+
+
+@requires_node
+def test_ask_user_dismissing_other_free_text_input_errors(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["otherDismissInput"]["ok"] is False
+    assert "free-text answer" in result["otherDismissInput"]["message"]
+    assert "Pick one" in result["otherDismissInput"]["message"]
+
+
+@requires_node
+def test_ask_user_empty_free_text_submit_is_rejected_not_answered(tmp_path_factory):
+    """The SDK input dialog resolves "" (not undefined) on empty Enter — accepting it would
+    let one accidental keypress masquerade as a deliberate answer."""
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["otherEmptyInput"]["ok"] is False
+    assert "free-text answer" in result["otherEmptyInput"]["message"]
+
+
+@requires_node
+def test_ask_user_authored_option_rendering_as_the_other_row_is_rejected(tmp_path_factory):
+    """optionLabel joins label+description with the same separator as OTHER_CHOICE, so an
+    authored option can render identically to the automatic row — reject up front instead of
+    rendering an indistinguishable duplicate."""
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["collision"]["ok"] is False
+    assert "free-text" in result["collision"]["message"]
+    assert "Trap" in result["collision"]["message"]
+    assert result["collision"]["selectCalls"] == [], "collision must be rejected before any dialog renders"
 
 
 @requires_node
@@ -1225,7 +1310,7 @@ def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
     result = _ask_user_result({}, tmp_path_factory)
     assert result["noUI"]["ok"] is False
     assert "interactive UI" in result["noUI"]["message"]
-    assert result["inputCalls"] == [], "hasUI:false must fail loudly, never silently fall back to ctx.ui.input"
+    assert result["noUI"]["inputCalls"] == [], "hasUI:false must fail loudly, never silently fall back to ctx.ui.input"
 
 
 # ---------------------------------------------------------------------------

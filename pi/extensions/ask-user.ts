@@ -74,6 +74,9 @@ function optionLabel(option: AskUserOption): string {
   return option.description ? `${option.label} — ${option.description}` : option.label;
 }
 
+/** Rendered as the last row of every question — choosing it opens a free-text input dialog. */
+const OTHER_CHOICE = "Other — type your own answer";
+
 export function registerAskUser(pi: ExtensionAPI): void {
   // Read once per process at registration time — an immutable config read, not a module-state
   // anti-pattern (nothing here mutates after this check). Gates Tier-2 tool registration only;
@@ -88,9 +91,11 @@ export function registerAskUser(pi: ExtensionAPI): void {
       "a decision genuinely belongs to the user — never as a substitute for a reasonable default.",
     promptSnippet:
       "ask_user_question(questions): present the user 1-4 fixed-option questions (2-4 options " +
-      "each) and get their picks back. Use when blocked on a decision only the user can make.",
+      "each, plus an automatic free-text \"Other\" row) and get their picks back. Use when " +
+      "blocked on a decision only the user can make.",
     promptGuidelines: [
-      "Never fabricate a free-text \"Other\" option — ask_user_question only supports fixed choices.",
+      "Never author an \"Other\" option — a free-text \"Other\" row is appended automatically; " +
+        "when the user picks it they type an answer that is returned for that question.",
       "Each question is single-select. To collect more than one choice per question, ask " +
         "separate sequential single-select questions instead of setting multiSelect.",
     ],
@@ -128,11 +133,21 @@ export function registerAskUser(pi: ExtensionAPI): void {
         );
       }
 
+      // An authored option can render identically to OTHER_CHOICE (optionLabel uses the same
+      // " — " join), which would show an indistinguishable duplicate row — reject up front.
+      const collision = questions.find((q) => q.options.map(optionLabel).includes(OTHER_CHOICE));
+      if (collision) {
+        throw new Error(
+          `ask_user_question: an option in "${collision.question}" renders identically to the ` +
+            `tool's automatic free-text "Other" row ("${OTHER_CHOICE}") — rephrase or remove it.`,
+        );
+      }
+
       const answers: Record<string, string> = {};
       for (const q of questions) {
         const choice = await ctx.ui.select(
           q.question,
-          q.options.map(optionLabel),
+          [...q.options.map(optionLabel), OTHER_CHOICE],
           { signal },
         );
         if (choice === undefined) {
@@ -140,6 +155,19 @@ export function registerAskUser(pi: ExtensionAPI): void {
             `ask_user_question: the user dismissed "${q.question}" without choosing an option — ` +
               "stop and check in with the user rather than assuming an answer.",
           );
+        }
+        if (choice === OTHER_CHOICE) {
+          const typed = await ctx.ui.input(q.question, "Type your answer", { signal });
+          // The SDK input dialog resolves "" (not undefined) on an empty Enter — treat both
+          // as not-answered so one accidental keypress can't masquerade as a deliberate answer.
+          if (typed === undefined || typed.trim() === "") {
+            throw new Error(
+              `ask_user_question: the user did not enter a free-text answer to "${q.question}" — ` +
+                "stop and check in with the user rather than assuming an answer.",
+            );
+          }
+          answers[q.question] = typed;
+          continue;
         }
         answers[q.question] = choice;
       }
