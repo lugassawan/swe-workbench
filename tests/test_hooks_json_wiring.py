@@ -177,6 +177,33 @@ def test_sh_scripts_use_bash():
         assert cmd.startswith("bash "), f"expected bash interpreter, got: {cmd!r}"
 
 
+def test_memory_hint_registered_for_every_session_start_matcher():
+    """hooks/memory_hint.sh must fire on all three SessionStart matchers —
+    memory injection has to survive cold start, --resume/--continue, and
+    auto-compaction, exactly like the resume hint."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    session_start = data["hooks"]["SessionStart"]
+    matchers = {entry.get("matcher") for entry in session_start}
+    assert matchers == {"startup", "resume", "compact"}, (
+        f"expected SessionStart matchers startup|resume|compact, got: {sorted(matchers)!r}"
+    )
+    for entry in session_start:
+        matcher = entry.get("matcher")
+        memory_hooks = [
+            hook
+            for hook in entry.get("hooks", [])
+            if "memory_hint.sh" in hook["command"]
+        ]
+        assert len(memory_hooks) == 1, (
+            f"expected exactly one memory_hint.sh hook under SessionStart/{matcher}, "
+            f"got {len(memory_hooks)}"
+        )
+        assert memory_hooks[0] == {
+            "type": "command",
+            "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/memory_hint.sh',
+        }
+
+
 def test_handoff_guard_registered_after_secret_guard_for_mutating_tools():
     """The handoff guard must cover Bash|Edit|Write and sit after secret_guard.py
     so the secret gate vets content before ownership is evaluated."""
