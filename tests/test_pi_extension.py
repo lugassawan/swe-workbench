@@ -817,10 +817,10 @@ def _memory_messages(sent):
 
 
 @requires_node
-def test_session_start_spawns_memory_hint_with_cwd_only_payload(memory_hint_result):
+def test_session_start_spawns_memory_hint_with_cwd_and_harness_payload(memory_hint_result):
     calls = _memory_spawn(memory_hint_result["trustedStart"]["spawnCalls"])
     assert len(calls) == 1
-    assert calls[0]["payload"] == {"cwd": str(ROOT)}
+    assert calls[0]["payload"] == {"cwd": str(ROOT), "harness": "pi"}
 
 
 @requires_node
@@ -849,7 +849,7 @@ def test_session_compact_emits_memory_hint(memory_hint_result):
     compact = memory_hint_result["trustedCompact"]
     calls = _memory_spawn(compact["spawnCalls"])
     assert len(calls) == 1
-    assert calls[0]["payload"] == {"cwd": str(ROOT)}
+    assert calls[0]["payload"] == {"cwd": str(ROOT), "harness": "pi"}
     assert len(_memory_messages(compact["sent"])) == 1
 
 

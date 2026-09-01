@@ -101,7 +101,10 @@ export function skillHintPayload(filePath: string, sessionId: string): Record<st
   return { tool_input: { file_path: filePath }, session_id: sessionId };
 }
 
-/** hooks/memory_hint.sh reads only `.cwd` from its SessionStart payload. */
-export function memoryHintPayload(cwd: string): Record<string, unknown> {
-  return { cwd };
+/** hooks/memory_hint.sh reads `.cwd` and `.harness` from its session payload. */
+export function memoryHintPayload(
+  cwd: string,
+  harness: "claude" | "pi",
+): Record<string, unknown> {
+  return { cwd, harness };
 }

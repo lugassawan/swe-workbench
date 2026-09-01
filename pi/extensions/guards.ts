@@ -156,14 +156,14 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     if (!ctx.isProjectTrusted()) return;
     const source = sessionStartSource(event as SessionStartEvent);
     await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
-    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd), ctx, "swe-workbench:memory-hint", "nextTurn");
+    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd, "pi"), ctx, "swe-workbench:memory-hint", "nextTurn");
   });
 
   pi.on("session_compact", async (event, ctx) => {
     if (!ctx.isProjectTrusted()) return;
     const source = sessionCompactSource(event as SessionCompactEvent);
     await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
-    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd), ctx, "swe-workbench:memory-hint", "nextTurn");
+    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd, "pi"), ctx, "swe-workbench:memory-hint", "nextTurn");
   });
 
   pi.on("tool_result", async (event, ctx) => {

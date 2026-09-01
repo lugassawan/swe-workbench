@@ -76,6 +76,10 @@ def payload_with_cwd(cwd: Path) -> str:
     return json.dumps({"cwd": str(cwd), "source": "startup"})
 
 
+def payload_with_cwd_and_harness(cwd: Path, harness: str) -> str:
+    return json.dumps({"cwd": str(cwd), "source": "startup", "harness": harness})
+
+
 def test_shim_exists_and_executable():
     assert SHIM.exists(), f"Missing hook script: {SHIM}"
     assert SHIM.stat().st_mode & 0o111, f"Hook script not executable: {SHIM}"
@@ -116,16 +120,49 @@ def test_missing_runtime_fails_open(tmp_path):
     assert result.stdout == ""
 
 
+def test_harness_pi_payload_renders_pi_store_as_own(tmp_path):
+    # The shim reads .harness from the payload (the Pi extension sends "pi") and
+    # renders with that harness as the owning side.
+    write_store(
+        tmp_path / "state" / slug_of(tmp_path),
+        [("pi-note", "Pi remembers this", "feedback")],
+    )
+    write_store(
+        tmp_path / "home" / ".claude" / "projects" / slug_of(tmp_path) / "memory",
+        [("claude-note", "Claude remembers this", "feedback")],
+    )
+    result = run_shim(
+        SHIM, payload_with_cwd_and_harness(tmp_path, "pi"), cwd=tmp_path
+    )
+    assert result.returncode == 0, result.stderr
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Pi memory (own)" in context
+    assert "pi-note" in context
+    assert "## Claude Code memory (read-only)" in context
+    assert "claude-note" in context
+
+
 def test_nonzero_runtime_exit_fails_open(tmp_path):
-    # chmod 000 on ~/.claude: the runtime's index probe raises PermissionError
-    # (only ENOENT/ENOTDIR suppressed) ⇒ exit 1, empty stdout — the non-zero guard.
-    claude_root = tmp_path / "home" / ".claude"
-    claude_root.mkdir(parents=True)
-    claude_root.chmod(0o000)
-    try:
-        result = run_shim(SHIM, payload_with_cwd(tmp_path), cwd=tmp_path)
-    finally:
-        claude_root.chmod(0o755)
+    # A regular file at the state-dir override makes the runtime exit 1 (StorageError)
+    # while the shim stays fail-open — the old chmod-000 premise now degrades cleanly.
+    state_dir = tmp_path / "state"
+    state_dir.write_text("not a directory", encoding="utf-8")
+    env = hermetic_env(tmp_path)
+    env["SWE_WORKBENCH_MEMORY_STATE_DIR"] = str(state_dir)
+    runtime_result = subprocess.run(
+        [str(ROOT / "bin" / "swe-workbench-memory"), "render", "--as", "claude"],
+        input="",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        env=env,
+        timeout=30,
+    )
+    assert runtime_result.returncode == 1
+    assert runtime_result.stdout == ""
+    assert runtime_result.stderr.startswith("swe-workbench-memory:")
+    assert "Traceback" not in runtime_result.stderr
+    result = run_shim(SHIM, payload_with_cwd(tmp_path), cwd=tmp_path, env=env)
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
 
