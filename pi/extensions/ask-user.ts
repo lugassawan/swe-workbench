@@ -133,6 +133,16 @@ export function registerAskUser(pi: ExtensionAPI): void {
         );
       }
 
+      // An authored option can render identically to OTHER_CHOICE (optionLabel uses the same
+      // " — " join), which would show an indistinguishable duplicate row — reject up front.
+      const collision = questions.find((q) => q.options.map(optionLabel).includes(OTHER_CHOICE));
+      if (collision) {
+        throw new Error(
+          `ask_user_question: an option in "${collision.question}" renders identically to the ` +
+            `tool's automatic free-text "Other" row ("${OTHER_CHOICE}") — rephrase or remove it.`,
+        );
+      }
+
       const answers: Record<string, string> = {};
       for (const q of questions) {
         const choice = await ctx.ui.select(
@@ -148,10 +158,12 @@ export function registerAskUser(pi: ExtensionAPI): void {
         }
         if (choice === OTHER_CHOICE) {
           const typed = await ctx.ui.input(q.question, "Type your answer", { signal });
-          if (typed === undefined) {
+          // The SDK input dialog resolves "" (not undefined) on an empty Enter — treat both
+          // as not-answered so one accidental keypress can't masquerade as a deliberate answer.
+          if (typed === undefined || typed.trim() === "") {
             throw new Error(
-              `ask_user_question: the user dismissed the free-text answer to "${q.question}" ` +
-                "without entering one — stop and check in with the user rather than assuming an answer.",
+              `ask_user_question: the user did not enter a free-text answer to "${q.question}" — ` +
+                "stop and check in with the user rather than assuming an answer.",
             );
           }
           answers[q.question] = typed;
