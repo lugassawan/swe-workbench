@@ -1,4 +1,4 @@
-"""Behavioral tests for bin/swe-workbench-memory (issue #697).
+"""Behavioral tests for bin/swe-workbench-memory.
 
 Every test is hermetic: both SWE_WORKBENCH_MEMORY_STATE_DIR (Pi store root override)
 and HOME (Claude store root) point into tmp dirs, and XDG_STATE_HOME is unset —

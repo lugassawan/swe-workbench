@@ -48,7 +48,7 @@ SKILLS_DIR = ROOT / "skills"
 # not shrink, is what issue #700 targets.
 TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL = 3606
 TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL = 3526
-BIN_SCRIPTS_SECTION_CHAR_CAP = 1323  # 697: +1 script row (~30 chars) — measured, not estimated
+BIN_SCRIPTS_SECTION_CHAR_CAP = 1323  # +1 script row (~30 chars) — measured, not estimated
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
 # file's own source — this file is not on secret_guard.py's allowlist (unlike
@@ -744,7 +744,7 @@ const stubPi = {
   sendMessage(message, options) { sent.push({ message, options }); },
 };
 
-// Fully stubbed runGuard (issue #697 Task 3): memory_hint.sh is spawned through the same
+// Fully stubbed runGuard: memory_hint.sh is spawned through the same
 // guard-runner seam as every other hook, so the adapter's emission contract — trust gate,
 // payload shape, customType, ordering, fail-open — is provable without the real script.
 const spawnCalls = [];

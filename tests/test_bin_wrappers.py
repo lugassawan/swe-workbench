@@ -1,5 +1,5 @@
 """Behavioral tests for hooks/memory_hint.sh — the Claude Code SessionStart
-wrapper around bin/swe-workbench-memory (issue #697).
+wrapper around bin/swe-workbench-memory.
 
 The shim must fail open — exit 0, no stdout on any failure (missing runtime,
 runtime error, absent cwd, foreign envelope): a broken hint must never block

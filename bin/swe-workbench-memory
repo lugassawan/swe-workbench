@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-harness per-repo memory: resolve, render, and record (issue #697)."""
+"""Cross-harness per-repo memory: resolve, render, and record."""
 
 from __future__ import annotations
 

@@ -105,7 +105,7 @@ def test_report_issue_supports_blank_argument():
     )
 
 
-# --- Runtime memory-read assertions (issue #697 Task 4) ---
+# --- Runtime memory-read assertions ---
 
 def _branch_a_step2_slice(text):
     branch_pos = text.find("### Branch A")

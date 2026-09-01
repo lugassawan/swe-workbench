@@ -464,7 +464,7 @@ by Claude's five-hour quota fields (`status-segment`).
 ## 13. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
 
 Each harness owns one per-repo memory store and reads the other's read-only
-(`bin/swe-workbench-memory`, hooks/memory_hint.sh, issue #697). Four rulings:
+(`bin/swe-workbench-memory`, hooks/memory_hint.sh). Four rulings:
 
 **Anchor on the main checkout, not the session cwd.** Claude Code keys
 `~/.claude/projects/<slug>` by the session's project directory — empirically,
