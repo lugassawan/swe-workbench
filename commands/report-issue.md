@@ -32,7 +32,19 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 1. **Scan the current conversation** for actionable plugin-related thoughts: frustrations, lessons learned, complaints about plugin behaviour, feature ideas, or pain points. Collect up to 3 candidates with a one-line framing each.
 
-2. If conversation yields fewer than 3, **scan memory** at `~/.claude/projects/<project-slug>/memory/MEMORY.md` (where `<project-slug>` is derived from the current working directory path by replacing each `/` with `-`, then stripping any resulting leading `-`; e.g. `/Users/foo/bar` → `Users-foo-bar`). Follow symlinks to `feedback_*.md` and `project_*.md` entries referenced there. Collect additional candidates until you have up to 3, prioritising entries that mention the plugin, commands, agents, or skills by name.
+2. If conversation yields fewer than 3, **scan memory** via the runtime:
+   ```bash
+   command -v swe-workbench-memory >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   RESULT=$(swe-workbench-memory show --as claude | swe-workbench-result-check swb.memory/1) || exit 1
+   ```
+   Read entries with `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.store) \(.name) \(.description)"'`
+   — **entry order is the recency signal** (index order, newest first; there is no date
+   frontmatter). Read an entry's full body at `.data.stores[.store].path` + `/` + `.file` (the
+   envelope's `file` is a basename only). Collect additional candidates until you have up to 3,
+   prioritising entries that mention the plugin, commands, agents, or skills by name.
 
 3. Present candidates numbered 1–N (max 3) with a one-line framing each:
    ```
@@ -55,13 +67,17 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 **Granularity:** exactly one issue per selected insight — never bundle multiple insights into a single issue.
 
-1. **Load all memory.** Use the same path recipe as Branch A: `~/.claude/projects/<project-slug>/memory/`. Read `MEMORY.md`, then follow its links to every `feedback_*.md` and `project_*.md` entry it points at. Capture each entry's `name`, `description`, body, and its `type` value (older entries carry a top-level `type:`; newer entries nest it under `metadata:` — read whichever is present). Preserve `MEMORY.md`'s listed order — it is the only recency signal available (no date frontmatter exists on memory entries).
+1. **Load all memory via the runtime** (the runtime preflight from Branch A step 2 applies — do not repeat it):
+   ```bash
+   RESULT=$(swe-workbench-memory show --as claude | swe-workbench-result-check swb.memory/1) || exit 1
+   ```
+   Read every entry the envelope lists, from both stores: `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.name) \(.description) \(.type) \(.store) \(.file)"'`. Capture each entry's `name`, `description`, and `type` straight from the envelope — the envelope's `type` field replaces the old dual frontmatter-convention read — plus its body, read from `.data.stores[.store].path` + `/` + `.file` (the envelope's `file` is a basename only). Preserve the entries' listed order — it is the only recency signal available (no date frontmatter exists). On disk, the claude store is a `MEMORY.md` index linking `feedback_*.md` / `project_*.md` files — shape context only; the envelope already carries every path you need.
 
 2. **Harvest conversation signal.** Separately note which plugin-related themes the current conversation itself touches. Keep this as its own set — it feeds the recency boost in step 4, it is not merged into the memory set.
 
 3. **Cluster into emergent themes.** Group the loaded entries by the semantic theme carried in their `description`/body — clusters emerge from the content itself. This is NOT a fixed taxonomy and not a path-prefix grouping (memory entries have no paths); invent a short theme label per cluster rather than picking from a predefined list. Each cluster becomes one candidate insight.
 
-4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in `MEMORY.md` order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
+4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in the entries' listed order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
 
 5. **Draft one preview body per insight**, using the Synthesis issue body shape below. Run the **Version capture** once, and the **Redaction pass** (delegation step 7) once over every drafted body — both before any display.
 

@@ -91,7 +91,7 @@ def test_report_issue_footer_names_both_harnesses():
 
 
 def test_report_issue_supports_blank_argument():
-    """commands/report-issue.md must handle empty $ARGUMENTS by scanning conversation then MEMORY.md."""
+    """commands/report-issue.md must handle empty $ARGUMENTS by scanning conversation then memory."""
     text = REPORT_ISSUE_MD.read_text()
     assert "ARGUMENTS" in text, (
         "commands/report-issue.md must reference $ARGUMENTS"
@@ -100,8 +100,101 @@ def test_report_issue_supports_blank_argument():
         "commands/report-issue.md must describe the blank-argument behaviour"
     )
     assert "MEMORY.md" in text, (
-        "commands/report-issue.md must reference MEMORY.md as the memory fallback for blank-arg mode"
+        "commands/report-issue.md must mention MEMORY.md (the store's on-disk shape) "
+        "when describing the memory fallback for blank-arg mode"
     )
+
+
+# --- Runtime memory-read assertions (issue #697 Task 4) ---
+
+def _branch_a_step2_slice(text):
+    branch_pos = text.find("### Branch A")
+    assert branch_pos != -1, "commands/report-issue.md must contain a '### Branch A' heading"
+    step2_pos = text.find("2. If conversation", branch_pos)
+    assert step2_pos != -1, "Branch A must keep a step-2 memory-scan instruction"
+    step3_pos = text.find("3. Present candidates", step2_pos)
+    assert step3_pos != -1, "Branch A must keep a step-3 candidates-presentation instruction"
+    return text[step2_pos:step3_pos]
+
+
+def _branch_b_step1_slice(text):
+    branch_b = _branch_b_slice(text)
+    step1_pos = branch_b.find("1. **Load all memory")
+    assert step1_pos != -1, "Branch B must keep a step-1 load-all-memory instruction"
+    step2_pos = branch_b.find("2. **Harvest conversation", step1_pos)
+    assert step2_pos != -1, "Branch B must keep a step-2 harvest-conversation instruction"
+    return branch_b[step1_pos:step2_pos]
+
+
+def test_report_issue_branch_a_step2_reads_memory_via_runtime():
+    """Branch A step 2 must scan memory through the runtime, not a computed path."""
+    step2 = _branch_a_step2_slice(REPORT_ISSUE_MD.read_text())
+    assert "swe-workbench-memory show" in step2, (
+        "Branch A step 2 must call swe-workbench-memory show via the runtime"
+    )
+    assert "swe-workbench-result-check swb.memory/1" in step2, (
+        "Branch A step 2 must pipe the runtime output through "
+        "swe-workbench-result-check swb.memory/1"
+    )
+
+
+def test_report_issue_branch_b_step1_reads_memory_via_runtime():
+    """Branch B step 1 must load all memory through the runtime, not a computed path."""
+    step1 = _branch_b_step1_slice(REPORT_ISSUE_MD.read_text())
+    assert "swe-workbench-memory show" in step1, (
+        "Branch B step 1 must call swe-workbench-memory show via the runtime"
+    )
+    assert "swe-workbench-result-check swb.memory/1" in step1, (
+        "Branch B step 1 must pipe the runtime output through "
+        "swe-workbench-result-check swb.memory/1"
+    )
+
+
+def test_report_issue_no_slug_recipe_prose():
+    """The prose slug recipe for computing the memory path must be gone."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert "derived from the current working directory path by replacing" not in text, (
+        "commands/report-issue.md must not restate the project-slug derivation recipe — "
+        "memory paths come from the runtime envelope"
+    )
+
+
+def test_report_issue_memory_recency_contract_preserved():
+    """Entry order (index order) is the only recency signal in both branches."""
+    text = REPORT_ISSUE_MD.read_text()
+    branch_a_step2 = _branch_a_step2_slice(text)
+    assert "order is the recency signal" in branch_a_step2, (
+        "Branch A step 2 must state that entry order is the recency signal"
+    )
+    branch_b_step1 = _branch_b_step1_slice(text)
+    assert "only recency signal" in branch_b_step1, (
+        "Branch B step 1 must state the entries' listed order is the only recency signal"
+    )
+
+
+def test_report_issue_memory_body_path_via_stores_composition():
+    """Body paths must compose .data.stores[store].path + .file — entries carry a basename only."""
+    text = REPORT_ISSUE_MD.read_text()
+    for label, block in (
+        ("Branch A step 2", _branch_a_step2_slice(text)),
+        ("Branch B step 1", _branch_b_step1_slice(text)),
+    ):
+        assert ".data.stores" in block, (
+            f"{label} must read body paths via .data.stores[store].path"
+        )
+        assert ".file" in block, (
+            f"{label} must compose the body path with the entry's basename .file field"
+        )
+
+
+def test_report_issue_memory_runtime_preflight_once():
+    """Exactly one command -v preflight guards the memory runtime (Branch A; B references it)."""
+    text = REPORT_ISSUE_MD.read_text()
+    assert text.count("command -v swe-workbench-memory") == 1, (
+        "commands/report-issue.md must carry exactly one "
+        "'command -v swe-workbench-memory' preflight, in Branch A step 2"
+    )
+    assert "command -v swe-workbench-memory" in _branch_a_step2_slice(text)
 
 
 def test_report_issue_has_redaction_pass():
@@ -243,10 +336,10 @@ def test_report_issue_synthesize_branch_exists():
 
 
 def test_report_issue_synthesize_aggregates_all_memory():
-    """Branch B must aggregate MEMORY.md plus feedback_*/project_* entries."""
+    """Branch B must aggregate every memory entry (feedback_*/project_* files under a MEMORY.md index)."""
     branch_b = _branch_b_slice(REPORT_ISSUE_MD.read_text())
     assert "MEMORY.md" in branch_b, (
-        "Branch B must reference MEMORY.md as the aggregation source"
+        "Branch B must reference MEMORY.md when describing the store's on-disk shape"
     )
     assert "feedback_" in branch_b, (
         "Branch B must reference feedback_*.md memory entries"
