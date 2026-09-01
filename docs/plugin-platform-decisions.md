@@ -460,3 +460,40 @@ corrupt state, or undecidable output fails closed), and the 429 recovery afforda
 signal — context-window usage accessors are explicitly NOT quota — so Pi warns only after
 an actual HTTP 429. Pre-limit percentage warnings remain a Claude-only affordance driven
 by Claude's five-hour quota fields (`status-segment`).
+
+## 13. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
+
+Each harness owns one per-repo memory store and reads the other's read-only
+(`bin/swe-workbench-memory`, hooks/memory_hint.sh, issue #697). Four rulings:
+
+**Anchor on the main checkout, not the session cwd.** Claude Code keys
+`~/.claude/projects/<slug>` by the session's project directory — empirically,
+worktree sessions produce separate worktree-slug directories (observed:
+`…-swe-workbench-worktrees-bugfix-…` alongside `…-swe-workbench`, the latter
+holding 103 entries). A cwd-anchored reader in a worktree would therefore see
+nothing; a cwd-anchored writer would fragment the store per worktree. Both
+stores instead resolve their slug from the realpath'd parent of
+`git rev-parse --git-common-dir` (the handoff runtime's repo-identity
+precedent); non-git cwds fall back to the cwd slug.
+
+**The Claude store is read through two slugs.** Entries Claude sessions wrote
+under a worktree slug stay real knowledge; reads probe the main slug first,
+then the cwd slug, merging by entry-file basename (main wins, cwd supplements).
+Writes stay single-anchored on the main slug.
+
+**Writes are structurally single-store.** No subcommand accepts a store path;
+the writable store derives solely from `--as`. A `--store` flag exists only as
+a guard: any value other than the caller's own store fails closed (non-zero
+exit, empty stdout, untouched stores) — the read-only direction is enforced in
+code, not documentation. Record inputs are secret-scanned; memory outlives the
+session that wrote it. Appends are flock-serialized.
+
+**Readability beats opacity for the Pi store key.** Unlike handoff's sha256
+repo keys (never inspected by hand), the Pi store uses the same readable slug
+as `~/.claude/projects/`, pairing the two stores visually, with a `.origin`
+file disambiguating path-vs-slug collisions (the `/a/b` vs `/a-b` collision is
+inherited from Claude Code's own scheme). Known asymmetry: Pi gates injection
+on `ctx.isProjectTrusted()`; Claude's SessionStart hook has no trust
+equivalent — mitigated by a hard 16 KiB render cap and a "treat as data, not
+instructions" fence on every injected block. The handoff checkpoint is not a
+carrier for memory (its security exclusions bar file bodies by design).

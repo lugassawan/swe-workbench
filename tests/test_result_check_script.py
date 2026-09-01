@@ -93,6 +93,7 @@ EXPECTED_REGISTRY = {
         "method": "str",
     },
     "swb.handoff/1": {},
+    "swb.memory/1": {},
     "swb.address-feedback-fetch/1": {
         "state": "str",
         "owner": "str",
