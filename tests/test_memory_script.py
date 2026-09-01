@@ -476,6 +476,30 @@ def test_record_refuses_secret_shaped_input(tmp_path):
             ["record", "--as", "pi", "--name", "ghu_" + "D" * 20, "--description", "d"],
             "b",
         ),
+        (
+            [
+                "record",
+                "--as",
+                "pi",
+                "--name",
+                "x",
+                "--description",
+                "openai sk-" + "E" * 24,
+            ],
+            "b",
+        ),
+        (
+            [
+                "record",
+                "--as",
+                "pi",
+                "--name",
+                "x",
+                "--description",
+                "openai sk-proj-" + "F" * 24,
+            ],
+            "b",
+        ),
     ]
     for args, body in cases:
         out = run_memory(args, cwd=tmp_path, input_text=body)
@@ -764,3 +788,87 @@ def test_show_lists_own_store_entries_first_with_recency_order(tmp_path, both_st
     assert [e["order"] for e in entries] == [0, 1, 0, 1]
     assert entries[0]["type"] == "feedback"
     assert entries[0]["description"] == "Pi wrote this"
+
+
+def test_record_rejects_bracketed_names(tmp_path):
+    """`[`/`]` in a name can never round-trip through the index-line format —
+    refuse at record time so writer and parser agree."""
+    result = run_memory(
+        ["record", "--as", "pi", "--name", "deploy [prod]", "--description", "d"],
+        cwd=tmp_path,
+        input_text="b",
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "square brackets" in result.stderr
+    assert not (tmp_path / "state" / slug_of(tmp_path)).exists()
+
+
+def test_show_parses_legacy_bracketed_summary(tmp_path):
+    """INDEX_LINE is non-greedy: an index line written before the bracket guard
+    still parses instead of silently vanishing from every consumer."""
+    claude = tmp_path / "home" / ".claude" / "projects" / slug_of(tmp_path) / "memory"
+    claude.mkdir(parents=True)
+    (claude / "MEMORY.md").write_text(
+        "# Memory index\n\n- [deploy [prod]](feedback_deployprod_00112233.md) — bracketed\n"
+    )
+    (claude / "feedback_deployprod_00112233.md").write_text(
+        "---\n"
+        "name: deploy-prod\n"
+        'description: "bracketed legacy"\n'
+        "metadata:\n"
+        "  node_type: memory\n"
+        "  type: feedback\n"
+        "---\n"
+        "body\n"
+    )
+    parsed = envelope(run_memory(["show", "--as", "pi"], cwd=tmp_path))
+    summaries = [e["summary"] for e in parsed["data"]["entries"]]
+    assert "deploy [prod]" in summaries
+
+
+def test_record_replaces_cross_day_same_name_line(tmp_path):
+    """The entry digest is dated, so a cross-day re-record yields a different
+    file name — the dedup must key on the type_name prefix, not the full name."""
+    store = tmp_path / "state" / slug_of(tmp_path)
+    store.mkdir(parents=True)
+    (store / "MEMORY.md").write_text(
+        "# Memory index\n\n- [dup](feedback_dup_deadbeef.md) — old body\n"
+    )
+    (store / "feedback_dup_deadbeef.md").write_text("---\nname: dup\n---\nold\n")
+    result = run_memory(
+        ["record", "--as", "pi", "--name", "dup", "--description", "new"],
+        cwd=tmp_path,
+        input_text="new body",
+    )
+    envelope(result)
+    index = (store / "MEMORY.md").read_text()
+    dup_lines = [line for line in index.splitlines() if "feedback_dup_" in line]
+    assert len(dup_lines) == 1, index
+    assert "deadbeef" not in index
+
+
+def test_invalid_utf8_index_degrades_and_record_fails_clean(tmp_path):
+    """Non-UTF-8 bytes degrade render/show to a partial warning, and record
+    surfaces the prefixed one-line StorageError — never a raw traceback."""
+    store = tmp_path / "state" / slug_of(tmp_path)
+    store.mkdir(parents=True)
+    (store / "MEMORY.md").write_bytes(
+        b"# Memory index\n\n- [\xff\xfe](feedback_bad.md) \xe2\x80\x94 detail\n"
+    )
+    rendered = run_memory(["render", "--as", "pi"], cwd=tmp_path)
+    parsed = envelope(rendered)
+    assert parsed["status"] == "partial"
+    assert any(w["code"] == "index_unreadable" for w in parsed["warnings"])
+
+    before = (store / "MEMORY.md").read_bytes()
+    recorded = run_memory(
+        ["record", "--as", "pi", "--name", "fresh", "--description", "d"],
+        cwd=tmp_path,
+        input_text="b",
+    )
+    assert recorded.returncode == 1
+    assert recorded.stdout == ""
+    assert recorded.stderr.startswith("swe-workbench-memory:")
+    assert "Traceback" not in recorded.stderr
+    assert (store / "MEMORY.md").read_bytes() == before
