@@ -1,11 +1,10 @@
 """Behavioral tests for hooks/memory_hint.sh — the Claude Code SessionStart
 wrapper around bin/swe-workbench-memory (issue #697).
 
-The shim must fail open: exit 0 unconditionally with no stdout on any failure
-(missing runtime, runtime error, absent cwd, foreign envelope), because a
-broken memory hint must never block session startup. Every test is hermetic:
-HOME and SWE_WORKBENCH_MEMORY_STATE_DIR point into tmp dirs and XDG_STATE_HOME
-is unset, so no real ~/.claude or XDG state tree is ever touched.
+The shim must fail open — exit 0, no stdout on any failure (missing runtime,
+runtime error, absent cwd, foreign envelope): a broken hint must never block
+session startup. Hermetic: HOME + SWE_WORKBENCH_MEMORY_STATE_DIR point into
+tmp dirs, XDG_STATE_HOME unset — no real ~/.claude tree is ever touched.
 """
 
 from __future__ import annotations
@@ -118,10 +117,8 @@ def test_missing_runtime_fails_open(tmp_path):
 
 
 def test_nonzero_runtime_exit_fails_open(tmp_path):
-    # chmod 000 on ~/.claude makes the runtime crash (exit 1, empty stdout):
-    # Path.is_file() propagates EACCES — only ENOENT/ENOTDIR are suppressed —
-    # so the index probe raises an uncaught PermissionError. That exercises
-    # the shim's non-zero-exit guard against the real runtime.
+    # chmod 000 on ~/.claude: the runtime's index probe raises PermissionError
+    # (only ENOENT/ENOTDIR suppressed) ⇒ exit 1, empty stdout — the non-zero guard.
     claude_root = tmp_path / "home" / ".claude"
     claude_root.mkdir(parents=True)
     claude_root.chmod(0o000)
