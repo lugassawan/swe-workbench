@@ -126,6 +126,120 @@ only print a `USAGE` block on an unrecognized argument; `preload-telemetry.py` h
 
 Everything the last three write accumulates under `.claude/cache/` (`skill-usage/canary-citations.jsonl`, `dispatch-probes/cache-runs.jsonl`, `dispatch-probes/ablation-runs.jsonl`), which is gitignored — that raw data is local to whoever ran the command and is never committed or shared. Only a short human-written summary of a run makes it into the repo, in the section below.
 
+### C3 sweep triage
+
+The remaining acceptance criterion from the C3 re-scope: triage the 19 agents beyond the
+three heaviest
+(`senior-engineer`, `architect`, `reviewer`) and sweep only those whose dispatch-ledger <!-- validate: prose-ref -->
+preload share makes them plausible demotion candidates. Condition 1's ≥ 500-token floor
+filters nothing here — the smallest preloaded skill anywhere is `principle-design-patterns` <!-- validate: prose-ref -->
+at 816 est. tokens (refactorer) — so the triage is economic: where would a demotion move
+enough tokens to justify ~20 paid dispatches per (agent, skill) pair (2 arms × 10 corpus
+diffs)?
+
+Figures quoted from `docs/dispatch-ledger.md` (snapshot 2026-08-31; that file is generated
+and authoritative — this table is a dated quote, not a second source of truth). Sorted by
+preload share:
+
+| Agent | Share % | Preload tokens (est.) | Skills ≥ 500 tok | Sweep dispatches |
+|---|---|---|---|---|
+| migrator | 84.7 | 12,945 | 8 | 160 |
+| auditor | 81.1 | 10,992 | 7 | 140 |
+| refactorer | 73.2 | 6,565 | 5 | 100 |
+| debugger | 69.6 | 6,983 | 5 | 100 |
+| code-impl | 69.3 | 6,724 | 5 | 100 |
+| tech-writer | 67.2 | 2,835 | 2 | 40 |
+| product-designer | 65.9 | 5,892 | 3 | 60 |
+| product-manager | 63.9 | 4,443 | 3 | 60 |
+| performance-tuner | 60.0 | 5,968 | 4 | 80 |
+| security-auditor | 57.0 | 3,709 | 2 | 40 |
+| test-reviewer | 57.0 | 2,597 | 2 | 40 |
+| dependency-auditor | 55.8 | 4,421 | 2 | 40 |
+| e2e-test-verifier | 54.5 | 1,546 | 1 | 20 |
+| test-writer | 54.0 | 2,649 | 2 | 40 |
+| accessibility-auditor | 52.5 | 4,299 | 3 | 60 |
+| e2e-test-writer | 50.0 | 1,546 | 1 | 20 |
+| contributor-auditor | 48.0 | 3,462 | 2 | 40 |
+| conflict-resolver | 47.7 | 1,409 | 1 | 20 |
+| redundancy-assessor | 38.5 | 1,107 | 1 | 20 |
+
+**Sweep now — migrator, auditor.** The only two remaining agents in the heavy-three
+neighborhood on *both* axes: share ≥ 80% and preload ≥ ~11k est. tokens. The next-closest
+agent (refactorer) sits 11.5 share-points below migrator and ~4.4k tokens below auditor — a
+clean break, not a boundary judgment call. Added cost on the uncached default provider:
+300 dispatches ≈ $22 on a prefix-only basis (ledger prefix × the observed ~$5.1/M input
+rate) — but on the three heavy agents the *measured full dispatch input* ran ~1.4–1.7× the
+ledger prefix (e.g. reviewer 36,452 measured vs 25,113 est. prefix), and the re-scoping
+ticket's own per-agent estimates ($35–50) are on that fuller basis — so budget roughly
+$30–40. ~5×
+cheaper on a prefix-caching provider (zai, per the 2026-08-31 cache measurements below).
+
+**Defer — refactorer, debugger, code-impl.** Share 69–73% with ~6.5–7k est. preload tokens:
+preload-heavy, but roughly half the absolute surface of the sweep-now tier. The cheap first
+filter is condition 2 (citation rate) — uncollected project-wide, tracked in its own
+follow-up — and sweeping a pair that condition 2 would clear anyway spends paid dispatches
+in the wrong order. Revisit once citation telemetry can name low-citation (agent, skill)
+pairs in these three.
+
+**Skip — the remaining 14 agents.** Either share < 65% (the agent's own body dominates the
+prefix, so demotion moves proportionally little) or absolute preload < ~6k est. tokens (the
+entire demotable surface is worth ~$0.006–0.03 per dispatch on the uncached default
+provider — less than a single sweep dispatch costs), or both.
+
+**Stated limitation.** The ledger is static: share measures the prefix, not dispatch
+frequency, and demotion value scales with frequency × tokens. No frequency instrument
+exists yet — relative dispatch rates are unmeasured, and the in-repo wiring that exists
+points both ways: `auditor` (sweep-now tier) is dispatched only by the cold-start <!-- validate: prose-ref -->
+`audit-codebase` path, while several skip-tier agents are the specialist modes of the
+everyday review command (security, accessibility, dependency, performance, tests,
+contributor-trust, ux) — so treat the tier ordering as provisional until frequency is
+measured. The defer tier is the first place to re-examine once it is. Recorded deliberately
+— the four demotion conditions still gate every actual demotion.
+
+#### Human sweep runbook
+
+The ablation harness spawns nested `pi` — run it from an interactive terminal, never from
+CI or an agent context (`hooks/bash_guard.sh` blocks nested pi). Smoke-test with `--dry-run`
+(zero dispatches) first, then run one agent's loop, then its report:
+
+```bash
+for s in <skill-a> <skill-b> …; do
+  node --experimental-strip-types scripts/preload-probe.mjs ablate \
+    --agent <agent-id> --corpus tests/fixtures/ablation_corpus --omit "$s"
+done
+node --experimental-strip-types scripts/preload-probe.mjs ablate --report --agent <agent-id>
+```
+
+Per-agent `--omit` lists — bare skill ids from the ledger's per-(agent, skill) breakdown,
+all ≥ 500 est. tokens:
+
+- **senior-engineer** (11): principle-clean-architecture principle-data-modeling
+  principle-ddd principle-api-design principle-event-driven principle-solid
+  principle-refactoring principle-performance principle-resiliency
+  principle-distributed-systems principle-observability
+- **architect** (12): principle-clean-architecture principle-api-design principle-ddd
+  principle-event-driven principle-data-modeling principle-resiliency
+  principle-distributed-systems principle-observability principle-security
+  principle-performance principle-concurrency principle-cost-awareness
+- **reviewer** (14): principle-code-review principle-clean-code principle-error-handling
+  principle-solid principle-security principle-performance principle-resiliency
+  principle-accessibility principle-concurrency principle-observability principle-testing
+  principle-cost-awareness principle-version-control principle-ddd
+- **migrator** (8): principle-api-design principle-data-modeling principle-event-driven
+  principle-observability principle-performance principle-release-engineering
+  principle-resiliency principle-version-control
+- **auditor** (7): principle-code-review principle-security principle-performance
+  principle-resiliency principle-observability principle-tdd principle-testing
+
+Running order: the three heaviest agents first (senior-engineer → architect →
+reviewer), then the triaged-in pair (migrator → auditor). Name the provider in every
+recorded line — condition 4 is provider-dependent (0.0000 on the uncached default provider
+vs ≥ 0.998 on zai, both 2026-08-31), so a lost/downgraded figure is only interpretable
+alongside the provider that produced it. Results accumulate under
+`.claude/cache/dispatch-probes/ablation-runs.jsonl` (local, gitignored); after each agent,
+record dated `agent=… omitted=…: lost=N downgraded=M` lines under
+`## Recorded measurements` below — verbatim figures only.
+
 ## Recorded measurements
 
 A place to record what the live instruments actually reported, since the raw JSONL never leaves the machine that produced it. After running one of the commands above, add a dated one-liner here naming the agent, the figure, and the date — for example `reviewer: cache-read fraction 0.XX (YYYY-MM-DD)` or `reviewer: principle-i18n cited in N/M dispatches (YYYY-MM-DD)`. This section is hand-maintained; nothing generates it.
