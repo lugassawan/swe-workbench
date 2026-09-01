@@ -1234,7 +1234,7 @@ def test_ask_user_options_always_end_with_free_text_other_row(tmp_path_factory):
     result = _ask_user_result({}, tmp_path_factory)
     options = result["singleSelect"]["selectCalls"][0]["options"]
     assert options[-1] == "Other — type your own answer", (
-        "issue #706: an Other row must always be appended so the user is never trapped "
+        "an Other row must always be appended so the user is never trapped "
         "in the fixed choices"
     )
     assert options[:-1] == ["A — desc A", "B"], "author-supplied options stay in order, untouched"
@@ -1270,7 +1270,7 @@ def test_ask_user_dismissing_other_free_text_input_errors(tmp_path_factory):
 @requires_node
 def test_ask_user_empty_free_text_submit_is_rejected_not_answered(tmp_path_factory):
     """The SDK input dialog resolves "" (not undefined) on empty Enter — accepting it would
-    let one accidental keypress masquerade as a deliberate answer (review finding on #706)."""
+    let one accidental keypress masquerade as a deliberate answer."""
     result = _ask_user_result({}, tmp_path_factory)
     assert result["otherEmptyInput"]["ok"] is False
     assert "free-text answer" in result["otherEmptyInput"]["message"]
@@ -1280,7 +1280,7 @@ def test_ask_user_empty_free_text_submit_is_rejected_not_answered(tmp_path_facto
 def test_ask_user_authored_option_rendering_as_the_other_row_is_rejected(tmp_path_factory):
     """optionLabel joins label+description with the same separator as OTHER_CHOICE, so an
     authored option can render identically to the automatic row — reject up front instead of
-    rendering an indistinguishable duplicate (review finding on #706)."""
+    rendering an indistinguishable duplicate."""
     result = _ask_user_result({}, tmp_path_factory)
     assert result["collision"]["ok"] is False
     assert "free-text" in result["collision"]["message"]

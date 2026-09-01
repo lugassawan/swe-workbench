@@ -801,7 +801,7 @@ def test_ask_user_ts_has_no_typebox_import():
 
 
 def test_ask_user_prompt_guidelines_offer_free_text_other():
-    """Issue #706: the guideline forbidding a free-text "Other" is retracted alongside the
+    """The guideline forbidding a free-text "Other" is retracted alongside the
     feature — otherwise the model is instructed not to use the row the tool just added."""
     text = ASK_USER_TS.read_text(encoding="utf-8")
     assert "Never fabricate" not in text, (
