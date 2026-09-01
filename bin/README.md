@@ -15,10 +15,11 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 
 Every script documents itself: run `swe-workbench-<name> --help` for usage, arguments, and
 behavior — there is no separate script-by-script table here to keep in sync with the code as
-scripts change. `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
-`swe-workbench-lsp`, `swe-workbench-pr-review-submit`, `swe-workbench-preflight-commit`, and
-`swe-workbench-result-check` are the six scripts in this directory with a `#!/usr/bin/env python3`
-shebang instead of `#!/usr/bin/env bash`. `comment-scan` is a pure diff-in/findings-out function
+scripts change. The scripts in this directory that carry a `#!/usr/bin/env python3`
+shebang instead of `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`,
+`swe-workbench-comment-scan`, `swe-workbench-handoff`, `swe-workbench-lsp`,
+`swe-workbench-memory`, `swe-workbench-pr-review-submit`, `swe-workbench-preflight-commit`,
+and `swe-workbench-result-check`. `comment-scan` is a pure diff-in/findings-out function
 (no git calls of its own; see `shared/agents/comment-scan.md` for the canonical diff command);
 `pr-review-submit` does call `git`/`gh` but needed Python's JSON and multi-call state-machine
 handling (422 retry, read-your-write confirmation) more than bash's process-spawning idioms; `lsp`
@@ -31,7 +32,11 @@ the same reason; `address-feedback-fetch` needed the same paginated-cursor state
 `pr-review-submit` (a `reviewThreads(first:100, after:$after)` / `pageInfo{endCursor hasNextPage}`
 loop) plus JSON emission over arbitrary-byte review-comment text, where bash would again mean a
 second escaping engine (`jq`) layered under the same shell process-spawning idioms `pr-review-submit`
-already rejected for the identical reason. Unlike `comment-scan` (advisory, correctly fails open),
+already rejected for the identical reason. `memory` resolves both harnesses' store paths,
+scans record input for secrets, and flock-serializes concurrent appends — that dual-store path
+resolution, JSON envelope emission, secret scan, and lock handling need Python's
+`json`/`re`/`fcntl`, where bash would need `jq` as a second escaping engine. Unlike `comment-scan`
+(advisory, correctly fails open),
 `preflight-commit`, `result-check`, and `address-feedback-fetch` fail closed: an error is a hard
 non-zero exit with nothing on stdout, never a silent "clean". Same bare-command convention
 applies; only the interpreter differs.

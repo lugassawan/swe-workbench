@@ -1,7 +1,7 @@
 /**
  * Pure translation from Pi's tool-call/session events to the CC-shaped JSON payloads
- * hooks/bash_guard.sh, hooks/secret_guard.py, hooks/workflow_resume_hint.sh, and
- * hooks/skill_autoload_hint.sh already read from stdin.
+ * hooks/bash_guard.sh, hooks/secret_guard.py, hooks/workflow_resume_hint.sh,
+ * hooks/skill_autoload_hint.sh, and hooks/memory_hint.sh already read from stdin.
  *
  * No I/O, no node:child_process, and no runtime import of @earendil-works/pi-coding-agent —
  * only `import type` — so this file stays exercisable under `node --experimental-strip-types`
@@ -99,4 +99,12 @@ export function resumeHintPayload(cwd: string, source: WorkflowResumeSource): Re
 
 export function skillHintPayload(filePath: string, sessionId: string): Record<string, unknown> {
   return { tool_input: { file_path: filePath }, session_id: sessionId };
+}
+
+/** hooks/memory_hint.sh reads `.cwd` and `.harness` from its session payload. */
+export function memoryHintPayload(
+  cwd: string,
+  harness: "claude" | "pi",
+): Record<string, unknown> {
+  return { cwd, harness };
 }

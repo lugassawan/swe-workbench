@@ -1,7 +1,7 @@
 /**
  * Composition root: wires bash_guard.sh/secret_guard.py as Pi tool_call guards, and
- * workflow_resume_hint.sh/skill_autoload_hint.sh as Pi session/tool_result hint sources — all
- * via guard-runner.ts, never reimplemented.
+ * workflow_resume_hint.sh/memory_hint.sh/skill_autoload_hint.sh as Pi session/tool_result hint
+ * sources — all via guard-runner.ts, never reimplemented.
  *
  * `toolName` narrowing uses a manual cast rather than the SDK's `isToolCallEventType` helper so
  * every @earendil-works/pi-coding-agent import here stays `import type`-only (pinned by
@@ -23,6 +23,7 @@ import {
   editPayloads,
   GUARD_DISPATCH,
   type GuardSpec,
+  memoryHintPayload,
   resumeHintPayload,
   sessionCompactSource,
   sessionStartSource,
@@ -33,6 +34,7 @@ import { runGuard as defaultRunGuard, type RunGuard } from "./guard-runner.ts";
 
 const RESUME_HINT_SCRIPT = "hooks/workflow_resume_hint.sh";
 const SKILL_HINT_SCRIPT = "hooks/skill_autoload_hint.sh";
+const MEMORY_HINT_SCRIPT = "hooks/memory_hint.sh";
 
 interface HookSpecificOutput {
   hookSpecificOutput?: { additionalContext?: string };
@@ -148,19 +150,20 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     pi.sendMessage({ customType, content, display: false }, { deliverAs });
   }
 
-  // Gated on project trust: workflow_resume_hint.sh injects repo-committed
-  // `.claude/cache/workflow-state/<branch>.json` content into model context, so an untrusted
-  // repo shouldn't reach the model this way.
+  // Gated on project trust: both hints here inject content into model context (repo-committed
+  // workflow state, agent-written cross-harness memory) — an untrusted repo must see neither.
   pi.on("session_start", async (event, ctx) => {
     if (!ctx.isProjectTrusted()) return;
     const source = sessionStartSource(event as SessionStartEvent);
     await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
+    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd, "pi"), ctx, "swe-workbench:memory-hint", "nextTurn");
   });
 
   pi.on("session_compact", async (event, ctx) => {
     if (!ctx.isProjectTrusted()) return;
     const source = sessionCompactSource(event as SessionCompactEvent);
     await emitHint(RESUME_HINT_SCRIPT, resumeHintPayload(ctx.cwd, source), ctx, "swe-workbench:workflow-resume-hint", "nextTurn");
+    await emitHint(MEMORY_HINT_SCRIPT, memoryHintPayload(ctx.cwd, "pi"), ctx, "swe-workbench:memory-hint", "nextTurn");
   });
 
   pi.on("tool_result", async (event, ctx) => {

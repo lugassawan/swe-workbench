@@ -548,6 +548,7 @@ const fields = {
     ...flatten(mod.editPayloads(editEvent)[0]),
   ],
   "workflow_resume_hint.sh": flatten(mod.resumeHintPayload("cwd-value", "startup")),
+  "memory_hint.sh": flatten(mod.memoryHintPayload("cwd-value", "pi")),
   "skill_autoload_hint.sh": flatten(mod.skillHintPayload("path-value", "session-value")),
 };
 
@@ -610,6 +611,7 @@ REFERENCED_FIELDS = {
     "bash_guard.sh": {"tool_input.command"},
     "secret_guard.py": {"tool_name", "tool_input.content", "tool_input.file_path", "tool_input.new_string"},
     "workflow_resume_hint.sh": {"cwd", "source"},
+    "memory_hint.sh": {"cwd", "harness"},
     "skill_autoload_hint.sh": {"tool_input.file_path", "session_id"},
 }
 
@@ -631,6 +633,7 @@ def test_referenced_fields_actually_appear_in_hook_source():
         "bash_guard.sh": (HOOKS_DIR / "bash_guard.sh").read_text(encoding="utf-8"),
         "secret_guard.py": (HOOKS_DIR / "secret_guard.py").read_text(encoding="utf-8"),
         "workflow_resume_hint.sh": (HOOKS_DIR / "workflow_resume_hint.sh").read_text(encoding="utf-8"),
+        "memory_hint.sh": (HOOKS_DIR / "memory_hint.sh").read_text(encoding="utf-8"),
         "skill_autoload_hint.sh": (HOOKS_DIR / "skill_autoload_hint.sh").read_text(encoding="utf-8"),
     }
     for hook, fields in REFERENCED_FIELDS.items():
@@ -651,6 +654,7 @@ HOOK_PI_STATUS = {
     "secret_guard.py": "wired",
     "handoff_guard.py": "n/a",
     "workflow_resume_hint.sh": "wired",
+    "memory_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",
     "skill_usage_record.sh": "n/a",

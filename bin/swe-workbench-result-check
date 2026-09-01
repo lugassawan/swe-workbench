@@ -72,6 +72,8 @@ REGISTRY: dict[str, dict[str, str]] = {
     # Handoff subcommands intentionally share one schema while returning
     # distinct data shapes; the checker validates their common envelope.
     "swb.handoff/1": {},
+    # Memory subcommands (render/show/record) share one schema the same way.
+    "swb.memory/1": {},
     "swb.address-feedback-fetch/1": {
         "state": "str",
         "owner": "str",
