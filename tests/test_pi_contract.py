@@ -651,6 +651,7 @@ HOOK_PI_STATUS = {
     "secret_guard.py": "wired",
     "handoff_guard.py": "n/a",
     "workflow_resume_hint.sh": "wired",
+    "memory_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",
     "skill_usage_record.sh": "n/a",

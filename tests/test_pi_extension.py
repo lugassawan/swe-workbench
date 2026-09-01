@@ -730,6 +730,142 @@ def test_session_start_emits_resume_hint_via_send_message(tmp_path_factory):
     assert isinstance(sent[0]["message"]["content"], str) and sent[0]["message"]["content"]
 
 
+_MEMORY_HINT_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const sent = [];
+const stubPi = {
+  on(event, handler) { handlers[event] = handler; },
+  sendMessage(message, options) { sent.push({ message, options }); },
+};
+
+// Fully stubbed runGuard (issue #697 Task 3): memory_hint.sh is spawned through the same
+// guard-runner seam as every other hook, so the adapter's emission contract — trust gate,
+// payload shape, customType, ordering, fail-open — is provable without the real script.
+const spawnCalls = [];
+let memorySpawnThrows = false;
+const runGuard = async (options) => {
+  spawnCalls.push({ scriptPath: options.scriptPath, payload: options.payload });
+  if (options.scriptPath.endsWith("memory_hint.sh")) {
+    if (memorySpawnThrows) throw new Error("forced memory-hint spawn failure (test)");
+    return { code: 0, stdout: '{"hookSpecificOutput":{"additionalContext":"MEM"}}', stderr: "" };
+  }
+  if (options.scriptPath.endsWith("workflow_resume_hint.sh")) {
+    return { code: 0, stdout: '{"hookSpecificOutput":{"additionalContext":"RESUME"}}', stderr: "" };
+  }
+  return { code: 0, stdout: "", stderr: "" };
+};
+registerGuards(stubPi, config.root, { runGuard });
+
+const mkCtx = (trusted) => ({
+  hasUI: true,
+  cwd: config.cwd,
+  signal: undefined,
+  isProjectTrusted: () => trusted,
+  ui: { notify() {} },
+  sessionManager: { getSessionId: () => "sess-memory-hint" },
+});
+
+const out = {};
+const snapshot = () => ({ sent: sent.slice(), spawnCalls: spawnCalls.slice() });
+
+sent.length = 0; spawnCalls.length = 0;
+await handlers["session_start"]({ type: "session_start", reason: "startup" }, mkCtx(true));
+out.trustedStart = snapshot();
+
+sent.length = 0; spawnCalls.length = 0;
+await handlers["session_start"]({ type: "session_start", reason: "startup" }, mkCtx(false));
+out.untrustedStart = snapshot();
+
+sent.length = 0; spawnCalls.length = 0;
+await handlers["session_compact"]({ type: "session_compact", reason: "manual" }, mkCtx(true));
+out.trustedCompact = snapshot();
+
+sent.length = 0; spawnCalls.length = 0;
+memorySpawnThrows = true;
+let threw = null;
+try {
+  await handlers["session_start"]({ type: "session_start", reason: "startup" }, mkCtx(true));
+} catch (err) {
+  threw = String((err && err.message) || err);
+}
+out.memorySpawnFailure = { threw, ...snapshot() };
+
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def memory_hint_result(tmp_path_factory):
+    config = {"root": str(ROOT), "cwd": str(ROOT)}
+    return _run_node(
+        _MEMORY_HINT_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-memory-hint-driver"
+    )
+
+
+def _memory_spawn(spawn_calls):
+    return [c for c in spawn_calls if c["scriptPath"].endswith("hooks/memory_hint.sh")]
+
+
+def _memory_messages(sent):
+    return [s for s in sent if s["message"]["customType"] == "swe-workbench:memory-hint"]
+
+
+@requires_node
+def test_session_start_spawns_memory_hint_with_cwd_only_payload(memory_hint_result):
+    calls = _memory_spawn(memory_hint_result["trustedStart"]["spawnCalls"])
+    assert len(calls) == 1
+    assert calls[0]["payload"] == {"cwd": str(ROOT)}
+
+
+@requires_node
+def test_session_start_emits_memory_hint_via_send_message(memory_hint_result):
+    messages = _memory_messages(memory_hint_result["trustedStart"]["sent"])
+    assert len(messages) == 1
+    assert messages[0]["message"] == {
+        "customType": "swe-workbench:memory-hint",
+        "content": "MEM",
+        "display": False,
+    }
+    assert messages[0]["options"] == {"deliverAs": "nextTurn"}
+
+
+@requires_node
+def test_memory_hint_is_gated_on_project_trust(memory_hint_result):
+    untrusted = memory_hint_result["untrustedStart"]
+    assert untrusted["spawnCalls"] == [], (
+        "an untrusted project must reach neither hint — the trust gate sits before both emits"
+    )
+    assert _memory_messages(untrusted["sent"]) == []
+
+
+@requires_node
+def test_session_compact_emits_memory_hint(memory_hint_result):
+    compact = memory_hint_result["trustedCompact"]
+    calls = _memory_spawn(compact["spawnCalls"])
+    assert len(calls) == 1
+    assert calls[0]["payload"] == {"cwd": str(ROOT)}
+    assert len(_memory_messages(compact["sent"])) == 1
+
+
+@requires_node
+def test_memory_hint_spawn_failure_fails_open(memory_hint_result):
+    failure = memory_hint_result["memorySpawnFailure"]
+    assert failure["threw"] is None, "an advisory hint must never throw out of the handler"
+    assert _memory_messages(failure["sent"]) == []
+
+
+@requires_node
+def test_memory_hint_emitted_after_resume_hint(memory_hint_result):
+    custom_types = [s["message"]["customType"] for s in memory_hint_result["trustedStart"]["sent"]]
+    assert custom_types == ["swe-workbench:workflow-resume-hint", "swe-workbench:memory-hint"]
+
+
 @requires_node
 def test_tool_result_emits_skill_hint_via_send_message_steer(guards_result):
     sent = guards_result["out"]["sentAfterToolResult"]
