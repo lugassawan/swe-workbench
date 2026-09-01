@@ -621,9 +621,7 @@ def test_pi_store_chmod_stops_at_state_root_override(tmp_path):
     assert (override / slug_of(tmp_path)).stat().st_mode & 0o777 == 0o700
 
 
-def test_pi_store_prepare_failure_is_clean_storage_error(
-    tmp_path, monkeypatch, capsys
-):
+def test_pi_store_prepare_failure_is_clean_storage_error(tmp_path, monkeypatch, capsys):
     # A failing mkdir/chmod must surface as the prefixed one-line StorageError
     # message with exit 1 — never a raw PermissionError traceback.
     (tmp_path / "home").mkdir()

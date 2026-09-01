@@ -154,9 +154,7 @@ def resolve_stores(anchor: Anchor) -> StorePaths:
     if root_exists and not root_is_dir:
         # A regular file where the store root belongs can never become a store —
         # every command would silently see the Pi store as absent.
-        raise StorageError(
-            f"the Pi memory state root is not a directory: {pi_root}"
-        )
+        raise StorageError(f"the Pi memory state root is not a directory: {pi_root}")
     claude = projects / anchor.slug / "memory"
     claude_cwd = (
         projects / anchor.cwd_slug / "memory"

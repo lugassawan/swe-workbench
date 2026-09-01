@@ -131,9 +131,7 @@ def test_harness_pi_payload_renders_pi_store_as_own(tmp_path):
         tmp_path / "home" / ".claude" / "projects" / slug_of(tmp_path) / "memory",
         [("claude-note", "Claude remembers this", "feedback")],
     )
-    result = run_shim(
-        SHIM, payload_with_cwd_and_harness(tmp_path, "pi"), cwd=tmp_path
-    )
+    result = run_shim(SHIM, payload_with_cwd_and_harness(tmp_path, "pi"), cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "## Pi memory (own)" in context
