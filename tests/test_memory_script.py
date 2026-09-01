@@ -8,8 +8,11 @@ no test ever touches a real ~/.claude or real XDG state tree.
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,18 @@ from conftest import _CLEAN_ENV
 ROOT = Path(__file__).parent.parent
 RUNTIME = ROOT / "bin" / "swe-workbench-memory"
 RESULT_CHECK = ROOT / "bin" / "swe-workbench-result-check"
+
+
+def load_runtime_module():
+    """Import the extensionless bin/swe-workbench-memory for in-process probes."""
+    loader = importlib.machinery.SourceFileLoader(
+        "swe_workbench_memory_runtime", str(RUNTIME)
+    )
+    spec = importlib.util.spec_from_loader("swe_workbench_memory_runtime", loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclass field resolution looks the module up
+    loader.exec_module(module)
+    return module
 
 
 def run_memory(args, cwd, input_text=None):
@@ -151,9 +166,8 @@ def test_dual_slug_claude_read_merges_main_first(worktree_repo):
         ],
     )
     out = run_memory(["show", "--as", "pi"], cwd=wt)
-    claude_entries = [
-        e for e in envelope(out)["data"]["entries"] if e["store"] == "claude"
-    ]
+    parsed = envelope(out)
+    claude_entries = [e for e in parsed["data"]["entries"] if e["store"] == "claude"]
     assert [e["name"] for e in claude_entries] == [
         "keep-builds-green",
         "slug-format",
@@ -163,6 +177,17 @@ def test_dual_slug_claude_read_merges_main_first(worktree_repo):
     assert [e["file"] for e in claude_entries].count(
         "feedback_keep-builds-green.md"
     ) == 1
+    # Entries carry an absolute per-entry path to the store they actually live in —
+    # store-path + basename composition would resolve worktree-slug entries wrongly.
+    by_name = {e["name"]: e for e in claude_entries}
+    for entry in claude_entries:
+        assert Path(entry["path"]).is_file()
+    cwd_memory = home / ".claude" / "projects" / slug_of(wt) / "memory"
+    main_memory = home / ".claude" / "projects" / slug_of(main) / "memory"
+    assert Path(by_name["worktree-only"]["path"]).is_relative_to(cwd_memory)
+    assert Path(by_name["keep-builds-green"]["path"]).is_relative_to(main_memory)
+    stores = parsed["data"]["stores"]
+    assert stores["claude_cwd"] == {"path": str(cwd_memory), "exists": True}
 
 
 # ── render (plan Step 5) ─────────────────────────────────────────────────────
@@ -343,6 +368,32 @@ def test_record_newest_entry_inserted_above_existing(tmp_path):
     assert lines[3].startswith("- [first](")
 
 
+def test_record_same_name_replaces_index_line(tmp_path):
+    # Same name + same date hash to the same entry file, so a re-record must leave
+    # exactly one index line — the newest description wins, no stale duplicate.
+    run_memory(
+        ["record", "--as", "pi", "--name", "dup", "--description", "first version"],
+        cwd=tmp_path,
+        input_text="body one\n",
+    )
+    run_memory(
+        ["record", "--as", "pi", "--name", "dup", "--description", "second version"],
+        cwd=tmp_path,
+        input_text="body two\n",
+    )
+    store = pi_store_dir(tmp_path)
+    index = (store / "MEMORY.md").read_text(encoding="utf-8")
+    entry_lines = [l for l in index.splitlines() if l.startswith("- [dup](")]
+    assert len(entry_lines) == 1
+    assert "second version" in entry_lines[0]
+    entry_files = list(store.glob("feedback_dup_*.md"))
+    assert len(entry_files) == 1
+    body = entry_files[0].read_text(encoding="utf-8")
+    assert "second version" in body
+    assert "body two" in body
+    assert "first version" not in body
+
+
 def test_record_refuses_non_owning_store_both_directions(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -409,6 +460,22 @@ def test_record_refuses_secret_shaped_input(tmp_path):
             ["record", "--as", "pi", "--name", "x", "--description", "d"],
             "Authorization: Bearer sk_" + "B" * 20,
         ),
+        (
+            [
+                "record",
+                "--as",
+                "pi",
+                "--name",
+                "x",
+                "--description",
+                "anthropic sk-ant-api03-" + "C" * 24,
+            ],
+            "b",
+        ),
+        (
+            ["record", "--as", "pi", "--name", "ghu_" + "D" * 20, "--description", "d"],
+            "b",
+        ),
     ]
     for args, body in cases:
         out = run_memory(args, cwd=tmp_path, input_text=body)
@@ -464,6 +531,7 @@ def test_record_parallel_appends_serialize_under_flock(tmp_path):
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             text=True,
             cwd=str(tmp_path),
             env={
@@ -483,6 +551,161 @@ def test_record_parallel_appends_serialize_under_flock(tmp_path):
     assert "- [parallel-a](" in index and "- [parallel-b](" in index
     assert lines[0] == "# Memory index" and lines[1] == ""
     assert len(lines) == 4  # header, blank, two entries — no torn interleaving
+
+
+def test_record_same_name_parallel_keeps_single_index_line(tmp_path):
+    # Same name + date hash to one entry file; entry write and index update must
+    # both sit inside the flock so the re-record is atomic vs a concurrent writer.
+    processes = [
+        subprocess.Popen(
+            [
+                str(RUNTIME),
+                "record",
+                "--as",
+                "pi",
+                "--name",
+                "dup",
+                "--description",
+                f"attempt-{label}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            cwd=str(tmp_path),
+            env={
+                **_CLEAN_ENV,
+                "SWE_WORKBENCH_MEMORY_STATE_DIR": str(tmp_path / "state"),
+                "HOME": str(tmp_path / "home"),
+            },
+        )
+        for label in ("one", "two")
+    ]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, stderr
+        assert json.loads(stdout)["schema"] == "swb.memory/1"
+    store = pi_store_dir(tmp_path)
+    index = (store / "MEMORY.md").read_text(encoding="utf-8")
+    assert len([l for l in index.splitlines() if l.startswith("- [dup](")]) == 1
+    entry_files = list(store.glob("feedback_dup_*.md"))
+    assert len(entry_files) == 1
+    body = entry_files[0].read_text(encoding="utf-8")
+    assert body.startswith("---\n")
+    assert "name: dup\n" in body
+    assert "attempt-one" in body or "attempt-two" in body
+
+
+def test_pi_store_chmod_stops_at_state_root_override(tmp_path):
+    # Regression (Phase-4 review): the fixed 4-level chmod walk escaped a state-dir
+    # override and chmodded user-provided ancestor directories.
+    override = tmp_path / "layer-one" / "layer-two"
+    override.mkdir(parents=True)
+    override.chmod(0o750)
+    (tmp_path / "layer-one").chmod(0o755)
+    env = dict(_CLEAN_ENV)
+    env["SWE_WORKBENCH_MEMORY_STATE_DIR"] = str(override)
+    env["HOME"] = str(tmp_path / "home")
+    env.pop("XDG_STATE_HOME", None)
+    result = subprocess.run(
+        [str(RUNTIME), "record", "--as", "pi", "--name", "n", "--description", "d"],
+        input="",
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "layer-one").stat().st_mode & 0o777 == 0o755
+    assert override.stat().st_mode & 0o777 == 0o750
+    assert (override / slug_of(tmp_path)).stat().st_mode & 0o777 == 0o700
+
+
+def test_pi_store_prepare_failure_is_clean_storage_error(
+    tmp_path, monkeypatch, capsys
+):
+    # A failing mkdir/chmod must surface as the prefixed one-line StorageError
+    # message with exit 1 — never a raw PermissionError traceback.
+    (tmp_path / "home").mkdir()
+    body_file = tmp_path / "body.md"
+    body_file.write_text("body\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("SWE_WORKBENCH_MEMORY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+
+    def deny(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", deny)
+    module = load_runtime_module()
+    code = module.main(
+        [
+            "record",
+            "--as",
+            "pi",
+            "--name",
+            "x",
+            "--description",
+            "d",
+            "--body-file",
+            str(body_file),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert captured.err.splitlines() == [
+        "swe-workbench-memory: could not prepare the Pi memory store directory: "
+        "[Errno 13] Permission denied"
+    ]
+
+
+def test_record_body_file_round_trip(tmp_path):
+    body_file = tmp_path / "note.md"
+    body_file.write_text("## Gotcha\nAlways run the full suite.\n", encoding="utf-8")
+    out = run_memory(
+        [
+            "record",
+            "--as",
+            "pi",
+            "--name",
+            "note",
+            "--description",
+            "d",
+            "--body-file",
+            str(body_file),
+        ],
+        cwd=tmp_path,
+        input_text="",
+    )
+    envelope(out)
+    entry = next(pi_store_dir(tmp_path).glob("feedback_note_*.md"))
+    text = entry.read_text(encoding="utf-8")
+    assert "## Gotcha" in text
+    assert "Always run the full suite." in text
+
+
+def test_record_refuses_missing_body_file_before_any_write(tmp_path):
+    out = run_memory(
+        [
+            "record",
+            "--as",
+            "pi",
+            "--name",
+            "x",
+            "--description",
+            "d",
+            "--body-file",
+            str(tmp_path / "absent.md"),
+        ],
+        cwd=tmp_path,
+        input_text="",
+    )
+    assert out.returncode == 1
+    assert out.stdout == ""
+    assert "could not read --body-file" in out.stderr
+    assert not pi_store_dir(tmp_path).exists()
 
 
 def test_record_claude_writes_claude_store_in_claude_format(tmp_path, worktree_repo):

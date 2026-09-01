@@ -49,8 +49,9 @@ overrides the Pi store root for tests. On-disk format is exactly Claude Code's:
 - `MEMORY.md` — `# Memory index` header, then newest-first
   `- [<summary>](<entry-file>.md) — <detail>` lines.
 - Entry files — frontmatter with `name`, `description`, and a `metadata:` block
-  (`node_type: memory`, `type: feedback|project`, plus `originHarness: pi` for
-  runtime-written entries); free-form body after the closing `---`.
+  (`node_type: memory`, `type: feedback|project`, plus
+  `originHarness: <claude|pi>` — the harness that wrote it — for runtime-written
+  entries); free-form body after the closing `---`.
 
 Concurrent `record` appends serialize via `fcntl.flock` on a `.lock` file in the
 store directory — N parallel rimba sessions, one `MEMORY.md`, no torn writes.
@@ -80,8 +81,9 @@ write.
   from `--as`; a `--store` value that disagrees fails closed (exit 1, empty
   stdout, both stores untouched).
 - **Secret scan on every record input** (name, description, body): bearer/basic
-  authorization headers and `ghp_`/`gho_`/`ghs_`/`sk_` tokens are refused —
-  memory outlives the session that wrote it.
+  authorization headers and `ghp_`/`gho_`/`ghu_`/`ghs_`/`sk_`/`sk-ant-`/`github_pat_`/
+  `glpat-`/`xox[abpr]-`/`AKIA…` tokens are refused — memory outlives the session
+  that wrote it.
 - Entry names/descriptions are coerced to single lines, and entry filenames are
   reduced to a safe charset, so record input cannot forge frontmatter or
   traverse out of the store directory.

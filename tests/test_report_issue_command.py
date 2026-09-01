@@ -172,18 +172,25 @@ def test_report_issue_memory_recency_contract_preserved():
     )
 
 
-def test_report_issue_memory_body_path_via_stores_composition():
-    """Body paths must compose .data.stores[store].path + .file — entries carry a basename only."""
+def test_report_issue_memory_body_path_via_entries_path():
+    """Body paths come from each entry's absolute .path field — never a
+    .data.stores[store].path + .file composition, which resolves cwd-slug-merged
+    entries against the wrong store."""
     text = REPORT_ISSUE_MD.read_text()
     for label, block in (
         ("Branch A step 2", _branch_a_step2_slice(text)),
         ("Branch B step 1", _branch_b_step1_slice(text)),
     ):
-        assert ".data.stores" in block, (
-            f"{label} must read body paths via .data.stores[store].path"
+        assert ".data.entries" in block, (
+            f"{label} must read body paths via .data.entries[].path"
         )
-        assert ".file" in block, (
-            f"{label} must compose the body path with the entry's basename .file field"
+        assert ".path" in block, (
+            f"{label} must use the entry's absolute .path field"
+        )
+        assert ".data.stores" not in block, (
+            f"{label} must not compose body paths from .data.stores — the store-path "
+            "+ basename composition resolves cwd-slug-merged entries against the "
+            "wrong store"
         )
 
 

@@ -15,11 +15,11 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 
 Every script documents itself: run `swe-workbench-<name> --help` for usage, arguments, and
 behavior — there is no separate script-by-script table here to keep in sync with the code as
-scripts change. `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
-`swe-workbench-lsp`, `swe-workbench-memory`, `swe-workbench-pr-review-submit`,
-`swe-workbench-preflight-commit`, and `swe-workbench-result-check` are the seven scripts in this
-directory with a `#!/usr/bin/env python3`
-shebang instead of `#!/usr/bin/env bash`. `comment-scan` is a pure diff-in/findings-out function
+scripts change. The scripts in this directory that carry a `#!/usr/bin/env python3`
+shebang instead of `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`,
+`swe-workbench-comment-scan`, `swe-workbench-handoff`, `swe-workbench-lsp`,
+`swe-workbench-memory`, `swe-workbench-pr-review-submit`, `swe-workbench-preflight-commit`,
+and `swe-workbench-result-check`. `comment-scan` is a pure diff-in/findings-out function
 (no git calls of its own; see `shared/agents/comment-scan.md` for the canonical diff command);
 `pr-review-submit` does call `git`/`gh` but needed Python's JSON and multi-call state-machine
 handling (422 retry, read-your-write confirmation) more than bash's process-spawning idioms; `lsp`

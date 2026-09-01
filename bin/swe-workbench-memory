@@ -28,7 +28,10 @@ SECRET_PATTERNS = (
         r"\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic)\s+\S+",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:ghp|gho|ghs|sk)_[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|sk)_[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\b(?:github_pat_|sk-ant-|glpat-)[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bxox[abpr]-[A-Za-z0-9-]{8,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 )
 DATA_FENCE = (
     "The following is accumulated project memory (corrections, gotchas, history) "
@@ -88,6 +91,7 @@ class MemoryEntry:
     store: str
     name: str
     file: str
+    path: str
     summary: str
     description: str
     type: str
@@ -139,13 +143,27 @@ def state_root() -> Path:
 
 def resolve_stores(anchor: Anchor) -> StorePaths:
     projects = Path.home() / ".claude" / "projects"
+    pi_root = state_root()
+    try:
+        root_exists = pi_root.exists()
+        root_is_dir = pi_root.is_dir()
+    except OSError as error:
+        raise StorageError(
+            f"could not probe the Pi memory state root at {pi_root}: {error}"
+        ) from error
+    if root_exists and not root_is_dir:
+        # A regular file where the store root belongs can never become a store —
+        # every command would silently see the Pi store as absent.
+        raise StorageError(
+            f"the Pi memory state root is not a directory: {pi_root}"
+        )
     claude = projects / anchor.slug / "memory"
     claude_cwd = (
         projects / anchor.cwd_slug / "memory"
         if anchor.cwd_slug != anchor.slug
         else None
     )
-    return StorePaths(claude, state_root() / anchor.slug, claude_cwd)
+    return StorePaths(claude, pi_root / anchor.slug, claude_cwd)
 
 
 def write_envelope(envelope: Envelope) -> None:
@@ -258,11 +276,21 @@ def load_store_entries(
     store_dir: Path, store: str
 ) -> tuple[list[MemoryEntry], list[dict[str, str]]]:
     index_path = store_dir / "MEMORY.md"
-    if not index_path.is_file():
+    try:
+        index_is_file = index_path.is_file()
+    except OSError as error:
+        return [], [
+            {
+                "code": "index_unreadable",
+                "message": f"could not probe the memory index at {index_path}: {error}",
+                "subject": str(index_path),
+            }
+        ]
+    if not index_is_file:
         return [], []
     try:
         index_text = index_path.read_text(encoding="utf-8")
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         return [], [
             {
                 "code": "index_unreadable",
@@ -279,11 +307,11 @@ def load_store_entries(
         entry_path = store_dir / file_name
         try:
             fields = parse_frontmatter(entry_path.read_text(encoding="utf-8"))
-        except OSError:
+        except (OSError, UnicodeDecodeError) as error:
             warnings.append(
                 {
                     "code": "entry_unreadable",
-                    "message": f"could not read memory entry {file_name}",
+                    "message": f"could not read memory entry {file_name}: {error}",
                     "subject": str(entry_path),
                 }
             )
@@ -293,6 +321,7 @@ def load_store_entries(
                 store=store,
                 name=fields.get("name") or summary,
                 file=file_name,
+                path=str(entry_path.resolve()),
                 summary=summary,
                 description=fields.get("description") or detail or summary,
                 type=fields.get("type") or "",
@@ -323,11 +352,29 @@ def anchor_data(anchor: Anchor) -> dict[str, object]:
     }
 
 
-def stores_data(stores: StorePaths) -> dict[str, object]:
-    return {
-        "claude": {"path": str(stores.claude), "exists": stores.claude.is_dir()},
-        "pi": {"path": str(stores.pi), "exists": stores.pi.is_dir()},
-    }
+def stores_data(stores: StorePaths) -> tuple[dict[str, object], list[dict[str, str]]]:
+    data: dict[str, object] = {}
+    warnings: list[dict[str, str]] = []
+    probes: list[tuple[str, Path]] = [("claude", stores.claude), ("pi", stores.pi)]
+    if stores.claude_cwd is not None:
+        probes.append(("claude_cwd", stores.claude_cwd))
+    for label, store_dir in probes:
+        entry: dict[str, object] = {"path": str(store_dir)}
+        try:
+            # pathlib propagates EACCES-style errors from is_dir(); degrade to a
+            # warning instead of letting render/show crash on an unreadable store.
+            entry["exists"] = store_dir.is_dir()
+        except OSError as error:
+            entry["exists"] = False
+            warnings.append(
+                {
+                    "code": "index_unreadable",
+                    "message": f"could not probe the memory store at {store_dir}: {error}",
+                    "subject": str(store_dir),
+                }
+            )
+        data[label] = entry
+    return data, warnings
 
 
 def cmd_show(as_harness: str) -> Envelope:
@@ -340,9 +387,11 @@ def cmd_show(as_harness: str) -> Envelope:
         own_entries, warnings = load_claude_entries(stores)
         other_entries, other_warnings = load_store_entries(stores.pi, "pi")
     warnings.extend(other_warnings)
+    store_info, store_warnings = stores_data(stores)
+    warnings.extend(store_warnings)
     data = {
         "anchor": anchor_data(anchor),
-        "stores": stores_data(stores),
+        "stores": store_info,
         "entries": [asdict(entry) for entry in own_entries + other_entries],
     }
     return Envelope("partial" if warnings else "ok", data, warnings)
@@ -398,12 +447,14 @@ def cmd_render(as_harness: str) -> Envelope:
         (SECTION_TITLES[(other_harness(as_harness), False)], other_entries),
     ]
     markdown, truncated, dropped = compose_markdown(sections)
+    store_info, store_warnings = stores_data(stores)
+    warnings.extend(store_warnings)
     data = {
         "markdown": markdown,
         "truncated": truncated,
         "dropped_entries": dropped,
         "anchor": anchor_data(anchor),
-        "stores": stores_data(stores),
+        "stores": store_info,
     }
     return Envelope("partial" if warnings else "ok", data, warnings)
 
@@ -444,10 +495,21 @@ def entry_text(
     return "\n".join(lines) + "\n"
 
 
-def insert_newest_first(existing: str, line: str) -> str:
+def _references_entry(index_line: str, file_name: str) -> bool:
+    match = INDEX_LINE.match(index_line)
+    return match is not None and Path(match.group("file")).name == file_name
+
+
+def insert_newest_first(existing: str, line: str, file_name: str) -> str:
+    """Insert at the top, keeping one line per entry file — a re-record replaces
+    its own line so the newest body wins."""
     if not existing.strip():
         return f"# Memory index\n\n{line}\n"
-    lines = existing.splitlines()
+    lines = [
+        current
+        for current in existing.splitlines()
+        if not _references_entry(current, file_name)
+    ]
     if lines and lines[0].strip() == "# Memory index":
         insert_at = 2 if len(lines) > 1 and lines[1].strip() == "" else 1
     else:
@@ -458,13 +520,20 @@ def insert_newest_first(existing: str, line: str) -> str:
 
 
 def ensure_pi_store_dir(store_dir: Path) -> None:
-    store_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    level = store_dir
-    for _ in range(
-        4
-    ):  # <slug>, v1, memory, swe-workbench — the state home itself stays untouched
-        level.chmod(0o700)
-        level = level.parent
+    try:
+        store_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Tighten only components strictly below the state root — a
+        # SWE_WORKBENCH_MEMORY_STATE_DIR override's ancestors are user-provided
+        # and must keep their own modes.
+        root = state_root()
+        level = store_dir
+        while level != root and root in level.parents:
+            level.chmod(0o700)
+            level = level.parent
+    except OSError as error:
+        raise StorageError(
+            f"could not prepare the Pi memory store directory: {error}"
+        ) from error
 
 
 def origin_path(anchor: Anchor) -> str:
@@ -526,12 +595,14 @@ def cmd_record(
     safe_description = single_line(description)
     file_name = entry_file_name(entry_type, safe_name)
     entry_path = store_dir / file_name
-    write_atomic(
-        entry_path,
-        entry_text(safe_name, safe_description, entry_type, as_harness, body),
-    )
     index_path = store_dir / "MEMORY.md"
     with store_flock(store_dir):
+        # The entry write sits inside the lock too: a same-name re-record must
+        # replace file and index line as one unit against a concurrent writer.
+        write_atomic(
+            entry_path,
+            entry_text(safe_name, safe_description, entry_type, as_harness, body),
+        )
         try:
             existing_index = (
                 index_path.read_text(encoding="utf-8") if index_path.is_file() else ""
@@ -539,7 +610,9 @@ def cmd_record(
         except OSError as error:
             raise StorageError(f"could not read the memory index: {error}") from error
         index_line = f"- [{safe_name}]({file_name}) — {safe_description}"
-        write_atomic(index_path, insert_newest_first(existing_index, index_line))
+        write_atomic(
+            index_path, insert_newest_first(existing_index, index_line, file_name)
+        )
     return Envelope(
         "ok",
         {

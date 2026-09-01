@@ -42,8 +42,9 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
    ```
    Read entries with `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.store) \(.name) \(.description)"'`
    — **entry order is the recency signal** (index order, newest first; there is no date
-   frontmatter). Read an entry's full body at `.data.stores[.store].path` + `/` + `.file` (the
-   envelope's `file` is a basename only). Collect additional candidates until you have up to 3,
+   frontmatter). Read an entry's full body at its `.data.entries[].path` field — an absolute
+   path resolved per entry by the runtime, so a worktree/cwd-slug merged entry points at the
+   store it actually lives in. Collect additional candidates until you have up to 3,
    prioritising entries that mention the plugin, commands, agents, or skills by name.
 
 3. Present candidates numbered 1–N (max 3) with a one-line framing each:
@@ -71,7 +72,7 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
    ```bash
    RESULT=$(swe-workbench-memory show --as claude | swe-workbench-result-check swb.memory/1) || exit 1
    ```
-   Read every entry the envelope lists, from both stores: `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.name) \(.description) \(.type) \(.store) \(.file)"'`. Capture each entry's `name`, `description`, and `type` straight from the envelope — the envelope's `type` field replaces the old dual frontmatter-convention read — plus its body, read from `.data.stores[.store].path` + `/` + `.file` (the envelope's `file` is a basename only). Preserve the entries' listed order — it is the only recency signal available (no date frontmatter exists). On disk, the claude store is a `MEMORY.md` index linking `feedback_*.md` / `project_*.md` files — shape context only; the envelope already carries every path you need.
+   Read every entry the envelope lists, from both stores: `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.name) \(.description) \(.type) \(.store) \(.file)"'`. Capture each entry's `name`, `description`, and `type` straight from the envelope — the envelope's `type` field replaces the old dual frontmatter-convention read — plus its body, read from the entry's absolute `.data.entries[].path` field (resolved per entry by the runtime, so a worktree/cwd-slug merged entry points at the store it actually lives in). Preserve the entries' listed order — it is the only recency signal available (no date frontmatter exists). On disk, the claude store is a `MEMORY.md` index linking `feedback_*.md` / `project_*.md` files — shape context only; the envelope already carries every path you need.
 
 2. **Harvest conversation signal.** Separately note which plugin-related themes the current conversation itself touches. Keep this as its own set — it feeds the recency boost in step 4, it is not merged into the memory set.
 
