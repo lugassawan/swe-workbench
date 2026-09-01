@@ -56,6 +56,16 @@ overrides the Pi store root for tests. On-disk format is exactly Claude Code's:
 Concurrent `record` appends serialize via `fcntl.flock` on a `.lock` file in the
 store directory — N parallel rimba sessions, one `MEMORY.md`, no torn writes.
 
+## Recording
+
+`/swe-workbench:memory` (Claude Code) / `/memory` (Pi) is the capture surface:
+it detects the invoking harness from `PI_SESSION_ID`, writes the body to a temp
+file via the Write tool, and calls `record --as <harness>` through
+`swe-workbench-result-check swb.memory/1`. Record input is bounded (name ≤ 200 B,
+description ≤ 1000 B, body ≤ 12 000 B) and refused fail-closed — an entry that
+could never fit under the 16 KiB render cap is rejected at write time, not
+silently dropped at render time.
+
 ## Injection
 
 Rendered memory is **agent-written content re-injected into future sessions**,
@@ -84,6 +94,8 @@ write.
   authorization headers and `ghp_`/`gho_`/`ghu_`/`ghs_`/`sk_`/`sk-ant-`/`github_pat_`/
   `glpat-`/`xox[abpr]-`/`AKIA…` tokens are refused — memory outlives the session
   that wrote it.
-- Entry names/descriptions are coerced to single lines, and entry filenames are
-  reduced to a safe charset, so record input cannot forge frontmatter or
-  traverse out of the store directory.
+- Entry names/descriptions are coerced to single lines, and entry filenames
+  carry a hash of the raw name plus a safe-charset stem — distinct names that
+  sanitize to the same stem never collapse into one entry, while a cross-day
+  re-record still replaces its own line — so record input cannot forge
+  frontmatter, collide distinct entries, or traverse out of the store directory.

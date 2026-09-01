@@ -23,6 +23,9 @@ STATE_DIRECTORY_NAME = Path("swe-workbench") / "memory" / "v1"
 HARNESSES = ("claude", "pi")
 ENTRY_TYPES = ("feedback", "project")
 MAX_RENDER_BYTES = 16384
+MAX_NAME_BYTES = 200
+MAX_DESCRIPTION_BYTES = 1000
+MAX_BODY_BYTES = 12000
 SECRET_PATTERNS = (
     re.compile(
         r"\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic)\s+\S+",
@@ -467,11 +470,16 @@ def single_line(value: str) -> str:
 
 
 def entry_file_name(entry_type: str, name: str) -> str:
-    digest = hashlib.sha256(
-        f"{name}{datetime.now(timezone.utc).date().isoformat()}".encode()
+    # The name hash pins entry identity: distinct raw names that sanitize to
+    # the same stem ("My Feature!" vs "My-Feature?") must never collide, so it
+    # hashes the raw name, never the sanitized stem. The date digest keeps
+    # same-day records from overwriting each other's filenames.
+    name_hash = hashlib.sha256(name.encode()).hexdigest()[:8]
+    date_digest = hashlib.sha256(
+        datetime.now(timezone.utc).date().isoformat().encode()
     ).hexdigest()[:8]
     safe_stem = re.sub(r"[^A-Za-z0-9_]", "_", name.replace("-", "_"))
-    return f"{entry_type}_{safe_stem}_{digest}.md"
+    return f"{entry_type}_{safe_stem}_{name_hash}_{date_digest}.md"
 
 
 def entry_text(
@@ -494,16 +502,21 @@ def entry_text(
     return "\n".join(lines) + "\n"
 
 
+def _entry_identity(file_basename: str) -> str:
+    """Strip the dated digest segment; the remainder (type, stem, raw-name
+    hash) is stable across days and unique per raw name."""
+    return file_basename[: -len(".md")].rsplit("_", 1)[0]
+
+
 def _references_entry(index_line: str, file_name: str) -> bool:
     match = INDEX_LINE.match(index_line)
     if match is None:
         return False
     referenced = Path(match.group("file")).name
-    if referenced == file_name:
-        return True
-    # Same entry identity across days: the digest is dated, so a cross-day
-    # re-record produces a different file name with the same type_name prefix.
-    return referenced.rsplit("_", 1)[0] == file_name.rsplit("_", 1)[0]
+    # Identity keys on the embedded raw-name hash, so a cross-day re-record
+    # (fresh date digest, same raw name) replaces its own line while distinct
+    # names sharing a sanitized stem never collapse into one entry.
+    return _entry_identity(referenced) == _entry_identity(file_name)
 
 
 def insert_newest_first(existing: str, line: str, file_name: str) -> str:
@@ -584,6 +597,18 @@ def cmd_record(
         raise InputError(
             "memory names must not contain square brackets — the index line format reserves them"
         )
+    # A single oversized entry would silently vanish from every render (the
+    # drop loop sheds whole entries against MAX_RENDER_BYTES), so refuse it at
+    # record time instead — the error names the field and the cap.
+    for field, text, cap in (
+        ("--name", name, MAX_NAME_BYTES),
+        ("--description", description, MAX_DESCRIPTION_BYTES),
+        ("--body", body, MAX_BODY_BYTES),
+    ):
+        if len(text.encode("utf-8")) > cap:
+            raise InputError(
+                f"{field} exceeds the {cap}-byte cap — record smaller entries so each stays renderable"
+            )
     for field, text in (("name", name), ("description", description), ("body", body)):
         if any(pattern.search(text) for pattern in SECRET_PATTERNS):
             raise InputError(

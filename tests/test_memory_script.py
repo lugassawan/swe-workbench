@@ -828,14 +828,17 @@ def test_show_parses_legacy_bracketed_summary(tmp_path):
 
 
 def test_record_replaces_cross_day_same_name_line(tmp_path):
-    """The entry digest is dated, so a cross-day re-record yields a different
-    file name — the dedup must key on the type_name prefix, not the full name."""
+    """The date digest is dated, so a cross-day re-record yields a different
+    file name — the dedup must key on the raw-name-hash identity, not the full
+    name."""
     store = tmp_path / "state" / slug_of(tmp_path)
     store.mkdir(parents=True)
+    name_hash = hashlib.sha256(b"dup").hexdigest()[:8]
+    stale_file = f"feedback_dup_{name_hash}_deadbeef.md"
     (store / "MEMORY.md").write_text(
-        "# Memory index\n\n- [dup](feedback_dup_deadbeef.md) — old body\n"
+        f"# Memory index\n\n- [dup]({stale_file}) — old body\n"
     )
-    (store / "feedback_dup_deadbeef.md").write_text("---\nname: dup\n---\nold\n")
+    (store / stale_file).write_text("---\nname: dup\n---\nold\n")
     result = run_memory(
         ["record", "--as", "pi", "--name", "dup", "--description", "new"],
         cwd=tmp_path,
@@ -846,6 +849,68 @@ def test_record_replaces_cross_day_same_name_line(tmp_path):
     dup_lines = [line for line in index.splitlines() if "feedback_dup_" in line]
     assert len(dup_lines) == 1, index
     assert "deadbeef" not in index
+
+
+def test_distinct_names_with_same_stem_never_collide(tmp_path):
+    """Entry identity keys on the raw name's hash: two distinct names that
+    sanitize to the same stem must both stay listed — the feature exists to
+    keep gotchas from silently disappearing."""
+    first = run_memory(
+        ["record", "--as", "pi", "--name", "My Feature!", "--description", "one"],
+        cwd=tmp_path,
+        input_text="first body",
+    )
+    second = run_memory(
+        ["record", "--as", "pi", "--name", "My-Feature?", "--description", "two"],
+        cwd=tmp_path,
+        input_text="second body",
+    )
+    envelope(first)
+    envelope(second)
+    index = (store_index(tmp_path)).read_text()
+    stem_lines = [line for line in index.splitlines() if "feedback_My_Feature_" in line]
+    assert len(stem_lines) == 2, index
+    parsed = envelope(run_memory(["show", "--as", "pi"], cwd=tmp_path))
+    names = [e["name"] for e in parsed["data"]["entries"]]
+    assert "My Feature!" in names and "My-Feature?" in names
+
+
+def store_index(tmp_path) -> Path:
+    return tmp_path / "state" / slug_of(tmp_path) / "MEMORY.md"
+
+
+def test_record_enforces_length_caps(tmp_path):
+    """Each cap refuses fail-closed before any write; at-cap input passes."""
+    refusals = [
+        ("n" * 201, "d", "b"),
+        ("ok", "d" * 1001, "b"),
+        ("ok", "d", "b" * 12001),
+    ]
+    for name, description, body in refusals:
+        result = run_memory(
+            ["record", "--as", "pi", "--name", name, "--description", description],
+            cwd=tmp_path,
+            input_text=body,
+        )
+        assert result.returncode == 1, (name[:10], len(description), len(body))
+        assert result.stdout == ""
+        assert "byte cap" in result.stderr
+    assert not (tmp_path / "state" / slug_of(tmp_path)).exists()
+    accepted = run_memory(
+        [
+            "record",
+            "--as",
+            "pi",
+            "--name",
+            "n" * 200,
+            "--description",
+            "d" * 1000,
+        ],
+        cwd=tmp_path,
+        input_text="b" * 12000,
+    )
+    envelope(accepted)
+    assert store_index(tmp_path).is_file()
 
 
 def test_invalid_utf8_index_degrades_and_record_fails_clean(tmp_path):
