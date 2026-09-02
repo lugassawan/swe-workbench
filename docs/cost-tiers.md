@@ -151,7 +151,7 @@ reason and no warning, since there is no model to have fallen back from.)
 
 There is no runtime, user-global, or project-local override surface for any of this — `MODEL_POLICY`
 is a fixed table in this plugin's own reviewed source, not a config file. See
-`docs/plugin-platform-decisions.md` §9 for the full trust-boundary rationale (hardcoded in reviewed
+`docs/decisions-task-dispatch.md` for the full trust-boundary rationale (hardcoded in reviewed
 source, not a runtime-editable settings file, specifically to avoid becoming an exfiltration
 primitive) and why exact ids strengthen that boundary rather than weaken it.
 

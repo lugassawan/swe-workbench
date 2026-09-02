@@ -125,7 +125,7 @@ hardcoded version literal is caught well before the release script ever runs.
 
 ## Pi adapter
 
-`pi/extensions/` is a runtime adapter that lets the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) load this plugin's `skills/`, `commands/`, and `agents/` trees unchanged — see `docs/plugin-platform-decisions.md` §6–§10 for the design rulings behind it. The root `package.json` (there is no `pi/package.json`) is what `pi install git:github.com/lugassawan/swe-workbench` actually reads; Pi's manifest resolution stops at the first `package.json` carrying a `pi` key, and `findPluginRoot()` in `pi/extensions/index.ts` walks up from the extension's own file for `.claude-plugin/plugin.json`, so the publishable unit is the whole plugin tree, not `pi/` alone.
+`pi/extensions/` is a runtime adapter that lets the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) load this plugin's `skills/`, `commands/`, and `agents/` trees unchanged — see `docs/decisions-pi-port.md` and `docs/decisions-task-dispatch.md` for the design rulings behind it. The root `package.json` (there is no `pi/package.json`) is what `pi install git:github.com/lugassawan/swe-workbench` actually reads; Pi's manifest resolution stops at the first `package.json` carrying a `pi` key, and `findPluginRoot()` in `pi/extensions/index.ts` walks up from the extension's own file for `.claude-plugin/plugin.json`, so the publishable unit is the whole plugin tree, not `pi/` alone.
 
 **Setup:**
 
@@ -147,7 +147,7 @@ npm run typecheck
 pytest tests/test_pi_extension.py tests/test_pi_contract.py -v
 ```
 
-`test_pi_extension.py` drives the real `pi/extensions/*.ts` under `node --experimental-strip-types` against a stub `ExtensionAPI` — no `pi` CLI or `node_modules` install required, since every `@earendil-works/*` import is type-only and elided by the stripper. `test_pi_contract.py` ratchets the frontmatter/tool-vocabulary boundary between this repo's `agents/*.md`/`commands/*.md` and Pi's own (stricter) YAML parser — a golden-inventory contract, not a schema, per `docs/plugin-platform-decisions.md` §2.
+`test_pi_extension.py` drives the real `pi/extensions/*.ts` under `node --experimental-strip-types` against a stub `ExtensionAPI` — no `pi` CLI or `node_modules` install required, since every `@earendil-works/*` import is type-only and elided by the stripper. `test_pi_contract.py` ratchets the frontmatter/tool-vocabulary boundary between this repo's `agents/*.md`/`commands/*.md` and Pi's own (stricter) YAML parser — a golden-inventory contract, not a schema, per `docs/decisions-ci-validation.md` §1.
 
 **Release:** the root `package.json` and `package-lock.json` version fields are among the fields `scripts/bump-version.sh` keeps in sync (see "Cutting a release" above) — there is no separate manual step, and nothing here is generated, so there is no "regenerate the adapter" step either.
 

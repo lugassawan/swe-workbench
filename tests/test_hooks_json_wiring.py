@@ -7,7 +7,7 @@ silently killing the hook — for bash_guard.sh and secret_guard.py that means
 a security control stops vetting tool calls with no error surfaced. Pinning
 `bash -c` here (never `$SHELL`/`sh`) is load-bearing: a harness that shelled
 out via zsh would report green against the pre-fix strings and guard nothing.
-See docs/plugin-platform-decisions.md for background.
+See docs/decisions-hooks.md for background.
 """
 
 import json

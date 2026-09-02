@@ -9,7 +9,7 @@
  * queries ctx.modelRegistry.
  *
  * Model selection here is EXACT id equality, never a substring or shortest-match heuristic (see
- * docs/plugin-platform-decisions.md §9 for why the earlier substring-match design was replaced) —
+ * docs/decisions-task-dispatch.md for why the earlier substring-match design was replaced) —
  * a catalog reshuffle or a new sibling id can never silently re-point a tier at the wrong model.
  */
 

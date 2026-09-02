@@ -30,7 +30,7 @@ For the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) (a 
 pi install git:github.com/lugassawan/swe-workbench
 ```
 
-This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/plugin-platform-decisions.md` for the Pi-specific rulings.
+This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/decisions-pi-port.md` for the Pi-specific rulings.
 
 ## What's inside
 

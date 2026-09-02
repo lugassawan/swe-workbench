@@ -57,7 +57,7 @@ and `skill_autoload_hint.sh` to Pi, but not this hook. `worktree_permission_gran
 `permissionDecision: "allow"` to skip Claude Code's file-operation permission prompts inside a
 worktree — Pi's own README states "No permission popups," so there is no prompt surface for a
 `tool_call` handler to grant permission *for*. This is a permanent, explicit N/A, not a deferred
-port: see `docs/plugin-platform-decisions.md` §6 and `tests/test_pi_contract.py`'s
+port: see `docs/decisions-pi-port.md` §1 and `tests/test_pi_contract.py`'s
 `HOOK_PI_STATUS["worktree_permission_grant.sh"] == "n/a"`.
 
 ## Manual smoke test

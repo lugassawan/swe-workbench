@@ -379,7 +379,7 @@ def check_pi_package_json(plugin_data):
     `pi.skills`/`pi.prompts`/`pi.themes` sibling key — the manifest route's loader recurses into
     subdirectories where resources_discover's does not, so declaring any of those here would
     silently republish a future nested skills/commands subdirectory as a top-level artifact (see
-    docs/plugin-platform-decisions.md)."""
+    docs/decisions-pi-port.md §4)."""
     path = ROOT / "package.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -402,7 +402,7 @@ def check_pi_package_json(plugin_data):
                 fail(
                     path.relative_to(ROOT),
                     f"'pi.{forbidden}' must be absent — resources_discover must stay the sole "
-                    "source of truth for skill/command paths (see docs/plugin-platform-decisions.md)",
+                    "source of truth for skill/command paths (see docs/decisions-pi-port.md §4)",
                 )
 
 
@@ -460,7 +460,7 @@ def check_hooks_json():
                     fail(
                         path.relative_to(ROOT),
                         f"hooks.{event}[{i}].hooks[{j}] carries an 'if' condition — no hooks.json "
-                        f"entry may use 'if' (see docs/plugin-platform-decisions.md §4)",
+                        f"entry may use 'if' (see docs/decisions-hooks.md §1)",
                     )
 
 
@@ -1735,7 +1735,7 @@ def check_hook_script_permissions():
 
 # Every bin/ wrapper must be invokable as a bare command once <plugin>/bin is
 # on PATH: exec-bit set, a #!/usr/bin/env <interp> shebang (any interpreter,
-# not just bash — see docs/plugin-platform-decisions.md), and the
+# not just bash — see docs/decisions-bin-path.md §2), and the
 # swe-workbench- prefix that is the only guard against colliding with a
 # user's own PATH entries (bin/ has no other enforcement mechanism for it).
 _SHEBANG_RE = re.compile(r'^#!/usr/bin/env \S+\n')

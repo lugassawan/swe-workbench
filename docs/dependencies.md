@@ -24,7 +24,7 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 **On the Pi Coding Agent:** none of the three browser backends above have a Pi equivalent —
 `pi/extensions/` contains no browser/Chrome/Playwright reference of any kind. This is an
-unaddressed gap, not a verified N/A ruling like `docs/plugin-platform-decisions.md` §6/§7/§8: the
+unaddressed gap, not a verified N/A ruling like `docs/decisions-pi-port.md` §1/§2/§3: the
 browser-gated commands (`/swe-workbench:test --mode e2e[-live]`, browser diagnostics in
 `/swe-workbench:debug`) will hit the same `BLOCKED:` message on Pi as when no backend is
 connected on Claude Code, since Pi has nothing registered to satisfy the gate.
@@ -61,6 +61,6 @@ These are the tools `swe-workbench:workflow-worktree-session` routes to. If a to
 **On the Pi Coding Agent:** none of the three tools above have a Pi equivalent — confirmed by
 reading the installed SDK (`ExtensionContext.cwd` is a plain read-only `string`; neither
 `ExtensionContext` nor `ExtensionCommandContext` exposes a `setCwd`). This is a permanent,
-explicit N/A, not a gap: see `docs/plugin-platform-decisions.md` §7. `pi/extensions/tool-vocab.ts`
+explicit N/A, not a gap: see `docs/decisions-pi-port.md` §2. `pi/extensions/tool-vocab.ts`
 tells a Pi session that `cd <absolute-path>` — the fallback `skills/workflow-worktree-session/SKILL.md`
 already documents for other harnesses — is *the* worktree-anchoring mechanism there, not a last resort.

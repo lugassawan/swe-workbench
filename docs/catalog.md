@@ -1,6 +1,6 @@
 # Catalog
 
-Pi Coding Agent coverage of these commands/skills/agents is ratcheted by `tests/test_pi_contract.py`'s golden-inventory tests, not by `check_catalog_completeness()` or the tables below — see `docs/plugin-platform-decisions.md`.
+Pi Coding Agent coverage of these commands/skills/agents is ratcheted by `tests/test_pi_contract.py`'s golden-inventory tests, not by `check_catalog_completeness()` or the tables below — see `docs/decisions-ci-validation.md` §1.
 
 ## Commands
 
