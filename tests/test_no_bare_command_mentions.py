@@ -57,7 +57,6 @@ SCAN_DIRS = ["skills", "docs", "agents", "commands"]
 _PI_TEMPLATE_NAME_ALLOWED_IN = {
     Path("commands/handoff.md"),
     Path("docs/cross-harness-handoff.md"),
-    Path("docs/plugin-platform-decisions.md"),
 }
 
 

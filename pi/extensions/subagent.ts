@@ -7,7 +7,7 @@
  * Exists because pi-subagents' `skills:` field only makes a skill *available* (an XML manifest
  * read on demand via its own `read` tool) — it never preloads skill body into context, which
  * this repo's agents/*.md convention requires (docs/skill-preload.md). See
- * docs/plugin-platform-decisions.md §9 for the full rationale, the model-dispatch-policy safety
+ * docs/decisions-task-dispatch.md for the full rationale, the model-dispatch-policy safety
  * posture, and how the `bash`-escape-hatch recursion gap is closed (in hooks/bash_guard.sh, not
  * here).
  *

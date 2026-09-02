@@ -8,7 +8,7 @@
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
 #     dispatcher's --exclude-tools recursion guard; see
-#     docs/plugin-platform-decisions.md §9)
+#     docs/decisions-task-dispatch.md)
 #
 # Short-circuits (exit 0, no greps) for commands that contain none of "rm",
 # "git", or "pi". This is the common case (ls, cat, echo, make, npm, …) and
