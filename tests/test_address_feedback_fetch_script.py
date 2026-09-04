@@ -295,9 +295,8 @@ def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path,
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
     env["GH_STUB_STATE"] = str(state_dir)
     env["GH_STUB_RESPONSES"] = str(responses_file)
-    # Default cwd is a fresh non-git dir: the repo-scope ladder (issue #713)
-    # finds no origin remote there, so default-mode runs keep the legacy
-    # un-scoped paths these tests characterize. Scoped runs pass --repo.
+    # Fresh non-git cwd by default: no origin -> legacy un-scoped paths (what these
+    # tests characterize); scoped runs pass --repo explicitly.
     if cwd is None:
         cwd = Path(tempfile.mkdtemp(prefix="aff-nogit-"))
     return subprocess.run(
