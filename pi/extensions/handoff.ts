@@ -123,7 +123,7 @@ function safeWorktreeRoot(value: unknown): string | undefined {
   if (
     typeof value === "string" &&
     value.startsWith("/") &&
-    value.length <= 4096 &&
+    Array.from(value).length <= 4096 &&
     Array.from(value).every((character) => {
       const code = character.codePointAt(0) ?? 0;
       return code >= 32 && code !== 127;

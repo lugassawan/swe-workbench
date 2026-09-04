@@ -113,6 +113,10 @@ def _block(message: str) -> None:
     raise SystemExit(2)
 
 
+def _with_worktree_clause(message: str, worktree_root: str | None) -> str:
+    return f"{message} (worktree: {worktree_root})" if worktree_root else message
+
+
 def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None] | None:
     try:
         envelope = json.loads(output)
@@ -182,15 +186,17 @@ def main() -> None:
             if checkpoint_id is None or target_harness is None:
                 _block("handoff ownership is released but its receiver state is invalid")
             command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
-            leased_clause = f" this worktree ({worktree_root}) is leased;" if worktree_root else ""
             _block(
-                f"handoff ownership is released to {target_harness};{leased_clause} "
-                f"run `{command_name} resume {checkpoint_id}` in the receiver"
+                _with_worktree_clause(
+                    f"handoff ownership is released to {target_harness}; "
+                    f"run `{command_name} resume {checkpoint_id}` in the receiver",
+                    worktree_root,
+                )
             )
         if "different receiver session" in reason:
-            _block(f"this worktree ({worktree_root}) is bound to a different receiver session" if worktree_root else reason)
+            _block(_with_worktree_clause("this worktree is bound to a different receiver session", worktree_root))
         if "held by" in reason:
-            _block(f"{reason} (worktree: {worktree_root})" if worktree_root else reason)
+            _block(_with_worktree_clause(reason, worktree_root))
         _block("the handoff lease denies mutation from this Claude session")
 
     if result.returncode != 0 and "Traceback" in result.stderr:
