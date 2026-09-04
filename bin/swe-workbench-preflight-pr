@@ -19,7 +19,10 @@ fi
 
 PR="${1:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
 OUT_JSON="${2:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
-FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision}"
+# `url` rides along for issue #713 repo self-attribution: every state file
+# carries its owner/repo on disk (swe-workbench-repo-scope --pr-json, and
+# sweep-residuals' legacy-artifact attribution both read it).
+FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision,url}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
