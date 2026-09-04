@@ -2,7 +2,10 @@ name: PR Validation
 
 on:
   pull_request:
-    types: [opened, edited, synchronize]
+    # 'reopened' lets dependabot-peer-sync.yml force a re-run of these checks after it
+    # pushes a peerDependencies fixup commit — a GITHUB_TOKEN-authored push does not
+    # itself retrigger pull_request workflows, but a close+reopen cycle does.
+    types: [opened, edited, synchronize, reopened]
     branches: [main]
 
 permissions:
@@ -78,6 +81,14 @@ jobs:
           # Accepts: "N/A", "Issue: N/A", "Issue: N/A — reason", "N/A — reason".
           if echo "$PR_BODY_VISIBLE" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
+            exit 0
+          fi
+
+          # Allow manually-authored dependency-bump PRs that carry the same
+          # "Bumps <pkg> from <old> to <new>." line Dependabot's own PRs use —
+          # these have no linked issue either, same as the dependabot[bot]-actor case above.
+          if echo "$PR_BODY_VISIBLE" | grep -qE '^Bumps .+ from .+ to .+\.$'; then
+            echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
             exit 0
           fi
 

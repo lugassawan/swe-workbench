@@ -1,0 +1,88 @@
+name: Dependabot peerDependencies Sync
+
+# Dependabot only ever bumps the exact devDependencies pin for
+# @earendil-works/pi-coding-agent / pi-tui, never the peerDependencies floor
+# (">=X <1" already satisfies the new pin, so its semver updater sees no
+# violation to fix) — but tests/test_pi_extension.py::test_package_json_values
+# requires the floor stay in lockstep with the pin. Left alone, every such
+# dependabot PR fails pytest until a human manually edits the floor. This
+# workflow runs scripts/sync-peer-deps.sh against the PR's own manifests and
+# pushes a fixup commit when drift is found.
+#
+# pull_request_target is required for write access to push back to the PR
+# branch. To stay safe against a compromised PR, this workflow:
+#   - never executes anything checked out from the PR itself — it fetches the
+#     sync script from the base branch (origin/main) and runs only that copy
+#   - only ever reads/writes package.json and package-lock.json — no `npm
+#     install`, so a malicious package's install/postinstall script can never
+#     run with this job's write token
+#   - is gated on the PR author being dependabot[bot] and the diff touching
+#     package.json
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+    branches: [main]
+    paths: ["package.json"]
+
+concurrency:
+  group: dependabot-peer-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync-peer-deps:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Checked out for git history/parentage only (so a fixup commit lands
+      # on top of the PR's real commits) — nothing from this tree is executed.
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch trusted sync script from main
+        run: |
+          git fetch --depth 1 origin main
+          git show origin/main:scripts/sync-peer-deps.sh > /tmp/sync-peer-deps.sh
+
+      - name: Check for peerDependencies drift
+        id: check
+        run: |
+          if bash /tmp/sync-peer-deps.sh --check; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fix, commit, and push
+        if: steps.check.outputs.drift == 'true'
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          bash /tmp/sync-peer-deps.sh
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "[chore] Sync peerDependencies floor to devDependencies pin"
+          git push origin "HEAD:refs/heads/${HEAD_REF}"
+
+      # A GITHUB_TOKEN-authored push does not itself retrigger pull_request
+      # workflows (infinite-loop guard built into Actions) — a close+reopen
+      # cycle does, and pr.yml's pull_request trigger now includes 'reopened'.
+      - name: Reopen PR to retrigger required checks
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr close "$PR_NUMBER" --repo "$REPO"
+          gh pr reopen "$PR_NUMBER" --repo "$REPO"

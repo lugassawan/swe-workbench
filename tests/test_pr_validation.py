@@ -55,6 +55,11 @@ def _na_optout(visible: str) -> bool:
     )
 
 
+def _dependabot_bump_optout(visible: str) -> bool:
+    """Python-native equivalent of the bash grep -qE Dependabot-bump-line opt-out pattern."""
+    return bool(re.search(r"^Bumps .+ from .+ to .+\.$", visible, re.MULTILINE))
+
+
 def has_closing_keyword(visible: str) -> bool:
     return bool(
         re.search(
@@ -175,6 +180,17 @@ class TestValidOptout:
         visible = strip_html_comments(body)
         assert has_closing_keyword(visible)
 
+    def test_dependabot_style_bump_line_triggers_optout(self):
+        body = (
+            "Bumps [@earendil-works/pi-tui]"
+            "(https://github.com/earendil-works/pi) from 0.84.3 to 0.84.4.\n"
+        )
+        visible = strip_html_comments(body)
+        assert _dependabot_bump_optout(visible), (
+            "A manually-authored PR body carrying Dependabot's own "
+            "'Bumps ... from ... to ....' line must trigger the opt-out"
+        )
+
 
 class TestPrYamlSync:
     """Tie Python helper functions to the source-of-truth regexes in pr.yml.
@@ -256,6 +272,33 @@ class TestPrYamlSync:
             py_result = has_closing_keyword(text)
             assert yml_result == py_result, (
                 f"yml_re and has_closing_keyword() disagree on {text!r}: "
+                f"yml={yml_result}, py={py_result}"
+            )
+            assert yml_result == expected, (
+                f"yml regex gave {yml_result!r} for {text!r}, expected {expected}"
+            )
+
+    def test_dependabot_bump_optout_matches_pr_yml(self):
+        """_dependabot_bump_optout() behaviour must match the pr.yml grep -qE bump-line pattern."""
+        raw = _extract_pr_yml_pattern(
+            r"Allow manually-authored dependency-bump PRs.*?grep -qE '([^']+)'"
+        )
+        yml_re = re.compile(raw, re.MULTILINE)
+
+        samples = [
+            ("Bumps @earendil-works/pi-tui from 0.84.3 to 0.84.4.",              True),
+            ("Bumps [@earendil-works/pi-tui](url) from 0.84.3 to 0.84.4.",       True),
+            ("## Summary\nBumps foo from 1.0.0 to 2.0.0.\n",                     True),
+            ("bumps foo from 1.0.0 to 2.0.0.",                                   False),  # case-sensitive
+            ("Bumps foo from 1.0.0 to 2.0.0",                                    False),  # no trailing period
+            ("See also: Bumps foo from 1.0.0 to 2.0.0.",                        False),  # not at line start
+            ("Closes #42",                                                      False),
+        ]
+        for text, expected in samples:
+            yml_result = bool(yml_re.search(text))
+            py_result = _dependabot_bump_optout(text)
+            assert yml_result == py_result, (
+                f"yml_re and _dependabot_bump_optout() disagree on {text!r}: "
                 f"yml={yml_result}, py={py_result}"
             )
             assert yml_result == expected, (
