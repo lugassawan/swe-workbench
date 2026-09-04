@@ -449,6 +449,7 @@ class TestOpenPrFullFetch:
             assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/{pr}.json"
             assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/{pr}-threads.json"
             assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/{pr}-pr-comments.json"
+            assert envelope["data"]["resume_triage_path"] == ""  # OPEN envelope, no resume point on disk
         finally:
             _cleanup_state_files(pr)
 

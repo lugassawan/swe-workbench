@@ -506,7 +506,9 @@ RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 # left unmatched are owned by new-run-dir's 24h age-gated reaper.
 run_glob=()
 if [ -z "$SCOPE_INVALID" ]; then
-  RUN_TAGS=(pr-review pr-followup address-feedback extend capture audit-emit hotfix)
+  # review-converge rides along: commands/converge.md sets LOOP_ID="${PR_NUM:-0}",
+  # so a converge loop run against PR <N> allocates review-converge-<slug>-<N>-<rand>.
+  RUN_TAGS=(pr-review pr-followup address-feedback review-converge extend capture audit-emit hotfix)
   for mode in "${SPECIALIST_MODES[@]}"; do
     RUN_TAGS+=("review-$mode")
   done

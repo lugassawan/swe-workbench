@@ -1035,6 +1035,46 @@ class TestThreadsSiblingDirectory:
             foreign_sibling.unlink(missing_ok=True)
 
 
+class TestSiblingNoHeadShaRetains:
+    def test_sibling_fingerprint_without_head_sha_retains_pair(self, tmp_path):
+        """oid-without---head-sha: the pair (sibling + threads) must both be
+        retained — never sibling-retained-threads-swept divergence."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        threads = ADDR_FEEDBACK_DIR / f"{n}-threads.json"
+        sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
+        threads.write_text("[]")
+        sibling.write_text(json.dumps({"headRefOid": "a" * 40}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))  # no --head-sha
+            _assert_contract(result, "0", "0", "0", retained_sf="2")
+            assert threads.exists() and sibling.exists()
+            payload = json.loads(result.stdout)
+            reasons = " | ".join(r["reason"] for r in payload["data"]["retained_state_files"])
+            assert "no --head-sha" in reasons
+        finally:
+            threads.unlink(missing_ok=True)
+            sibling.unlink(missing_ok=True)
+
+
+class TestRunDirConvergeTag:
+    def test_converge_shaped_run_dir_swept_when_pr_keyed(self, tmp_path):
+        """review-converge-<slug>-<N>-<rand> is a sanctioned producer shape and
+        must stay sweepable when its LOOP_ID was a PR number."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        d = RUN_ROOT / f"review-converge-octocat-widgets-{n}-a1b2c3"
+        d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not d.exists()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class TestInvalidRepoFailsClosed:
     def test_invalid_repo_retains_legacy_state_and_skips_run_dirs(self, tmp_path):
         """A typo'd explicit --repo must not degrade to an unconditional legacy
