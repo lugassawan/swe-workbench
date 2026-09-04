@@ -208,6 +208,45 @@ def test_allows_exact_resume_pipeline_through_a_released_lease(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_allows_exact_resume_env_pipeline_through_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            "--receiver-session-env CLAUDE_CODE_SESSION_ID "
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_blocks_resume_pipeline_with_a_near_miss_session_env_name(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            "--receiver-session-env HOME "
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+
+
 def test_allows_exact_pi_source_recovery_pipeline_through_ownership_gate(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

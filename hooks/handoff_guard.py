@@ -25,10 +25,19 @@ _CHECKED_PIPE = r"\| swe-workbench-result-check swb\.handoff/1"
 _CLAUDE_SESSION_ARGUMENT = re.escape(
     '"${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}"'
 )
+_CLAUDE_SESSION_ENV_ARGUMENT = re.escape("CLAUDE_CODE_SESSION_ID")
 _CONTROL_COMMANDS = (
     re.compile(
         rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
         rf'--receiver-session {_CLAUDE_SESSION_ARGUMENT} '
+        rf'(?:--acknowledge-degraded )?{_CHECKED_PIPE}$'
+    ),
+    # Literal-argument form: no runtime shell expansion, so a harness's static command
+    # guard can prove the pipeline inert. See resolve_session_ref in
+    # bin/swe-workbench-handoff for the allowlist this mirrors.
+    re.compile(
+        rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
+        rf'--receiver-session-env {_CLAUDE_SESSION_ENV_ARGUMENT} '
         rf'(?:--acknowledge-degraded )?{_CHECKED_PIPE}$'
     ),
     re.compile(

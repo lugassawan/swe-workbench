@@ -2908,6 +2908,8 @@ out.releasedRead = await toolCall(config.repos.released, "read", { path: "/tmp/f
 
 out.resumePipeline = await toolCall(config.repos.released, "bash", { command: config.resumePipeline });
 out.resumeDegradedPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeDegradedPipeline });
+out.resumeEnvPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeEnvPipeline });
+out.resumeNearMissEnvPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeNearMissEnvPipeline });
 out.recoverPipeline = await toolCall(config.repos.released, "bash", { command: config.recoverPipeline });
 out.injectedPipeline = await toolCall(config.repos.released, "bash", { command: config.injectedPipeline });
 out.closePipeline = await toolCall(config.repos.released, "bash", { command: config.closePipeline });
@@ -3081,6 +3083,16 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
             f'--receiver-session {session_arg} --acknowledge-degraded '
             f'| swe-workbench-result-check swb.handoff/1'
         ),
+        "resumeEnvPipeline": (
+            f'swe-workbench-handoff resume "{released_id}" --as pi '
+            f'--receiver-session-env PI_SESSION_ID '
+            f'| swe-workbench-result-check swb.handoff/1'
+        ),
+        "resumeNearMissEnvPipeline": (
+            f'swe-workbench-handoff resume "{released_id}" --as pi '
+            f'--receiver-session-env HOME '
+            f'| swe-workbench-result-check swb.handoff/1'
+        ),
         "recoverPipeline": (
             'swe-workbench-handoff recover --from "claude" --source-stopped '
             "| swe-workbench-result-check swb.handoff/1"
@@ -3156,6 +3168,13 @@ def test_handoff_permits_only_the_exact_lifecycle_pipelines(tmp_path_factory):
     assert out.get("recoverPipeline") is None
     assert out["injectedPipeline"]["block"] is True
     assert out["closePipeline"]["block"] is True
+
+
+@requires_node
+def test_handoff_allowlists_the_literal_session_env_resume_pipeline(tmp_path_factory):
+    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-env-pipeline")["out"]
+    assert out.get("resumeEnvPipeline") is None
+    assert out["resumeNearMissEnvPipeline"]["block"] is True
 
 
 @requires_node

@@ -48,6 +48,7 @@ const INTERPRETER_FAILURE_TEXT =
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.handoff/1`;
 const PI_SESSION_ARGUMENT = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"';
+const PI_SESSION_ENV_ARGUMENT = "PI_SESSION_ID";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -62,6 +63,13 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
       `--receiver-session ${escapeRegExp(PI_SESSION_ARGUMENT)} ` +
+      `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
+  ),
+  // Literal-argument form: no runtime shell expansion, so a harness's static command guard
+  // can prove the pipeline inert. Mirrors bin/swe-workbench-handoff's resolve_session_ref.
+  new RegExp(
+    `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
+      `--receiver-session-env ${escapeRegExp(PI_SESSION_ENV_ARGUMENT)} ` +
       `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
   ),
   new RegExp(

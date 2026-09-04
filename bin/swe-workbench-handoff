@@ -56,6 +56,7 @@ FORBIDDEN_INPUT_FIELDS = frozenset(
 VERIFICATION_FIELDS = frozenset({"command", "label", "exit_status", "timestamp", "result"})
 VERIFICATION_RESULTS = frozenset({"passed", "failed", "not_run", "skipped"})
 HARNESSES = ("claude", "pi")
+SESSION_ENV_NAMES = {"claude": "CLAUDE_CODE_SESSION_ID", "pi": "PI_SESSION_ID"}
 LEASE_SCHEMA_VERSION = 1
 MANDATORY_REVIEW_ACTION = (
     "Review the salvage manifest, reconcile it with the live worktree, "
@@ -509,6 +510,27 @@ def valid_session_ref(value: object) -> bool:
         and len(value) <= 256
         and all(ord(character) >= 32 and ord(character) != 127 for character in value)
     )
+
+
+def resolve_session_ref(literal: str | None, env_name: str | None, as_harness: str) -> str:
+    """Resolve a --receiver-session/--session-ref value from a literal or an env-var name.
+
+    The env-name form keeps every argument in the lifecycle pipelines literal (inert),
+    which is what lets a harness's static command guard clear them. The allowlist is
+    load-bearing, not a nicety: an arbitrary env name would turn the flag into an
+    env-value exfiltration primitive into persisted lease state.
+    """
+    if env_name is not None:
+        expected = SESSION_ENV_NAMES.get(as_harness)
+        if env_name != expected:
+            raise InputError(f"--*-session-env must be {expected!r} for --as {as_harness}; got {env_name!r}")
+        value = os.environ.get(env_name)
+        if not value:
+            raise InputError(f"missing {env_name}")
+        return value
+    if literal is None:
+        raise InputError("a session reference is required")
+    return literal
 
 
 def load_lease(workspace_directory: Path) -> dict[str, object] | None:
@@ -1254,7 +1276,9 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subcommands.add_parser("resume", help="acquire ownership of a handoff checkpoint")
     resume_parser.add_argument("checkpoint_id")
     resume_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
-    resume_parser.add_argument("--receiver-session", required=True)
+    resume_session_group = resume_parser.add_mutually_exclusive_group(required=True)
+    resume_session_group.add_argument("--receiver-session")
+    resume_session_group.add_argument("--receiver-session-env")
     resume_parser.add_argument("--acknowledge-degraded", action="store_true")
     recover_parser = subcommands.add_parser("recover", help="rebuild a degraded checkpoint after source failure")
     recover_parser.add_argument("--from", dest="from_harness", required=True, choices=list(HARNESSES))
@@ -1263,7 +1287,9 @@ def build_parser() -> argparse.ArgumentParser:
     close_parser = subcommands.add_parser("close", help="close a handoff checkpoint and release the worktree")
     close_parser.add_argument("checkpoint_id")
     close_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
-    close_parser.add_argument("--session-ref", required=True)
+    close_session_group = close_parser.add_mutually_exclusive_group(required=True)
+    close_session_group.add_argument("--session-ref")
+    close_session_group.add_argument("--session-ref-env")
     guard_parser = subcommands.add_parser("guard", help="decide whether a harness may mutate this worktree")
     guard_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
     guard_parser.add_argument("--session-ref")
@@ -1279,18 +1305,22 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "show":
             write_envelope(show_checkpoint(args.checkpoint_id))
         elif args.command == "resume":
+            receiver_session = resolve_session_ref(
+                args.receiver_session, args.receiver_session_env, args.as_harness
+            )
             write_envelope(
                 resume_checkpoint(
                     args.checkpoint_id,
                     args.as_harness,
-                    args.receiver_session,
+                    receiver_session,
                     args.acknowledge_degraded,
                 )
             )
         elif args.command == "recover":
             write_envelope(recover_checkpoint(args.from_harness, args.source_stopped, args.source_session_ref))
         elif args.command == "close":
-            write_envelope(close_checkpoint(args.checkpoint_id, args.as_harness, args.session_ref))
+            session_ref = resolve_session_ref(args.session_ref, args.session_ref_env, args.as_harness)
+            write_envelope(close_checkpoint(args.checkpoint_id, args.as_harness, session_ref))
         elif args.command == "guard":
             envelope, exit_code = guard_decision(args.as_harness, args.session_ref)
             write_envelope(envelope)
