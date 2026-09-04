@@ -668,3 +668,21 @@ class TestRepoScopedState:
         finally:
             _cleanup_state_files(pr)
             (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+
+def test_envelope_exposes_triage_path(tmp_path):
+    """The skill's triage save/resume sites need the (possibly slugged) triage
+    path without reconstructing naming logic — the envelope is the contract."""
+    pr = _unique_n()
+    responses = _preflight_responses(pr, state="MERGED")
+    stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+    try:
+        result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                      responses_file=tmp_path / "gh_responses.json",
+                      extra_args=["--repo", "octocat/widgets"])
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-triage.json"
+    finally:
+        _cleanup_state_files(pr)
+        (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
