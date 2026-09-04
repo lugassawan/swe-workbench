@@ -888,15 +888,15 @@ class TestRepoScopedStateFileSweep:
         theirs = ADDR_FEEDBACK_DIR / f"{n}-threads.json"  # pairing probe: foreign sibling below
         ours.write_text(json.dumps([{"id": 1, "repository_url": "https://api.github.com/repos/octocat/widgets"}]))
         theirs.write_text("[]")
-        # foreign sibling preflight JSON: itself retained AND retains the threads file via set-pairing
-        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        sibling = PR_REVIEW_DIR / f"{n}.json"
+        # Foreign sibling preflight JSON in the threads file's OWN directory:
+        # itself retained AND retains the threads file via set-pairing.
+        sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
         sibling.write_text(json.dumps({"url": f"https://github.com/other/repo/pull/{n}"}))
         try:
             result = _run_script(repo, n, _scoped_env(tmp_path))
             _assert_contract(result, "0", "1", "0", retained_sf="2")
             assert not ours.exists()
-            assert theirs.exists(), "threads paired with a foreign preflight JSON must be retained"
+            assert theirs.exists(), "threads paired with a foreign same-directory sibling must be retained"
             assert sibling.exists()
         finally:
             ours.unlink(missing_ok=True)
@@ -967,3 +967,95 @@ class TestRepoScopedFallbackWorktreeSweep:
         finally:
             _cleanup_worktree(repo, own, None)
             _cleanup_worktree(foreign_repo, theirs, None)
+
+
+# ── Review fixes: exact-tag run-dir matching, sibling pairing, invalid --repo ──
+
+
+class TestRunDirExactTagMatching:
+    def test_slug_suffix_collision_not_swept(self, tmp_path):
+        """A foreign slug ENDING with our slug (x/acme-app vs acme/app) plus the
+        same PR number must not match — the exact-tag anchor forbids the `*`
+        from absorbing a longer slug."""
+        repo = _build_scoped_repo(tmp_path, "https://github.com/acme/app.git")
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        own = RUN_ROOT / f"pr-review-acme-app-{n}-a1b2c3"
+        foreign = RUN_ROOT / f"pr-review-x-acme-app-{n}-b2c3d4"
+        for d in (own, foreign):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not own.exists()
+            assert foreign.exists(), "suffix-colliding foreign slug must not be swept"
+        finally:
+            shutil.rmtree(own, ignore_errors=True)
+            shutil.rmtree(foreign, ignore_errors=True)
+
+    def test_unscoped_mode_never_matches_slugged_dirs(self, tmp_path):
+        """Unscoped mode (no origin) must sweep ONLY legacy exact shapes — a
+        slugged dir (any repo's) is not a legacy name."""
+        repo = _build_repo(tmp_path)  # no remote -> unscoped
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
+        slugged = RUN_ROOT / f"pr-review-octocat-widgets-{n}-d4e5f6"
+        for d in (legacy, slugged):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not legacy.exists()
+            assert slugged.exists(), "unscoped sweep must not touch slugged dirs"
+        finally:
+            shutil.rmtree(legacy, ignore_errors=True)
+            shutil.rmtree(slugged, ignore_errors=True)
+
+
+class TestThreadsSiblingDirectory:
+    def test_legacy_threads_paired_with_addr_feedback_sibling(self, tmp_path):
+        """$N-threads.json is an address-feedback artifact: its set-pair sibling
+        is $ADDR_FEEDBACK_DIR/$N.json (same directory), never the pr-review
+        flow's $N.json. Foreign sibling in the SAME directory -> retained."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        threads = ADDR_FEEDBACK_DIR / f"{n}-threads.json"
+        foreign_sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
+        threads.write_text("[]")
+        foreign_sibling.write_text(json.dumps({"url": f"https://github.com/other/repo/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="2")
+            assert threads.exists(), "threads paired with a foreign same-directory sibling must be retained"
+            assert foreign_sibling.exists()
+        finally:
+            threads.unlink(missing_ok=True)
+            foreign_sibling.unlink(missing_ok=True)
+
+
+class TestInvalidRepoFailsClosed:
+    def test_invalid_repo_retains_legacy_state_and_skips_run_dirs(self, tmp_path):
+        """A typo'd explicit --repo must not degrade to an unconditional legacy
+        sweep: legacy state files are retained with a reason, run dirs are not
+        globbed, and the envelope reports partial."""
+        repo = _build_repo(tmp_path)  # no origin: scope comes only from the flag
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text("{}")
+        run_dir = RUN_ROOT / f"pr-review-{n}-e5f6a7"
+        run_dir.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path), "--repo", "bogus")
+            assert result.returncode == 0
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists(), "invalid --repo must retain legacy state files"
+            assert run_dir.exists(), "invalid --repo must not glob run dirs"
+            payload = json.loads(result.stdout)
+            assert "invalid --repo" in payload["data"]["retained_state_files"][0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+            shutil.rmtree(run_dir, ignore_errors=True)

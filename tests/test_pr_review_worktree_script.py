@@ -932,3 +932,69 @@ def test_release_finds_legacy_fallback_worktree_dual_read(tmp_path):
         assert not legacy.exists()
     finally:
         _cleanup_worktree(repo, legacy, branch)
+
+
+# ── Review fix: legacy-fallback dual-read is attribution-gated ──────────────
+
+
+class TestLegacyFallbackAttribution:
+    def test_acquire_leaves_foreign_legacy_fallback_alone(self, tmp_path):
+        """A foreign repo's clean legacy fallback dir (same PR number) must not
+        be reaped by our acquire's stale-self-heal — attribution via the dir's
+        own origin gates it; our slugged allocation proceeds unaffected."""
+        n = _unique_n()
+        repo = _build_repo_with_pr_ref(tmp_path, n)
+        _run("git", "remote", "set-url", "origin", "https://github.com/octocat/widgets.git", cwd=repo)
+        foreign_base = tmp_path / "foreign"
+        foreign_base.mkdir()
+        foreign = _build_repo(foreign_base)
+        _run("git", "remote", "add", "origin", "https://github.com/other/repo.git", cwd=foreign)
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        (tmp_path / "fake_home").mkdir(exist_ok=True)
+        legacy = Path("/tmp/swe-workbench-pr-review") / n
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(legacy), "main", cwd=foreign)
+        acquired = None
+        try:
+            acquired = _run_script(
+                repo, ["acquire", "--mode", "first-pass", "--pr", n], env,
+            )
+            assert acquired.returncode == 0, acquired.stderr
+            kv = _kv(acquired)
+            assert kv["PROVIDER"] == "git"
+            assert Path(kv["WT"]).name == f"octocat-widgets-{n}"
+            assert legacy.exists(), "foreign-origin legacy fallback must survive our acquire"
+        finally:
+            if acquired is not None:
+                try:
+                    wt = Path(_kv(acquired)["WT"])
+                    _cleanup_worktree(repo, wt, f"pr-review-{n}")
+                except Exception:
+                    pass
+            _cleanup_worktree(foreign, legacy, None)
+
+    def test_release_foreign_legacy_fallback_not_found(self, tmp_path):
+        n = _unique_n()
+        repo = _build_repo(tmp_path)
+        _run("git", "remote", "add", "origin", "https://github.com/octocat/widgets.git", cwd=repo)
+        foreign_base = tmp_path / "foreign"
+        foreign_base.mkdir()
+        foreign = _build_repo(foreign_base)
+        _run("git", "remote", "add", "origin", "https://github.com/other/repo.git", cwd=foreign)
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        (tmp_path / "fake_home").mkdir(exist_ok=True)
+        legacy = Path("/tmp/swe-workbench-pr-review") / n
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(legacy), "main", cwd=foreign)
+        try:
+            result = _run_script(
+                repo, ["release", "--mode", "first-pass", "--pr", n, "--intent", "completed"], env,
+            )
+            assert result.returncode == 0, result.stderr
+            kv = _kv(result)
+            assert kv["WORKTREE_REMOVED"] == "0"
+            assert kv["PRESERVED"] == "0"
+            assert "no worktree" in kv["REASON"]
+            assert legacy.exists()
+        finally:
+            _cleanup_worktree(foreign, legacy, None)

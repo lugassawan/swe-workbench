@@ -145,6 +145,16 @@ _is_dirty() {
   [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]
 }
 
+# _attributes_here <dir> — true iff the worktree dir's own origin remote
+# resolves to this run's scope slug (issue #713: legacy fallback dual-read is
+# attribution-gated — a foreign repo's same-numbered dir is never ours).
+_attributes_here() {
+  [ -n "$SCOPE_SLUG" ] || return 1
+  local origin_scope
+  origin_scope=$( (cd "$1" 2>/dev/null && "$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || true )
+  [ "$origin_scope" = "$SCOPE_SLUG" ]
+}
+
 # _reap_worktree <rimba> <label> <path> -- rimba-remove-first, `||` git-fallback +
 # swe-workbench-clean-ephemeral. Mirrors swe-workbench-sweep-residuals' reap_one_worktree()
 # exactly (same order, same fallback chain) so the primary release path and the backstop that
@@ -229,9 +239,14 @@ _acquire_git() {
 
   # Dual-read stale-self-heal (issue #713): a pre-upgrade session may have left
   # a worktree at the legacy spelling; a clean one is reaped exactly like a
-  # stale scoped one, a dirty one refuses to overwrite — both spellings.
+  # stale scoped one, a dirty one refuses to overwrite — both spellings. The
+  # legacy spelling is attribution-gated: a foreign repo's same-numbered dir
+  # (own origin != our scope) is skipped, not reaped and not blocking.
   for stale in "$wt" "$LEGACY_FALLBACK"; do
     if [ -d "$stale" ]; then
+      if [ "$stale" = "$LEGACY_FALLBACK" ] && [ "$LEGACY_FALLBACK" != "$wt" ] && ! _attributes_here "$stale"; then
+        continue
+      fi
       if _is_dirty "$stale"; then
         echo "swe-workbench-pr-review-worktree: acquire: existing worktree at $stale for mode=$mode pr=$pr has uncommitted changes -- refusing to overwrite. Inspect manually, or run 'release --mode $mode --pr $pr --intent failed' first." >&2
         exit 1
@@ -329,9 +344,11 @@ cmd_release() {
   elif [ -d "$FALLBACK" ]; then
     path="$FALLBACK"
     provider="git"
-  elif [ -d "$LEGACY_FALLBACK" ] && [ "$LEGACY_FALLBACK" != "$FALLBACK" ]; then
+  elif [ -d "$LEGACY_FALLBACK" ] && [ "$LEGACY_FALLBACK" != "$FALLBACK" ] && _attributes_here "$LEGACY_FALLBACK"; then
     # Dual-read (issue #713): a pre-upgrade acquire left the worktree at the
-    # legacy un-scoped spelling — release must still find it.
+    # legacy un-scoped spelling — release must still find it, but only when
+    # the dir's own origin attributes it to this run's repo (a foreign repo's
+    # same-numbered dir reads as "no worktree found", never removed).
     path="$LEGACY_FALLBACK"
     provider="git"
   fi

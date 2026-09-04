@@ -80,17 +80,26 @@ slugged names unconditionally (ours by construction) and legacy names only when 
 | `<N>-triage.json` | **Always retained** — user decisions, unrecoverable; a spent resume point ages out with `/tmp` |
 | `<N>-worktree.json` receipt | Receipt `.path`'s own `git remote get-url origin` == scope; missing path ⇒ retain |
 | Legacy fallback worktree dirs | Dir's own git origin == scope; else retain |
-| Legacy run dirs | Never swept here — `new-run-dir`'s 24h age-gated orphan reaper owns them |
+| Legacy run dirs | Never swept here — `new-run-dir`'s 24h age-gated orphan reaper owns them (that reaper is deliberately shape-wide — any repo's stale run dir, `mtime`-gated — pre-existing GC semantics, not repo-scoped) |
 
 Unattributable/retained items land in `data.retained_state_files` / `data.retained_worktrees`
-as `{path, reason}` and flip the envelope to `status: "partial"`. **Unscoped mode** (no slug
-resolved) keeps byte-for-byte pre-#713 behavior: legacy names swept unconditionally after the
-caller proved the PR MERGED.
+as `{path, reason}` and flip the envelope to `status: "partial"`. An explicitly **invalid
+`--repo`** fails closed to retain-only (nothing legacy swept, run dirs not globbed) — a typo
+must never widen into an unconditional sweep. **Unscoped mode** (no slug resolved — origin
+absent, not malformed) keeps pre-#713 sweep semantics for legacy names after the caller proved
+the PR MERGED, plus one deliberate addition: the legacy `<N>-worktree.json` receipt, newly
+covered (pre-#713 sweeps never touched it). Block C matches run dirs with **exact-tag anchored
+globs** (`<tag>-<slug>-<N>-??????` per allowlisted tag, legacy `<tag>-<N>-??????` unscoped) —
+an unanchored `*` could absorb a longer foreign slug ending in `-<slug>`.
 
 ## Mid-upgrade (dual-read)
 
 A pre-upgrade acquire and a post-upgrade release must still meet: release paths, the worktree
 receipt read, and the triage resume check all fall back to the legacy spelling when the scoped
-one is absent (see the three writers above). Prose that hardcoded literal paths now reaps via
-the envelope-provided variables (`$JSON`, `$TRIAGE_PATH`, …) so both spellings flow through one
-name.
+one is absent (see the three writers above), and every legacy-fallback adoption is
+attribution-gated by the artifact's own git origin. Prose that hardcoded literal paths now
+reaps via the envelope-provided variables (`$JSON`, `$TRIAGE_PATH`, `$RESUME_TRIAGE_PATH`, …)
+so both spellings flow through one name. Known inherited edges (documented, retention-bounded):
+a fork checkout's origin-derived artifacts won't match a base-repo sweep's explicit scope —
+they are retained, never deleted, until `/tmp` cleanup; the 24h age-gated run-dir reaper is
+shape-wide across repos by design.

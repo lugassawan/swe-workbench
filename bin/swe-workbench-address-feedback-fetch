@@ -21,9 +21,11 @@ cursor loop) with a per-thread `eligible`/`skip_reason` projection, paginates RE
 `issues/{pr}/comments` with the same bot/owner-exclusion + handled-marker/manual-reply
 eligibility logic the skill's jq program used to run (ported here as direct python,
 unit-tested against the same fixtures that program was tested against), atomically
-writes the three snapshot files at the byte-identical paths
-bin/swe-workbench-sweep-residuals hardcodes for its own merged-PR backstop sweep, and
-checks for `${PR}-triage.json`'s existence for `resume_available`.
+writes the three snapshot files at repo-scoped paths (issue #713 owner-repo slug
+prefix; legacy un-scoped names when no scope resolves — ratcheted against
+swe-workbench-sweep-residuals' own legacy+scoped literal sets), and dual-reads
+`${PR}-triage.json` (legacy) / `<slug>-<PR>-triage.json` (scoped) for
+`resume_available` + `resume_triage_path`.
 
 Manifest of paths, not inline records: `data` carries paths/counts/booleans only —
 the actual thread/comment records live in the snapshot files, read with `jq`. The
@@ -336,6 +338,15 @@ def main(argv: list[str] | None = None) -> int:
         pr_comments_path = STATE_DIR / f"{stem}-pr-comments.json"
         # Dual-read (issue #713): a pre-upgrade session's resume point lives at
         # the legacy un-scoped triage path — still visible to a scoped run.
+        # resume_triage_path locates where the data actually lives (slugged if
+        # present, else legacy, else empty); triage_path keeps naming where new
+        # saves go, so the resume offer can point at a readable file while every
+        # save migrates to the scoped spelling.
+        resume_triage_path = ""
+        if triage_path.exists():
+            resume_triage_path = str(triage_path)
+        elif slug and legacy_triage_path.exists():
+            resume_triage_path = str(legacy_triage_path)
         resume_available = triage_path.exists() or (slug != "" and legacy_triage_path.exists())
 
         if state != "OPEN":
@@ -352,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
                 threads_path="",
                 pr_comments_path="",
                 triage_path=str(triage_path),
+                resume_triage_path=resume_triage_path,
                 eligible_threads=0,
                 skipped_threads_clarified=0,
                 eligible_pr_comments=0,
@@ -380,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                 threads_path=str(threads_path),
                 pr_comments_path=str(pr_comments_path),
                 triage_path=str(triage_path),
+                resume_triage_path=resume_triage_path,
                 eligible_threads=sum(1 for t in threads if t["eligible"]),
                 skipped_threads_clarified=sum(1 for t in threads if t.get("skip_reason") == "already-clarified"),
                 eligible_pr_comments=sum(1 for c in pr_comments if c["eligible"]),

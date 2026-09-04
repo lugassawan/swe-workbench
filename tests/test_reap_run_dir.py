@@ -8,6 +8,7 @@ Exit code 1 + dir untouched                   -> rejected path.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -275,9 +276,12 @@ def test_slugged_name_with_dots_and_underscores_accepted():
 def test_slug_charset_violation_rejected():
     # Characters outside [A-Za-z0-9._-] are not a sanctioned shape.
     d = make_run_dir("pr-review-octocat;widgets-42-abc123")
-    r = run_script(str(d))
-    assert r.returncode == 1
-    assert d.exists()
+    try:
+        r = run_script(str(d))
+        assert r.returncode == 1
+        assert d.exists()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_legacy_basename_still_accepted():

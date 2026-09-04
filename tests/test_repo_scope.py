@@ -107,3 +107,9 @@ def test_unrecognized_flag_fails():
     r = run_script("--bogus", "x")
     assert r.returncode == 1
     assert r.stdout == ""
+
+
+def test_extra_arguments_rejected():
+    r = run_script("--repo", "octocat/widgets", "junk")
+    assert r.returncode == 1
+    assert r.stdout == ""

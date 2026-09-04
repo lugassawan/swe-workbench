@@ -48,8 +48,10 @@
 # repo's) and sweeps legacy un-scoped names only when their content attributes to
 # the sweeping repo — a url field, a headRefOid fingerprint vs --head-sha, a
 # repository_url, or the artifact's own git remote. Unattributable legacy files are
-# RETAINED with a reason. Unscoped mode (no slug resolved) keeps byte-for-byte
-# pre-#713 behavior: legacy names swept unconditionally after the caller proved MERGED.
+# RETAINED with a reason; an explicitly invalid --repo degrades to retain-only.
+# Unscoped mode (no slug resolved — origin absent, not malformed) keeps pre-#713
+# sweep semantics for legacy names (swept unconditionally after the caller proved
+# MERGED), plus the legacy worktree receipt, newly covered.
 set -euo pipefail
 
 if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
@@ -163,10 +165,17 @@ RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve
 # Explicit --repo wins (the PR record in hand); else the cwd's origin remote;
 # else the empty slug = unscoped mode (byte-for-byte pre-#713 behavior).
 SCOPE_SLUG=""
+SCOPE_INVALID=""
 if [ -n "$REPO_ARG" ]; then
   SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$REPO_ARG" 2>/dev/null) || {
-    echo "swe-workbench-sweep-residuals: invalid --repo value: $REPO_ARG (continuing unscoped)" >&2
+    # Fail CLOSED on explicitly malformed input: this script holds deletion
+    # decisions, so a typo'd --repo degrades to retain-only (legacy state files
+    # kept with a reason, run dirs not globbed), never to an unconditional
+    # legacy sweep. A missing origin (absence, not bad input) still degrades
+    # to the pre-#713 unscoped mode below.
+    echo "swe-workbench-sweep-residuals: invalid --repo value: $REPO_ARG (continuing retain-only)" >&2
     SCOPE_SLUG=""
+    SCOPE_INVALID=1
   }
 else
   SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || SCOPE_SLUG=""
@@ -206,7 +215,10 @@ _attribute_legacy_state() {
     "$N-threads.json"|"$N-post-threads-"*".json")
       # Set-paired with the same invocation's preflight JSON: a refetchable
       # snapshot, swept iff the sibling is absent (already cleaned) or ours.
-      sibling="$PR_REVIEW_DIR/$N.json"
+      # The sibling lives in the file's OWN directory — $N-threads.json is an
+      # address-feedback artifact (sibling $ADDR_FEEDBACK_DIR/$N.json), while
+      # $N-post-threads-* live under $PR_REVIEW_DIR.
+      sibling="$(dirname "$f")/$N.json"
       if [ ! -e "$sibling" ]; then
         return
       fi
@@ -218,10 +230,15 @@ _attribute_legacy_state() {
         return
       fi
       oid=$(jq -r '.headRefOid // empty' "$sibling" 2>/dev/null) || oid=""
-      if [ -n "$oid" ] && [ "$oid" != "null" ] && [ -n "$HEAD_SHA" ] && [ "$oid" != "$HEAD_SHA" ]; then
-        RETAIN_REASON="paired preflight JSON fingerprint mismatch"
-      elif [ -z "$oid" ] || [ "$oid" = "null" ]; then
+      if [ -z "$oid" ] || [ "$oid" = "null" ]; then
         RETAIN_REASON="paired preflight JSON not attributable"
+      elif [ -z "$HEAD_SHA" ]; then
+        # Mirror the preflight branch: a fingerprint with nothing to compare
+        # against is unattributable, not silently sweepable — the pair must
+        # not diverge (sibling retained, threads removed) in the same pass.
+        RETAIN_REASON="paired preflight JSON not attributable (no --head-sha)"
+      elif [ "$oid" != "$HEAD_SHA" ]; then
+        RETAIN_REASON="paired preflight JSON fingerprint mismatch"
       fi
       return
       ;;
@@ -311,6 +328,16 @@ fi
 for f in "${STATE_FILES[@]}"; do
   [ -e "$f" ] || continue
   base="${f##*/}"
+  # Retain-only mode (invalid --repo): every legacy spelling is kept with a
+  # reason — no attribution is possible without a trustworthy scope.
+  if [ -n "$SCOPE_INVALID" ]; then
+    case "$base" in
+      "$N"|"$N"-*|"$N".*)
+        RETAINED_STATE_ITEMS+=("$(_json_item "$f" "retained: invalid --repo — repository scope unknown")")
+        continue
+        ;;
+    esac
+  fi
   # Scoped mode: legacy spellings (basename starts with the bare PR number) are
   # attributed first — a foreign repo's file is retained, never removed.
   if [ -n "$SCOPE_SLUG" ]; then
@@ -389,13 +416,18 @@ if [ -n "${MAIN_REPO:-}" ]; then
   # "<mode>-<N>") is not the task label — so the scan above cannot find them.
   # Check the known literal paths directly. address-feedback carries no
   # fallback entry (empty string), so it is skipped here by construction.
-  wi=0
-  while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
-    if [ -z "${WT_PATHS[$wi]}" ] && [ -n "${WT_FALLBACKS[$wi]}" ] && [ -d "${WT_FALLBACKS[$wi]}" ]; then
-      WT_PATHS[wi]="${WT_FALLBACKS[$wi]}"
-    fi
-    wi=$((wi + 1))
-  done
+  # Retain-only mode (invalid --repo): never adopt /tmp fallback dirs by
+  # literal path — the rimba-label porcelain reap above stays active (it is
+  # scoped by git's own worktree registry, not by the flag).
+  if [ -z "$SCOPE_INVALID" ]; then
+    wi=0
+    while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+      if [ -z "${WT_PATHS[$wi]}" ] && [ -n "${WT_FALLBACKS[$wi]}" ] && [ -d "${WT_FALLBACKS[$wi]}" ]; then
+        WT_PATHS[wi]="${WT_FALLBACKS[$wi]}"
+      fi
+      wi=$((wi + 1))
+    done
+  fi
   # Scoped dual-read (issue #713): a pre-upgrade acquire left the worktree at
   # the legacy spelling — remove it only when its own git remote attributes it
   # to the sweeping repo, else retain it with a reason.
@@ -465,14 +497,28 @@ fi
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
 RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 
-shopt -s nullglob
-# #713: scoped mode matches the run dir's own embedded slug (literal glob,
-# never ERE — the slug charset includes '.'); legacy un-scoped run dirs are
-# NOT swept here — the 24h age-gated reaper in new-run-dir owns them.
-if [ -n "$SCOPE_SLUG" ]; then
-  run_glob=("$RUN_ROOT"/*-"$SCOPE_SLUG"-"$N"-??????)
-else
-  run_glob=("$RUN_ROOT"/*-"$N"-??????)
+# #713: exact-tag anchored globs. An unanchored `*-$SLUG-$N-??????` would let
+# the `*` absorb a longer foreign slug ending in "-$SLUG" (x/acme-app vs
+# acme/app, same PR N) and reap another repo's dir; anchoring on the exact
+# allowlisted tag forbids it. Unscoped mode anchors on the legacy exact shape
+# (tag-$N-??????) so slugged dirs — any repo's — are never matched there.
+# Retain-only mode (invalid --repo) skips Block C entirely; legacy run dirs
+# left unmatched are owned by new-run-dir's 24h age-gated reaper.
+run_glob=()
+if [ -z "$SCOPE_INVALID" ]; then
+  RUN_TAGS=(pr-review pr-followup address-feedback extend capture audit-emit hotfix)
+  for mode in "${SPECIALIST_MODES[@]}"; do
+    RUN_TAGS+=("review-$mode")
+  done
+  shopt -s nullglob
+  for tag in "${RUN_TAGS[@]}"; do
+    if [ -n "$SCOPE_SLUG" ]; then
+      run_glob+=("$RUN_ROOT/$tag-$SCOPE_SLUG-$N-"??????)
+    else
+      run_glob+=("$RUN_ROOT/$tag-$N-"??????)
+    fi
+  done
+  shopt -u nullglob
 fi
 # ${arr[@]+"${arr[@]}"} — bash 3.2 (stock macOS) throws "unbound variable" under
 # set -u when a nullglob-expanded assignment leaves run_glob with zero elements.

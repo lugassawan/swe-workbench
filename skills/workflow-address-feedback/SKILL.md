@@ -46,6 +46,7 @@ PR_BRANCH=$(printf '%s' "$RESULT" | jq -r '.data.pr_branch')
 THREADS_PATH=$(printf '%s' "$RESULT" | jq -r '.data.threads_path')
 PR_COMMENTS_PATH=$(printf '%s' "$RESULT" | jq -r '.data.pr_comments_path')
 TRIAGE_PATH=$(printf '%s' "$RESULT" | jq -r '.data.triage_path')
+RESUME_TRIAGE_PATH=$(printf '%s' "$RESULT" | jq -r '.data.resume_triage_path')
 ELIGIBLE_THREADS=$(printf '%s' "$RESULT" | jq -r '.data.eligible_threads')
 SKIPPED_THREADS_CLARIFIED=$(printf '%s' "$RESULT" | jq -r '.data.skipped_threads_clarified')
 ELIGIBLE_PR_COMMENTS=$(printf '%s' "$RESULT" | jq -r '.data.eligible_pr_comments')
@@ -66,7 +67,7 @@ If `$ELIGIBLE_THREADS` and `$ELIGIBLE_PR_COMMENTS` are both zero, nothing is lef
 
 Then run **Phase 7 — Cleanup** and exit.
 
-If a prior triage save exists at `$TRIAGE_PATH` — the envelope's `resume_available` is true — offer to resume from it. A pre-upgrade session's resume point at the legacy un-scoped `/tmp/swe-workbench-address-feedback/${PR}-triage.json` is dual-read by the fetch for exactly this check; new saves always go to `$TRIAGE_PATH`.
+If the envelope's `resume_available` is true, offer to resume — reading the saved decisions from `$RESUME_TRIAGE_PATH`, which the fetch resolves to wherever the data actually lives (the scoped `$TRIAGE_PATH`, or a pre-upgrade session's legacy un-scoped `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, dual-read). New saves always go to `$TRIAGE_PATH`, so a resumed session migrates to the scoped spelling on its next save.
 
 ### Phase 2 — Worktree
 

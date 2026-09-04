@@ -73,6 +73,7 @@ SIBLING_CALLERS = {
         "swe-workbench-clean-ephemeral",
         "swe-workbench-reap-run-dir",
         "swe-workbench-reap-session-scratch",
+        "swe-workbench-repo-scope",
     ],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }

@@ -685,3 +685,28 @@ def test_envelope_exposes_triage_path(tmp_path):
     finally:
         _cleanup_state_files(pr)
         (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+
+def test_resume_triage_path_points_at_existing_file(tmp_path):
+    """When the resume point exists only at the legacy spelling, the envelope
+    must locate the data (resume_triage_path), not just flag it — triage_path
+    keeps naming where new saves go."""
+    pr = _unique_n()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    legacy = STATE_DIR / f"{pr}-triage.json"
+    legacy.write_text(json.dumps({"t1": "A"}))
+    responses = _preflight_responses(pr, state="MERGED")
+    stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+    try:
+        result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                      responses_file=tmp_path / "gh_responses.json",
+                      extra_args=["--repo", "octocat/widgets"])
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["resume_available"] is True
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-triage.json"
+        assert envelope["data"]["resume_triage_path"] == str(legacy)
+        assert Path(envelope["data"]["resume_triage_path"]).exists()
+    finally:
+        _cleanup_state_files(pr)
+        (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)

@@ -65,6 +65,13 @@ resolve_origin() {
   printf '%s\n' "$owner_repo" | tr '/' '-'
 }
 
+# Extra positionals after the recognized pair are a caller typo, not a wider
+# scope — reject rather than silently succeed on a partial argument list.
+[ "$#" -le 2 ] || {
+  printf 'swe-workbench-repo-scope: unexpected extra argument(s)\n' >&2
+  exit 1
+}
+
 case "$MODE" in
   --repo)
     [ -n "$ARG" ] || exit 1
