@@ -26,9 +26,34 @@ def run_script(*args: str, cwd=None):
 
 
 def test_explicit_repo_prints_slug():
+    r = run_script("--repo", "octocat/widgets")
+    assert r.returncode == 0
+    assert r.stdout == "octocat-widgets\n"
+
+
+def test_explicit_repo_doubles_internal_hyphens():
+    # Real-world case: "swe-workbench" itself has a hyphen in the repo name.
     r = run_script("--repo", "lugassawan/swe-workbench")
     assert r.returncode == 0
-    assert r.stdout == "lugassawan-swe-workbench\n"
+    assert r.stdout == "lugassawan-swe--workbench\n"
+
+
+@pytest.mark.parametrize(
+    "pair_a,pair_b",
+    [
+        ("acme-app/foo", "acme/app-foo"),
+        ("a-b-c/d", "a/b-c-d"),
+    ],
+)
+def test_hyphen_split_pairs_never_collide(pair_a, pair_b):
+    # Without doubling, "acme-app/foo" and "acme/app-foo" both collapse to
+    # "acme-app-foo" under a plain tr '/' '-' — exactly the collision that
+    # breaks the "never remove artifacts belonging to a different
+    # repository" guarantee this scoping scheme exists to provide.
+    slug_a = run_script("--repo", pair_a).stdout
+    slug_b = run_script("--repo", pair_b).stdout
+    assert slug_a != slug_b
+    assert slug_a != "" and slug_b != ""
 
 
 @pytest.mark.parametrize("bad", ["nodoublecolon", "a/b/c", "../evil", "a b/c", "a/"])

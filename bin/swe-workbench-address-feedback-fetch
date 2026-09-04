@@ -24,7 +24,8 @@ unit-tested against the same fixtures that program was tested against), atomical
 writes the three snapshot files at repo-scoped paths (owner-repo slug
 prefix; legacy un-scoped names when no scope resolves — ratcheted against
 swe-workbench-sweep-residuals' own legacy+scoped literal sets), and dual-reads
-`${PR}-triage.json` (legacy) / `<slug>-<PR>-triage.json` (scoped) for
+`${PR}-triage.json` (legacy, only when a same-numbered legacy preflight JSON
+also attributes it to this repo) / `<slug>-<PR>-triage.json` (scoped) for
 `resume_available` + `resume_triage_path`.
 
 Manifest of paths, not inline records: `data` carries paths/counts/booleans only —
@@ -152,6 +153,24 @@ def resolve_scope_slug(repo_arg: str | None, script_dir: Path) -> str:
     if proc.returncode != 0:
         return ""
     return proc.stdout.strip()
+
+
+def _legacy_triage_attributable(pr: str, owner: str, repo: str) -> bool:
+    """True iff a same-numbered legacy (un-scoped) preflight JSON exists in
+    STATE_DIR and its own .url attributes to this repo. The legacy triage
+    file itself carries no owner/repo field, so this is the only signal
+    available — mirrors swe-workbench-sweep-residuals' sibling-attribution
+    pattern for $N-threads.json (paired with the preflight JSON's own .url)
+    rather than trusting an un-scoped leftover by presence alone. Absent or
+    unreadable/mismatched -> not attributable (fail closed, same default as
+    every other legacy-attribution rule in this scheme)."""
+    try:
+        legacy_data = json.loads((STATE_DIR / f"{pr}.json").read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    url = legacy_data.get("url") or ""
+    m = re.match(r"^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$", url)
+    return bool(m) and m.group(1) == owner and m.group(2) == repo
 
 
 def _gh(args: list[str], script_dir: Path) -> subprocess.CompletedProcess:
@@ -337,17 +356,24 @@ def main(argv: list[str] | None = None) -> int:
         threads_path = STATE_DIR / f"{stem}-threads.json"
         pr_comments_path = STATE_DIR / f"{stem}-pr-comments.json"
         # Dual-read: a pre-upgrade session's resume point lives at
-        # the legacy un-scoped triage path — still visible to a scoped run.
+        # the legacy un-scoped triage path — still visible to a scoped run,
+        # but only when a same-numbered legacy preflight JSON also exists and
+        # attributes to this repo (see _legacy_triage_attributable) — an
+        # un-scoped leftover from a DIFFERENT repository's earlier
+        # same-numbered PR must never be silently offered as a resume point.
         # resume_triage_path locates where the data actually lives (slugged if
-        # present, else legacy, else empty); triage_path keeps naming where new
-        # saves go, so the resume offer can point at a readable file while every
-        # save migrates to the scoped spelling.
+        # present, else attributable legacy, else empty); triage_path keeps
+        # naming where new saves go, so the resume offer can point at a
+        # readable file while every save migrates to the scoped spelling.
+        legacy_triage_attributable = (
+            slug != "" and legacy_triage_path.exists() and _legacy_triage_attributable(pr, owner, repo)
+        )
         resume_triage_path = ""
         if triage_path.exists():
             resume_triage_path = str(triage_path)
-        elif slug and legacy_triage_path.exists():
+        elif legacy_triage_attributable:
             resume_triage_path = str(legacy_triage_path)
-        resume_available = triage_path.exists() or (slug != "" and legacy_triage_path.exists())
+        resume_available = triage_path.exists() or legacy_triage_attributable
 
         if state != "OPEN":
             envelope = _build_envelope(

@@ -651,11 +651,14 @@ class TestRepoScopedState:
             _cleanup_state_files(pr)
 
     def test_resume_dual_reads_legacy_triage(self, tmp_path):
-        """A pre-upgrade session left <N>-triage.json; a scoped run must still
-        see the resume point (dual-read), while writing slugged paths."""
+        """A pre-upgrade session left <N>-triage.json plus its paired <N>.json
+        preflight snapshot attributing to this same repo; a scoped run must
+        still see the resume point (dual-read), while writing slugged paths."""
         pr = _unique_n()
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         (STATE_DIR / f"{pr}-triage.json").write_text("{}")
+        (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+            {"url": f"https://github.com/test-owner/test-repo/pull/{pr}"}))
         responses = _preflight_responses(pr, state="MERGED")
         stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
         try:
@@ -665,6 +668,53 @@ class TestRepoScopedState:
             assert result.returncode == 0, result.stderr
             envelope = json.loads(result.stdout)
             assert envelope["data"]["resume_available"] is True
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+    def test_resume_skips_legacy_triage_from_a_different_repo(self, tmp_path):
+        """A legacy <N>-triage.json left by an UNRELATED repository's
+        earlier same-numbered PR must never be silently offered as a resume
+        point — this is the collision the un-gated dual-read used to miss.
+        The paired <N>.json here attributes to a foreign owner/repo, so the
+        gate must reject it even though the triage file itself exists."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text(json.dumps({"foreign": "A"}))
+        (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+            {"url": f"https://github.com/some-other-owner/some-other-repo/pull/{pr}"}))
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is False
+            assert envelope["data"]["resume_triage_path"] == ""
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+    def test_resume_skips_legacy_triage_with_no_paired_preflight(self, tmp_path):
+        """A legacy <N>-triage.json with no paired <N>.json preflight snapshot
+        at all has no attribution signal — fail closed, same as every other
+        unattributable legacy artifact in this scheme, rather than trusting
+        the leftover by presence alone."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text(json.dumps({"orphan": "A"}))
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is False
+            assert envelope["data"]["resume_triage_path"] == ""
         finally:
             _cleanup_state_files(pr)
             (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
@@ -696,6 +746,8 @@ def test_resume_triage_path_points_at_existing_file(tmp_path):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     legacy = STATE_DIR / f"{pr}-triage.json"
     legacy.write_text(json.dumps({"t1": "A"}))
+    (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+        {"url": f"https://github.com/test-owner/test-repo/pull/{pr}"}))
     responses = _preflight_responses(pr, state="MERGED")
     stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
     try:

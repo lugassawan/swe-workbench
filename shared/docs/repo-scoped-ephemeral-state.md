@@ -15,11 +15,18 @@ lingered, and concurrent same-`<N>` reviews raced on identical filenames.
 
 ## The slug
 
-`owner/repo` → `owner-repo` (`tr '/' '-'`), the pre-existing convention from
-`swe-workbench:workflow-audit-emit-issues` (`gh repo view --json nameWithOwner -q .nameWithOwner | tr '/' '-'`).
-GitHub owner/repo names are `[A-Za-z0-9._-]` and start alphanumeric, so the translation is
-sufficient and filename-safe. `bin/swe-workbench-repo-scope` is the single resolver
-(Tier S bare scalar on stdout; exit 1 + empty output = unresolvable):
+`owner/repo` → `owner-repo`, with every literal hyphen inside `owner` and inside `repo` doubled
+*before* the join (`owner.replace('-', '--') + '-' + repo.replace('-', '--')`). Plain `tr '/' '-'`
+— the pre-existing convention from `swe-workbench:workflow-audit-emit-issues`
+(`gh repo view --json nameWithOwner -q .nameWithOwner | tr '/' '-'`) — is **not** injective: two
+distinct pairs that split the hyphen boundary differently collide (`acme-app/foo` and
+`acme/app-foo` both produce `acme-app-foo`), which breaks the "never remove artifacts belonging to
+a different repository" guarantee this whole scheme exists to provide. Doubling makes every
+hyphen run wholly inside an escaped half even-length, so the separator — the one hyphen not part
+of a doubled pair — is always locatable and the join stays injective (e.g. `acme-app/foo` →
+`acme--app-foo`, `acme/app-foo` → `acme-app--foo`). GitHub owner/repo names are `[A-Za-z0-9._-]`
+and start alphanumeric, so the escaping stays filename-safe. `bin/swe-workbench-repo-scope` is the
+single resolver (Tier S bare scalar on stdout; exit 1 + empty output = unresolvable):
 
 | Resolution step | Source |
 |---|---|
@@ -61,7 +68,9 @@ Rules of thumb:
 - `swe-workbench-preflight-pr` — default field set includes `url`, so every new state file
   self-attributes on disk.
 - `swe-workbench-address-feedback-fetch [--repo owner/repo]` — slugs all four state paths;
-  `resume_available` dual-reads the legacy triage path.
+  `resume_available` dual-reads the legacy triage path only when a same-numbered legacy
+  preflight JSON also attributes it to this repo (the triage file itself carries no owner/repo
+  field to check directly).
 - `swe-workbench-address-feedback-worktree [acquire|release] … [--repo owner/repo]` — slugged
   `<slug>-<N>-worktree.json` receipt, dual-read of the legacy receipt on release.
 - `swe-workbench-pr-review-worktree {acquire,release,names} … [--repo owner/repo]` — slugged
@@ -97,7 +106,9 @@ an unanchored `*` could absorb a longer foreign slug ending in `-<slug>`.
 A pre-upgrade acquire and a post-upgrade release must still meet: release paths, the worktree
 receipt read, and the triage resume check all fall back to the legacy spelling when the scoped
 one is absent (see the three writers above), and every legacy-fallback adoption is
-attribution-gated by the artifact's own git origin. Prose that hardcoded literal paths now
+attribution-gated — the worktree receipt by its own recorded path's git origin, the triage resume
+check by a same-numbered legacy preflight JSON's `.url` (the triage file itself has no
+owner/repo field of its own to check). Prose that hardcoded literal paths now
 reaps via the envelope-provided variables (`$JSON`, `$TRIAGE_PATH`, `$RESUME_TRIAGE_PATH`, …)
 so both spellings flow through one name. Known inherited edges (documented, retention-bounded):
 a fork checkout's origin-derived artifacts won't match a base-repo sweep's explicit scope —
