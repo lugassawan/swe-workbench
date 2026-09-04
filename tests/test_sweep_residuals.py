@@ -84,9 +84,9 @@ def _rimba_absent_env(fake_home: Path) -> dict:
     return env
 
 
-def _run_script(repo: Path, n: str, env: dict) -> subprocess.CompletedProcess:
+def _run_script(repo: Path, n: str, env: dict, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(SCRIPT), n],
+        ["bash", str(SCRIPT), n, *extra],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -103,9 +103,11 @@ def _assert_contract(
     swept_ssf: str = "0",
     retained_wt: str = "0",
     failed: str = "0",
+    retained_sf: str = "0",
 ) -> None:
-    """`retained_wt`/`failed` are expected *counts* — checked against the length of
-    the `data.retained_worktrees`/`data.failed_removals` arrays, not their content."""
+    """`retained_wt`/`failed`/`retained_sf` are expected *counts* — checked against
+    the length of the `data.retained_worktrees`/`data.failed_removals`/
+    `data.retained_state_files` arrays, not their content."""
     assert result.returncode == 0, (
         f"Script must always exit 0 (rc={result.returncode})\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
@@ -113,7 +115,7 @@ def _assert_contract(
     payload = json.loads(result.stdout)
     assert payload["schema"] == "swb.sweep-residuals/1"
     assert payload["warnings"] == []
-    expected_status = "partial" if (int(retained_wt) > 0 or int(failed) > 0) else "ok"
+    expected_status = "partial" if (int(retained_wt) > 0 or int(failed) > 0 or int(retained_sf) > 0) else "ok"
     assert payload["status"] == expected_status, (
         f"expected status={expected_status!r}, got {payload['status']!r}\nFull payload: {payload!r}"
     )
@@ -125,6 +127,7 @@ def _assert_contract(
         "swept_session_files": data["swept_session_files"],
         "retained_worktrees": len(data["retained_worktrees"]),
         "failed_removals": len(data["failed_removals"]),
+        "retained_state_files": len(data["retained_state_files"]),
         "residual_none": data["residual_none"],
     }
     expected = {
@@ -134,6 +137,7 @@ def _assert_contract(
         "swept_session_files": int(swept_ssf),
         "retained_worktrees": int(retained_wt),
         "failed_removals": int(failed),
+        "retained_state_files": int(retained_sf),
         "residual_none": bool(int(residual_none)),
     }
     assert actual == expected, (
@@ -763,3 +767,203 @@ def test_stdout_contains_no_eval_able_key_value_lines(tmp_path):
     assert not re.search(r"^[A-Z_]+=", result.stdout, re.MULTILINE), (
         f"stdout must be a bare JSON envelope, no shell KEY=VALUE lines: {result.stdout!r}"
     )
+
+
+# ── Repo-scoped dual-read sweep (issue #713) ──────────────────────────────
+
+
+def _build_scoped_repo(base: Path, origin_url: str = "https://github.com/octocat/widgets.git") -> Path:
+    """A repo whose origin remote is a github URL, so the sweep resolves a slug
+    and runs in scoped mode."""
+    repo = _build_repo(base)
+    _run("git", "remote", "add", "origin", origin_url, cwd=repo)
+    return repo
+
+
+def _scoped_env(tmp_path: Path) -> dict:
+    (tmp_path / "fake_home").mkdir(exist_ok=True)
+    return _rimba_absent_env(tmp_path / "fake_home")
+
+
+class TestRepoScopedStateFileSweep:
+    def test_scoped_sweeps_own_slugged_files_and_leaves_foreign_slugged(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / f"octocat-widgets-{n}.json"
+        foreign = PR_REVIEW_DIR / f"other-repo-{n}.json"
+        own.write_text("{}")
+        foreign.write_text("{}")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not own.exists()
+            assert foreign.exists(), "a foreign repo's slugged state file must never be touched"
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert retained == [], retained
+        finally:
+            own.unlink(missing_ok=True)
+            foreign.unlink(missing_ok=True)
+
+    def test_explicit_repo_flag_drives_scope_from_plain_cwd(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / f"octocat-widgets-{n}.json"
+        own.write_text("{}")
+        try:
+            result = _run_script(plain, n, _scoped_env(tmp_path), "--repo", "octocat/widgets")
+            _assert_contract(result, "0", "1", "0")
+            assert not own.exists()
+        finally:
+            own.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_foreign_retained(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": "https://github.com/other/repo/pull/" + n}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists()
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert retained == [{"path": str(f), "reason": retained[0]["reason"]}]
+            assert "another repository" in retained[0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_ours_swept(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": f"https://github.com/octocat/widgets/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not f.exists()
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_headrefoid_fingerprint(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        match = PR_REVIEW_DIR / f"{n}.json"
+        mismatch = PR_REVIEW_DIR / f"{n}-followup.json"
+        match.write_text(json.dumps({"headRefOid": "a" * 40}))
+        mismatch.write_text(json.dumps({"headRefOid": "b" * 40}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path), "--head-sha", "a" * 40)
+            _assert_contract(result, "0", "1", "0", retained_sf="1")
+            assert not match.exists()
+            assert mismatch.exists()
+        finally:
+            match.unlink(missing_ok=True)
+            mismatch.unlink(missing_ok=True)
+
+    def test_legacy_triage_always_retained(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        f = ADDR_FEEDBACK_DIR / f"{n}-triage.json"
+        f.write_text(json.dumps({"123": "ADDRESSED"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists(), "legacy triage carries user decisions — always retained"
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert "triage" in retained[0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_pr_comments_repository_url_attribution(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        ours = ADDR_FEEDBACK_DIR / f"{n}-pr-comments.json"
+        theirs = ADDR_FEEDBACK_DIR / f"{n}-threads.json"  # pairing probe: foreign sibling below
+        ours.write_text(json.dumps([{"id": 1, "repository_url": "https://api.github.com/repos/octocat/widgets"}]))
+        theirs.write_text("[]")
+        # foreign sibling preflight JSON: itself retained AND retains the threads file via set-pairing
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        sibling = PR_REVIEW_DIR / f"{n}.json"
+        sibling.write_text(json.dumps({"url": f"https://github.com/other/repo/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0", retained_sf="2")
+            assert not ours.exists()
+            assert theirs.exists(), "threads paired with a foreign preflight JSON must be retained"
+            assert sibling.exists()
+        finally:
+            ours.unlink(missing_ok=True)
+            theirs.unlink(missing_ok=True)
+            sibling.unlink(missing_ok=True)
+
+    def test_legacy_worktree_receipt_attributed_by_path_remote(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        ours = ADDR_FEEDBACK_DIR / f"{n}-worktree.json"
+        theirs = ADDR_FEEDBACK_DIR / f"{n}-pr-comments.json"
+        # own receipt points at a worktree of the scoped repo
+        own_wt = tmp_path / "own_wt"
+        _run("git", "worktree", "add", "--detach", str(own_wt), "main", cwd=repo)
+        ours.write_text(json.dumps({"path": str(own_wt), "branch": "b", "created": "true"}))
+        # theirs: empty-array pr-comments has no repository_url -> not attributable
+        theirs.write_text("[]")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0", retained_sf="1")
+            assert not ours.exists()
+            assert theirs.exists()
+        finally:
+            ours.unlink(missing_ok=True)
+            theirs.unlink(missing_ok=True)
+            _run("git", "worktree", "remove", "--force", str(own_wt), cwd=repo)
+
+
+class TestRepoScopedRunDirSweep:
+    def test_scoped_glob_only_reaps_own_slug(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        own = RUN_ROOT / f"pr-review-octocat-widgets-{n}-a1b2c3"
+        foreign = RUN_ROOT / f"pr-review-other-repo-{n}-b2c3d4"
+        legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
+        for d in (own, foreign, legacy):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not own.exists()
+            assert foreign.exists(), "foreign repo's run dir must not be reaped by a scoped sweep"
+            assert legacy.exists(), "legacy run dirs belong to the 24h age-gated reaper, not this sweep"
+        finally:
+            for d in (own, foreign, legacy):
+                shutil.rmtree(d, ignore_errors=True)
+
+
+class TestRepoScopedFallbackWorktreeSweep:
+    def test_legacy_fallback_worktree_attributed_by_origin(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        foreign_base = tmp_path / "foreign"
+        foreign_base.mkdir()
+        foreign_repo = _build_scoped_repo(foreign_base, "https://github.com/other/repo.git")
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / n
+        theirs = PR_REVIEW_DIR / f"{n}-followup"
+        _run("git", "worktree", "add", "--detach", str(own), "main", cwd=repo)
+        _run("git", "worktree", "add", "--detach", str(theirs), "main", cwd=foreign_repo)
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "1", "0", "0", retained_wt="1")
+            assert not own.exists()
+            assert theirs.exists(), "foreign-origin legacy fallback worktree must be retained"
+        finally:
+            _cleanup_worktree(repo, own, None)
+            _cleanup_worktree(foreign_repo, theirs, None)

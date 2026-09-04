@@ -72,18 +72,23 @@ def test_script_compiles():
 
 
 def test_snapshot_paths_match_sweep_residuals_hardcoded_literals():
-    """sweep-residuals hardcodes these three paths as literals for its own merged-PR
-    backstop sweep — they must stay byte-identical or that sweep silently stops
-    reaping this flow's state files."""
+    """sweep-residuals hardcodes these paths for its own merged-PR backstop sweep —
+    both spellings must stay byte-identical or that sweep silently stops reaping
+    this flow's state files: the legacy un-scoped names ($N) and the #713 scoped
+    names (${SCOPE_STEM}, literal in sweep's Block A candidate array)."""
     pr = "424242"
     threads_path = STATE_DIR / f"{pr}-threads.json"
     pr_comments_path = STATE_DIR / f"{pr}-pr-comments.json"
     pr_json_path = STATE_DIR / f"{pr}.json"
 
     sweep_text = SWEEP_RESIDUALS.read_text()
-    assert f'"/tmp/swe-workbench-address-feedback/$N.json"' in sweep_text
-    assert f'"/tmp/swe-workbench-address-feedback/$N-threads.json"' in sweep_text
-    assert f'"/tmp/swe-workbench-address-feedback/$N-pr-comments.json"' in sweep_text
+    for suffix in (".json", "-threads.json", "-pr-comments.json"):
+        assert f'"$ADDR_FEEDBACK_DIR/$N{suffix}"' in sweep_text, (
+            f"legacy candidate for {suffix} drifted — sweep-residuals must keep reaping it"
+        )
+        assert f'"$ADDR_FEEDBACK_DIR/${{SCOPE_STEM}}{suffix}"' in sweep_text, (
+            f"scoped candidate for {suffix} drifted — sweep-residuals must reap the slugged spelling"
+        )
 
     assert str(pr_json_path) == f"/tmp/swe-workbench-address-feedback/{pr}.json"
     assert str(threads_path) == f"/tmp/swe-workbench-address-feedback/{pr}-threads.json"

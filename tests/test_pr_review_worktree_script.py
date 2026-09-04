@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -359,32 +360,51 @@ def test_names_specialist_labels(mode):
     assert data[mode]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{mode}-{n}"
 
 
-def _sweep_residuals_worktree_contract(n: str) -> set:
+def _sweep_residuals_worktree_contract(n: str) -> tuple[set, set]:
     """Ground truth extracted from swe-workbench-sweep-residuals' own hardcoded
-    WT_LABELS/WT_FALLBACKS/WT_DELETE_BRANCH arrays -- the backstop this ratchet
-    guards against silently drifting away from."""
+    WT_LABELS/WT_FALLBACKS/WT_LEGACY_FALLBACKS/WT_DELETE_BRANCH arrays -- the
+    backstop this ratchet guards against silently drifting away from. Returns
+    (legacy_triples, scoped_triples-with-octocat-widgets-slug) for the same PR
+    number: scoped fallbacks carry the `${SCOPE_SLUG:+${SCOPE_SLUG}-}` marker,
+    substituted here exactly as a scoped sweep would."""
     text = SWEEP_RESIDUALS.read_text()
 
     specialist_match = re.search(r"SPECIALIST_MODES=\(([^)]*)\)", text)
     assert specialist_match, "SPECIALIST_MODES=(...) not found in sweep-residuals"
     specialist_modes = specialist_match.group(1).split()
 
-    labels_match = re.search(r"WT_LABELS=\(([^)]*)\)", text)
-    fallbacks_match = re.search(r"WT_FALLBACKS=\(([^)]*)\)", text)
-    delete_match = re.search(r"WT_DELETE_BRANCH=\(([^)]*)\)", text)
-    assert labels_match and fallbacks_match and delete_match, "WT_* arrays not found in sweep-residuals"
+    def _extract(array_name: str) -> list[str]:
+        m = re.search(rf"{array_name}=\(([^)]*)\)", text)
+        assert m, f"{array_name}=(...) not found in sweep-residuals"
+        return re.findall(r'"([^"]*)"', m.group(1))
 
-    labels = [s.replace("$N", n) for s in re.findall(r'"([^"]*)"', labels_match.group(1))]
-    fallbacks = [s.replace("$N", n) for s in re.findall(r'"([^"]*)"', fallbacks_match.group(1))]
-    delete_branch = re.findall(r"\d+", delete_match.group(1))
-    assert len(labels) == len(fallbacks) == len(delete_branch)
+    labels = [s.replace("$N", n) for s in _extract("WT_LABELS")]
+    scoped = [s.replace("$N", n).replace("${SCOPE_SLUG:+${SCOPE_SLUG}-}", "octocat-widgets-")
+              for s in _extract("WT_FALLBACKS")]
+    legacy = [s.replace("$N", n) for s in _extract("WT_LEGACY_FALLBACKS")]
+    delete_branch = re.findall(r"\d+", _extract_dec(text))
+    assert len(labels) == len(scoped) == len(legacy) == len(delete_branch)
+    # sweep spells the root as $PR_REVIEW_DIR in its arrays; names emits the
+    # absolute path — normalize before comparing.
+    scoped = [s.replace("$PR_REVIEW_DIR/", "/tmp/swe-workbench-pr-review/") for s in scoped]
+    legacy = [s.replace("$PR_REVIEW_DIR/", "/tmp/swe-workbench-pr-review/") for s in legacy]
 
     for mode in specialist_modes:
         labels.append(f"review-{mode}-{n}")
-        fallbacks.append(f"/tmp/swe-workbench-pr-review/{mode}-{n}")
+        scoped.append(f"/tmp/swe-workbench-pr-review/octocat-widgets-{mode}-{n}")
+        legacy.append(f"/tmp/swe-workbench-pr-review/{mode}-{n}")
         delete_branch.append("1")
 
-    return {(l, f, d) for l, f, d in zip(labels, fallbacks, delete_branch)}
+    return (
+        {(l, f, d) for l, f, d in zip(labels, legacy, delete_branch)},
+        {(l, f, d) for l, f, d in zip(labels, scoped, delete_branch)},
+    )
+
+
+def _extract_dec(text: str) -> str:
+    m = re.search(r"WT_DELETE_BRANCH=\(([^)]*)\)", text)
+    assert m, "WT_DELETE_BRANCH=(...) not found in sweep-residuals"
+    return m.group(1)
 
 
 def test_names_matches_sweep_residuals_worktree_contract():
@@ -393,25 +413,42 @@ def test_names_matches_sweep_residuals_worktree_contract():
     `names` output, unioned with one explicit address-feedback-<N> row (owned by
     workflow-address-feedback's own worktree lifecycle, not this command -- its
     worktree has the opposite branch-deletion invariant), must equal sweep-residuals' own
-    hardcoded triples for the same PR number. The union is asserted explicitly here,
-    not silently -- deleting this line would not make the test pass."""
+    hardcoded triples for the same PR number, on BOTH spellings (issue #713):
+    legacy (names in a non-git cwd) and scoped (names --repo, octocat-widgets slug).
+    The union is asserted explicitly here, not silently -- deleting this line would
+    not make the test pass."""
     n = _unique_n()
-    result = subprocess.run(
+    plain = Path(tempfile.mkdtemp(prefix="names-nogit-"))
+    legacy_result = subprocess.run(
         ["bash", str(SCRIPT), "names", "--pr", n], capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        cwd=str(plain),
     )
-    assert result.returncode == 0, result.stderr
-    names_data = json.loads(result.stdout)
-    # The ratchet compares the LEGACY triple until sweep-residuals grows its own
-    # scoped+legacy pair (issue #713) — legacy_fallback_path is the stable join
-    # key between the two contracts.
-    names_triples = {
-        (item["label"], item["legacy_fallback_path"], "1" if item["delete_branch"] else "0")
+    assert legacy_result.returncode == 0, legacy_result.stderr
+    names_data = json.loads(legacy_result.stdout)
+    legacy_triples = {
+        (item["label"], item["fallback_path"], "1" if item["delete_branch"] else "0")
         for item in names_data
     }
-    names_triples.add((f"address-feedback-{n}", "", "0"))
+    legacy_triples.add((f"address-feedback-{n}", "", "0"))
 
-    expected = _sweep_residuals_worktree_contract(n)
-    assert names_triples == expected
+    scoped_result = subprocess.run(
+        ["bash", str(SCRIPT), "names", "--pr", n, "--repo", "octocat/widgets"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert scoped_result.returncode == 0, scoped_result.stderr
+    scoped_triples = {
+        (item["label"], item["fallback_path"], "1" if item["delete_branch"] else "0")
+        for item in json.loads(scoped_result.stdout)
+    }
+    scoped_triples.add((f"address-feedback-{n}", "", "0"))
+
+    expected_legacy, expected_scoped = _sweep_residuals_worktree_contract(n)
+    assert legacy_triples == expected_legacy, (
+        f"legacy contract drift: names={sorted(legacy_triples)} sweep={sorted(expected_legacy)}"
+    )
+    assert scoped_triples == expected_scoped, (
+        f"scoped contract drift: names={sorted(scoped_triples)} sweep={sorted(expected_scoped)}"
+    )
 
 
 # ── acquire / release argument validation ────────────────────────────────────
