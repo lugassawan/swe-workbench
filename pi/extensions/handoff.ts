@@ -93,6 +93,7 @@ interface GuardData {
   decision?: unknown;
   reason?: unknown;
   instruction?: unknown;
+  worktree_root?: unknown;
 }
 
 function parseGuardDecision(stdout: string): GuardData | undefined {
@@ -109,12 +110,29 @@ function parseGuardDecision(stdout: string): GuardData | undefined {
   }
 }
 
+/** Validate an untrusted worktree_root before it reaches a block reason string. */
+function safeWorktreeRoot(value: unknown): string | undefined {
+  if (
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    value.length <= 4096 &&
+    Array.from(value).every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function blockReason(data: GuardData | undefined, fallback: string): string {
   if (data === undefined) return fallback;
   const reason = typeof data.reason === "string" ? data.reason : "";
   const instruction = typeof data.instruction === "string" ? data.instruction : "";
-  if (reason && instruction) return `${reason} — ${instruction}`;
-  return instruction || reason || fallback;
+  const worktreeRoot = safeWorktreeRoot(data.worktree_root);
+  const base = reason && instruction ? `${reason} — ${instruction}` : instruction || reason || fallback;
+  return worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base;
 }
 
 export function registerHandoff(pi: ExtensionAPI, root: string): void {

@@ -840,7 +840,20 @@ def test_guard_allows_mutation_outside_a_git_workspace(tmp_path):
     result = _run_handoff("guard", "--as", "claude", cwd=plain, env=_env_for(tmp_path / "state"))
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["data"]["decision"] == "allow"
+    envelope = json.loads(result.stdout)
+    assert envelope["data"]["decision"] == "allow"
+    assert "worktree_root" not in envelope["data"]
+
+
+def test_guard_allow_envelope_carries_the_worktree_root_when_no_lease_exists(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(tmp_path / "state"))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"]["worktree_root"] == str(repo.resolve())
 
 
 def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
@@ -858,6 +871,7 @@ def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
         assert envelope["data"]["checkpoint_id"] == checkpoint_id
         assert envelope["data"]["target_harness"] == "pi"
         assert envelope["data"]["instruction"] == f"/handoff resume {checkpoint_id}"
+        assert envelope["data"]["worktree_root"] == str(repo.resolve())
 
 
 def test_guard_allows_only_the_bound_owner_session(tmp_path):
@@ -875,13 +889,19 @@ def test_guard_allows_only_the_bound_owner_session(tmp_path):
     foreign = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
 
     assert allowed.returncode == 0, allowed.stderr
-    assert json.loads(allowed.stdout)["data"]["decision"] == "allow"
+    allowed_envelope = json.loads(allowed.stdout)
+    assert allowed_envelope["data"]["decision"] == "allow"
+    assert allowed_envelope["data"]["worktree_root"] == str(repo.resolve())
     assert wrong_session.returncode == 3
-    assert json.loads(wrong_session.stdout)["data"]["decision"] == "deny"
+    wrong_session_envelope = json.loads(wrong_session.stdout)
+    assert wrong_session_envelope["data"]["decision"] == "deny"
+    assert wrong_session_envelope["data"]["worktree_root"] == str(repo.resolve())
     assert missing_session.returncode == 3
     assert json.loads(missing_session.stdout)["data"]["decision"] == "deny"
     assert foreign.returncode == 3
-    assert json.loads(foreign.stdout)["data"]["decision"] == "deny"
+    foreign_envelope = json.loads(foreign.stdout)
+    assert foreign_envelope["data"]["decision"] == "deny"
+    assert foreign_envelope["data"]["worktree_root"] == str(repo.resolve())
 
 
 def test_close_rejects_a_stale_checkpoint_without_releasing_the_current_lease(tmp_path):

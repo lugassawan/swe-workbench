@@ -1069,10 +1069,19 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
         )
     paths = StatePaths.from_environment()
     workspace_directory = paths.workspace_directory(workspace)
+    worktree_root = str(workspace.worktree_root)
     lease = load_lease(workspace_directory)
     if lease is None:
         return (
-            Envelope("ok", {"decision": "allow", "reason": "no handoff lease for this worktree"}, []),
+            Envelope(
+                "ok",
+                {
+                    "decision": "allow",
+                    "reason": "no handoff lease for this worktree",
+                    "worktree_root": worktree_root,
+                },
+                [],
+            ),
             0,
         )
     owner = str(lease["owner_harness"])
@@ -1097,6 +1106,7 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
                     "checkpoint_id": checkpoint_id,
                     "target_harness": target_harness,
                     "instruction": f"{command_name} resume {checkpoint_id}",
+                    "worktree_root": worktree_root,
                 },
                 [],
             ),
@@ -1110,6 +1120,7 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
                     "decision": "deny",
                     "reason": f"handoff lease is held by {owner}",
                     "instruction": f"the {owner} harness owns this worktree; stop it or resume its checkpoint",
+                    "worktree_root": worktree_root,
                 },
                 [],
             ),
@@ -1124,12 +1135,20 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
                     "decision": "deny",
                     "reason": "handoff lease is bound to a different receiver session",
                     "instruction": f"only receiver session {bound_session!r} may mutate this worktree",
+                    "worktree_root": worktree_root,
                 },
                 [],
             ),
             GUARD_DENY_EXIT_CODE,
         )
-    return (Envelope("ok", {"decision": "allow", "reason": f"handoff lease held by {owner}"}, []), 0)
+    return (
+        Envelope(
+            "ok",
+            {"decision": "allow", "reason": f"handoff lease held by {owner}", "worktree_root": worktree_root},
+            [],
+        ),
+        0,
+    )
 
 
 def _safe_lease_for_cleanup(workspace_directory: Path) -> dict[str, object] | None | bool:

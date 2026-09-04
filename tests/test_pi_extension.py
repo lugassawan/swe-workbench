@@ -3094,13 +3094,15 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
             f'--session-ref {session_arg} | swe-workbench-result-check swb.handoff/1'
         ),
     }
-    return _run_node(
+    result = _run_node(
         _HANDOFF_DRIVER,
         [str(HANDOFF_TS), json.dumps(config)],
         tmp_path_factory,
         label=label,
         env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
     )
+    result["repos"] = {name: str(path) for name, path in repos.items()}
+    return result
 
 
 def test_handoff_module_exists():
@@ -3137,10 +3139,12 @@ def test_handoff_allows_mutation_when_no_state_exists(tmp_path_factory):
 
 @requires_node
 def test_handoff_blocks_mutating_tools_under_a_released_lease(tmp_path_factory):
-    out = _handoff_driver_result(tmp_path_factory, "pi-handoff-released")["out"]
+    result = _handoff_driver_result(tmp_path_factory, "pi-handoff-released")
+    out = result["out"]
     for key in ("releasedBash", "releasedEdit", "releasedWrite"):
         assert out[key]["block"] is True, f"{key}: {out[key]}"
     assert "/handoff resume" in out["releasedBash"]["reason"]
+    assert result["repos"]["released"] in out["releasedBash"]["reason"]
     assert out.get("releasedRead") is None
 
 

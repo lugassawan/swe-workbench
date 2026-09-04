@@ -56,12 +56,35 @@ def _runtime_path() -> Path | None:
 
 
 def _working_directory(payload: dict[str, object]) -> Path:
+    """Resolve the directory the guarded tool call will run in.
+
+    Falls back to ``Path.cwd()`` when the PreToolUse payload carries no ``cwd`` — a
+    Claude-Code-specific payload artifact with no Pi counterpart (Pi reads ``ctx.cwd``
+    directly). Do not "fix" this asymmetry by adding a fallback on the Pi side.
+    """
     cwd = payload.get("cwd")
     if isinstance(cwd, str):
         candidate = Path(cwd)
         if candidate.is_dir():
             return candidate
     return Path.cwd()
+
+
+def _safe_worktree_root(value: object) -> str | None:
+    """Validate an untrusted worktree_root before it reaches stderr.
+
+    The path is decoded with ``surrogateescape`` upstream, so treat it as untrusted text:
+    require a bounded string free of control characters. Validation failure omits the
+    clause; it never raises.
+    """
+    if (
+        isinstance(value, str)
+        and value.startswith("/")
+        and len(value) <= 4096
+        and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+    ):
+        return value
+    return None
 
 
 def _is_control_command(payload: dict[str, object]) -> bool:
@@ -82,7 +105,7 @@ def _block(message: str) -> None:
     raise SystemExit(2)
 
 
-def _decision(output: str) -> tuple[str, str, str | None, str | None] | None:
+def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None] | None:
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError:
@@ -108,7 +131,8 @@ def _decision(output: str) -> tuple[str, str, str | None, str | None] | None:
         if isinstance(target_harness, str) and target_harness in {"claude", "pi"}
         else None
     )
-    return decision, reason, safe_checkpoint_id, safe_target_harness
+    safe_worktree_root = _safe_worktree_root(data.get("worktree_root"))
+    return decision, reason, safe_checkpoint_id, safe_target_harness, safe_worktree_root
 
 
 def main() -> None:
@@ -145,19 +169,20 @@ def main() -> None:
         return
 
     if parsed is not None and parsed[0] == "deny":
-        reason, checkpoint_id, target_harness = parsed[1:]
+        reason, checkpoint_id, target_harness, worktree_root = parsed[1:]
         if "released" in reason:
             if checkpoint_id is None or target_harness is None:
                 _block("handoff ownership is released but its receiver state is invalid")
             command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
+            leased_clause = f" this worktree ({worktree_root}) is leased;" if worktree_root else ""
             _block(
-                f"handoff ownership is released to {target_harness}; "
+                f"handoff ownership is released to {target_harness};{leased_clause} "
                 f"run `{command_name} resume {checkpoint_id}` in the receiver"
             )
         if "different receiver session" in reason:
-            _block("this worktree is bound to a different receiver session")
+            _block(f"this worktree ({worktree_root}) is bound to a different receiver session" if worktree_root else reason)
         if "held by" in reason:
-            _block(reason)
+            _block(f"{reason} (worktree: {worktree_root})" if worktree_root else reason)
         _block("the handoff lease denies mutation from this Claude session")
 
     if result.returncode != 0 and "Traceback" in result.stderr:
