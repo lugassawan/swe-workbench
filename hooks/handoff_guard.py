@@ -32,9 +32,8 @@ _CONTROL_COMMANDS = (
         rf'--receiver-session {_CLAUDE_SESSION_ARGUMENT} '
         rf'(?:--acknowledge-degraded )?{_CHECKED_PIPE}$'
     ),
-    # Literal-argument form: no runtime shell expansion, so a harness's static command
-    # guard can prove the pipeline inert. See resolve_session_ref in
-    # bin/swe-workbench-handoff for the allowlist this mirrors.
+    # Literal-argument form: lets a harness's static command guard prove the pipeline inert
+    # (mirrors bin/swe-workbench-handoff's resolve_session_ref allowlist).
     re.compile(
         rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
         rf'--receiver-session-env {_CLAUDE_SESSION_ENV_ARGUMENT} '
