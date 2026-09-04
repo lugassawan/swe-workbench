@@ -21,7 +21,7 @@ cursor loop) with a per-thread `eligible`/`skip_reason` projection, paginates RE
 `issues/{pr}/comments` with the same bot/owner-exclusion + handled-marker/manual-reply
 eligibility logic the skill's jq program used to run (ported here as direct python,
 unit-tested against the same fixtures that program was tested against), atomically
-writes the three snapshot files at repo-scoped paths (issue #713 owner-repo slug
+writes the three snapshot files at repo-scoped paths (owner-repo slug
 prefix; legacy un-scoped names when no scope resolves — ratcheted against
 swe-workbench-sweep-residuals' own legacy+scoped literal sets), and dual-reads
 `${PR}-triage.json` (legacy) / `<slug>-<PR>-triage.json` (scoped) for
@@ -140,8 +140,8 @@ def _check_siblings(script_dir: Path) -> None:
 
 
 def resolve_scope_slug(repo_arg: str | None, script_dir: Path) -> str:
-    """Issue #713 ladder: explicit --repo -> cwd origin -> '' (legacy naming).
-    Empty slug means pre-#713 un-scoped paths; never fatal on its own."""
+    """Ladder: explicit --repo -> cwd origin -> '' (legacy naming).
+    Empty slug means legacy un-scoped paths; never fatal on its own."""
     cmd = [str(script_dir / "swe-workbench-repo-scope")]
     if repo_arg:
         cmd += ["--repo", repo_arg]
@@ -299,7 +299,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="swe-workbench-address-feedback-fetch")
     p.add_argument("--pr", required=True)
     p.add_argument("--repo", default=None, help="owner/repo scope for state-file names "
-                   "(issue #713); defaults to the cwd's origin remote, else legacy names")
+                   "; defaults to the cwd's origin remote, else legacy names")
     return p
 
 
@@ -336,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         triage_path = STATE_DIR / f"{stem}-triage.json"
         threads_path = STATE_DIR / f"{stem}-threads.json"
         pr_comments_path = STATE_DIR / f"{stem}-pr-comments.json"
-        # Dual-read (issue #713): a pre-upgrade session's resume point lives at
+        # Dual-read: a pre-upgrade session's resume point lives at
         # the legacy un-scoped triage path — still visible to a scoped run.
         # resume_triage_path locates where the data actually lives (slugged if
         # present, else legacy, else empty); triage_path keeps naming where new

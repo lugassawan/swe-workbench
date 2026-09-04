@@ -2,14 +2,14 @@
 # swe-workbench-repo-scope [--repo owner/repo | --pr-json <file>]
 #
 # Prints the normalized owner-repo slug that scopes /tmp/swe-workbench-*
-# ephemeral artifacts by repository (issue #713; convention documented in
+# ephemeral artifacts by repository (convention documented in
 # shared/docs/repo-scoped-ephemeral-state.md): owner/repo -> owner-repo,
 # matching the pre-existing convention in workflow-audit-emit-issues
 # (nameWithOwner | tr '/' '-').
 #
 # Tier S output (shared/docs/runtime-result-contract.md): the slug on stdout,
 # nothing else. Unresolvable -> exit 1, empty stdout; callers treat an empty
-# slug as "legacy un-scoped naming" (pre-#713 behavior), never a failure of
+# slug as "legacy un-scoped naming" (legacy behavior), never a failure of
 # their own flow.
 #
 # Resolution ladder (first hit wins):

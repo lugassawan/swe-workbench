@@ -897,7 +897,7 @@ def test_release_envelope_round_trips_through_result_check(tmp_path):
         _cleanup_worktree(clone, wt, branch)
 
 
-# ── Repo-scoped receipts (issue #713) ────────────────────────────────────────
+# ── Repo-scoped receipts ────────────────────────────────────────
 
 
 class TestRepoScopedReceipts:

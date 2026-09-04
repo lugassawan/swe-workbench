@@ -90,7 +90,7 @@ _json_warning() {
   jq -cn --arg code "$1" --arg message "$2" '{code: $code, message: $message}'
 }
 
-# Issue #713 scope resolution: --repo owner/repo -> cwd origin -> empty slug
+# Scope resolution: --repo owner/repo -> cwd origin -> empty slug
 # (legacy receipt naming). Invalid explicit values fail hard; a missing origin
 # is a soft legacy fallback, never fatal.
 REPO_ARG=""
@@ -297,7 +297,7 @@ do_release() {
   fi
 
   local RECEIPT="$(receipt_path)"
-  # Dual-read (issue #713): a pre-upgrade acquire wrote the legacy receipt.
+  # Dual-read: a pre-upgrade acquire wrote the legacy receipt.
   if [ ! -f "$RECEIPT" ] && [ "${SCOPE_SLUG:+x}" = "x" ] && [ -f "${STATE_DIR}/${PR}-worktree.json" ]; then
     RECEIPT="${STATE_DIR}/${PR}-worktree.json"
   fi

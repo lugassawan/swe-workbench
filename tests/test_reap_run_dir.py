@@ -248,7 +248,7 @@ def test_reaping_one_run_dir_leaves_sibling_intact():
 
 
 # ──────────────────────────────────────────────────────
-# Repo-scoped names (issue #713)
+# Repo-scoped names
 # ──────────────────────────────────────────────────────
 
 def test_slugged_basename_accepted_and_removed():

@@ -21,7 +21,7 @@
 #   5. Target is not the run-dir root itself (implied by 4, asserted anyway).
 #   6. Basename matches the run-dir name shape (allowlist, not denylist):
 #        ^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)(-[A-Za-z0-9._-]+)?-[0-9]+-[A-Za-z0-9]{6}$
-#        The optional middle segment is the #713 owner-repo slug. Overlap with
+#        The optional middle segment is the owner-repo slug. Overlap with
 #        review-* legacy tags is acceptable: this allowlist is a recognition
 #        gate, not a deletion decision — safety comes from checks 4+7+8.
 #   7. Target is owned by the current user ([ -O ]) — /tmp is world-writable

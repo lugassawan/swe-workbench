@@ -289,11 +289,11 @@ def test_preflight_pr_emits_exactly_the_golden_six_field_contract():
 
 
 # ──────────────────────────────────────────────────────
-# Repo self-attribution (issue #713)
+# Repo self-attribution
 # ──────────────────────────────────────────────────────
 
 def test_preflight_default_fields_include_url_for_repo_attribution():
-    """The default FIELDS set must include `url` (issue #713): every preflight
+    """The default FIELDS set must include `url`: every preflight
     state file then self-attributes its repository on disk, feeding both
     swe-workbench-repo-scope --pr-json and sweep-residuals' legacy attribution."""
     text = SCRIPT.read_text()
@@ -302,7 +302,7 @@ def test_preflight_default_fields_include_url_for_repo_attribution():
     fields = m.group(1).split(",")
     assert "url" in fields, (
         "preflight-pr's default FIELDS must fetch `url` so state files carry their "
-        "owner/repo on disk (repo-scoped ephemeral state, issue #713)"
+        "owner/repo on disk (repo-scoped ephemeral state,)"
     )
 
 

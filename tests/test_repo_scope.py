@@ -2,7 +2,7 @@
 
 Tier S bare-scalar contract (shared/docs/runtime-result-contract.md): the slug
 on stdout and nothing else; exit 1 with empty stdout when unresolvable —
-callers treat that as "legacy un-scoped naming" (issue #713), never a failure
+callers treat that as "legacy un-scoped naming", never a failure
 of their own flow.
 """
 

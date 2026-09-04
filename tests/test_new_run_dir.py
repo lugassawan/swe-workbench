@@ -72,7 +72,7 @@ def test_allocates_run_dir_for_pr_review():
     run_dir = Path(parse_run_dir(result.stdout))
     assert run_dir.is_dir(), "RUN_DIR must exist as a directory"
     # cwd=REPO_ROOT has an origin remote, so no-flag allocation auto-scopes
-    # (issue #713): pr-review-<owner-repo-slug>-42-XXXXXX.
+    #: pr-review-<owner-repo-slug>-42-XXXXXX.
     assert run_dir.name.startswith("pr-review-")
     assert re.fullmatch(r"pr-review-[a-zA-Z0-9._-]+-42-[A-Za-z0-9]{6}", run_dir.name)
 
@@ -200,7 +200,7 @@ def test_sweep_never_touches_pr_review_state_dir():
 
 
 # ──────────────────────────────────────────────────────
-# Repo-scoped allocation (issue #713)
+# Repo-scoped allocation
 # ──────────────────────────────────────────────────────
 
 def test_allocation_with_explicit_repo_embeds_slug():

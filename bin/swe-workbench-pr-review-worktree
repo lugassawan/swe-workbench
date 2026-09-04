@@ -19,13 +19,13 @@
 #   first-pass   -> rimba task/branch pr-review-<N>     ; git-fallback <slug>-<N>            (legacy <N>)
 #   followup     -> rimba task/branch pr-followup-<N>   ; git-fallback <slug>-<N>-followup   (legacy <N>-followup)
 #   <specialist> -> rimba task/branch review-<mode>-<N> ; git-fallback <slug>-<mode>-<N>     (legacy <mode>-<N>)
-# Issue #713 scopes the shared /tmp fallback namespace by an owner-repo slug
+# The shared /tmp fallback namespace is scoped by an owner-repo slug
 # (resolution ladder in swe-workbench-repo-scope: --repo -> cwd origin -> empty).
 # The three slugged orderings are unified (<slug> first); the legacy spellings
 # stay knowable as LEGACY_FALLBACK and are dual-read on lookup/release so a
 # pre-upgrade acquire is still released by a post-upgrade session. Rimba
 # task/branch labels stay un-scoped — they are per-repo git objects already.
-# This was previously "today's naming contract as-is"; #713 deliberately
+# This was previously "today's naming contract as-is"; this change deliberately
 # changed the fallback half (persisted legacy dirs are handled by dual-read).
 #
 # Result shape: Tier Q (printf %q KEY=VALUE for eval), not the JSON envelope — see
@@ -69,7 +69,7 @@ usage() {
 # derive_names <mode> <pr> [slug] -- sets TASK, FALLBACK and LEGACY_FALLBACK globals on
 # success (deliberately not `local` — every caller in this file relies on them as an
 # out-parameter triple). Returns 1 on an unrecognized mode, leaving them untouched.
-# With an empty slug the scoped and legacy fallbacks coincide (pre-#713 naming).
+# With an empty slug the scoped and legacy fallbacks coincide (legacy naming).
 derive_names() {
   local mode="$1" pr="$2" slug="${3:-}" m
   case "$mode" in
@@ -98,8 +98,8 @@ derive_names() {
 }
 
 # _resolve_scope <repo-arg> -- sets SCOPE_SLUG (empty when unresolvable). Issue
-# #713 ladder: explicit --repo (the PR record in hand) -> cwd origin -> empty
-# slug -> legacy naming, so non-git contexts keep pre-#713 behavior.
+# Ladder: explicit --repo (the PR record in hand) -> cwd origin -> empty
+# slug -> legacy naming, so non-git contexts keep legacy behavior.
 _resolve_scope() {
   local repo_arg="${1:-}"
   SCOPE_SLUG=""
@@ -146,7 +146,7 @@ _is_dirty() {
 }
 
 # _attributes_here <dir> — true iff the worktree dir's own origin remote
-# resolves to this run's scope slug (issue #713: legacy fallback dual-read is
+# resolves to this run's scope slug (legacy fallback dual-read is
 # attribution-gated — a foreign repo's same-numbered dir is never ours).
 _attributes_here() {
   [ -n "$SCOPE_SLUG" ] || return 1
@@ -237,7 +237,7 @@ _acquire_rimba() {
 _acquire_git() {
   local mode="$1" pr="$2" wt="$FALLBACK" canon stale
 
-  # Dual-read stale-self-heal (issue #713): a pre-upgrade session may have left
+  # Dual-read stale-self-heal: a pre-upgrade session may have left
   # a worktree at the legacy spelling; a clean one is reaped exactly like a
   # stale scoped one, a dirty one refuses to overwrite — both spellings. The
   # legacy spelling is attribution-gated: a foreign repo's same-numbered dir
@@ -345,7 +345,7 @@ cmd_release() {
     path="$FALLBACK"
     provider="git"
   elif [ -d "$LEGACY_FALLBACK" ] && [ "$LEGACY_FALLBACK" != "$FALLBACK" ] && _attributes_here "$LEGACY_FALLBACK"; then
-    # Dual-read (issue #713): a pre-upgrade acquire left the worktree at the
+    # Dual-read: a pre-upgrade acquire left the worktree at the
     # legacy un-scoped spelling — release must still find it, but only when
     # the dir's own origin attributes it to this run's repo (a foreign repo's
     # same-numbered dir reads as "no worktree found", never removed).

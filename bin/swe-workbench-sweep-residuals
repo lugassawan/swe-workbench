@@ -32,7 +32,7 @@
 #   data.swept_session_files  — count of session scratchpad entries removed (Block D)
 #   data.retained_worktrees   — [{path, reason}] dirty worktrees deliberately preserved,
 #                               never force-removed
-#   data.retained_state_files — [{path, reason}] legacy (pre-#713) state files whose
+#   data.retained_state_files — [{path, reason}] legacy (legacy) state files whose
 #                               on-disk content did not attribute to the sweeping repo
 #                               (scoped mode only; see shared/docs/repo-scoped-ephemeral-state.md)
 #   data.failed_removals      — [{path, reason}] removal attempted but the artifact is
@@ -42,14 +42,14 @@
 # "ok" otherwise. Always exits 0 — the caller's cleanup chain must never abort mid-sweep; a
 # genuine partial failure is expressed through status/data, not the exit code.
 #
-# Repo scoping (issue #713): --repo owner/repo (the PR record in hand, e.g. from the
+# Repo scoping: --repo owner/repo (the PR record in hand, e.g. from the
 # PR URL or cleanup-merged's own gh pr view) -> cwd origin remote -> empty. Scoped
 # mode sweeps slugged (<slug>-<N>*...) names by construction (ours, never another
 # repo's) and sweeps legacy un-scoped names only when their content attributes to
 # the sweeping repo — a url field, a headRefOid fingerprint vs --head-sha, a
 # repository_url, or the artifact's own git remote. Unattributable legacy files are
 # RETAINED with a reason; an explicitly invalid --repo degrades to retain-only.
-# Unscoped mode (no slug resolved — origin absent, not malformed) keeps pre-#713
+# Unscoped mode (no slug resolved — origin absent, not malformed) keeps legacy
 # sweep semantics for legacy names (swept unconditionally after the caller proved
 # MERGED), plus the legacy worktree receipt, newly covered.
 set -euo pipefail
@@ -161,9 +161,9 @@ SPECIALIST_MODES=(security accessibility dependency performance tests ux)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_envelope; exit 0; }
 RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
 
-# ── Repo-scope resolution (issue #713; see shared/docs/repo-scoped-ephemeral-state.md) ──
+# ── Repo-scope resolution (see shared/docs/repo-scoped-ephemeral-state.md) ──
 # Explicit --repo wins (the PR record in hand); else the cwd's origin remote;
-# else the empty slug = unscoped mode (byte-for-byte pre-#713 behavior).
+# else the empty slug = unscoped mode (byte-for-byte legacy behavior).
 SCOPE_SLUG=""
 SCOPE_INVALID=""
 if [ -n "$REPO_ARG" ]; then
@@ -172,7 +172,7 @@ if [ -n "$REPO_ARG" ]; then
     # decisions, so a typo'd --repo degrades to retain-only (legacy state files
     # kept with a reason, run dirs not globbed), never to an unconditional
     # legacy sweep. A missing origin (absence, not bad input) still degrades
-    # to the pre-#713 unscoped mode below.
+    # to the legacy unscoped mode below.
     echo "swe-workbench-sweep-residuals: invalid --repo value: $REPO_ARG (continuing retain-only)" >&2
     SCOPE_SLUG=""
     SCOPE_INVALID=1
@@ -192,7 +192,7 @@ _url_scope_slug() {
 }
 
 # _attribute_legacy_state <file> <basename> — sets RETAIN_REASON (non-empty =
-# retain). Scoped mode only; the per-writer rules are the #713 legacy table.
+# retain). Scoped mode only; the per-writer rules are the legacy attribution table.
 _attribute_legacy_state() {
   local f="$1" base="$2" url oid repo_url rc_path origin_scope sibling
   RETAIN_REASON=""
@@ -255,7 +255,7 @@ _attribute_legacy_state() {
       ;;
   esac
   # Preflight JSONs ($N.json, $N-followup.json, $N-review-<mode>.json): url
-  # first (post-#713 writes), headRefOid fingerprint second (pre-#713 writes).
+  # first (scoped writes), headRefOid fingerprint second (legacy writes).
   url=$(jq -r '.url // empty' "$f" 2>/dev/null) || url=""
   if [ -n "$url" ] && [ "$url" != "null" ]; then
     if [ "$(_url_scope_slug "$url")" = "$SCOPE_SLUG" ]; then
@@ -276,7 +276,7 @@ _attribute_legacy_state() {
 }
 
 # ── Block A: state-file reap ─────────────────────────────────────────────────
-# Legacy (pre-#713, un-scoped) spellings — swept unconditionally in unscoped
+# Legacy (legacy, un-scoped) spellings — swept unconditionally in unscoped
 # mode; attributed one by one in scoped mode. Scoped spellings (when a slug
 # resolved) are ours by construction and swept unconditionally.
 STATE_FILES=(
@@ -428,7 +428,7 @@ if [ -n "${MAIN_REPO:-}" ]; then
       wi=$((wi + 1))
     done
   fi
-  # Scoped dual-read (issue #713): a pre-upgrade acquire left the worktree at
+  # Scoped dual-read: a pre-upgrade acquire left the worktree at
   # the legacy spelling — remove it only when its own git remote attributes it
   # to the sweeping repo, else retain it with a reason.
   if [ -n "$SCOPE_SLUG" ]; then
@@ -497,7 +497,7 @@ fi
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
 RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 
-# #713: exact-tag anchored globs. An unanchored `*-$SLUG-$N-??????` would let
+# exact-tag anchored globs. An unanchored `*-$SLUG-$N-??????` would let
 # the `*` absorb a longer foreign slug ending in "-$SLUG" (x/acme-app vs
 # acme/app, same PR N) and reap another repo's dir; anchoring on the exact
 # allowlisted tag forbids it. Unscoped mode anchors on the legacy exact shape

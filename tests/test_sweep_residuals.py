@@ -769,7 +769,7 @@ def test_stdout_contains_no_eval_able_key_value_lines(tmp_path):
     )
 
 
-# ── Repo-scoped dual-read sweep (issue #713) ──────────────────────────────
+# ── Repo-scoped dual-read sweep ──────────────────────────────
 
 
 def _build_scoped_repo(base: Path, origin_url: str = "https://github.com/octocat/widgets.git") -> Path:

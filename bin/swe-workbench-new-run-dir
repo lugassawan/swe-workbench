@@ -15,7 +15,7 @@
 # Usage:
 #   RUN_DIR=$(swe-workbench-new-run-dir pr-review 42 [--repo owner/repo])
 #   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-octocat-widgets-42-a1b2c3
-#   # (issue #713: the owner-repo slug scopes run dirs by repository; without a
+#   # (the owner-repo slug scopes run dirs by repository; without a
 #   #  resolvable slug the legacy <prefix>-<id>-<rand> shape is used)
 #
 # <prefix> must be one of the flow prefixes swe-workbench-reap-run-dir's
@@ -68,10 +68,10 @@ case "$ID" in
   ''|*[!0-9]*) reject "id must be a non-negative integer: $ID" ;;
 esac
 
-# Repo scoping (issue #713): explicit --repo owner/repo wins (the PR record in
+# Repo scoping: explicit --repo owner/repo wins (the PR record in
 # hand when the invocation carried a full PR URL); otherwise the cwd's origin
 # remote; otherwise the empty slug -> legacy un-scoped naming, so behavior in
-# non-git contexts is byte-for-byte pre-#713.
+# non-git contexts is byte-for-byte legacy.
 SCOPE_SLUG=""
 case "${3:-}" in
   --repo)

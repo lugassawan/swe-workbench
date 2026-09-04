@@ -74,7 +74,7 @@ def test_script_compiles():
 def test_snapshot_paths_match_sweep_residuals_hardcoded_literals():
     """sweep-residuals hardcodes these paths for its own merged-PR backstop sweep —
     both spellings must stay byte-identical or that sweep silently stops reaping
-    this flow's state files: the legacy un-scoped names ($N) and the #713 scoped
+    this flow's state files: the legacy un-scoped names ($N) and the scoped
     names (${SCOPE_STEM}, literal in sweep's Block A candidate array)."""
     pr = "424242"
     threads_path = STATE_DIR / f"{pr}-threads.json"
@@ -614,7 +614,7 @@ def test_envelope_round_trips_through_result_check(tmp_path):
         _cleanup_state_files(pr)
 
 
-# ── Repo-scoped state paths (issue #713) ────────────────────────────────────
+# ── Repo-scoped state paths ────────────────────────────────────
 
 
 class TestRepoScopedState:

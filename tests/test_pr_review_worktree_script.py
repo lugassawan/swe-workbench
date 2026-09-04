@@ -413,7 +413,7 @@ def test_names_matches_sweep_residuals_worktree_contract():
     `names` output, unioned with one explicit address-feedback-<N> row (owned by
     workflow-address-feedback's own worktree lifecycle, not this command -- its
     worktree has the opposite branch-deletion invariant), must equal sweep-residuals' own
-    hardcoded triples for the same PR number, on BOTH spellings (issue #713):
+    hardcoded triples for the same PR number, on BOTH spellings:
     legacy (names in a non-git cwd) and scoped (names --repo, octocat-widgets slug).
     The union is asserted explicitly here, not silently -- deleting this line would
     not make the test pass."""
@@ -863,7 +863,7 @@ class TestRimbaPath:
             _cleanup_worktree(repo, expected_wt, branch)
 
 
-# ── repo-scoped fallbacks (issue #713) ───────────────────────────────────────
+# ── repo-scoped fallbacks ───────────────────────────────────────
 
 
 def test_names_scoped_fallbacks_with_explicit_repo():

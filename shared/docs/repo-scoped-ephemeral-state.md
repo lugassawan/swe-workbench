@@ -1,12 +1,12 @@
 # Repo-scoped ephemeral state
 
-How `/tmp/swe-workbench-*` ephemeral artifacts are scoped by repository (issue #713), so
+How `/tmp/swe-workbench-*` ephemeral artifacts are scoped by repository, so
 same-numbered PRs in different repositories never collide and cleanup never deletes another
 repository's artifacts.
 
 ## The problem
 
-Pre-#713, every ephemeral artifact was keyed only by PR number and flow tag:
+Previously, every ephemeral artifact was keyed only by PR number and flow tag:
 `/tmp/swe-workbench-pr-review/<N>*.json`, `/tmp/swe-workbench-address-feedback/<N>*.json`,
 `/tmp/swe-workbench-run/<prefix>-<N>-<rand>/`, and the git-fallback worktree dirs
 `/tmp/swe-workbench-pr-review/<N>` (plus `-followup` / `<mode>-<N>` variants). Two repos can
@@ -24,9 +24,9 @@ sufficient and filename-safe. `bin/swe-workbench-repo-scope` is the single resol
 | Resolution step | Source |
 |---|---|
 | 1. `--repo owner/repo` | Explicit, from the caller — the PR record in hand when the invocation carried a full PR URL |
-| 2. `--pr-json <file>` | The fetched PR JSON's own `.url` field (every post-#713 preflight state file carries it) |
+| 2. `--pr-json <file>` | The fetched PR JSON's own `.url` field (every current preflight state file carries it) |
 | 3. *(no args)* | `git remote get-url origin` of the cwd (https / `git@` / `ssh://` forms) |
-| *(all fail)* | Empty slug ⇒ **legacy un-scoped naming** — byte-for-byte pre-#713 behavior, never a flow failure |
+| *(all fail)* | Empty slug ⇒ **legacy un-scoped naming** — byte-for-byte legacy behavior, never a flow failure |
 
 Fork checkouts: `origin` is the fork, so the checkout-derived slug differs from the PR's base
 repo. Callers that know the PR URL (or hold the PR JSON) should always pass the explicit scope —
@@ -86,9 +86,9 @@ Unattributable/retained items land in `data.retained_state_files` / `data.retain
 as `{path, reason}` and flip the envelope to `status: "partial"`. An explicitly **invalid
 `--repo`** fails closed to retain-only (nothing legacy swept, run dirs not globbed) — a typo
 must never widen into an unconditional sweep. **Unscoped mode** (no slug resolved — origin
-absent, not malformed) keeps pre-#713 sweep semantics for legacy names after the caller proved
+absent, not malformed) keeps legacy sweep semantics for legacy names after the caller proved
 the PR MERGED, plus one deliberate addition: the legacy `<N>-worktree.json` receipt, newly
-covered (pre-#713 sweeps never touched it). Block C matches run dirs with **exact-tag anchored
+covered (legacy sweeps never touched it). Block C matches run dirs with **exact-tag anchored
 globs** (`<tag>-<slug>-<N>-??????` per allowlisted tag, legacy `<tag>-<N>-??????` unscoped) —
 an unanchored `*` could absorb a longer foreign slug ending in `-<slug>`.
 
