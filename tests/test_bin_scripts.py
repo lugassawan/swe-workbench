@@ -58,7 +58,7 @@ SIBLING_CALLERS = {
     "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout"],
     "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
-    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
+    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
     "swe-workbench-preflight-pr": [
         "swe-workbench-gh-timeout",
         "swe-workbench-fetch-pr",
