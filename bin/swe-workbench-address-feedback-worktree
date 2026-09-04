@@ -81,13 +81,34 @@ STATE_DIR="/tmp/swe-workbench-address-feedback"
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
-  echo "Usage: swe-workbench-address-feedback-worktree acquire --pr <N> --branch <PR_BRANCH>" >&2
-  echo "       swe-workbench-address-feedback-worktree release --pr <N> --path <abs-path> --branch <PR_BRANCH> --created <true|false>" >&2
+  echo "Usage: swe-workbench-address-feedback-worktree acquire --pr <N> --branch <PR_BRANCH> [--repo owner/repo]" >&2
+  echo "       swe-workbench-address-feedback-worktree release --pr <N> --path <abs-path> --branch <PR_BRANCH> --created <true|false> [--repo owner/repo]" >&2
   exit 1
 }
 
 _json_warning() {
   jq -cn --arg code "$1" --arg message "$2" '{code: $code, message: $message}'
+}
+
+# Issue #713 scope resolution: --repo owner/repo -> cwd origin -> empty slug
+# (legacy receipt naming). Invalid explicit values fail hard; a missing origin
+# is a soft legacy fallback, never fatal.
+REPO_ARG=""
+SCOPE_SLUG=""
+resolve_scope() {
+  if [ -n "$REPO_ARG" ]; then
+    SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$REPO_ARG") || {
+      echo "swe-workbench-address-feedback-worktree: invalid --repo value: $REPO_ARG" >&2
+      exit 1
+    }
+  else
+    SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || SCOPE_SLUG=""
+  fi
+}
+
+# Receipt path for this run: slugged when a scope resolved, legacy otherwise.
+receipt_path() {
+  printf '%s/%s%s-worktree.json\n' "$STATE_DIR" "${SCOPE_SLUG:+${SCOPE_SLUG}-}" "$PR"
 }
 
 emit_acquire_envelope() {
@@ -241,7 +262,7 @@ do_acquire() {
     --arg path "$WT" --arg branch "$PR_BRANCH" \
     --argjson created "$CREATED_BOOL" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{path: $path, branch: $branch, created: $created, created_at: $created_at}' \
-    > "${STATE_DIR}/${PR}-worktree.json"
+    > "$(receipt_path)"
 
   emit_acquire_envelope
 }
@@ -275,7 +296,11 @@ do_release() {
     return
   fi
 
-  local RECEIPT="${STATE_DIR}/${PR}-worktree.json"
+  local RECEIPT="$(receipt_path)"
+  # Dual-read (issue #713): a pre-upgrade acquire wrote the legacy receipt.
+  if [ ! -f "$RECEIPT" ] && [ "${SCOPE_SLUG:+x}" = "x" ] && [ -f "${STATE_DIR}/${PR}-worktree.json" ]; then
+    RECEIPT="${STATE_DIR}/${PR}-worktree.json"
+  fi
   local receipt_ok=1
   if [ -f "$RECEIPT" ]; then
     local rc_created rc_path canon_receipt_path canon_wpath
@@ -402,6 +427,12 @@ while [ $# -gt 0 ]; do
       _CREATED_SET=1
       shift 2
       ;;
+    --repo)
+      [ $# -ge 2 ] || usage
+      [ -z "$REPO_ARG" ] || usage
+      REPO_ARG=$2
+      shift 2
+      ;;
     *)
       usage
       ;;
@@ -438,6 +469,8 @@ if [ "$OP" = "release" ]; then
       ;;
   esac
 fi
+
+resolve_scope
 
 case "$OP" in
   acquire) do_acquire ;;

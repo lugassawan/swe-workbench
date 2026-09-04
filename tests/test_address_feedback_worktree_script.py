@@ -94,24 +94,24 @@ def _build_remote_and_clone(base: Path, pr_branch: str) -> tuple[Path, Path]:
     return remote, clone
 
 
-def _run_acquire(cwd: Path, pr: str, branch: str, env: dict) -> subprocess.CompletedProcess:
+def _run_acquire(cwd: Path, pr: str, branch: str, env: dict, extra_args: list[str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(SCRIPT), "acquire", "--pr", pr, "--branch", branch],
+        [str(SCRIPT), "acquire", "--pr", pr, "--branch", branch, *(extra_args or [])],
         cwd=str(cwd), capture_output=True, text=True, env=env,
     )
 
 
-def _run_release(cwd: Path, pr: str, path: str, branch: str, created: str, env: dict) -> subprocess.CompletedProcess:
+def _run_release(cwd: Path, pr: str, path: str, branch: str, created: str, env: dict, extra_args: list[str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(SCRIPT), "release", "--pr", pr, "--path", path, "--branch", branch, "--created", created],
+        [str(SCRIPT), "release", "--pr", pr, "--path", path, "--branch", branch, "--created", created, *(extra_args or [])],
         cwd=str(cwd), capture_output=True, text=True, env=env,
     )
 
 
-def _cleanup_state_files(pr: str) -> None:
-    for suffix in ("-worktree.json",):
-        f = STATE_DIR / f"{pr}{suffix}"
-        f.unlink(missing_ok=True)
+def _cleanup_state_files(pr: str, slug: str = "") -> None:
+    stem = f"{slug}-{pr}" if slug else pr
+    for name in (f"{pr}-worktree.json", f"{stem}-worktree.json"):
+        (STATE_DIR / name).unlink(missing_ok=True)
 
 
 def _cleanup_worktree(repo: Path, wt_path, branch: str | None) -> None:
@@ -895,3 +895,79 @@ def test_release_envelope_round_trips_through_result_check(tmp_path):
     finally:
         _cleanup_state_files(pr)
         _cleanup_worktree(clone, wt, branch)
+
+
+# ── Repo-scoped receipts (issue #713) ────────────────────────────────────────
+
+
+class TestRepoScopedReceipts:
+    def test_acquire_with_repo_writes_slugged_receipt(self, tmp_path):
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+        _run("git", "fetch", "origin", branch, cwd=clone)
+        _run("git", "checkout", "-b", branch, "origin/" + branch, cwd=clone)
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        try:
+            result = _run_acquire(clone, pr, branch, env, extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            slugged = STATE_DIR / f"octocat-widgets-{pr}-worktree.json"
+            legacy = STATE_DIR / f"{pr}-worktree.json"
+            assert slugged.exists(), "acquire --repo must write the slugged receipt"
+            assert not legacy.exists(), "acquire --repo must not write the legacy receipt"
+        finally:
+            _cleanup_state_files(pr, slug="octocat-widgets")
+
+    def test_acquire_rejects_invalid_repo_value(self, tmp_path):
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        try:
+            result = _run_acquire(clone, pr, branch, env, extra_args=["--repo", "bogus"])
+            assert result.returncode != 0
+            assert "invalid --repo" in result.stderr
+        finally:
+            _cleanup_state_files(pr)
+
+    def test_release_dual_reads_legacy_receipt(self, tmp_path):
+        """Pre-upgrade acquire (legacy receipt) / post-upgrade release (--repo
+        given, slugged receipt absent): the legacy receipt must still satisfy
+        ownership so release does not refuse. Uses created=true — the only path
+        that actually consults the receipt."""
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+        _run("git", "fetch", "origin", branch, cwd=clone)
+        _run("git", "branch", branch, f"origin/{branch}", cwd=clone)
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        acquired = None
+        try:
+            acquired = _run_acquire(clone, pr, branch, env, extra_args=["--repo", "octocat/widgets"])
+            assert acquired.returncode == 0, acquired.stderr
+            payload = json.loads(acquired.stdout)
+            assert payload["data"]["reused"] is False, payload
+            assert payload["data"]["reuse_reason"] == "created-git", payload
+            wt_path = Path(payload["data"]["path"])
+            # Simulate the pre-upgrade receipt spelling.
+            slugged = STATE_DIR / f"octocat-widgets-{pr}-worktree.json"
+            legacy = STATE_DIR / f"{pr}-worktree.json"
+            assert slugged.exists()
+            slugged.rename(legacy)
+
+            released = _run_release(clone, pr, str(wt_path), branch, "true", env,
+                                    extra_args=["--repo", "octocat/widgets"])
+            assert released.returncode == 0, released.stderr
+            rpayload = json.loads(released.stdout)
+            assert rpayload["status"] == "ok", rpayload
+            assert not wt_path.exists()
+        finally:
+            _cleanup_state_files(pr, slug="octocat-widgets")
+            if acquired is not None:
+                try:
+                    wt_path = Path(json.loads(acquired.stdout)["data"]["path"])
+                    _cleanup_worktree(clone, wt_path, branch)
+                except Exception:
+                    pass

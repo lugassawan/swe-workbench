@@ -55,8 +55,8 @@ SCRIPTS = {
 
 # scripts known to call a sibling script by basename (script -> sibling basenames it calls)
 SIBLING_CALLERS = {
-    "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout"],
-    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
+    "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout", "swe-workbench-repo-scope"],
+    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
     "swe-workbench-preflight-pr": [

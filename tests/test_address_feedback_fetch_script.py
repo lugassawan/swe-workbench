@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -283,14 +284,20 @@ def _gh_calls(state_dir: Path) -> list[dict]:
     return calls
 
 
-def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path):
+def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path,
+         extra_args: list[str] | None = None, cwd: Path | None = None):
     env = dict(_CLEAN_ENV)
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
     env["GH_STUB_STATE"] = str(state_dir)
     env["GH_STUB_RESPONSES"] = str(responses_file)
+    # Default cwd is a fresh non-git dir: the repo-scope ladder (issue #713)
+    # finds no origin remote there, so default-mode runs keep the legacy
+    # un-scoped paths these tests characterize. Scoped runs pass --repo.
+    if cwd is None:
+        cwd = Path(tempfile.mkdtemp(prefix="aff-nogit-"))
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--pr", pr],
-        capture_output=True, text=True, env=env,
+        [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
+        capture_output=True, text=True, env=env, cwd=str(cwd),
     )
 
 
@@ -600,3 +607,59 @@ def test_envelope_round_trips_through_result_check(tmp_path):
         assert checked.returncode == 0, checked.stderr
     finally:
         _cleanup_state_files(pr)
+
+
+# ── Repo-scoped state paths (issue #713) ────────────────────────────────────
+
+
+class TestRepoScopedState:
+    def test_explicit_repo_slugs_all_snapshot_paths(self, tmp_path):
+        pr = _unique_n()
+        responses = _preflight_responses(pr) + [_ok("me\n"), _threads_page_response([]), _pr_comments_response([])]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}.json"
+            assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-threads.json"
+            assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-pr-comments.json"
+            assert Path(envelope["data"]["threads_path"]).exists()
+            assert Path(envelope["data"]["pr_json_path"]).exists()
+        finally:
+            for suffix in (".json", "-threads.json", "-pr-comments.json", "-triage.json"):
+                (STATE_DIR / f"octocat-widgets-{pr}{suffix}").unlink(missing_ok=True)
+
+    def test_invalid_repo_value_rejected(self, tmp_path):
+        pr = _unique_n()
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "bogus"])
+            assert result.returncode == 1
+            assert "invalid --repo" in result.stderr
+        finally:
+            _cleanup_state_files(pr)
+
+    def test_resume_dual_reads_legacy_triage(self, tmp_path):
+        """A pre-upgrade session left <N>-triage.json; a scoped run must still
+        see the resume point (dual-read), while writing slugged paths."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text("{}")
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is True
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)

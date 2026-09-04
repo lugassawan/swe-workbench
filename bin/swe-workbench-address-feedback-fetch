@@ -129,12 +129,27 @@ def _script_dir() -> Path:
 
 
 def _check_siblings(script_dir: Path) -> None:
-    for name in ("swe-workbench-preflight-pr", "swe-workbench-gh-timeout"):
+    for name in ("swe-workbench-preflight-pr", "swe-workbench-gh-timeout", "swe-workbench-repo-scope"):
         path = script_dir / name
         if not (path.is_file() and os.access(path, os.X_OK)):
             raise FetchError(
                 f"sibling script {name} not found at {path} — reinstall or update the swe-workbench plugin."
             )
+
+
+def resolve_scope_slug(repo_arg: str | None, script_dir: Path) -> str:
+    """Issue #713 ladder: explicit --repo -> cwd origin -> '' (legacy naming).
+    Empty slug means pre-#713 un-scoped paths; never fatal on its own."""
+    cmd = [str(script_dir / "swe-workbench-repo-scope")]
+    if repo_arg:
+        cmd += ["--repo", repo_arg]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
 
 
 def _gh(args: list[str], script_dir: Path) -> subprocess.CompletedProcess:
@@ -281,6 +296,8 @@ def _build_envelope(*, resume_available: bool, **data) -> dict:
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="swe-workbench-address-feedback-fetch")
     p.add_argument("--pr", required=True)
+    p.add_argument("--repo", default=None, help="owner/repo scope for state-file names "
+                   "(issue #713); defaults to the cwd's origin remote, else legacy names")
     return p
 
 
@@ -294,10 +311,17 @@ def main(argv: list[str] | None = None) -> int:
 
     script_dir = _script_dir()
 
+    if args.repo is not None and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$", args.repo):
+        print(f"swe-workbench-address-feedback-fetch: invalid --repo value: {args.repo!r} (expected owner/repo)", file=sys.stderr)
+        return 1
+
     try:
         _check_siblings(script_dir)
 
-        pr_json_path = STATE_DIR / f"{pr}.json"
+        slug = resolve_scope_slug(args.repo, script_dir)
+        stem = f"{slug}-{pr}" if slug else pr
+        legacy_triage_path = STATE_DIR / f"{pr}-triage.json"
+        pr_json_path = STATE_DIR / f"{stem}.json"
         preflight = run_preflight(pr, pr_json_path, script_dir)
         owner, repo, state = preflight["owner"], preflight["repo"], preflight["state"]
 
@@ -307,9 +331,12 @@ def main(argv: list[str] | None = None) -> int:
             raise FetchError(f"could not read {pr_json_path}: {exc}") from exc
         pr_branch = pr_data.get("headRefName") or ""
 
-        triage_path = STATE_DIR / f"{pr}-triage.json"
-        threads_path = STATE_DIR / f"{pr}-threads.json"
-        pr_comments_path = STATE_DIR / f"{pr}-pr-comments.json"
+        triage_path = STATE_DIR / f"{stem}-triage.json"
+        threads_path = STATE_DIR / f"{stem}-threads.json"
+        pr_comments_path = STATE_DIR / f"{stem}-pr-comments.json"
+        # Dual-read (issue #713): a pre-upgrade session's resume point lives at
+        # the legacy un-scoped triage path — still visible to a scoped run.
+        resume_available = triage_path.exists() or (slug != "" and legacy_triage_path.exists())
 
         if state != "OPEN":
             envelope = _build_envelope(
@@ -328,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
                 skipped_threads_clarified=0,
                 eligible_pr_comments=0,
                 skipped_pr_comments=0,
-                resume_available=triage_path.exists(),
+                resume_available=resume_available,
             )
         else:
             current_user = fetch_current_user(script_dir)
@@ -355,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                 skipped_threads_clarified=sum(1 for t in threads if t.get("skip_reason") == "already-clarified"),
                 eligible_pr_comments=sum(1 for c in pr_comments if c["eligible"]),
                 skipped_pr_comments=sum(1 for c in pr_comments if not c["eligible"]),
-                resume_available=triage_path.exists(),
+                resume_available=resume_available,
             )
     except FetchError as exc:
         print(f"swe-workbench-address-feedback-fetch: {exc}", file=sys.stderr)
