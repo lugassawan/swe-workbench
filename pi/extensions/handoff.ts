@@ -48,6 +48,7 @@ const INTERPRETER_FAILURE_TEXT =
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.handoff/1`;
 const PI_SESSION_ARGUMENT = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"';
+const PI_SESSION_ENV_ARGUMENT = "PI_SESSION_ID";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -62,6 +63,13 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
       `--receiver-session ${escapeRegExp(PI_SESSION_ARGUMENT)} ` +
+      `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
+  ),
+  // Literal-argument form: no runtime shell expansion, so a harness's static command guard
+  // can prove the pipeline inert. Mirrors bin/swe-workbench-handoff's resolve_session_ref.
+  new RegExp(
+    `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
+      `--receiver-session-env ${escapeRegExp(PI_SESSION_ENV_ARGUMENT)} ` +
       `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
   ),
   new RegExp(
@@ -93,6 +101,7 @@ interface GuardData {
   decision?: unknown;
   reason?: unknown;
   instruction?: unknown;
+  worktree_root?: unknown;
 }
 
 function parseGuardDecision(stdout: string): GuardData | undefined {
@@ -109,12 +118,29 @@ function parseGuardDecision(stdout: string): GuardData | undefined {
   }
 }
 
+/** Validate an untrusted worktree_root before it reaches a block reason string. */
+function safeWorktreeRoot(value: unknown): string | undefined {
+  if (
+    typeof value === "string" &&
+    value.startsWith("/") &&
+    Array.from(value).length <= 4096 &&
+    Array.from(value).every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function blockReason(data: GuardData | undefined, fallback: string): string {
   if (data === undefined) return fallback;
   const reason = typeof data.reason === "string" ? data.reason : "";
   const instruction = typeof data.instruction === "string" ? data.instruction : "";
-  if (reason && instruction) return `${reason} — ${instruction}`;
-  return instruction || reason || fallback;
+  const worktreeRoot = safeWorktreeRoot(data.worktree_root);
+  const base = reason && instruction ? `${reason} — ${instruction}` : instruction || reason || fallback;
+  return worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base;
 }
 
 export function registerHandoff(pi: ExtensionAPI, root: string): void {
