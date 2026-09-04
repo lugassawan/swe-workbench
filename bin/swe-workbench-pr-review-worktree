@@ -7,21 +7,26 @@
 # that had drifted into inconsistent label/PR/mode orderings across one shared
 # /tmp/swe-workbench-pr-review/ namespace.
 #
-#   swe-workbench-pr-review-worktree acquire --mode <MODE> --pr <N>
-#   swe-workbench-pr-review-worktree release --mode <MODE> --pr <N> --intent <completed|declined|failed>
-#   swe-workbench-pr-review-worktree names   --pr <N>
+#   swe-workbench-pr-review-worktree acquire --mode <MODE> --pr <N> [--repo owner/repo]
+#   swe-workbench-pr-review-worktree release --mode <MODE> --pr <N> --intent <completed|declined|failed> [--repo owner/repo]
+#   swe-workbench-pr-review-worktree names   --pr <N> [--repo owner/repo]
 #
 # MODE is one of: first-pass, followup, security, accessibility, dependency, performance,
 # tests, ux — the exact vocabulary workflow-pr-review's own $MODE (after auto-resolution) and
 # commands/review.md's normalized --mode already produce. No translation layer.
 #
 # Naming (one function, derive_names, so there is exactly one place that knows it):
-#   first-pass   -> rimba task/branch pr-review-<N>     ; git-fallback /tmp/swe-workbench-pr-review/<N>
-#   followup     -> rimba task/branch pr-followup-<N>   ; git-fallback /tmp/swe-workbench-pr-review/<N>-followup
-#   <specialist> -> rimba task/branch review-<mode>-<N> ; git-fallback /tmp/swe-workbench-pr-review/<mode>-<N>
-# This is today's naming contract as-is (verified against SKILL.md/commands/review.md), not a
-# normalization — unifying the three git-fallback basename orderings is explicitly out of scope
-# (a worktree directory is a persisted artifact that can outlive a plugin upgrade).
+#   first-pass   -> rimba task/branch pr-review-<N>     ; git-fallback <slug>-<N>            (legacy <N>)
+#   followup     -> rimba task/branch pr-followup-<N>   ; git-fallback <slug>-<N>-followup   (legacy <N>-followup)
+#   <specialist> -> rimba task/branch review-<mode>-<N> ; git-fallback <slug>-<mode>-<N>     (legacy <mode>-<N>)
+# Issue #713 scopes the shared /tmp fallback namespace by an owner-repo slug
+# (resolution ladder in swe-workbench-repo-scope: --repo -> cwd origin -> empty).
+# The three slugged orderings are unified (<slug> first); the legacy spellings
+# stay knowable as LEGACY_FALLBACK and are dual-read on lookup/release so a
+# pre-upgrade acquire is still released by a post-upgrade session. Rimba
+# task/branch labels stay un-scoped — they are per-repo git objects already.
+# This was previously "today's naming contract as-is"; #713 deliberately
+# changed the fallback half (persisted legacy dirs are handled by dual-read).
 #
 # Result shape: Tier Q (printf %q KEY=VALUE for eval), not the JSON envelope — see
 # shared/docs/runtime-result-contract.md's S/Q/J test. Every invocation acquires/releases
@@ -36,7 +41,7 @@
 #   names:   bare JSON array (not the envelope — nothing in a SKILL.md consumes it; exists
 #            solely for the golden-ratchet test comparing this contract to
 #            swe-workbench-sweep-residuals' hardcoded WT_LABELS/WT_FALLBACKS/WT_DELETE_BRANCH
-#            arrays), one object per mode: {"mode","label","fallback_path","delete_branch"}
+#            arrays), one object per mode: {"mode","label","fallback_path","legacy_fallback_path","delete_branch"}
 #
 # Provider resolution reuses swe-workbench-sweep-residuals' own resolve-rimba.sh call and
 # rimba-remove-first `||` git-fallback removal chain — no new detection logic. acquire resolves
@@ -61,31 +66,51 @@ usage() {
   exit 1
 }
 
-# derive_names <mode> <pr> -- sets TASK and FALLBACK globals on success (deliberately not
-# `local` — every caller in this file relies on them as an out-parameter pair). Returns 1 on
-# an unrecognized mode, leaving TASK/FALLBACK untouched.
+# derive_names <mode> <pr> [slug] -- sets TASK, FALLBACK and LEGACY_FALLBACK globals on
+# success (deliberately not `local` — every caller in this file relies on them as an
+# out-parameter triple). Returns 1 on an unrecognized mode, leaving them untouched.
+# With an empty slug the scoped and legacy fallbacks coincide (pre-#713 naming).
 derive_names() {
-  local mode="$1" pr="$2" m
+  local mode="$1" pr="$2" slug="${3:-}" m
   case "$mode" in
     first-pass)
       TASK="pr-review-${pr}"
-      FALLBACK="${FALLBACK_ROOT}/${pr}"
+      LEGACY_FALLBACK="${FALLBACK_ROOT}/${pr}"
+      FALLBACK="${FALLBACK_ROOT}/${slug:+${slug}-}${pr}"
       return 0
       ;;
     followup)
       TASK="pr-followup-${pr}"
-      FALLBACK="${FALLBACK_ROOT}/${pr}-followup"
+      LEGACY_FALLBACK="${FALLBACK_ROOT}/${pr}-followup"
+      FALLBACK="${FALLBACK_ROOT}/${slug:+${slug}-}${pr}-followup"
       return 0
       ;;
   esac
   for m in "${SPECIALIST_MODES[@]}"; do
     if [ "$mode" = "$m" ]; then
       TASK="review-${mode}-${pr}"
-      FALLBACK="${FALLBACK_ROOT}/${mode}-${pr}"
+      LEGACY_FALLBACK="${FALLBACK_ROOT}/${mode}-${pr}"
+      FALLBACK="${FALLBACK_ROOT}/${slug:+${slug}-}${mode}-${pr}"
       return 0
     fi
   done
   return 1
+}
+
+# _resolve_scope <repo-arg> -- sets SCOPE_SLUG (empty when unresolvable). Issue
+# #713 ladder: explicit --repo (the PR record in hand) -> cwd origin -> empty
+# slug -> legacy naming, so non-git contexts keep pre-#713 behavior.
+_resolve_scope() {
+  local repo_arg="${1:-}"
+  SCOPE_SLUG=""
+  if [ -n "$repo_arg" ]; then
+    SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$repo_arg") || {
+      echo "swe-workbench-pr-review-worktree: invalid --repo value: $repo_arg" >&2
+      exit 1
+    }
+  else
+    SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || SCOPE_SLUG=""
+  fi
 }
 
 _require_pr() {
@@ -140,22 +165,25 @@ _reap_worktree() {
 # ── names ────────────────────────────────────────────────────────────────────
 
 cmd_names() {
-  local pr="" m
+  local pr="" repo_arg="" m
   while [ $# -gt 0 ]; do
     case "$1" in
-      --pr) [ $# -ge 2 ] || usage; pr="$2"; shift 2 ;;
+      --pr)   [ $# -ge 2 ] || usage; pr="$2";   shift 2 ;;
+      --repo) [ $# -ge 2 ] || usage; repo_arg="$2"; shift 2 ;;
       *) usage ;;
     esac
   done
   [ -n "$pr" ] || usage
   _require_pr "$pr"
+  _resolve_scope "$repo_arg"
 
   local modes=(first-pass followup "${SPECIALIST_MODES[@]}")
   local items=()
   for m in "${modes[@]}"; do
-    derive_names "$m" "$pr"
+    derive_names "$m" "$pr" "$SCOPE_SLUG"
     items+=("$(jq -cn --arg mode "$m" --arg label "$TASK" --arg fallback_path "$FALLBACK" \
-      '{mode: $mode, label: $label, fallback_path: $fallback_path, delete_branch: true}')")
+      --arg legacy_fallback_path "$LEGACY_FALLBACK" \
+      '{mode: $mode, label: $label, fallback_path: $fallback_path, legacy_fallback_path: $legacy_fallback_path, delete_branch: true}')")
   done
   printf '%s\n' "${items[@]}" | jq -cs '.'
 }
@@ -197,20 +225,25 @@ _acquire_rimba() {
 }
 
 _acquire_git() {
-  local mode="$1" pr="$2" wt="$FALLBACK" canon
+  local mode="$1" pr="$2" wt="$FALLBACK" canon stale
 
-  if [ -d "$wt" ]; then
-    if _is_dirty "$wt"; then
-      echo "swe-workbench-pr-review-worktree: acquire: existing worktree at $wt for mode=$mode pr=$pr has uncommitted changes -- refusing to overwrite. Inspect manually, or run 'release --mode $mode --pr $pr --intent failed' first." >&2
-      exit 1
+  # Dual-read stale-self-heal (issue #713): a pre-upgrade session may have left
+  # a worktree at the legacy spelling; a clean one is reaped exactly like a
+  # stale scoped one, a dirty one refuses to overwrite — both spellings.
+  for stale in "$wt" "$LEGACY_FALLBACK"; do
+    if [ -d "$stale" ]; then
+      if _is_dirty "$stale"; then
+        echo "swe-workbench-pr-review-worktree: acquire: existing worktree at $stale for mode=$mode pr=$pr has uncommitted changes -- refusing to overwrite. Inspect manually, or run 'release --mode $mode --pr $pr --intent failed' first." >&2
+        exit 1
+      fi
+      # Route through _reap_worktree (rimba="" forces its git-fallback branch) rather than a
+      # hand-rolled subset of it, for parity with _acquire_rimba's self-heal -- this also force-
+      # deletes the stale $TASK branch, which the fetch --force refspec below would otherwise
+      # have to paper over, and which a partial `git worktree remove` can leave in a state
+      # swe-workbench-clean-ephemeral's is_registered_worktree() check may legitimately refuse.
+      _reap_worktree "" "$TASK" "$stale"
     fi
-    # Route through _reap_worktree (rimba="" forces its git-fallback branch) rather than a
-    # hand-rolled subset of it, for parity with _acquire_rimba's self-heal -- this also force-
-    # deletes the stale $TASK branch, which the fetch --force refspec below would otherwise
-    # have to paper over, and which a partial `git worktree remove` can leave in a state
-    # swe-workbench-clean-ephemeral's is_registered_worktree() check may legitimately refuse.
-    _reap_worktree "" "$TASK" "$wt"
-  fi
+  done
 
   mkdir -p "$(dirname "$wt")"
   # 1>&2: this function's stdout is captured via `$(...)` by the caller as the return
@@ -224,17 +257,19 @@ _acquire_git() {
 }
 
 cmd_acquire() {
-  local mode="" pr="" rimba wt provider
+  local mode="" pr="" repo_arg="" rimba wt provider
   while [ $# -gt 0 ]; do
     case "$1" in
       --mode) [ $# -ge 2 ] || usage; mode="$2"; shift 2 ;;
       --pr)   [ $# -ge 2 ] || usage; pr="$2";   shift 2 ;;
+      --repo) [ $# -ge 2 ] || usage; repo_arg="$2"; shift 2 ;;
       *) usage ;;
     esac
   done
   [ -n "$mode" ] && [ -n "$pr" ] || usage
   _require_pr "$pr"
-  derive_names "$mode" "$pr" || {
+  _resolve_scope "$repo_arg"
+  derive_names "$mode" "$pr" "$SCOPE_SLUG" || {
     echo "swe-workbench-pr-review-worktree: acquire: unrecognized mode: $mode" >&2
     exit 1
   }
@@ -258,7 +293,7 @@ cmd_acquire() {
 # ── release ──────────────────────────────────────────────────────────────────
 
 cmd_release() {
-  local mode="" pr="" intent="" rimba path="" provider="unknown" via_rimba
+  local mode="" pr="" intent="" repo_arg="" rimba path="" provider="unknown" via_rimba
   local worktree_removed=0 branch_deleted=0 preserved=0 reason="" dirty_lines
 
   while [ $# -gt 0 ]; do
@@ -266,12 +301,14 @@ cmd_release() {
       --mode)   [ $# -ge 2 ] || usage; mode="$2";   shift 2 ;;
       --pr)     [ $# -ge 2 ] || usage; pr="$2";     shift 2 ;;
       --intent) [ $# -ge 2 ] || usage; intent="$2"; shift 2 ;;
+      --repo)   [ $# -ge 2 ] || usage; repo_arg="$2"; shift 2 ;;
       *) usage ;;
     esac
   done
   [ -n "$mode" ] && [ -n "$pr" ] && [ -n "$intent" ] || usage
   _require_pr "$pr"
-  derive_names "$mode" "$pr" || {
+  _resolve_scope "$repo_arg"
+  derive_names "$mode" "$pr" "$SCOPE_SLUG" || {
     echo "swe-workbench-pr-review-worktree: release: unrecognized mode: $mode" >&2
     exit 1
   }
@@ -291,6 +328,11 @@ cmd_release() {
     provider="rimba"
   elif [ -d "$FALLBACK" ]; then
     path="$FALLBACK"
+    provider="git"
+  elif [ -d "$LEGACY_FALLBACK" ] && [ "$LEGACY_FALLBACK" != "$FALLBACK" ]; then
+    # Dual-read (issue #713): a pre-upgrade acquire left the worktree at the
+    # legacy un-scoped spelling — release must still find it.
+    path="$LEGACY_FALLBACK"
     provider="git"
   fi
 

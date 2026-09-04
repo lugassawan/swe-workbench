@@ -65,7 +65,7 @@ SIBLING_CALLERS = {
         "swe-workbench-clean-state-files",
     ],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
-    "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
+    "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sweep-residuals": [
         "swe-workbench-skill-script",

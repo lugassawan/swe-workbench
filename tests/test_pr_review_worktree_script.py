@@ -324,33 +324,39 @@ def test_names_covers_all_eight_modes_with_expected_shape():
     assert {item["mode"] for item in data} == set(ALL_MODES)
     assert len(data) == len(ALL_MODES)
     for item in data:
-        assert set(item) == {"mode", "label", "fallback_path", "delete_branch"}
+        assert set(item) == {"mode", "label", "fallback_path", "legacy_fallback_path", "delete_branch"}
         assert item["delete_branch"] is True
         assert n in item["label"]
         assert n in item["fallback_path"]
+        assert n in item["legacy_fallback_path"]
 
 
 def test_names_first_pass_and_followup_labels():
     n = _unique_n()
     result = subprocess.run(
-        ["bash", str(SCRIPT), "names", "--pr", n], capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        ["bash", str(SCRIPT), "names", "--pr", n, "--repo", "octocat/widgets"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
     )
     data = {item["mode"]: item for item in json.loads(result.stdout)}
     assert data["first-pass"]["label"] == f"pr-review-{n}"
-    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
+    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}"
+    assert data["first-pass"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
     assert data["followup"]["label"] == f"pr-followup-{n}"
-    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}-followup"
+    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}-followup"
+    assert data["followup"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}-followup"
 
 
 @pytest.mark.parametrize("mode", SPECIALIST_MODES)
 def test_names_specialist_labels(mode):
     n = _unique_n()
     result = subprocess.run(
-        ["bash", str(SCRIPT), "names", "--pr", n], capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        ["bash", str(SCRIPT), "names", "--pr", n, "--repo", "octocat/widgets"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
     )
     data = {item["mode"]: item for item in json.loads(result.stdout)}
     assert data[mode]["label"] == f"review-{mode}-{n}"
-    assert data[mode]["fallback_path"] == f"/tmp/swe-workbench-pr-review/{mode}-{n}"
+    assert data[mode]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{mode}-{n}"
+    assert data[mode]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{mode}-{n}"
 
 
 def _sweep_residuals_worktree_contract(n: str) -> set:
@@ -395,8 +401,11 @@ def test_names_matches_sweep_residuals_worktree_contract():
     )
     assert result.returncode == 0, result.stderr
     names_data = json.loads(result.stdout)
+    # The ratchet compares the LEGACY triple until sweep-residuals grows its own
+    # scoped+legacy pair (issue #713) — legacy_fallback_path is the stable join
+    # key between the two contracts.
     names_triples = {
-        (item["label"], item["fallback_path"], "1" if item["delete_branch"] else "0")
+        (item["label"], item["legacy_fallback_path"], "1" if item["delete_branch"] else "0")
         for item in names_data
     }
     names_triples.add((f"address-feedback-{n}", "", "0"))
@@ -815,3 +824,74 @@ class TestRimbaPath:
             assert dirty_file.exists(), "acquire must never silently discard uncommitted local-only work"
         finally:
             _cleanup_worktree(repo, expected_wt, branch)
+
+
+# ── repo-scoped fallbacks (issue #713) ───────────────────────────────────────
+
+
+def test_names_scoped_fallbacks_with_explicit_repo():
+    n = _unique_n()
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "names", "--pr", n, "--repo", "octocat/widgets"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0, result.stderr
+    data = {item["mode"]: item for item in json.loads(result.stdout)}
+    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}"
+    assert data["first-pass"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
+    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}-followup"
+    assert data["followup"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}-followup"
+    assert data["security"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-security-{n}"
+    assert data["security"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/security-{n}"
+    # Rimba task/branch labels are per-repo git objects already — unchanged.
+    assert data["first-pass"]["label"] == f"pr-review-{n}"
+    assert data["security"]["label"] == f"review-security-{n}"
+
+
+def test_names_legacy_when_origin_unresolvable(tmp_path):
+    """No remote at all -> empty slug -> legacy names, legacy == scoped."""
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "names", "--pr", n],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV), cwd=str(repo),
+    )
+    assert result.returncode == 0, result.stderr
+    data = {item["mode"]: item for item in json.loads(result.stdout)}
+    fp = data["first-pass"]
+    assert fp["fallback_path"] == fp["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
+
+
+def test_names_rejects_invalid_repo_value():
+    n = _unique_n()
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "names", "--pr", n, "--repo", "bogus"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode != 0
+
+
+def test_release_finds_legacy_fallback_worktree_dual_read(tmp_path):
+    """Pre-upgrade acquire / post-upgrade release: the worktree sits at the
+    legacy un-scoped fallback path; release must still find and remove it."""
+    repo = _build_repo(tmp_path)
+    _run("git", "remote", "add", "origin", "https://github.com/octocat/widgets.git", cwd=repo)
+    (tmp_path / "fake_home").mkdir(exist_ok=True)
+    env = _rimba_absent_env(tmp_path / "fake_home")
+    n = _unique_n()
+    legacy = Path("/tmp/swe-workbench-pr-review") / n
+    branch = f"pr-review-{n}"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    _run("git", "worktree", "add", "--detach", str(legacy), "main", cwd=repo)
+    try:
+        result = _run_script(
+            repo,
+            ["release", "--mode", "first-pass", "--pr", n, "--intent", "completed"],
+            env,
+        )
+        assert result.returncode == 0, result.stderr
+        kv = _kv(result)
+        assert kv["WORKTREE_REMOVED"] == "1"
+        assert not legacy.exists()
+    finally:
+        _cleanup_worktree(repo, legacy, branch)
