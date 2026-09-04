@@ -29,7 +29,20 @@ if [[ -z "$PIN" || "$PIN" == "null" ]]; then
   exit 1
 fi
 
-FLOOR=$(jq -r '.peerDependencies["@earendil-works/pi-coding-agent"] | split(" ")[0]' "$PKG")
+# pi-coding-agent and pi-tui are nested and published lockstep (see
+# tests/test_pi_extension.py's tui_dev_pin == dev_pin assertion) — this script only derives
+# the expected floor from one pin, so a partial bump that skips pi-tui must fail loudly here
+# rather than silently syncing pi-tui's floor to a pin pi-tui never actually moved to.
+TUI_PIN=$(jq -r '.devDependencies["@earendil-works/pi-tui"]' "$PKG")
+if [[ "$TUI_PIN" != "$PIN" ]]; then
+  echo "Error: devDependencies pins are out of lockstep — pi-coding-agent is ${PIN}, pi-tui is ${TUI_PIN}" >&2
+  exit 1
+fi
+
+FLOOR=$(jq -e -r '.peerDependencies["@earendil-works/pi-coding-agent"] | split(" ")[0]' "$PKG") || {
+  echo "Error: could not read peerDependencies[\"@earendil-works/pi-coding-agent\"] from ${PKG}" >&2
+  exit 1
+}
 EXPECTED_FLOOR=">=${PIN}"
 
 MODE="${1:-}"

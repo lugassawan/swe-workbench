@@ -2,10 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    # 'reopened' lets dependabot-peer-sync.yml force a re-run of these checks after it
-    # pushes a peerDependencies fixup commit — a GITHUB_TOKEN-authored push does not
-    # itself retrigger pull_request workflows, but a close+reopen cycle does.
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize]
     branches: [main]
 
 permissions:
@@ -70,6 +67,9 @@ jobs:
         if: github.actor != 'dependabot[bot]'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # Strip HTML comments first so example text inside <!-- ... --> blocks
           # (e.g. "Issue: N/A" documentation in the PR template) does not
@@ -87,9 +87,15 @@ jobs:
           # Allow manually-authored dependency-bump PRs that carry the same
           # "Bumps <pkg> from <old> to <new>." line Dependabot's own PRs use —
           # these have no linked issue either, same as the dependabot[bot]-actor case above.
+          # Gated on package.json actually being in the diff (not just body text) so a
+          # contributor can't paste this one line into an unrelated PR to dodge the check.
           if echo "$PR_BODY_VISIBLE" | grep -qE '^Bumps .+ from .+ to .+\.$'; then
-            echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
-            exit 0
+            CHANGED_FILES=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
+            if echo "$CHANGED_FILES" | grep -qxF "package.json"; then
+              echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
+              exit 0
+            fi
+            echo "Bump-style opt-out line found but package.json is not in this PR's diff — ignoring the opt-out"
           fi
 
           # Require a GitHub closing keyword (case-insensitive).

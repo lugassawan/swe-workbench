@@ -18,6 +18,7 @@ SCRIPT = ROOT / "scripts" / "sync-peer-deps.sh"
 _SYNCED_PKG = {
     "devDependencies": {
         "@earendil-works/pi-coding-agent": "0.84.4",
+        "@earendil-works/pi-tui": "0.84.4",
     },
     "peerDependencies": {
         "@earendil-works/pi-coding-agent": ">=0.84.4 <1",
@@ -28,6 +29,7 @@ _SYNCED_PKG = {
 _DRIFTED_PKG = {
     "devDependencies": {
         "@earendil-works/pi-coding-agent": "0.84.4",
+        "@earendil-works/pi-tui": "0.84.4",
     },
     "peerDependencies": {
         "@earendil-works/pi-coding-agent": ">=0.84.3 <1",
@@ -138,3 +140,35 @@ class TestSyncPeerDepsApply:
         result = _run(script, cwd=tmp_path)
         assert result.returncode == 1
         assert "could not read" in result.stderr
+
+    def test_mismatched_devdependencies_pins_errors(self, tmp_path):
+        """pi-coding-agent and pi-tui are published lockstep — a partial bump that moves
+        only one of the two pins must fail loudly rather than silently deriving the
+        expected floor from whichever pin happened to be read."""
+        pkg = json.loads(json.dumps(_SYNCED_PKG))
+        pkg["devDependencies"]["@earendil-works/pi-tui"] = "0.84.3"
+        script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "out of lockstep" in result.stderr
+
+    def test_mismatched_devdependencies_pins_errors_in_check_mode(self, tmp_path):
+        pkg = json.loads(json.dumps(_SYNCED_PKG))
+        pkg["devDependencies"]["@earendil-works/pi-tui"] = "0.84.3"
+        script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
+        result = _run(script, "--check", cwd=tmp_path)
+        assert result.returncode == 1
+        assert "out of lockstep" in result.stderr
+
+    def test_missing_peerdependencies_key_errors(self, tmp_path):
+        pkg = {
+            "devDependencies": {
+                "@earendil-works/pi-coding-agent": "0.84.4",
+                "@earendil-works/pi-tui": "0.84.4",
+            },
+            "peerDependencies": {},
+        }
+        script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 1
+        assert "could not read peerDependencies" in result.stderr

@@ -11,13 +11,25 @@ name: Dependabot peerDependencies Sync
 #
 # pull_request_target is required for write access to push back to the PR
 # branch. To stay safe against a compromised PR, this workflow:
-#   - never executes anything checked out from the PR itself — it fetches the
-#     sync script from the base branch (origin/main) and runs only that copy
+#   - never executes anything checked out from the PR itself — it overwrites
+#     scripts/sync-peer-deps.sh with the copy from the base branch
+#     (origin/main) before running it, so only that trusted content ever runs,
+#     invoked in place so its own BASH_SOURCE-relative root detection still
+#     resolves to the checked-out repo (not /tmp)
 #   - only ever reads/writes package.json and package-lock.json — no `npm
 #     install`, so a malicious package's install/postinstall script can never
 #     run with this job's write token
 #   - is gated on the PR author being dependabot[bot] and the diff touching
 #     package.json
+#
+# The resulting fixup-commit push authenticates with the default
+# GITHUB_TOKEN, so per GitHub's own docs the pull_request run it triggers on
+# pr.yml lands in an approval-required state rather than running immediately
+# — https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow.
+# A maintainer still needs one click of "Approve workflows to run" on that
+# run; getting a fully automatic re-run would require a PAT or GitHub App
+# token in place of GITHUB_TOKEN, which we deliberately avoid here to keep
+# this workflow secret-free.
 on:
   pull_request_target:
     types: [opened, synchronize]
@@ -38,25 +50,27 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-      pull-requests: write
     steps:
       # Checked out for git history/parentage only (so a fixup commit lands
-      # on top of the PR's real commits) — nothing from this tree is executed.
+      # on top of the PR's real commits) — every file in this tree is
+      # untrusted until the next step overwrites the one script we execute.
       - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Fetch trusted sync script from main
+      # Overwrite in place (not copied to /tmp) so the script's own
+      # BASH_SOURCE-relative root detection still resolves correctly.
+      - name: Overwrite sync script with the trusted copy from main
         run: |
           git fetch --depth 1 origin main
-          git show origin/main:scripts/sync-peer-deps.sh > /tmp/sync-peer-deps.sh
+          git show origin/main:scripts/sync-peer-deps.sh > scripts/sync-peer-deps.sh
 
       - name: Check for peerDependencies drift
         id: check
         run: |
-          if bash /tmp/sync-peer-deps.sh --check; then
+          if bash scripts/sync-peer-deps.sh --check; then
             echo "drift=false" >> "$GITHUB_OUTPUT"
           else
             echo "drift=true" >> "$GITHUB_OUTPUT"
@@ -67,22 +81,10 @@ jobs:
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          bash /tmp/sync-peer-deps.sh
+          bash scripts/sync-peer-deps.sh
+          git checkout -- scripts/sync-peer-deps.sh
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "[chore] Sync peerDependencies floor to devDependencies pin"
           git push origin "HEAD:refs/heads/${HEAD_REF}"
-
-      # A GITHUB_TOKEN-authored push does not itself retrigger pull_request
-      # workflows (infinite-loop guard built into Actions) — a close+reopen
-      # cycle does, and pr.yml's pull_request trigger now includes 'reopened'.
-      - name: Reopen PR to retrigger required checks
-        if: steps.check.outputs.drift == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh pr close "$PR_NUMBER" --repo "$REPO"
-          gh pr reopen "$PR_NUMBER" --repo "$REPO"
