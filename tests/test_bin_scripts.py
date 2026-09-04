@@ -44,6 +44,7 @@ SCRIPTS = {
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-repo-scope": "bash",
     "swe-workbench-result-check": "python3",
     "swe-workbench-session-scratch-adapter-claude": "bash",
     "swe-workbench-session-scratch-adapter-pi": "bash",

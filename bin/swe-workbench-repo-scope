@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# swe-workbench-repo-scope [--repo owner/repo | --pr-json <file>]
+#
+# Prints the normalized owner-repo slug that scopes /tmp/swe-workbench-*
+# ephemeral artifacts by repository (issue #713; convention documented in
+# shared/docs/repo-scoped-ephemeral-state.md): owner/repo -> owner-repo,
+# matching the pre-existing convention in workflow-audit-emit-issues
+# (nameWithOwner | tr '/' '-').
+#
+# Tier S output (shared/docs/runtime-result-contract.md): the slug on stdout,
+# nothing else. Unresolvable -> exit 1, empty stdout; callers treat an empty
+# slug as "legacy un-scoped naming" (pre-#713 behavior), never a failure of
+# their own flow.
+#
+# Resolution ladder (first hit wins):
+#   --repo owner/repo  explicit scope from the caller — the PR record in hand
+#                      when the invocation carried a full PR URL
+#   --pr-json <file>   slug read from the fetched PR JSON's own .url field
+#                      (https://github.com/<owner>/<repo>/pull/<N>)
+#   (no args)          `git remote get-url origin` of the cwd (https, git@,
+#                      ssh:// forms; .git suffix tolerated)
+#
+# GitHub owner/repo names are [A-Za-z0-9._-], so tr '/' '-' is a sufficient
+# normalizer; the shape checks below reject anything else rather than guess.
+
+set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
+MODE="${1:-}"
+ARG="${2:-}"
+
+resolve_explicit() {
+  # GitHub owner/repo names start with an alphanumeric (never '.', '-', '_'),
+  # which also rejects traversal-shaped inputs like '../evil'.
+  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$' || return 1
+  printf '%s\n' "$1" | tr '/' '-'
+}
+
+resolve_pr_json() {
+  [ -f "$1" ] || return 1
+  local url owner_repo
+  url=$(jq -r '.url // empty' "$1" 2>/dev/null) || return 1
+  [ -n "$url" ] || return 1
+  owner_repo=$(printf '%s' "$url" | sed -nE 's#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$#\1/\2#p')
+  [ -n "$owner_repo" ] || return 1
+  printf '%s\n' "$owner_repo" | tr '/' '-'
+}
+
+resolve_origin() {
+  local url owner_repo
+  url=$(git remote get-url origin 2>/dev/null) || return 1
+  # GitHub forbids repo names ending in ".git", so pre-stripping the suffix is
+  # unambiguous — and avoids the greedy-charset trap where [A-Za-z0-9._-]+
+  # swallows ".git" before an optional (\.git)? group can claim it.
+  url="${url%.git}"
+  owner_repo=$(printf '%s' "$url" | sed -nE \
+    -e 's#^https://[^/@]*github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/?$#\1/\2#p' \
+    -e 's#^git@github\.com:([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#\1/\2#p' \
+    -e 's#^ssh://git@github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#\1/\2#p')
+  [ -n "$owner_repo" ] || return 1
+  printf '%s\n' "$owner_repo" | tr '/' '-'
+}
+
+case "$MODE" in
+  --repo)
+    [ -n "$ARG" ] || exit 1
+    resolve_explicit "$ARG" && exit 0
+    exit 1
+    ;;
+  --pr-json)
+    [ -n "$ARG" ] || exit 1
+    resolve_pr_json "$ARG" && exit 0
+    exit 1
+    ;;
+  "")
+    resolve_origin && exit 0
+    exit 1
+    ;;
+  *)
+    printf 'swe-workbench-repo-scope: unrecognized argument: %s\n' "$MODE" >&2
+    exit 1
+    ;;
+esac
