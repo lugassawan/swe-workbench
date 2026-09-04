@@ -77,20 +77,20 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
 
 ## Resume
 
-Determine the current harness (`pi` when `PI_SESSION_ID` is set; otherwise `claude`). Bind the lease to the canonical receiver session: Pi uses `PI_SESSION_ID`; Claude uses `CLAUDE_CODE_SESSION_ID`, which matches the Claude hook payload identity. A missing session ID is an error; never acquire an unbound lease.
+Determine the current harness (`pi` when `PI_SESSION_ID` is set; otherwise `claude`). Bind the lease to the canonical receiver session via its environment variable name: Pi uses `PI_SESSION_ID`; Claude uses `CLAUDE_CODE_SESSION_ID`, which matches the Claude hook payload identity. The runtime reads the named variable itself and errors if it is missing or blank; never acquire an unbound lease.
 
-Run exactly one of these single pipelines, inserting `--acknowledge-degraded` only when explicitly requested:
+Run exactly one of these single pipelines, inserting `--acknowledge-degraded` only when explicitly requested. Every argument is a literal value — never a `${VAR}` shell expansion — so the pipeline stays inert enough for the harness's own command-safety checks to verify:
 
 ```bash
 # Claude receiver
 swe-workbench-handoff resume "<checkpoint-id>" --as claude \
-  --receiver-session "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" \
+  --receiver-session-env CLAUDE_CODE_SESSION_ID \
   <include --acknowledge-degraded only when requested> \
   | swe-workbench-result-check swb.handoff/1
 
 # Pi receiver
 swe-workbench-handoff resume "<checkpoint-id>" --as pi \
-  --receiver-session "${PI_SESSION_ID:?missing PI_SESSION_ID}" \
+  --receiver-session-env PI_SESSION_ID \
   <include --acknowledge-degraded only when requested> \
   | swe-workbench-result-check swb.handoff/1
 ```
@@ -110,17 +110,17 @@ Print the returned checkpoint id and warning. Recovery is truthful degraded salv
 
 ## Close
 
-Authenticate close with the same harness and canonical receiver session that acquired the lease. Run exactly one pipeline:
+Authenticate close with the same harness and canonical receiver session that acquired the lease. Run exactly one pipeline, again using the literal environment-variable-name form:
 
 ```bash
 # Claude receiver
 swe-workbench-handoff close "<checkpoint-id>" --as claude \
-  --session-ref "${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}" \
+  --session-ref-env CLAUDE_CODE_SESSION_ID \
   | swe-workbench-result-check swb.handoff/1
 
 # Pi receiver
 swe-workbench-handoff close "<checkpoint-id>" --as pi \
-  --session-ref "${PI_SESSION_ID:?missing PI_SESSION_ID}" \
+  --session-ref-env PI_SESSION_ID \
   | swe-workbench-result-check swb.handoff/1
 ```
 

@@ -27,9 +27,12 @@ The **source harness must stop mutating after `create`** — this is enforced, n
 Claude's PreToolUse hook (`hooks/handoff_guard.py`) and Pi's native adapter
 (`pi/extensions/handoff.ts`) block `Bash`/`Edit`/`Write` (Pi: `bash`/`write`/`edit`) while a
 lease they do not own is in flight, allowing only the exact anchored lifecycle pipelines
-(resume/recover with `--receiver-session`/`--source-stopped` and a
-`| swe-workbench-result-check swb.handoff/1` tail). Blocking messages carry the exact
-receiver command, e.g. ``run `/handoff resume <id>` in the receiver``.
+(resume/recover with a literal `--receiver-session-env`/`--source-stopped` and a
+`| swe-workbench-result-check swb.handoff/1` tail — every pipeline argument is a literal
+value, never a runtime `${VAR}` shell expansion). Blocking messages carry the exact receiver
+command and the leased worktree path, e.g. ``run `/handoff resume <id>` in the receiver``
+plus the worktree root the guard resolved the lease against — so a session that finds itself
+blocked can tell which worktree holds the lease even when it differs from its own.
 
 ## Routes
 
@@ -38,7 +41,7 @@ receiver command, e.g. ``run `/handoff resume <id>` in the receiver``.
   `swe-workbench-handoff create < file`, validates the `swb.handoff/1` envelope, prints the
   receiver instruction, and **stops**.
 - **resume** — the receiver acquires ownership:
-  `swe-workbench-handoff resume <id> --as <harness> --receiver-session "${PI_SESSION_ID:?…}"`
+  `swe-workbench-handoff resume <id> --as <harness> --receiver-session-env PI_SESSION_ID`
   (Claude: `CLAUDE_CODE_SESSION_ID`), then `show` to present the checkpoint. Session refs are
   required and bounded; a session-less resume is rejected rather than binding an unbound lease.
 - **recover** — after the source harness has *hard-failed* (quota exhaustion, crash): the
@@ -47,8 +50,31 @@ receiver command, e.g. ``run `/handoff resume <id>` in the receiver``.
   Recovery is **truthful degraded salvage**: it rebuilds from the prior checkpoint (if any)
   plus deterministic git evidence only, marks the checkpoint `degraded`, and requires
   `--acknowledge-degraded` on resume before ownership is granted.
-- **close** — owner-authenticated (`--as` + `--session-ref` matching the lease); closes the
+- **close** — owner-authenticated (`--as` + `--session-ref-env` matching the lease); closes the
   checkpoint and removes the lease.
+
+### Abandoning a checkpoint
+
+The guard mediates the *agent's* tools (`Bash`/`Edit`/`Write` on Claude, `bash`/`write`/`edit`
+on Pi) — it does not, and cannot, stop a human operator from running the runtime directly in a
+plain shell. If a checkpoint needs to be walked back (a lease left `released` with no live
+receiver, an abandoned salvage attempt), an operator can resume and immediately close it:
+
+```bash
+swe-workbench-handoff resume <id> --as <target> --receiver-session <ref>
+swe-workbench-handoff close <id> --as <same-target> --session-ref <same-ref>
+```
+
+Three sharp edges apply, all enforced by the runtime itself:
+
+- `--as` must match the checkpoint's `target_harness` exactly; resuming with the wrong harness
+  is rejected before any lease state changes.
+- A `degraded` (salvage) checkpoint requires `--acknowledge-degraded` on the `resume` call, or
+  it is refused.
+- `resume` refuses if the live worktree has drifted since the checkpoint was written (its
+  dirty fingerprint no longer matches). That is not itself abandonable — the path is
+  `swe-workbench-handoff recover --from <source> --source-stopped`, which rebuilds a fresh,
+  honestly `degraded` checkpoint from the current worktree instead of trusting stale state.
 
 Stale-checkpoint and lease-identity mismatches are rejected on both `resume` and `close`,
 so an old checkpoint id can never rebind or release a newer handoff's lease.
