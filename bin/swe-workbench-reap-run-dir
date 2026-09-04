@@ -20,7 +20,10 @@
 #      /tmp/swe-workbench-run root — prefix containment is not enough.
 #   5. Target is not the run-dir root itself (implied by 4, asserted anyway).
 #   6. Basename matches the run-dir name shape (allowlist, not denylist):
-#        ^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$
+#        ^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)(-[A-Za-z0-9._-]+)?-[0-9]+-[A-Za-z0-9]{6}$
+#        The optional middle segment is the #713 owner-repo slug. Overlap with
+#        review-* legacy tags is acceptable: this allowlist is a recognition
+#        gate, not a deletion decision — safety comes from checks 4+7+8.
 #   7. Target is owned by the current user ([ -O ]) — /tmp is world-writable
 #      and sticky, so a squatted dir owned by another UID is refused.
 #   8. Target does NOT contain a .git entry — keeps scratch and worktree
@@ -91,7 +94,7 @@ is_run_root "$canon_target" && reject "refusing to remove the run-dir root itsel
 
 is_run_root "$canon_parent" || reject "path is not exactly one level under $RUN_ROOT: $TARGET"
 
-if ! printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$'; then
+if ! printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)(-[A-Za-z0-9._-]+)?-[0-9]+-[A-Za-z0-9]{6}$'; then
   reject "basename does not match the run-dir name shape: $base"
 fi
 

@@ -244,3 +244,44 @@ def test_reaping_one_run_dir_leaves_sibling_intact():
     finally:
         d1.rmdir() if d1.exists() else None
         d2.rmdir() if d2.exists() else None
+
+
+# ──────────────────────────────────────────────────────
+# Repo-scoped names (issue #713)
+# ──────────────────────────────────────────────────────
+
+def test_slugged_basename_accepted_and_removed():
+    d = make_run_dir("pr-review-octocat-widgets-42-abc123")
+    r = run_script(str(d))
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    assert not d.exists()
+
+
+def test_slugged_review_mode_basename_accepted():
+    d = make_run_dir("review-security-octocat-widgets-7-xyz789")
+    r = run_script(str(d))
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    assert not d.exists()
+
+
+def test_slugged_name_with_dots_and_underscores_accepted():
+    # GitHub repo names may contain '.' and '_' (charset [A-Za-z0-9._-]).
+    d = make_run_dir("pr-review-octo.cat-wid_gets-9-q1w2e3")
+    r = run_script(str(d))
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    assert not d.exists()
+
+
+def test_slug_charset_violation_rejected():
+    # Characters outside [A-Za-z0-9._-] are not a sanctioned shape.
+    d = make_run_dir("pr-review-octocat;widgets-42-abc123")
+    r = run_script(str(d))
+    assert r.returncode == 1
+    assert d.exists()
+
+
+def test_legacy_basename_still_accepted():
+    d = make_run_dir("pr-review-42-abc123")
+    r = run_script(str(d))
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    assert not d.exists()
