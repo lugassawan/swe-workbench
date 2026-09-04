@@ -112,6 +112,7 @@ def test_blocks_mutating_tools_under_a_released_lease(tmp_path):
         assert result.returncode == 2, f"{tool_name}: {result.stderr}"
         assert "BLOCKED:" in result.stderr
         assert f"/handoff resume {checkpoint_id}" in result.stderr
+        assert str(repo.resolve()) in result.stderr
 
 
 def test_released_lease_names_the_claude_receiver_command(tmp_path):
@@ -160,6 +161,7 @@ def test_allows_the_bound_owner_session_and_blocks_other_sessions(tmp_path):
     assert bound.returncode == 0, bound.stderr
     assert other.returncode == 2
     assert "BLOCKED:" in other.stderr
+    assert str(repo.resolve()) in other.stderr
 
 
 def test_blocks_when_the_other_harness_owns_the_lease(tmp_path):
@@ -184,6 +186,7 @@ def test_blocks_when_the_other_harness_owns_the_lease(tmp_path):
     assert result.returncode == 2
     assert "BLOCKED:" in result.stderr
     assert "pi" in result.stderr
+    assert str(repo.resolve()) in result.stderr
 
 
 def test_allows_exact_resume_pipeline_through_a_released_lease(tmp_path):
@@ -203,6 +206,45 @@ def test_allows_exact_resume_pipeline_through_a_released_lease(tmp_path):
     result = _run_hook(payload, state_dir=state_dir)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_allows_exact_resume_env_pipeline_through_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            "--receiver-session-env CLAUDE_CODE_SESSION_ID "
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_blocks_resume_pipeline_with_a_near_miss_session_env_name(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff resume "{checkpoint_id}" --as claude '
+            "--receiver-session-env HOME "
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
 
 
 def test_allows_exact_pi_source_recovery_pipeline_through_ownership_gate(tmp_path):
@@ -372,6 +414,19 @@ def test_interpreter_startup_failure_names_the_required_runtime(tmp_path):
     assert result.returncode == 2
     assert "Python 3.9" in result.stderr
     assert "pin" in result.stderr
+
+
+def test_a_control_character_worktree_root_is_omitted_not_emitted(tmp_path):
+    repo = tmp_path / "repo\nweird"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _create(repo, state_dir, target="pi")
+
+    result = _run_hook(_payload(repo, "Bash"), state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+    assert result.stderr.count("\n") == 1, "an unvalidated worktree_root must never split the BLOCKED line"
 
 
 def test_no_secrets_in_blocking_output(tmp_path):

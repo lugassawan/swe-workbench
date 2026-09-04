@@ -47,9 +47,9 @@ def test_planned_handoff_prints_the_stop_invariant_and_exact_resume_commands():
 
 def test_resume_binds_a_receiver_session_from_the_harness_environment():
     text = _text()
-    assert "--receiver-session" in text
-    assert "${PI_SESSION_ID:?" in text
-    assert "${CLAUDE_CODE_SESSION_ID:?" in text
+    assert "--receiver-session-env" in text
+    assert "PI_SESSION_ID" in text
+    assert "CLAUDE_CODE_SESSION_ID" in text
     assert "CLAUDE_SESSION_ID" not in text
 
 
@@ -83,7 +83,7 @@ def test_close_authenticates_the_current_harness_and_session():
     text = _text()
     close_section = text.split("## Close", 1)[1]
     assert "--as" in close_section
-    assert "--session-ref" in close_section
+    assert "--session-ref-env" in close_section
     assert "CLAUDE_CODE_SESSION_ID" in close_section
     assert "PI_SESSION_ID" in close_section
 
