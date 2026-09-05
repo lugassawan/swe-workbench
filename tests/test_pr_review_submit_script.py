@@ -359,6 +359,44 @@ def test_resolve_event_self_review_with_blocking_threads_downgrades_decision_too
     assert event == "COMMENT"
 
 
+# ── Unit: resolve_event — override ─────────────────────────────────────────────
+
+
+def test_resolve_event_override_prevents_blocking_downgrade():
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 1, override=True)
+    assert decision == "APPROVE"
+    assert event == "APPROVE"
+
+
+def test_resolve_event_override_with_zero_blocking_threads_is_a_no_op():
+    """No blocking threads means there's nothing to override — override=True must behave
+    identically to override=False."""
+    with_override = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 0, override=True)
+    without_override = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 0, override=False)
+    assert with_override == without_override
+    assert with_override[1] == "APPROVE"
+
+
+def test_resolve_event_override_does_not_defeat_self_review_clamp():
+    """The override bypasses exactly the thread-count downgrade — it must never let a
+    self-authored review submit as APPROVE. Under self-review, override has zero effect
+    on either `event` or `decision`: callers (e.g. workflow-pr-review-post's CTA
+    suppression) read `decision`, not `event`, to decide whether there's anything left
+    to address, so `decision` must be downgraded too, not just `event`."""
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice", 1, override=True)
+    assert is_self is True
+    assert event == "COMMENT", "self-review must never submit APPROVE, override or not"
+    assert decision == "COMMENT", "override must not defeat the self-review clamp on decision either"
+
+
+def test_resolve_event_default_override_preserves_existing_truth_table_row():
+    """Calling resolve_event with the exact positional args a pre-override test used must
+    yield identical output — the new `override` parameter's default must not shift behavior."""
+    event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "bob", 1)
+    assert decision == "COMMENT"
+    assert event == "COMMENT"
+
+
 # ── Unit: build_byline / build_summary ────────────────────────────────────────
 
 
@@ -388,6 +426,26 @@ def test_build_summary_non_self_review_includes_decision_line():
     summary = prs.build_summary("COMMENT", "byline text", False)
     assert "**Review Decision: COMMENT**" in summary
     assert "byline text" in summary
+
+
+def test_build_summary_override_note_appears_when_set_and_not_self_review():
+    summary = prs.build_summary("APPROVE", "byline text", False, override_note="verified manually", n_blocking=2)
+    assert "**Review Decision: APPROVE**" in summary
+    assert "Approved with 2 unresolved review thread(s) still open" in summary
+    assert "override: verified manually" in summary
+
+
+def test_build_summary_no_override_note_when_not_set():
+    summary = prs.build_summary("APPROVE", "byline text", False)
+    assert "override:" not in summary
+
+
+def test_build_summary_self_review_omits_override_note_even_if_passed():
+    """Defensive: even a caller misuse (passing override_note under self-review) must not
+    produce a summary that references 'Approved' when no decision line was even printed."""
+    summary = prs.build_summary("APPROVE", "byline text", True, override_note="verified manually", n_blocking=2)
+    assert summary.strip() == "byline text"
+    assert "override:" not in summary
 
 
 # ── Unit: partition_findings ──────────────────────────────────────────────────
@@ -464,6 +522,70 @@ def test_byline_forbidden_content_aborts(tmp_path, byline):
     assert result.returncode != 0
     assert "--byline" in result.stderr
     assert _gh_calls(state_dir) == []
+
+
+def test_approve_over_open_threads_multiline_aborts(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--approve-over-open-threads": "line one\nline two"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode != 0
+    assert "--approve-over-open-threads" in result.stderr
+    assert "single line" in result.stderr
+    assert _gh_calls(state_dir) == []
+
+
+def test_approve_over_open_threads_over_200_chars_aborts(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--approve-over-open-threads": "x" * 201}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode != 0
+    assert "--approve-over-open-threads" in result.stderr
+    assert "200 characters" in result.stderr
+    assert _gh_calls(state_dir) == []
+
+
+def test_approve_over_open_threads_embedding_remark_aborts(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--approve-over-open-threads": f"verified {prs.REMARK_TEXT}"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode != 0
+    assert "--approve-over-open-threads" in result.stderr
+    assert "swe-workbench remark" in result.stderr
+    assert _gh_calls(state_dir) == []
+
+
+def test_approve_over_open_threads_valid_reason_flows_to_envelope(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE", "--approve-over-open-threads": "verified manually"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert data["approve_over_open_threads"] is True
+    assert data["override_reason"] == "verified manually"
 
 
 def test_inline_finding_missing_path_aborts(tmp_path):
@@ -1114,6 +1236,102 @@ def test_outdated_thread_does_not_block_approve(tmp_path):
     assert _data(result)["blocked_by_unresolved"] == 0
 
 
+# ── Behavioral: --approve-over-open-threads override ────────────────────────────
+
+
+def test_override_prevents_downgrade_but_blocked_by_unresolved_stays_true_count(tmp_path):
+    """The single most important behavioral assertion in this feature: the override lets
+    APPROVE stand, but `blocked_by_unresolved` must remain the true non-zero count — it is
+    the only evidence in the envelope that a downgrade would otherwise have applied."""
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE", "--approve-over-open-threads": "verified manually"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert data["event"] == "APPROVE"
+    assert data["decision"] == "APPROVE"
+    assert data["blocked_by_unresolved"] == 1, "override must never launder away the true blocking count"
+    assert "downgraded" not in result.stderr, "nothing to warn about once the override handled it"
+
+
+def test_override_note_appears_in_posted_review_body(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--decision": "APPROVE", "--approve-over-open-threads": "verified manually"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = _gh_calls(state_dir)
+    post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
+    payload = json.loads(post_call["stdin"])
+    assert "Approved with 1 unresolved review thread(s) still open" in payload["body"]
+    assert "override: verified manually" in payload["body"]
+
+
+def test_override_has_no_effect_when_decision_never_reaches_approve(tmp_path):
+    """--approve-over-open-threads is meant to override the blocking-threads downgrade of
+    an APPROVE. If the caller's --decision was never going to be APPROVE in the first
+    place (here: explicit COMMENT, default IN-DIFF blocking-scope so no OUT-OF-DIFF-ONLY
+    upgrade fires), the override must be a no-op: no override-note text in the posted
+    review body, and the envelope's decision stays COMMENT — there is nothing to
+    override."""
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(
+            findings,
+            **{
+                "--decision": "COMMENT",
+                "--blocking-scope": "IN-DIFF",
+                "--approve-over-open-threads": "some reason",
+            },
+        ),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert data["decision"] == "COMMENT"
+    calls = _gh_calls(state_dir)
+    post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
+    payload = json.loads(post_call["stdin"])
+    assert "override:" not in payload["body"]
+    assert "Approved with" not in payload["body"]
+
+
 def test_n_zero_skips_atomic_post_entirely(tmp_path):
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
@@ -1141,7 +1359,7 @@ def test_n_zero_skips_atomic_post_entirely(tmp_path):
 # ── Behavioral: envelope shape ─────────────────────────────────────────────────
 
 
-def test_stdout_is_one_envelope_with_data_holding_eight_fields(tmp_path):
+def test_stdout_is_one_envelope_with_data_holding_ten_fields(tmp_path):
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
         [
@@ -1162,6 +1380,7 @@ def test_stdout_is_one_envelope_with_data_holding_eight_fields(tmp_path):
     assert set(payload["data"].keys()) == {
         "posted_inline", "posted_pr_level", "deduped", "submitted",
         "event", "decision", "review_url", "blocked_by_unresolved",
+        "approve_over_open_threads", "override_reason",
     }
 
 

@@ -40,6 +40,7 @@ SCRIPTS = {
     "swe-workbench-preflight-commit": "python3",
     "swe-workbench-preflight-pr": "bash",
     "swe-workbench-pr-review-submit": "python3",
+    "swe-workbench-pr-review-threads": "python3",
     "swe-workbench-pr-review-worktree": "bash",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
@@ -65,6 +66,7 @@ SIBLING_CALLERS = {
         "swe-workbench-clean-state-files",
     ],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
+    "swe-workbench-pr-review-threads": ["swe-workbench-gh-timeout", "swe-workbench-reply-and-resolve"],
     "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sweep-residuals": [

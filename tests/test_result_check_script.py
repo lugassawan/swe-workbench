@@ -77,6 +77,26 @@ EXPECTED_REGISTRY = {
         "decision": "str",
         "review_url": "str",
         "blocked_by_unresolved": "int",
+        "approve_over_open_threads": "bool",
+        "override_reason": "str",
+    },
+    "swb.pr-review-threads-evidence/1": {
+        "owner": "str",
+        "repo": "str",
+        "current_user": "str",
+        "evidence_path": "str",
+        "eligible_threads": "int",
+        "skipped_other_author": "int",
+        "skipped_outdated": "int",
+        "skipped_no_anchor": "int",
+        "nothing_to_verify": "bool",
+    },
+    "swb.pr-review-threads-resolve/1": {
+        "requested": "int",
+        "resolved": "int",
+        "failed": "int",
+        "failed_thread_ids": "list[str]",
+        "report_path": "str",
     },
     "swb.address-feedback-worktree-acquire/1": {
         "path": "str",
@@ -343,6 +363,7 @@ def test_special_characters_round_trip_in_string_data_fields():
             "submitted": True, "event": "COMMENT", "decision": "COMMENT",
             "review_url": "quote\" backslash\\ newline\n tab\t done",
             "blocked_by_unresolved": 0,
+            "approve_over_open_threads": False, "override_reason": "",
         },
     )
     result = _run(["swb.pr-review-submit/1"], stdin=json.dumps(envelope))
