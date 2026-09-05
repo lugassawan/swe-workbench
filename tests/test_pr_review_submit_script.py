@@ -379,10 +379,14 @@ def test_resolve_event_override_with_zero_blocking_threads_is_a_no_op():
 
 def test_resolve_event_override_does_not_defeat_self_review_clamp():
     """The override bypasses exactly the thread-count downgrade — it must never let a
-    self-authored review submit as APPROVE."""
+    self-authored review submit as APPROVE. Under self-review, override has zero effect
+    on either `event` or `decision`: callers (e.g. workflow-pr-review-post's CTA
+    suppression) read `decision`, not `event`, to decide whether there's anything left
+    to address, so `decision` must be downgraded too, not just `event`."""
     event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice", 1, override=True)
     assert is_self is True
     assert event == "COMMENT", "self-review must never submit APPROVE, override or not"
+    assert decision == "COMMENT", "override must not defeat the self-review clamp on decision either"
 
 
 def test_resolve_event_default_override_preserves_existing_truth_table_row():
@@ -1286,6 +1290,46 @@ def test_override_note_appears_in_posted_review_body(tmp_path):
     payload = json.loads(post_call["stdin"])
     assert "Approved with 1 unresolved review thread(s) still open" in payload["body"]
     assert "override: verified manually" in payload["body"]
+
+
+def test_override_has_no_effect_when_decision_never_reaches_approve(tmp_path):
+    """--approve-over-open-threads is meant to override the blocking-threads downgrade of
+    an APPROVE. If the caller's --decision was never going to be APPROVE in the first
+    place (here: explicit COMMENT, default IN-DIFF blocking-scope so no OUT-OF-DIFF-ONLY
+    upgrade fires), the override must be a no-op: no override-note text in the posted
+    review body, and the envelope's decision stays COMMENT — there is nothing to
+    override."""
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, is_resolved=False, is_outdated=False)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([node]),
+            {"stdout": "", "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(
+            findings,
+            **{
+                "--decision": "COMMENT",
+                "--blocking-scope": "IN-DIFF",
+                "--approve-over-open-threads": "some reason",
+            },
+        ),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert data["decision"] == "COMMENT"
+    calls = _gh_calls(state_dir)
+    post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
+    payload = json.loads(post_call["stdin"])
+    assert "override:" not in payload["body"]
+    assert "Approved with" not in payload["body"]
 
 
 def test_n_zero_skips_atomic_post_entirely(tmp_path):
