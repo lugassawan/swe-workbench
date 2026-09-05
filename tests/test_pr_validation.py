@@ -420,3 +420,91 @@ class TestAuthorshipDenylist:
     def test_pre_commit_allows_real_email(self):
         result = self._run_pre_commit("dev@example.org")
         assert result.returncode == 0
+
+
+def _extract_issue_reference_bash() -> str:
+    """Extract the full "Validate issue reference" step's run block from pr.yml.
+
+    Unlike the regex-only mirrors above, this drives the actual bash (with a stubbed `gh`)
+    end to end — the live gh-api gating on the "Bumps ... from ... to ...." opt-out has no
+    other coverage, since it depends on real process execution, not just string matching.
+    """
+    if _PR_YML_TEXT is None:
+        pytest.skip("pr.yml not found")
+    m = re.search(
+        r"name: Validate issue reference\n.*?run: \|\n(.*?)\n(?=  validate-plugin-files:)",
+        _PR_YML_TEXT,
+        re.DOTALL,
+    )
+    assert m, "could not locate the 'Validate issue reference' step's run block"
+    body = m.group(1)
+    assert "gh api" in body and "CHANGED_FILES" in body, (
+        "extracted block is missing the gh-api gating logic — the step's bash may have "
+        "changed shape in a way this extraction no longer tracks correctly"
+    )
+    lines = body.splitlines()
+    return "\n".join(line[10:] if line.startswith(" " * 10) else line for line in lines)
+
+
+class TestIssueReferenceBumpOptoutGating:
+    """Drives the actual "Validate issue reference" bash (not just its regex) with a
+    stubbed `gh`, covering the live changed-files gate the sibling
+    tests/test_dependabot_peer_sync_workflow.py established this pattern for."""
+
+    def _run(self, tmp_path: Path, pr_body: str, gh_files: list[str] | None, gh_exit: int = 0) -> subprocess.CompletedProcess:
+        """gh_files=None simulates `gh api` itself failing (gh_exit is then forced nonzero)."""
+        stub_dir = tmp_path / "stub_bin"
+        stub_dir.mkdir()
+        stub_gh = stub_dir / "gh"
+        if gh_files is None:
+            stub_gh.write_text("#!/usr/bin/env bash\nexit 1\n")
+        else:
+            files_output = "\n".join(gh_files)
+            stub_gh.write_text(f"#!/usr/bin/env bash\ncat <<'EOF'\n{files_output}\nEOF\nexit {gh_exit}\n")
+        stub_gh.chmod(0o755)
+
+        script = f"set -eo pipefail\n{_extract_issue_reference_bash()}\n"
+        return subprocess.run(
+            ["bash", "-c", script],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env={
+                **_CLEAN_ENV,
+                "PATH": f"{stub_dir}{os.pathsep}{_CLEAN_ENV['PATH']}",
+                "PR_BODY": pr_body,
+                "REPO": "owner/repo",
+                "PR_NUMBER": "1",
+                "GH_TOKEN": "dummy",
+            },
+        )
+
+    def test_bump_line_with_package_json_in_diff_opts_out(self, tmp_path):
+        result = self._run(tmp_path, "Bumps foo from 1.0.0 to 2.0.0.", gh_files=["package.json", "package-lock.json"])
+        assert result.returncode == 0
+        assert "opted out with a Dependabot-style bump line" in result.stdout
+
+    def test_bump_line_without_package_json_in_diff_falls_through_and_fails(self, tmp_path):
+        result = self._run(tmp_path, "Bumps foo from 1.0.0 to 2.0.0.", gh_files=["src/other.py"])
+        assert result.returncode == 1
+        assert "ignoring the opt-out" in result.stdout
+        assert "must reference an issue" in result.stdout
+
+    def test_bump_line_without_package_json_in_diff_but_with_closing_keyword_passes(self, tmp_path):
+        result = self._run(
+            tmp_path, "Bumps foo from 1.0.0 to 2.0.0.\n\nCloses #42", gh_files=["src/other.py"],
+        )
+        assert result.returncode == 0
+
+    def test_gh_api_failure_falls_through_fail_open_not_step_failure(self, tmp_path):
+        """A transient gh api error must not abort the step outright — it falls through to
+        the closing-keyword check, which still correctly fails without one."""
+        result = self._run(tmp_path, "Bumps foo from 1.0.0 to 2.0.0.", gh_files=None)
+        assert result.returncode == 1
+        assert "must reference an issue" in result.stdout
+
+    def test_gh_api_failure_with_valid_closing_keyword_still_passes(self, tmp_path):
+        """Proves the gh api failure path is fail-open (falls through), not fail-closed
+        (aborts the whole step) — a PR that doesn't even need the opt-out still passes."""
+        result = self._run(tmp_path, "Bumps foo from 1.0.0 to 2.0.0.\n\nCloses #42", gh_files=None)
+        assert result.returncode == 0

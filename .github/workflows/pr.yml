@@ -90,7 +90,11 @@ jobs:
           # Gated on package.json actually being in the diff (not just body text) so a
           # contributor can't paste this one line into an unrelated PR to dodge the check.
           if echo "$PR_BODY_VISIBLE" | grep -qE '^Bumps .+ from .+ to .+\.$'; then
-            CHANGED_FILES=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
+            # A transient gh api failure falls through to the closing-keyword check below
+            # rather than failing this step outright — a real closing keyword still passes,
+            # and a PR relying solely on this opt-out correctly gets asked to add one instead
+            # of failing on an unrelated API blip.
+            CHANGED_FILES=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' 2>/dev/null) || CHANGED_FILES=""
             if echo "$CHANGED_FILES" | grep -qxF "package.json"; then
               echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
               exit 0

@@ -22,14 +22,22 @@ WORKFLOW_PATH = ROOT / ".github" / "workflows" / "dependabot-peer-sync.yml"
 
 def _extract_drift_check_bash() -> str:
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    # End boundary is the next step marker (6-space-indented "- name:"), not a bare blank
+    # line — a blank line inserted inside the run block for readability would otherwise
+    # silently truncate the capture instead of tripping the assert below.
     m = re.search(
-        r"name: Check for peerDependencies drift\n\s*id: check\n\s*run: \|\n(.*?)\n\n",
+        r"name: Check for peerDependencies drift\n\s*id: check\n\s*run: \|\n(.*?)\n(?=      - name:)",
         text,
         re.DOTALL,
     )
     assert m, "could not locate the 'Check for peerDependencies drift' step's run block"
+    body = m.group(1)
+    assert "set +e" in body and "set -e" in body, (
+        "extracted block is missing the set +e/set -e pair — the step's bash may have "
+        "changed shape in a way this extraction no longer tracks correctly"
+    )
     # De-indent: the YAML block is indented 10 spaces under `run: |`.
-    lines = m.group(1).splitlines()
+    lines = body.splitlines()
     return "\n".join(line[10:] if line.startswith(" " * 10) else line for line in lines)
 
 
