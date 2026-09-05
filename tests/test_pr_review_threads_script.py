@@ -565,6 +565,25 @@ class TestFailClosed:
         assert "Traceback" not in result.stderr
         assert not (out_dir / "threads-evidence.json").exists()
 
+    def test_malformed_pr_fails_closed_with_clean_diagnostic(self, tmp_path):
+        """A malformed --pr must be caught locally, before any gh call, with a crisp
+        diagnostic — not surfaced as a generic wrapped gh error from a graphql call
+        made with junk `-F number=...`."""
+        worktree = _init_repo(tmp_path)
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _evidence_args(pr="abc", worktree=worktree, out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "--pr" in result.stderr
+        assert "Traceback" not in result.stderr
+        assert not (out_dir / "threads-evidence.json").exists()
+        # No gh call was ever made — the guard fires before any subprocess call.
+        assert not (state_dir / "call-0.json").exists()
+
 
 # ── CLI validation ───────────────────────────────────────────────────────────
 
@@ -792,6 +811,44 @@ class TestResolveReportContent:
         assert report_path == out_dir / "threads-resolve-report.json"
         report = json.loads(report_path.read_text())
         assert report == [{"thread_id": "T-a", "comment_database_id": 7, "success": True, "error": None}]
+
+
+class TestResolveReportWriteFailure:
+    def test_unwritable_out_dir_still_exits_zero_with_full_envelope_and_warning(self, tmp_path):
+        """The reply+resolve mutations already landed on GitHub by the time the report is
+        written — an OSError writing the report (here: --out-dir points at a path where a
+        directory is expected, so `mkdir(parents=True, exist_ok=True)` raises) must never
+        crash with a traceback and must never make those already-landed mutations vanish
+        from the reviewer's visibility. The script must still exit 0 with a full envelope
+        (requested/resolved/failed/failed_thread_ids all populated from the real outcome)
+        plus a `report_write_failed` warning, and `report_path` comes back empty since the
+        file was never successfully written."""
+        rows = [_row(thread_id="T1", comment_database_id=1)]
+        responses = [_reply_ok(), _resolve_ok("T1")]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+
+        # A regular file where a directory is expected: `Path(out_dir) / "threads-resolve-
+        # report.json"`.parent is `out_dir` itself, so `mkdir(parents=True, exist_ok=True)`
+        # on a path with a file component raises NotADirectoryError (an OSError subclass).
+        blocked_out_dir = tmp_path / "not-a-directory"
+        blocked_out_dir.write_text("i am a file, not a directory")
+
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=blocked_out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Traceback" not in result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["schema"] == "swb.pr-review-threads-resolve/1"
+        assert envelope["data"]["requested"] == 1
+        assert envelope["data"]["resolved"] == 1
+        assert envelope["data"]["failed"] == 0
+        assert envelope["data"]["failed_thread_ids"] == []
+        assert envelope["data"]["report_path"] == ""
+        assert len(envelope["warnings"]) == 1
+        assert envelope["warnings"][0]["code"] == "report_write_failed"
+        assert envelope["warnings"][0]["message"]
 
 
 class TestResolveInputValidation:

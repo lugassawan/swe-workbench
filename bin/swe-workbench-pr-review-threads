@@ -29,9 +29,10 @@ bin/swe-workbench-address-feedback-fetch: reviewers need repeated random access
 into excerpt/commit bodies, which belongs in a file, not a JSON-in-a-shell-
 variable payload.
 
-Fail-closed: any `gh` failure, malformed GraphQL response shape, or the
-required sibling script (`swe-workbench-gh-timeout`) missing/non-executable
-prints a diagnostic to stderr, prints NOTHING to stdout, and exits 1 — mirrors
+Fail-closed: any `gh` failure, malformed GraphQL response shape, a malformed
+`--repo`/`--pr` (checked locally before any `gh` call), or the required
+sibling script (`swe-workbench-gh-timeout`) missing/non-executable prints a
+diagnostic to stderr, prints NOTHING to stdout, and exits 1 — mirrors
 bin/swe-workbench-address-feedback-fetch's FetchError pattern exactly.
 
 A thread's `path` is attacker-influenced (it comes from the GitHub API, and
@@ -61,7 +62,13 @@ written to `<out-dir>/threads-resolve-report.json`; the envelope on stdout
 path, mirroring `evidence`'s manifest-not-inline-records rationale. `status`
 is `"partial"` when any row failed, but the script still exits 0 whenever it
 reaches the point of emitting an envelope — a per-row failure is an expected,
-reported outcome, not a script-level error.
+reported outcome, not a script-level error. The mutations happen first and the
+report write happens after — an `OSError` writing the report (bad `--out-dir`:
+missing, unwritable, or a path colliding with an existing file) never raises;
+it is caught, `report_path` comes back as an empty string, and a
+`{"code": "report_write_failed", "message": ...}` entry is appended to
+`warnings` instead, so the already-landed mutations are never silently lost
+from the reviewer's visibility just because the report couldn't be written.
 """
 
 from __future__ import annotations
@@ -358,6 +365,12 @@ def run_evidence(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if not _PR_RE.match(args.pr or ""):
+        print(
+            f"swe-workbench-pr-review-threads: --pr must match [1-9][0-9]*, got {args.pr!r}",
+            file=sys.stderr,
+        )
+        return 1
 
     script_dir = _script_dir()
     try:
@@ -483,7 +496,14 @@ def resolve_rows(script_dir: Path, owner: str, repo: str, pr: str, rows: list[di
     return records
 
 
-def _build_resolve_envelope(*, requested: int, resolved: int, failed_thread_ids: list[str], report_path: str) -> dict:
+def _build_resolve_envelope(
+    *,
+    requested: int,
+    resolved: int,
+    failed_thread_ids: list[str],
+    report_path: str,
+    warnings: list[dict] | None = None,
+) -> dict:
     failed = requested - resolved
     return {
         "schema": "swb.pr-review-threads-resolve/1",
@@ -495,7 +515,7 @@ def _build_resolve_envelope(*, requested: int, resolved: int, failed_thread_ids:
             "failed_thread_ids": failed_thread_ids,
             "report_path": report_path,
         },
-        "warnings": [],
+        "warnings": warnings or [],
     }
 
 
@@ -516,8 +536,19 @@ def run_resolve(args: argparse.Namespace) -> int:
     owner, repo = args.repo.split("/", 1)
     records = resolve_rows(script_dir, owner, repo, args.pr, rows)
 
+    # The reply+resolve mutations above have already landed on GitHub by this point —
+    # a failure writing the report must never make that outcome disappear from the
+    # reviewer's visibility. Only the write itself is guarded; requested/resolved/
+    # failed/failed_thread_ids are all computed from `records` (already in memory)
+    # regardless of whether the report file could be written.
     report_path = Path(args.out_dir) / "threads-resolve-report.json"
-    _atomic_write_json(report_path, records)
+    warnings: list[dict] = []
+    written_report_path = str(report_path)
+    try:
+        _atomic_write_json(report_path, records)
+    except OSError as exc:
+        written_report_path = ""
+        warnings.append({"code": "report_write_failed", "message": str(exc)})
 
     resolved = sum(1 for r in records if r["success"])
     failed_thread_ids = [r["thread_id"] for r in records if not r["success"]]
@@ -525,7 +556,8 @@ def run_resolve(args: argparse.Namespace) -> int:
         requested=len(rows),
         resolved=resolved,
         failed_thread_ids=failed_thread_ids,
-        report_path=str(report_path),
+        report_path=written_report_path,
+        warnings=warnings,
     )
 
     json.dump(envelope, sys.stdout, ensure_ascii=True)
