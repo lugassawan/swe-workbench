@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Bulk-verify a reviewer's own open review threads before approving a PR.
+
+`evidence --repo owner/repo --pr N --current-user LOGIN --worktree PATH --out-dir DIR`
+
+Paginates `reviewThreads` (mirroring bin/swe-workbench-pr-review-submit's cursor
+loop, plus `createdAt` on the comments selection), keeps only threads that are
+unresolved, non-outdated, and whose head comment author equals `--current-user`,
+then for each surviving thread computes an `anchor_status` against the given
+worktree:
+
+  - `ok` — the thread's file exists in `--worktree` and the anchor line is
+    within EOF. Two pieces of evidence are gathered, since either alone yields
+    a confident wrong answer: an `excerpt` (±15 lines of HEAD content around
+    the anchor — does the code still exhibit the concern?) and `commits_since`
+    (up to 10 sha/subject pairs touching that path since the thread was
+    opened — did anyone deliberately act here?).
+  - `missing` + a `reason` of `no_line_anchor` (no anchor line at all),
+    `file_deleted` (the path doesn't exist in the worktree — a rename also
+    reads as this; rename detection is intentionally out of scope), or
+    `line_beyond_eof` (the file exists but is shorter than the anchor line).
+
+The full per-thread records are written to `<out-dir>/threads-evidence.json` as
+a JSON array — this is the interface a downstream skill reads to render each
+thread's evidence for the reviewer. The envelope on stdout (schema
+`swb.pr-review-threads-evidence/1`) carries only the file path and counts, not
+the records themselves — same manifest-not-inline-records rationale as
+bin/swe-workbench-address-feedback-fetch: reviewers need repeated random access
+into excerpt/commit bodies, which belongs in a file, not a JSON-in-a-shell-
+variable payload.
+
+Fail-closed: any `gh` failure, malformed GraphQL response shape, or the
+required sibling script (`swe-workbench-gh-timeout`) missing/non-executable
+prints a diagnostic to stderr, prints NOTHING to stdout, and exits 1 — mirrors
+bin/swe-workbench-address-feedback-fetch's FetchError pattern exactly.
+
+A thread's `path` is attacker-influenced (it comes from the GitHub API, and
+the PR may be from an external contributor) — every filesystem read is guarded
+by resolving `Path(worktree, path)` and verifying the result stays inside the
+resolved worktree root before ever opening it. A path that escapes the
+worktree is treated as `anchor_status: missing` / `reason: file_deleted` (not
+a distinct reason in the schema — fail closed into the existing bucket).
+
+The `resolve` subcommand (bulk-resolving verified threads) is added by a later
+change to this same file; only `evidence` is wired up here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { endCursor hasNextPage }
+        nodes {
+          id isResolved isOutdated path line startLine
+          comments(first: 10) {
+            nodes {
+              id databaseId body createdAt
+              author { login }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+EXCERPT_RADIUS = 15
+COMMITS_SINCE_LIMIT = 10
+
+
+class EvidenceError(Exception):
+    pass
+
+
+# ── gh layer ─────────────────────────────────────────────────────────────────
+
+
+def _script_dir() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _check_siblings(script_dir: Path) -> None:
+    for name in ("swe-workbench-gh-timeout",):
+        path = script_dir / name
+        if not (path.is_file() and os.access(path, os.X_OK)):
+            raise EvidenceError(
+                f"sibling script {name} not found at {path} — reinstall or update the swe-workbench plugin."
+            )
+
+
+def _gh(args: list[str]) -> subprocess.CompletedProcess:
+    cmd = ["bash", str(_script_dir() / "swe-workbench-gh-timeout"), *args]
+    # Always pass a (possibly empty) string so subprocess pipes and immediately closes
+    # stdin, rather than inheriting the parent's — an inherited pipe with no EOF would
+    # hang any call gh doesn't itself need stdin for.
+    return subprocess.run(cmd, input="", capture_output=True, text=True)
+
+
+def _gh_json(args: list[str]):
+    """Returns (data, proc) — data is None on non-zero exit or unparseable stdout."""
+    proc = _gh(args)
+    if proc.returncode != 0:
+        return None, proc
+    try:
+        return json.loads(proc.stdout), proc
+    except (json.JSONDecodeError, ValueError):
+        return None, proc
+
+
+# ── Step 1 — fetch + filter review threads (paginated) ──────────────────────
+
+
+def _thread_from_node(node: dict) -> dict:
+    comments = (node.get("comments") or {}).get("nodes") or []
+    head = comments[0] if comments else None
+    start_line = node.get("startLine")
+    line = node.get("line")
+    effective_line = start_line if start_line is not None else line
+    return {
+        "id": node["id"],
+        "path": node.get("path") or "",
+        "line": effective_line,
+        "is_resolved": bool(node.get("isResolved")),
+        "is_outdated": bool(node.get("isOutdated")),
+        "head_author": ((head or {}).get("author") or {}).get("login") or "",
+        "head_comment_database_id": (head or {}).get("databaseId"),
+        "created_at": (head or {}).get("createdAt") or "",
+    }
+
+
+def fetch_threads(owner: str, repo: str, pr: str) -> list[dict]:
+    threads: list[dict] = []
+    after: str | None = None
+    while True:
+        args = [
+            "api", "graphql",
+            "-F", f"number={pr}", "-F", f"owner={owner}", "-F", f"repo={repo}",
+            "-f", f"query={_THREADS_QUERY}",
+        ]
+        if after:
+            args += ["-F", f"after={after}"]
+        data, proc = _gh_json(args)
+        if data is None:
+            raise EvidenceError(f"failed to fetch review threads: {proc.stderr.strip() or proc.stdout.strip()}")
+        try:
+            rt = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+        except (KeyError, TypeError) as exc:
+            raise EvidenceError(f"unexpected reviewThreads response shape: {exc}") from exc
+        for node in rt.get("nodes") or []:
+            threads.append(_thread_from_node(node))
+        page = rt.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+        if not after:
+            raise EvidenceError("reviewThreads reported hasNextPage without an endCursor")
+    return threads
+
+
+def filter_own_open_threads(threads: list[dict], current_user: str) -> tuple[list[dict], int, int]:
+    """Returns (survivors, skipped_other_author, skipped_outdated).
+
+    An empty --current-user must never fall out as a match by accidental
+    string equality: a thread with an empty/null head author (e.g. a
+    deleted-account comment) is deliberately excluded via the `not current_user`
+    guard below, rather than relying on "" == "" happening to be false-negative
+    by luck of comparison order.
+    """
+    survivors: list[dict] = []
+    skipped_other_author = 0
+    skipped_outdated = 0
+    for t in threads:
+        if t["is_resolved"]:
+            continue
+        if t["is_outdated"]:
+            skipped_outdated += 1
+            continue
+        if not current_user or t["head_author"] != current_user:
+            skipped_other_author += 1
+            continue
+        survivors.append(t)
+    return survivors, skipped_other_author, skipped_outdated
+
+
+# ── Step 2 — per-thread anchor status + evidence ─────────────────────────────
+
+
+def _resolve_within_worktree(worktree: Path, path: str) -> Path | None:
+    """Returns the resolved absolute path if it stays inside the resolved worktree
+    root, else None. `path` is attacker-influenced (GitHub API data on a PR that may
+    come from an external contributor) — this must run before any filesystem read."""
+    root = worktree.resolve()
+    try:
+        candidate = (worktree / path).resolve()
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate
+
+
+def compute_anchor(worktree: Path, path: str, line: int | None) -> tuple[str, str | None]:
+    """Returns (anchor_status, reason). Check order matters: line-presence first,
+    then file existence, then EOF bounds."""
+    if line is None:
+        return "missing", "no_line_anchor"
+    resolved = _resolve_within_worktree(worktree, path)
+    if resolved is None or not resolved.is_file():
+        return "missing", "file_deleted"
+    try:
+        n_lines = len(resolved.read_text(errors="replace").splitlines())
+    except OSError:
+        return "missing", "file_deleted"
+    if line < 1 or line > n_lines:
+        return "missing", "line_beyond_eof"
+    return "ok", None
+
+
+def build_excerpt(worktree: Path, path: str, line: int) -> str:
+    resolved = _resolve_within_worktree(worktree, path)
+    lines = resolved.read_text(errors="replace").splitlines()
+    n = len(lines)
+    start = max(1, line - EXCERPT_RADIUS)
+    end = min(n, line + EXCERPT_RADIUS)
+    return "\n".join(f"{lineno}: {lines[lineno - 1]}" for lineno in range(start, end + 1))
+
+
+def commits_since(worktree: Path, path: str, since_iso: str) -> list[dict]:
+    proc = subprocess.run(
+        [
+            "git", "-C", str(worktree), "log",
+            f"--since={since_iso}", "-n", str(COMMITS_SINCE_LIMIT),
+            "--format=%H%x09%s", "--", path,
+        ],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    commits: list[dict] = []
+    for raw_line in proc.stdout.splitlines():
+        if not raw_line:
+            continue
+        sha, _, subject = raw_line.partition("\t")
+        commits.append({"sha": sha, "subject": subject})
+    return commits[:COMMITS_SINCE_LIMIT]
+
+
+def build_evidence_record(thread: dict, worktree: Path) -> dict:
+    path = thread["path"]
+    line = thread["line"]
+    anchor_status, reason = compute_anchor(worktree, path, line)
+    record = {
+        "thread_id": thread["id"],
+        "comment_database_id": thread["head_comment_database_id"],
+        "path": path,
+        # null only for no_line_anchor — file_deleted/line_beyond_eof both imply a
+        # line was present (see compute_anchor's check order), so it's still reported.
+        "line": None if reason == "no_line_anchor" else line,
+        "anchor_status": anchor_status,
+        "reason": reason,
+        "excerpt": None,
+        "commits_since": [],
+    }
+    if anchor_status == "ok":
+        record["excerpt"] = build_excerpt(worktree, path, line)
+        record["commits_since"] = commits_since(worktree, path, thread["created_at"])
+    return record
+
+
+# ── Atomic write ──────────────────────────────────────────────────────────────
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.tmp-{os.getpid()}"
+    tmp.write_text(json.dumps(data, ensure_ascii=True))
+    os.replace(tmp, path)
+
+
+# ── Envelope ─────────────────────────────────────────────────────────────────
+
+
+def _build_envelope(
+    *, owner: str, repo: str, current_user: str, evidence_path: str,
+    eligible_threads: int, skipped_other_author: int, skipped_outdated: int, skipped_no_anchor: int,
+) -> dict:
+    # nothing_to_verify: true exactly when the reviewer authored zero surviving open
+    # threads at all after the resolved/outdated/other-author filter — NOT merely zero
+    # anchorable ones. A thread with anchor_status "missing" still means there is
+    # something for the caller to report as still-open, so skipped_no_anchor must gate
+    # this too (a thread that IS anchorable-missing is not "nothing").
+    nothing_to_verify = eligible_threads == 0 and skipped_no_anchor == 0
+    return {
+        "schema": "swb.pr-review-threads-evidence/1",
+        "status": "ok",
+        "data": {
+            "owner": owner,
+            "repo": repo,
+            "current_user": current_user,
+            "evidence_path": evidence_path,
+            "eligible_threads": eligible_threads,
+            "skipped_other_author": skipped_other_author,
+            "skipped_outdated": skipped_outdated,
+            "skipped_no_anchor": skipped_no_anchor,
+            "nothing_to_verify": nothing_to_verify,
+        },
+        "warnings": [],
+    }
+
+
+# ── evidence subcommand ───────────────────────────────────────────────────────
+
+
+def run_evidence(args: argparse.Namespace) -> int:
+    script_dir = _script_dir()
+    try:
+        _check_siblings(script_dir)
+
+        owner, repo = args.repo.split("/", 1)
+        worktree = Path(args.worktree)
+
+        threads = fetch_threads(owner, repo, args.pr)
+        survivors, skipped_other_author, skipped_outdated = filter_own_open_threads(threads, args.current_user)
+
+        records = [build_evidence_record(t, worktree) for t in survivors]
+        eligible_threads = sum(1 for r in records if r["anchor_status"] == "ok")
+        skipped_no_anchor = sum(1 for r in records if r["anchor_status"] == "missing")
+
+        evidence_path = Path(args.out_dir) / "threads-evidence.json"
+        _atomic_write_json(evidence_path, records)
+
+        envelope = _build_envelope(
+            owner=owner,
+            repo=repo,
+            current_user=args.current_user,
+            evidence_path=str(evidence_path),
+            eligible_threads=eligible_threads,
+            skipped_other_author=skipped_other_author,
+            skipped_outdated=skipped_outdated,
+            skipped_no_anchor=skipped_no_anchor,
+        )
+    except EvidenceError as exc:
+        print(f"swe-workbench-pr-review-threads: {exc}", file=sys.stderr)
+        return 1
+
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="swe-workbench-pr-review-threads")
+    sub = p.add_subparsers(dest="subcommand", required=True)
+
+    evidence = sub.add_parser("evidence", help="Gather verification evidence for the reviewer's own open threads.")
+    evidence.add_argument("--repo", required=True)
+    evidence.add_argument("--pr", required=True)
+    evidence.add_argument("--current-user", required=True)
+    evidence.add_argument("--worktree", required=True)
+    evidence.add_argument("--out-dir", required=True)
+
+    # A sibling `resolve` subparser is added by a later change to this file.
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    if args.subcommand == "evidence":
+        return run_evidence(args)
+    print(f"swe-workbench-pr-review-threads: unknown subcommand {args.subcommand!r}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
