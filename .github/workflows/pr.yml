@@ -67,6 +67,9 @@ jobs:
         if: github.actor != 'dependabot[bot]'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # Strip HTML comments first so example text inside <!-- ... --> blocks
           # (e.g. "Issue: N/A" documentation in the PR template) does not
@@ -79,6 +82,24 @@ jobs:
           if echo "$PR_BODY_VISIBLE" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
             exit 0
+          fi
+
+          # Allow manually-authored dependency-bump PRs that carry the same
+          # "Bumps <pkg> from <old> to <new>." line Dependabot's own PRs use —
+          # these have no linked issue either, same as the dependabot[bot]-actor case above.
+          # Gated on package.json actually being in the diff (not just body text) so a
+          # contributor can't paste this one line into an unrelated PR to dodge the check.
+          if echo "$PR_BODY_VISIBLE" | grep -qE '^Bumps .+ from .+ to .+\.$'; then
+            # A transient gh api failure falls through to the closing-keyword check below
+            # rather than failing this step outright — a real closing keyword still passes,
+            # and a PR relying solely on this opt-out correctly gets asked to add one instead
+            # of failing on an unrelated API blip.
+            CHANGED_FILES=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' 2>/dev/null) || CHANGED_FILES=""
+            if echo "$CHANGED_FILES" | grep -qxF "package.json"; then
+              echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
+              exit 0
+            fi
+            echo "Bump-style opt-out line found but package.json is not in this PR's diff — ignoring the opt-out"
           fi
 
           # Require a GitHub closing keyword (case-insensitive).
