@@ -142,15 +142,68 @@ eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --int
 
 Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; parse into `$BLOCKING_SCOPE`. Zero or >1 matches → `BLOCKING_SCOPE=IN-DIFF` (fail-safe). Log warning; do **not** abort — footer is the only hard-required contract.
 
+### Step 5.5 — Verify and close out own review threads
+
+**Runs only when `$DECISION == APPROVE`.** This is self-gating — no separate mode check is needed: in first-pass mode there are simply no own-authored prior threads to find, so the `evidence` call below costs one cheap GraphQL round-trip that returns empty and short-circuits immediately at point 2. When `$DECISION == COMMENT`, skip this step entirely and go straight to Step 6.
+
+1. Reachability preflight, matching Step 1's `command -v ... || { ...; exit 1; }` pattern, for `swe-workbench-pr-review-threads` and `swe-workbench-result-check`, then call `evidence`:
+
+   ```bash
+   command -v swe-workbench-pr-review-threads >/dev/null 2>&1 && command -v swe-workbench-result-check >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   RESULT=$(swe-workbench-pr-review-threads evidence --repo "$OWNER/$REPO" --pr "$PR" \
+     --current-user "$CURRENT_USER" --worktree "$WT" --out-dir "$RUN_DIR" \
+     | swe-workbench-result-check swb.pr-review-threads-evidence/1) || exit 1
+   ```
+
+   As with Step 6's own `$RESULT` (see `skills/workflow-pr-review-post/SKILL.md` § Post), read every field with `printf '%s' "$RESULT" | jq ...` or `jq ... <<<"$RESULT"` — **never** `echo "$RESULT" | jq`, per `shared/docs/shell-echo-vs-printf.md`.
+
+2. If `.data.nothing_to_verify` is `true`: print "No own-authored open review threads to verify." and skip directly to Step 6 — this step does nothing further.
+
+3. Otherwise, `Read` the evidence file at `.data.evidence_path` (a JSON array of `{thread_id, comment_database_id, path, line, anchor_status, reason, excerpt, commits_since}` records — see `bin/swe-workbench-pr-review-threads`'s module docstring for the full shape). Per record, judge **ADDRESSED** / **NOT ADDRESSED** from `excerpt` (does the code at `$HEAD_SHA` still exhibit the concern?) and `commits_since` (did anyone deliberately act on this path since the thread opened?). `anchor_status: "missing"` records (`reason` one of `file_deleted` / `line_beyond_eof` / `no_line_anchor`) are **never** ADDRESSED — there is nothing to verify against.
+
+4. For every ADDRESSED record, build one row `{thread_id, comment_database_id, reply_body: "Verified addressed at $HEAD_SHA — resolving."}`, write the ADDRESSED rows to a file under `$RUN_DIR`, and call `resolve` (skip this call entirely when there are zero ADDRESSED records — no point invoking `resolve` with an empty array):
+
+   ```bash
+   RESULT=$(swe-workbench-pr-review-threads resolve --repo "$OWNER/$REPO" --pr "$PR" \
+     --threads-json "$RUN_DIR/addressed-threads.json" --out-dir "$RUN_DIR" \
+     | swe-workbench-result-check swb.pr-review-threads-resolve/1) || exit 1
+   ```
+
+5. Print a summary: how many threads were resolved (`.data.resolved`), and — for every record that is NOT ADDRESSED (including every `anchor_status: missing` one) — its `path`/`line` and the reason it's still open (either the NOT-ADDRESSED judgment from point 3, or the `missing` record's `reason` field).
+
+6. If any thread remains open after resolution — the NOT-ADDRESSED set from point 3, plus any `resolve` failures reported via `.data.failed_thread_ids` (point 4), is non-empty — call `AskUserQuestion`:
+
+   ```json
+   {
+     "questions": [{
+       "question": "N unresolved review thread(s) remain on PR #<N>. Approve anyway, or submit as COMMENT?",
+       "header": "Open threads",
+       "multiSelect": false,
+       "options": [
+         { "label": "Approve anyway", "description": "Type a reason in Other — submitted as the override on the posted review." },
+         { "label": "Submit COMMENT", "description": "Proceed with $DECISION forced to COMMENT instead of APPROVE." }
+       ]
+     }]
+   }
+   ```
+
+   On **Approve anyway**, the free-text "Other" reply becomes `$APPROVE_OVER_OPEN_THREADS`; `$DECISION` stays `APPROVE`. On **Submit COMMENT**, set `DECISION=COMMENT` and leave `$APPROVE_OVER_OPEN_THREADS` empty. This prompt is **skipped entirely** — pre-answered — when `$APPROVE_OVER_OPEN_THREADS` already arrived non-empty as an input from the command layer (see `commands/review.md` § Step 1 and `skills/workflow-pr-review-post/SKILL.md` § Input contract for where that value originates).
+
+   When no thread remains open after resolution, `$APPROVE_OVER_OPEN_THREADS` stays empty and `$DECISION` stays `APPROVE` — proceed straight to Step 6.
+
 ### Step 6 — Invoke the posting core
 
 Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `line`, `body`); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
 
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
-- `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5.
+- `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5 (`$DECISION` may since have been forced to `COMMENT` by Step 5.5's `AskUserQuestion` — pass whatever it currently holds).
 - `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `swe-workbench:reviewer`_ `` for first-pass, `` _Re-reviewed by `swe-workbench:reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `CALLER_TAG` — `$CALLER_TAG` from the mode table above (`general` / `followup`; scopes the core's own threads-cache filename so it never collides with a concurrent run of the other mode or a specialist run on the same PR).
 - `RUN_DIR` — this skill's own Step 1 allocation, for the core's optional mid-workflow debug persist (see `skills/workflow-pr-review-post/SKILL.md` § Post).
+- `APPROVE_OVER_OPEN_THREADS` — whatever Step 5.5 produced (possibly empty: unset when `$DECISION` was never `APPROVE`, when Step 5.5 short-circuited on `nothing_to_verify`, when every thread resolved, or when the `AskUserQuestion` prompt was answered "Submit COMMENT").
 - `FINDINGS[]` — as parsed above.
 
 The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
@@ -216,3 +269,5 @@ See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
 | Assume worktree teardown still backgrounds `(... ) &` | `release` runs foregrounded — its `eval "$(...)"` output must be read directly, and removal is fast (`--skip-deps --skip-hooks` worktrees have no dependency tree to clean up). |
 | Reuse the core's own dedup/CTA/flip logic inline instead of invoking it | Duplicating that mechanism here is exactly the drift this skill was folded to remove — always delegate Step 6 to `swe-workbench:workflow-pr-review-post`. |
+| Run Step 5.5 unconditionally, or after `$DECISION` has already been forced to `COMMENT` | Step 5.5 is gated on `$DECISION == APPROVE` only — running it on a `COMMENT` decision wastes a GraphQL round-trip verifying threads that can't unblock anything this run. |
+| Resolve a thread in Step 5.5 based on the reviewer's own claim of a fix, without reading `excerpt`/`commits_since` | ADDRESSED requires evidence — the excerpt showing the concern is gone and/or a commit touching that path since the thread opened. Resolving on the reply text alone risks closing a thread that was never actually fixed. |

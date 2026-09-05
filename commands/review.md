@@ -12,7 +12,11 @@ Review code with senior-engineer depth. Two dimensions — fully orthogonal:
 
 Parse `$ARGUMENTS` left-to-right:
 
-0. If `--check-followup <N>` is present (where `N` is a PR number), strip it and enter **Followup mode** — see `## Followup mode` below. All other flags and argument parsing are skipped.
+0. If `--approve-over-open-threads "<reason>"` is present, strip it from `$ARGUMENTS` first — before any other flag parsing below, so it survives regardless of which mode is subsequently selected — and carry `<reason>` through as `$APPROVE_OVER_OPEN_THREADS` to whichever delegation this command makes to `swe-workbench:workflow-pr-review`: both the PR-mode `MODE=auto` delegation (`## PR mode` below) and the Followup-mode `MODE=followup` delegation (`## Followup mode` below), since the skill's Step 5.5 reads `$APPROVE_OVER_OPEN_THREADS` to pre-answer its own `AskUserQuestion` prompt. Absent this flag, `$APPROVE_OVER_OPEN_THREADS` stays empty and Step 5.5 prompts normally. This flag is meaningless outside `general`/`--check-followup` mode — a postable specialist mode or `contributor-trust` never reaches `swe-workbench:workflow-pr-review`, so it's silently unused there.
+
+   **When this flag is safe to use:** only *after* Step 5.5 (in `skills/workflow-pr-review/SKILL.md`) has actually run its verification pass and reported which threads remain open. It exists to answer — or pre-empt — the `AskUserQuestion` prompt Step 5.5 raises once genuinely-unresolved threads remain, for a thread the PR owner deliberately chose to leave open (e.g. a deferred follow-up). It is not a blanket way to force an approval without ever looking at what's still unresolved — supplying it on a first invocation just skips the prompt on faith that nothing in the still-open set actually needs a look.
+
+0.5. If `--check-followup <N>` is present (where `N` is a PR number), strip it and enter **Followup mode** — see `## Followup mode` below. All other flags and argument parsing (besides item 0 above, already stripped) are skipped.
 
 1. If a `--mode <value>` flag is present, extract it and normalize the alias:
 
@@ -83,7 +87,7 @@ Ground judgements in SOLID and Clean Architecture principles. Do not nitpick for
 
 ## PR mode
 
-**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=auto`, passing the resolved PR number. The skill self-detects first-pass vs. followup by checking whether this reviewer already has a review on the PR and whether it's still open — `--check-followup <N>` below remains available as an explicit override that always forces `MODE=followup`.
+**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=auto`, passing the resolved PR number and `$APPROVE_OVER_OPEN_THREADS` (parsed in Step 1 item 0 above, possibly empty). The skill self-detects first-pass vs. followup by checking whether this reviewer already has a review on the PR and whether it's still open — `--check-followup <N>` below remains available as an explicit override that always forces `MODE=followup`.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `/tmp/swe-workbench-pr-review/<N>`, ticket-context chain, reviewer invocation with footer instruction, decision-footer parsing, GraphQL thread fetch + dedup + REST inline-comment post, `gh pr review --approve|--comment` submission, non-blocking cleanup. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and failure-mode handling.
 
@@ -136,6 +140,6 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings, posts only truly-new inline comments, and submits APPROVE or COMMENT.
 
-Invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=followup`, passing the resolved PR number.
+Invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=followup`, passing the resolved PR number and `$APPROVE_OVER_OPEN_THREADS` (parsed in Step 1 item 0, possibly empty).
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`, plus a followup-only open-PR gate), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `swe-workbench:reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), posts only truly-new inline comments, and submits an APPROVE or COMMENT review event. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and its mode-resolution table.

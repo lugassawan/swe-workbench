@@ -38,6 +38,7 @@ contract callers must satisfy, not a check this skill performs itself.
 | `CURRENT_USER`/`AUTHOR_LOGIN` | `--current-user`/`--author-login` | optional; empty = identity unknown (self-review flip and auto-approve both stay suppressed — never guesses) |
 | `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, body, anchor}`; `anchor=inline` rows also carry `{path, line}`. **Inline comment bodies must NOT contain the byline/remark** in any form — a `comments[]` body is `finding.body` verbatim; the byline/remark is a review-level concern the script builds once. |
 | `CALLER_TAG` | `--caller-tag` | non-empty — `general`, `followup`, or the specialist mode name; also scopes an optional `--debug-dir` dump (`<tag>-threads.json` / `<tag>-payload.json`) so two callers reviewing the same PR concurrently never collide |
+| `APPROVE_OVER_OPEN_THREADS` | `--approve-over-open-threads` | optional; empty = no override. When non-empty: a single line, ≤200 chars, must not embed the swe-workbench remark — validated by the script, not this skill |
 
 ## Post
 
@@ -51,6 +52,7 @@ RESULT=$(swe-workbench-pr-review-submit \
   --decision "$DECISION" --byline "$BYLINE" --caller-tag "$CALLER_TAG" \
   --findings-json "$FINDINGS_JSON_PATH" --blocking-scope "$BLOCKING_SCOPE" \
   --current-user "$CURRENT_USER" --author-login "$AUTHOR_LOGIN" \
+  --approve-over-open-threads "$APPROVE_OVER_OPEN_THREADS" \
   | swe-workbench-result-check swb.pr-review-submit/1) || exit 1
 ```
 
@@ -93,6 +95,8 @@ severity (GitHub threads carry no severity field). This is deliberately severity
 orthogonal to the `swe-workbench:reviewer` agent's own footer, which still means "no Critical/High
 in this diff, this run" exactly as before — the two criteria can legitimately disagree.
 
+`APPROVE_OVER_OPEN_THREADS` is the one sanctioned way to submit `APPROVE` with open threads still present — when it fires (decision reaches `APPROVE`, `n_blocking > 0`, not self-review), the posted review body gains an `_Approved with {N} unresolved review thread(s) still open — override: {reason}._` line and the stderr "APPROVE downgraded" notice is suppressed for that run; `.data.blocked_by_unresolved` always stays the true, non-zero count regardless of whether the override fired — it has nothing to do with whether the override took effect, and is the one visible proof an override happened.
+
 **Residual risk:** GitHub's `isOutdated` reflects diff-*position* staleness (the thread's anchored
 hunk no longer maps cleanly to HEAD), not whether the underlying concern was ever addressed — an
 unrelated edit elsewhere in the file can flip a still-valid, never-addressed thread to outdated,
@@ -129,7 +133,7 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 | Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
 | Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
 | All findings dedup-matched, or the pr-level batch post fails | `.data.posted_inline = 0` and `.data.posted_pr_level = 0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
-| Unresolved, non-outdated review thread(s) exist from a prior review | `.data.blocked_by_unresolved > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design. Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`. |
+| Unresolved, non-outdated review thread(s) exist from a prior review | `.data.blocked_by_unresolved > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design. Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`; or pass `APPROVE_OVER_OPEN_THREADS` to submit `APPROVE` anyway for a thread deliberately left open. |
 | Every submit path exhausted with nothing landed | `status: "partial"`, `.data.submitted = false` | The script still exits 0 (never aborts the caller's flow); treat every count in `.data` as best-effort rather than a confirmed post. |
 
 ## Common mistakes
