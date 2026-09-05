@@ -138,18 +138,20 @@ class TestSyncPeerDepsApply:
         }}
         script = _scaffold(tmp_path, pkg, ">=0.84.3 <1")
         result = _run(script, cwd=tmp_path)
-        assert result.returncode == 1
+        assert result.returncode == 2
         assert "could not read" in result.stderr
 
     def test_mismatched_devdependencies_pins_errors(self, tmp_path):
-        """pi-coding-agent and pi-tui are published lockstep — a partial bump that moves
-        only one of the two pins must fail loudly rather than silently deriving the
-        expected floor from whichever pin happened to be read."""
+        """pi-coding-agent and pi-tui bump as two SEPARATE dependabot PRs (dependabot.yml has
+        no npm `groups:`), so the first PR of every such pair always lands here — this must
+        be a hard error (exit 2), distinct from actionable floor drift (exit 1), so
+        .github/workflows/dependabot-peer-sync.yml treats it as a clean no-op rather than
+        attempting (and failing) an apply it can't complete."""
         pkg = json.loads(json.dumps(_SYNCED_PKG))
         pkg["devDependencies"]["@earendil-works/pi-tui"] = "0.84.3"
         script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
         result = _run(script, cwd=tmp_path)
-        assert result.returncode == 1
+        assert result.returncode == 2
         assert "out of lockstep" in result.stderr
 
     def test_mismatched_devdependencies_pins_errors_in_check_mode(self, tmp_path):
@@ -157,7 +159,7 @@ class TestSyncPeerDepsApply:
         pkg["devDependencies"]["@earendil-works/pi-tui"] = "0.84.3"
         script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
         result = _run(script, "--check", cwd=tmp_path)
-        assert result.returncode == 1
+        assert result.returncode == 2
         assert "out of lockstep" in result.stderr
 
     def test_missing_peerdependencies_key_errors(self, tmp_path):
@@ -170,5 +172,5 @@ class TestSyncPeerDepsApply:
         }
         script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
         result = _run(script, cwd=tmp_path)
-        assert result.returncode == 1
+        assert result.returncode == 2
         assert "could not read peerDependencies" in result.stderr

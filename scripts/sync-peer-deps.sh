@@ -13,6 +13,16 @@ set -euo pipefail
 # Usage:
 #   scripts/sync-peer-deps.sh --check   # fail if the floor is out of sync; make no changes
 #   scripts/sync-peer-deps.sh           # rewrite package.json + package-lock.json in place
+#
+# Exit codes (distinguished so a caller like dependabot-peer-sync.yml can tell "there is
+# actionable drift to fix" apart from "this script cannot proceed at all" — pi-coding-agent
+# and pi-tui are bumped as two SEPARATE dependabot PRs, so the first of every such pair
+# always hits the lockstep guard below; that must never be treated as syncable drift):
+#   0 - already in sync (or, in apply mode, sync completed)
+#   1 - actionable floor drift found (only in --check mode)
+#   2 - hard error: cannot determine or apply the correct floor (missing jq, missing/
+#       malformed devDependencies or peerDependencies keys, or the two packages' pins are
+#       out of lockstep) — nothing was or could be synced
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="${ROOT}/package.json"
@@ -20,28 +30,30 @@ LOCK="${ROOT}/package-lock.json"
 
 if ! command -v jq &>/dev/null; then
   echo "Error: jq is required." >&2
-  exit 1
+  exit 2
 fi
 
 PIN=$(jq -r '.devDependencies["@earendil-works/pi-coding-agent"]' "$PKG")
 if [[ -z "$PIN" || "$PIN" == "null" ]]; then
   echo "Error: could not read devDependencies[\"@earendil-works/pi-coding-agent\"] from ${PKG}" >&2
-  exit 1
+  exit 2
 fi
 
 # pi-coding-agent and pi-tui are nested and published lockstep (see
 # tests/test_pi_extension.py's tui_dev_pin == dev_pin assertion) — this script only derives
 # the expected floor from one pin, so a partial bump that skips pi-tui must fail loudly here
-# rather than silently syncing pi-tui's floor to a pin pi-tui never actually moved to.
+# rather than silently syncing pi-tui's floor to a pin pi-tui never actually moved to. This is
+# not a rare edge case: dependabot.yml has no `groups:` for npm, so pi-coding-agent and pi-tui
+# bump as two separate PRs — every such pair's first PR lands in exactly this state.
 TUI_PIN=$(jq -r '.devDependencies["@earendil-works/pi-tui"]' "$PKG")
 if [[ "$TUI_PIN" != "$PIN" ]]; then
   echo "Error: devDependencies pins are out of lockstep — pi-coding-agent is ${PIN}, pi-tui is ${TUI_PIN}" >&2
-  exit 1
+  exit 2
 fi
 
 FLOOR=$(jq -e -r '.peerDependencies["@earendil-works/pi-coding-agent"] | split(" ")[0]' "$PKG") || {
   echo "Error: could not read peerDependencies[\"@earendil-works/pi-coding-agent\"] from ${PKG}" >&2
-  exit 1
+  exit 2
 }
 EXPECTED_FLOOR=">=${PIN}"
 

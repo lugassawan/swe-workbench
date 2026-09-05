@@ -67,13 +67,28 @@ jobs:
           git fetch --depth 1 origin main
           git show origin/main:scripts/sync-peer-deps.sh > scripts/sync-peer-deps.sh
 
+      # sync-peer-deps.sh --check distinguishes actionable drift (exit 1) from a hard error
+      # it can't act on (exit 2) — pi-coding-agent and pi-tui bump as two SEPARATE dependabot
+      # PRs (no npm `groups:` in dependabot.yml), so the first PR of every such pair always
+      # hits the script's own devDependencies-lockstep guard (exit 2). Treating that as
+      # actionable drift would run the apply step next, which hits the identical guard and
+      # fails the job — a confusing, unfixable-by-design red check on top of the pytest
+      # failure this workflow exists to eliminate. Only exit 1 is actionable; exit 2 (or
+      # anything else unexpected) is a clean no-op with a warning annotation.
       - name: Check for peerDependencies drift
         id: check
         run: |
-          if bash scripts/sync-peer-deps.sh --check; then
+          set +e
+          bash scripts/sync-peer-deps.sh --check
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
             echo "drift=false" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$code" -eq 1 ]; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::sync-peer-deps.sh could not determine an actionable floor (exit ${code}) — skipping auto-fix. This is expected when only one of pi-coding-agent/pi-tui has bumped so far; it resolves once the other one bumps too."
+            echo "drift=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Fix, commit, and push
@@ -82,7 +97,7 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           bash scripts/sync-peer-deps.sh
-          git checkout -- scripts/sync-peer-deps.sh
+          git checkout -- scripts/sync-peer-deps.sh || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json

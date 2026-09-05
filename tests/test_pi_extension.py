@@ -220,6 +220,20 @@ def test_package_json_values():
     )
 
 
+def test_package_lock_peer_dependencies_match_package_json():
+    """package-lock.json's packages[""].peerDependencies is a separate, manually-editable
+    copy of package.json's peerDependencies (lockfileVersion 3 has no other mirror to keep
+    it in sync automatically) — scripts/sync-peer-deps.sh keeps both in lockstep, but nothing
+    besides this test would catch a manual edit to one file that forgot the other."""
+    pkg = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    assert lock["packages"][""]["peerDependencies"] == pkg["peerDependencies"], (
+        "package-lock.json's peerDependencies has drifted from package.json's — "
+        "run scripts/sync-peer-deps.sh, or if the drift is elsewhere, run `npm install "
+        "--package-lock-only`"
+    )
+
+
 def test_package_json_has_no_forbidden_pi_keys():
     data = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     assert "skills" not in data["pi"], (
