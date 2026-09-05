@@ -750,6 +750,31 @@ class TestResolvePartialFailure:
         envelope = json.loads(result.stdout)
         assert envelope["data"]["failed_thread_ids"] == ["T2"]
 
+    def test_all_rows_fail_still_exits_zero_with_partial_envelope(self, tmp_path):
+        rows = [_row(thread_id="T1", comment_database_id=1), _row(thread_id="T2", comment_database_id=2)]
+        responses = [
+            _reply_ok(),                                         # T1 reply
+            _fail_call(stderr="gh-stub: resolve mutation boom"),  # T1 resolve fails
+            _reply_ok(),                                         # T2 reply
+            _fail_call(stderr="gh-stub: resolve mutation boom"),  # T2 resolve fails
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["status"] == "partial"
+        assert envelope["data"]["requested"] == 2
+        assert envelope["data"]["resolved"] == 0
+        assert envelope["data"]["failed"] == envelope["data"]["requested"]
+        assert envelope["data"]["failed_thread_ids"] == ["T1", "T2"]
+        report = json.loads(Path(envelope["data"]["report_path"]).read_text())
+        assert len(report) == 2
+        assert all(r["success"] is False for r in report)
+
 
 class TestResolveReportContent:
     def test_report_path_contains_exact_per_row_records(self, tmp_path):
