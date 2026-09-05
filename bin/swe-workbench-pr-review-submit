@@ -151,7 +151,7 @@ def resolve_event(
     is_self_review = identity_known and current_user == author_login
     if decision == "COMMENT" and blocking_scope == "OUT-OF-DIFF-ONLY" and identity_known and not is_self_review:
         decision = "APPROVE"
-    if decision == "APPROVE" and n_blocking_threads > 0 and not override:
+    if decision == "APPROVE" and n_blocking_threads > 0 and not (override and not is_self_review):
         decision = "COMMENT"
     event = "COMMENT" if is_self_review else decision
     return event, decision, is_self_review, identity_known
@@ -660,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
         _, decision_without_gate, _, _ = resolve_event(
             args.decision, args.blocking_scope, args.current_user, args.author_login, override=False,
         )
-        override_used = override and n_blocking > 0 and not is_self_review
+        override_used = override and n_blocking > 0 and not is_self_review and decision == "APPROVE"
         if n_blocking > 0 and decision_without_gate == "APPROVE" and decision != "APPROVE" and not override_used:
             print(
                 f"[info] APPROVE downgraded to {decision} — {n_blocking} unresolved review "
