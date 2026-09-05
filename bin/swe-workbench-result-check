@@ -54,6 +54,8 @@ REGISTRY: dict[str, dict[str, str]] = {
         "decision": "str",
         "review_url": "str",
         "blocked_by_unresolved": "int",
+        "approve_over_open_threads": "bool",
+        "override_reason": "str",
     },
     "swb.address-feedback-worktree-acquire/1": {
         "path": "str",
