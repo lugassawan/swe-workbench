@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -323,6 +324,13 @@ def _build_envelope(
 
 
 def run_evidence(args: argparse.Namespace) -> int:
+    if not re.match(r"^[^/\s]+/[^/\s]+$", args.repo or ""):
+        print(
+            f"swe-workbench-pr-review-threads: --repo must be in the form owner/repo, got {args.repo!r}",
+            file=sys.stderr,
+        )
+        return 1
+
     script_dir = _script_dir()
     try:
         _check_siblings(script_dir)

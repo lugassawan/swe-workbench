@@ -537,6 +537,34 @@ class TestFailClosed:
         assert result.stdout == ""
         assert result.stderr.strip() != ""
 
+    def test_malformed_repo_missing_slash_fails_closed(self, tmp_path):
+        worktree = _init_repo(tmp_path)
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _evidence_args(repo="norepo", worktree=worktree, out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert result.stderr.strip() != ""
+        assert "Traceback" not in result.stderr
+        assert not (out_dir / "threads-evidence.json").exists()
+
+    def test_malformed_repo_empty_fails_closed(self, tmp_path):
+        worktree = _init_repo(tmp_path)
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _evidence_args(repo="", worktree=worktree, out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert result.stderr.strip() != ""
+        assert "Traceback" not in result.stderr
+        assert not (out_dir / "threads-evidence.json").exists()
+
 
 # ── CLI validation ───────────────────────────────────────────────────────────
 
