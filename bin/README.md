@@ -18,9 +18,10 @@ behavior — there is no separate script-by-script table here to keep in sync wi
 scripts change. The scripts in this directory that carry a `#!/usr/bin/env python3`
 shebang instead of `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`,
 `swe-workbench-comment-scan`, `swe-workbench-handoff`, `swe-workbench-lsp`,
-`swe-workbench-memory`, `swe-workbench-pr-review-submit`, `swe-workbench-preflight-commit`,
-and `swe-workbench-result-check`. `comment-scan` is a pure diff-in/findings-out function
-(no git calls of its own; see `shared/agents/comment-scan.md` for the canonical diff command);
+`swe-workbench-memory`, `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
+`swe-workbench-preflight-commit`, and `swe-workbench-result-check`. `comment-scan` is a pure
+diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md` for the
+canonical diff command);
 `pr-review-submit` does call `git`/`gh` but needed Python's JSON and multi-call state-machine
 handling (422 retry, read-your-write confirmation) more than bash's process-spawning idioms; `lsp`
 speaks JSON-RPC framing to a spawned language server subprocess, which needs a real threaded
@@ -32,14 +33,17 @@ the same reason; `address-feedback-fetch` needed the same paginated-cursor state
 `pr-review-submit` (a `reviewThreads(first:100, after:$after)` / `pageInfo{endCursor hasNextPage}`
 loop) plus JSON emission over arbitrary-byte review-comment text, where bash would again mean a
 second escaping engine (`jq`) layered under the same shell process-spawning idioms `pr-review-submit`
-already rejected for the identical reason. `memory` resolves both harnesses' store paths,
-scans record input for secrets, and flock-serializes concurrent appends — that dual-store path
+already rejected for the identical reason. `pr-review-threads` needs the same paginated-cursor
+GraphQL state machine `pr-review-submit`/`address-feedback-fetch` already use — a third copy of the
+same `reviewThreads(first:100, after:$after)` pagination shape — plus filesystem/git-log
+evidence-gathering a shell script would need `jq` and a second regex engine for. `memory` resolves
+both harnesses' store paths, scans record input for secrets, and flock-serializes concurrent
+appends — that dual-store path
 resolution, JSON envelope emission, secret scan, and lock handling need Python's
 `json`/`re`/`fcntl`, where bash would need `jq` as a second escaping engine. Unlike `comment-scan`
-(advisory, correctly fails open),
-`preflight-commit`, `result-check`, and `address-feedback-fetch` fail closed: an error is a hard
-non-zero exit with nothing on stdout, never a silent "clean". Same bare-command convention
-applies; only the interpreter differs.
+(advisory, correctly fails open), `preflight-commit`, `result-check`, `address-feedback-fetch`, and
+`pr-review-threads` fail closed: an error is a hard non-zero exit with nothing on stdout, never a
+silent "clean". Same bare-command convention applies; only the interpreter differs.
 
 ## Result contract
 
