@@ -3,11 +3,12 @@
 #
 # Prints the normalized owner-repo slug that scopes /tmp/swe-workbench-*
 # ephemeral artifacts by repository (convention documented in
-# shared/docs/repo-scoped-ephemeral-state.md): owner/repo -> owner-repo, with
-# literal hyphens in each half doubled before the join so the mapping stays
-# injective (plain `tr '/' '-'`, the pre-existing workflow-audit-emit-issues
-# convention, is NOT injective: 'acme-app/foo' and 'acme/app-foo' would both
-# collapse to 'acme-app-foo').
+# shared/docs/repo-scoped-ephemeral-state.md): owner/repo -> owner-repo,
+# length-prefixed with owner's own length so the join stays injective while
+# staying inside the [A-Za-z0-9._-] charset every other allowlist regex in
+# this scheme already hardcodes (plain `tr '/' '-'`, the pre-existing
+# workflow-audit-emit-issues convention, is NOT injective: 'acme-app/foo' and
+# 'acme/app-foo' would both collapse to 'acme-app-foo').
 #
 # Tier S output (shared/docs/runtime-result-contract.md): the slug on stdout,
 # nothing else. Unresolvable -> exit 1, empty stdout; callers treat an empty
@@ -23,20 +24,41 @@
 #                      ssh:// forms; .git suffix tolerated)
 #
 # GitHub owner/repo names are [A-Za-z0-9._-]; the shape checks below reject
-# anything else rather than guess.
+# anything else rather than guess. Owner must start alphanumeric (GitHub
+# org/user names never start with '.', '-', or '_'); repo has no such
+# restriction (GitHub allows e.g. the special ".github" repo) but must not
+# be the traversal-shaped "." or "..".
 
 set -euo pipefail
 
 escape_owner_repo() {
-  # Doubles every literal hyphen within owner and repo before joining them
-  # with a single '-' separator. This keeps the join injective: the
-  # doubling means every hyphen run wholly inside an escaped half has even
-  # length, so the separator — the one hyphen not part of a doubled pair —
-  # is always locatable, and two different owner/repo pairs can never
-  # produce the same slug. See shared/docs/repo-scoped-ephemeral-state.md
+  # Length-prefixes owner so the join is injective with NO escaping:
+  # "<len(owner)>-<owner>-<repo>". Decoding (never actually done downstream
+  # — the slug is opaque by design — but this is the proof of injectivity)
+  # always terminates the leading digit run at the very next '-', which is
+  # guaranteed present by construction; reading exactly that many
+  # characters past it recovers owner byte-for-byte regardless of what
+  # hyphens it or repo contain, and everything after the following '-' is
+  # repo. A prior hyphen-doubling scheme was NOT actually injective — using
+  # the same character as both the escape marker and the separator can't
+  # distinguish "this hyphen is escaped" from "this hyphen starts the
+  # separator run": owner='a-'/repo='b' and owner='a'/repo='-b' both
+  # produced 'a---b'. See shared/docs/repo-scoped-ephemeral-state.md
   # § The slug.
   local owner="${1%%/*}" repo="${1#*/}"
-  printf '%s-%s\n' "${owner//-/--}" "${repo//-/--}"
+  printf '%s-%s-%s\n' "${#owner}" "$owner" "$repo"
+}
+
+# _owner_repo_ok <owner/repo> — the single shared shape validator used by
+# all three resolve_* functions below, so a candidate owner/repo pair is
+# judged identically regardless of which resolution path produced it
+# (resolve_pr_json/resolve_origin used to extract with a looser, owner-vs-repo-
+# inconsistent regex than resolve_explicit's own check — this closes that gap).
+_owner_repo_ok() {
+  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$' || return 1
+  case "${1#*/}" in
+    .|..) return 1 ;;
+  esac
 }
 
 if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
@@ -48,9 +70,7 @@ MODE="${1:-}"
 ARG="${2:-}"
 
 resolve_explicit() {
-  # GitHub owner/repo names start with an alphanumeric (never '.', '-', '_'),
-  # which also rejects traversal-shaped inputs like '../evil'.
-  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$' || return 1
+  _owner_repo_ok "$1" || return 1
   escape_owner_repo "$1"
 }
 
@@ -61,6 +81,7 @@ resolve_pr_json() {
   [ -n "$url" ] || return 1
   owner_repo=$(printf '%s' "$url" | sed -nE 's#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$#\1/\2#p')
   [ -n "$owner_repo" ] || return 1
+  _owner_repo_ok "$owner_repo" || return 1
   escape_owner_repo "$owner_repo"
 }
 
@@ -76,6 +97,7 @@ resolve_origin() {
     -e 's#^git@github\.com:([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#\1/\2#p' \
     -e 's#^ssh://git@github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)$#\1/\2#p')
   [ -n "$owner_repo" ] || return 1
+  _owner_repo_ok "$owner_repo" || return 1
   escape_owner_repo "$owner_repo"
 }
 

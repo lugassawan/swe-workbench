@@ -790,7 +790,7 @@ class TestRepoScopedStateFileSweep:
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()
         PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        own = PR_REVIEW_DIR / f"octocat-widgets-{n}.json"
+        own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}.json"
         foreign = PR_REVIEW_DIR / f"other-repo-{n}.json"
         own.write_text("{}")
         foreign.write_text("{}")
@@ -810,7 +810,7 @@ class TestRepoScopedStateFileSweep:
         plain.mkdir()
         n = _unique_n()
         PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        own = PR_REVIEW_DIR / f"octocat-widgets-{n}.json"
+        own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}.json"
         own.write_text("{}")
         try:
             result = _run_script(plain, n, _scoped_env(tmp_path), "--repo", "octocat/widgets")
@@ -845,6 +845,25 @@ class TestRepoScopedStateFileSweep:
             result = _run_script(repo, n, _scoped_env(tmp_path))
             _assert_contract(result, "0", "1", "0")
             assert not f.exists()
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_ours_swept_hyphenated_repo_name(self, tmp_path):
+        """_url_scope_slug delegates to swe-workbench-repo-scope itself now —
+        this pins that a repo name containing a hyphen (this repo's own name
+        is a real-world instance) is recognized as attributable, which a
+        reimplemented `\\1-\\2` join previously failed for any hyphenated
+        owner/repo, since it never agreed with escape_owner_repo's actual
+        slug encoding."""
+        repo = _build_scoped_repo(tmp_path, "https://github.com/lugassawan/swe-workbench.git")
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": f"https://github.com/lugassawan/swe-workbench/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not f.exists(), "hyphenated-name owner/repo must still be recognized as our own"
         finally:
             f.unlink(missing_ok=True)
 
@@ -931,7 +950,7 @@ class TestRepoScopedRunDirSweep:
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()
         RUN_ROOT.mkdir(parents=True, exist_ok=True)
-        own = RUN_ROOT / f"pr-review-octocat-widgets-{n}-a1b2c3"
+        own = RUN_ROOT / f"pr-review-7-octocat-widgets-{n}-a1b2c3"
         foreign = RUN_ROOT / f"pr-review-other-repo-{n}-b2c3d4"
         legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
         for d in (own, foreign, legacy):
@@ -974,14 +993,14 @@ class TestRepoScopedFallbackWorktreeSweep:
 
 class TestRunDirExactTagMatching:
     def test_slug_suffix_collision_not_swept(self, tmp_path):
-        """A foreign slug ENDING with our slug (x/acme-app vs acme/app) plus the
-        same PR number must not match — the exact-tag anchor forbids the `*`
-        from absorbing a longer slug."""
+        """A foreign slug ENDING with our slug (our own resolves to
+        "4-acme-app" for acme/app) plus the same PR number must not match —
+        the exact-tag anchor forbids the `*` from absorbing a longer slug."""
         repo = _build_scoped_repo(tmp_path, "https://github.com/acme/app.git")
         n = _unique_n()
         RUN_ROOT.mkdir(parents=True, exist_ok=True)
-        own = RUN_ROOT / f"pr-review-acme-app-{n}-a1b2c3"
-        foreign = RUN_ROOT / f"pr-review-x-acme-app-{n}-b2c3d4"
+        own = RUN_ROOT / f"pr-review-4-acme-app-{n}-a1b2c3"
+        foreign = RUN_ROOT / f"pr-review-x-4-acme-app-{n}-b2c3d4"
         for d in (own, foreign):
             d.mkdir()
         try:
@@ -1000,7 +1019,7 @@ class TestRunDirExactTagMatching:
         n = _unique_n()
         RUN_ROOT.mkdir(parents=True, exist_ok=True)
         legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
-        slugged = RUN_ROOT / f"pr-review-octocat-widgets-{n}-d4e5f6"
+        slugged = RUN_ROOT / f"pr-review-7-octocat-widgets-{n}-d4e5f6"
         for d in (legacy, slugged):
             d.mkdir()
         try:
@@ -1065,7 +1084,7 @@ class TestRunDirConvergeTag:
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()
         RUN_ROOT.mkdir(parents=True, exist_ok=True)
-        d = RUN_ROOT / f"review-converge-octocat-widgets-{n}-a1b2c3"
+        d = RUN_ROOT / f"review-converge-7-octocat-widgets-{n}-a1b2c3"
         d.mkdir()
         try:
             result = _run_script(repo, n, _scoped_env(tmp_path))

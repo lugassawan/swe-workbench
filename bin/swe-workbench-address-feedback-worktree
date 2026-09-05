@@ -111,6 +111,21 @@ receipt_path() {
   printf '%s/%s%s-worktree.json\n' "$STATE_DIR" "${SCOPE_SLUG:+${SCOPE_SLUG}-}" "$PR"
 }
 
+# _attributes_here <dir> — true iff dir's own origin remote resolves to this
+# run's scope slug. Mirrors bin/swe-workbench-pr-review-worktree's helper of
+# the same name — the legacy-receipt dual-read below must be attribution-gated
+# on the receipt's own recorded path, not just on a raw path-string match
+# against $WPATH: two differently-owned repos that share a basename and
+# branch-naming convention under the same personal workspace root can produce
+# byte-identical worktree paths, which would otherwise let a foreign repo's
+# stale receipt silently satisfy the release path-match check.
+_attributes_here() {
+  [ -n "$SCOPE_SLUG" ] || return 1
+  local origin_scope
+  origin_scope=$( (cd "$1" 2>/dev/null && "$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || true )
+  [ "$origin_scope" = "$SCOPE_SLUG" ]
+}
+
 emit_acquire_envelope() {
   local status="ok"
   [ "${#WARNINGS[@]}" -gt 0 ] && status="partial"
@@ -298,9 +313,16 @@ do_release() {
 
   local RECEIPT
   RECEIPT="$(receipt_path)"
-  # Dual-read: a pre-upgrade acquire wrote the legacy receipt.
+  # Dual-read: a pre-upgrade acquire wrote the legacy receipt — only adopt it
+  # when its own recorded .path attributes to this repo (_attributes_here
+  # above), so a foreign repo's same-numbered legacy receipt is never
+  # silently trusted just because its .path happens to match.
   if [ ! -f "$RECEIPT" ] && [ "${SCOPE_SLUG:+x}" = "x" ] && [ -f "${STATE_DIR}/${PR}-worktree.json" ]; then
-    RECEIPT="${STATE_DIR}/${PR}-worktree.json"
+    local legacy_rc_path
+    legacy_rc_path=$(jq -r '.path // empty' "${STATE_DIR}/${PR}-worktree.json" 2>/dev/null) || legacy_rc_path=""
+    if [ -n "$legacy_rc_path" ] && _attributes_here "$legacy_rc_path"; then
+      RECEIPT="${STATE_DIR}/${PR}-worktree.json"
+    fi
   fi
   local receipt_ok=1
   if [ -f "$RECEIPT" ]; then

@@ -207,7 +207,7 @@ def test_allocation_with_explicit_repo_embeds_slug():
     r = run_script("pr-review", "42", "--repo", "octocat/widgets")
     assert r.returncode == 0, f"stderr: {r.stderr!r}"
     base = os.path.basename(parse_run_dir(r.stdout))
-    assert re.fullmatch(r"pr-review-octocat-widgets-42-[A-Za-z0-9]{6}", base)
+    assert re.fullmatch(r"pr-review-7-octocat-widgets-42-[A-Za-z0-9]{6}", base)
 
 
 def test_allocation_without_repo_uses_origin_slug():
@@ -217,10 +217,10 @@ def test_allocation_without_repo_uses_origin_slug():
     base = os.path.basename(parse_run_dir(r.stdout))
     assert re.fullmatch(r"pr-review-[a-zA-Z0-9._-]+-42-[A-Za-z0-9]{6}", base)
     # The slug segment is a real owner-repo pair (contains the repo's own
-    # name, escaped — swe-workbench-repo-scope doubles internal hyphens
-    # before joining owner and repo so the slug stays injective), not just
-    # any charset run.
-    assert "swe--workbench" in base
+    # name — swe-workbench-repo-scope length-prefixes owner with its own
+    # character count before joining owner and repo so the slug stays
+    # injective), not just any charset run.
+    assert "-swe-workbench-" in base
 
 
 def test_allocation_falls_back_to_legacy_naming_outside_git(tmp_path):

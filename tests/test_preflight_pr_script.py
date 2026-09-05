@@ -328,6 +328,6 @@ def test_preflight_state_file_resolves_repo_scope():
                 capture_output=True, text=True, env=dict(_CLEAN_ENV),
             )
             assert scope.returncode == 0, f"stderr: {scope.stderr!r}"
-            assert scope.stdout == "octocat-widgets\n"
+            assert scope.stdout == "7-octocat-widgets\n"
         finally:
             out_json.unlink(missing_ok=True)

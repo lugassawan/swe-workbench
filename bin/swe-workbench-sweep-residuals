@@ -183,12 +183,21 @@ fi
 PR_REVIEW_DIR="/tmp/swe-workbench-pr-review"
 ADDR_FEEDBACK_DIR="/tmp/swe-workbench-address-feedback"
 
-# GitHub URL forms seen in the state files -> owner-repo slug (same tr-based
-# normalization swe-workbench-repo-scope applies, so comparison stays in slug space).
+# GitHub URL forms seen in the state files -> owner-repo slug. Extracts
+# "owner/repo" only, then delegates the actual slug encoding to
+# swe-workbench-repo-scope itself (`--repo owner/repo`) rather than
+# reimplementing it here — a second, independent implementation of the same
+# encoding previously drifted out of sync with escape_owner_repo's fix
+# (reimplementing plain `\1-\2` here reintroduced the exact non-injective
+# join escape_owner_repo was fixed to eliminate), so this is the single
+# source of truth both sides of every comparison now share.
 _url_scope_slug() {
-  printf '%s' "$1" | sed -nE \
-    -e 's#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$#\1-\2#p' \
-    -e 's#^https://api\.github\.com/repos/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/?$#\1-\2#p'
+  local owner_repo
+  owner_repo=$(printf '%s' "$1" | sed -nE \
+    -e 's#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$#\1/\2#p' \
+    -e 's#^https://api\.github\.com/repos/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/?$#\1/\2#p')
+  [ -n "$owner_repo" ] || return 1
+  "$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$owner_repo" 2>/dev/null
 }
 
 # _attribute_legacy_state <file> <basename> — sets RETAIN_REASON (non-empty =

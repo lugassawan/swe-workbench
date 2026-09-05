@@ -15,18 +15,28 @@ lingered, and concurrent same-`<N>` reviews raced on identical filenames.
 
 ## The slug
 
-`owner/repo` → `owner-repo`, with every literal hyphen inside `owner` and inside `repo` doubled
-*before* the join (`owner.replace('-', '--') + '-' + repo.replace('-', '--')`). Plain `tr '/' '-'`
-— the pre-existing convention from `swe-workbench:workflow-audit-emit-issues`
+`owner/repo` → `<len(owner)>-owner-repo` — `owner`'s own character length prefixed on front, e.g.
+`lugassawan/swe-workbench` → `10-lugassawan-swe-workbench`. Plain `tr '/' '-'` — the pre-existing
+convention from `swe-workbench:workflow-audit-emit-issues`
 (`gh repo view --json nameWithOwner -q .nameWithOwner | tr '/' '-'`) — is **not** injective: two
 distinct pairs that split the hyphen boundary differently collide (`acme-app/foo` and
 `acme/app-foo` both produce `acme-app-foo`), which breaks the "never remove artifacts belonging to
-a different repository" guarantee this whole scheme exists to provide. Doubling makes every
-hyphen run wholly inside an escaped half even-length, so the separator — the one hyphen not part
-of a doubled pair — is always locatable and the join stays injective (e.g. `acme-app/foo` →
-`acme--app-foo`, `acme/app-foo` → `acme-app--foo`). GitHub owner/repo names are `[A-Za-z0-9._-]`
-and start alphanumeric, so the escaping stays filename-safe. `bin/swe-workbench-repo-scope` is the
-single resolver (Tier S bare scalar on stdout; exit 1 + empty output = unresolvable):
+a different repository" guarantee this whole scheme exists to provide. A hyphen-doubling escape
+(`owner.replace('-','--') + '-' + repo.replace('-','--')`) was tried first and is **also not**
+injective — doubling the same character used as the separator can't distinguish "this hyphen is
+escaped" from "this hyphen starts the separator run": `owner='a-', repo='b'` and `owner='a',
+repo='-b'` both produce `a---b` (owner's doubled trailing hyphen plus the separator merges,
+byte-for-byte, with the separator plus repo's doubled leading hyphen). The length prefix sidesteps
+escaping entirely: the leading digit
+run always terminates at the very next `-` (guaranteed present by construction, and digits can
+never be confused with that terminator), so reading exactly that many characters past it recovers
+`owner` verbatim regardless of what hyphens either half contains, and everything after the
+following `-` is `repo` — genuinely injective for any owner/repo content, no character-class
+restriction needed on either half beyond "no `/`". `bin/swe-workbench-repo-scope` is the single
+resolver (Tier S bare scalar on stdout; exit 1 + empty output = unresolvable) — every other
+call-site that needs to compare against a slug (`bin/swe-workbench-sweep-residuals`'s
+`_url_scope_slug` included) delegates to it rather than reimplementing the encoding, so a second,
+independently-drifting implementation of this scheme can't reintroduce the same class of bug:
 
 | Resolution step | Source |
 |---|---|

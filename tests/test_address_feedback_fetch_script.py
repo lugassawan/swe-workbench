@@ -628,14 +628,14 @@ class TestRepoScopedState:
                           extra_args=["--repo", "octocat/widgets"])
             assert result.returncode == 0, result.stderr
             envelope = json.loads(result.stdout)
-            assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}.json"
-            assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-threads.json"
-            assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-pr-comments.json"
+            assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}.json"
+            assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-threads.json"
+            assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-pr-comments.json"
             assert Path(envelope["data"]["threads_path"]).exists()
             assert Path(envelope["data"]["pr_json_path"]).exists()
         finally:
             for suffix in (".json", "-threads.json", "-pr-comments.json", "-triage.json"):
-                (STATE_DIR / f"octocat-widgets-{pr}{suffix}").unlink(missing_ok=True)
+                (STATE_DIR / f"7-octocat-widgets-{pr}{suffix}").unlink(missing_ok=True)
 
     def test_invalid_repo_value_rejected(self, tmp_path):
         pr = _unique_n()
@@ -670,7 +670,7 @@ class TestRepoScopedState:
             assert envelope["data"]["resume_available"] is True
         finally:
             _cleanup_state_files(pr)
-            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
 
     def test_resume_skips_legacy_triage_from_a_different_repo(self, tmp_path):
         """A legacy <N>-triage.json left by an UNRELATED repository's
@@ -695,7 +695,7 @@ class TestRepoScopedState:
             assert envelope["data"]["resume_triage_path"] == ""
         finally:
             _cleanup_state_files(pr)
-            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
 
     def test_resume_skips_legacy_triage_with_no_paired_preflight(self, tmp_path):
         """A legacy <N>-triage.json with no paired <N>.json preflight snapshot
@@ -717,7 +717,7 @@ class TestRepoScopedState:
             assert envelope["data"]["resume_triage_path"] == ""
         finally:
             _cleanup_state_files(pr)
-            (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
 
 
 def test_envelope_exposes_triage_path(tmp_path):
@@ -732,10 +732,10 @@ def test_envelope_exposes_triage_path(tmp_path):
                       extra_args=["--repo", "octocat/widgets"])
         assert result.returncode == 0, result.stderr
         envelope = json.loads(result.stdout)
-        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-triage.json"
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-triage.json"
     finally:
         _cleanup_state_files(pr)
-        (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
 
 
 def test_resume_triage_path_points_at_existing_file(tmp_path):
@@ -757,9 +757,9 @@ def test_resume_triage_path_points_at_existing_file(tmp_path):
         assert result.returncode == 0, result.stderr
         envelope = json.loads(result.stdout)
         assert envelope["data"]["resume_available"] is True
-        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/octocat-widgets-{pr}-triage.json"
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-triage.json"
         assert envelope["data"]["resume_triage_path"] == str(legacy)
         assert Path(envelope["data"]["resume_triage_path"]).exists()
     finally:
         _cleanup_state_files(pr)
-        (STATE_DIR / f"octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)

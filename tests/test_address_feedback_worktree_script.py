@@ -912,12 +912,12 @@ class TestRepoScopedReceipts:
         try:
             result = _run_acquire(clone, pr, branch, env, extra_args=["--repo", "octocat/widgets"])
             assert result.returncode == 0, result.stderr
-            slugged = STATE_DIR / f"octocat-widgets-{pr}-worktree.json"
+            slugged = STATE_DIR / f"7-octocat-widgets-{pr}-worktree.json"
             legacy = STATE_DIR / f"{pr}-worktree.json"
             assert slugged.exists(), "acquire --repo must write the slugged receipt"
             assert not legacy.exists(), "acquire --repo must not write the legacy receipt"
         finally:
-            _cleanup_state_files(pr, slug="octocat-widgets")
+            _cleanup_state_files(pr, slug="7-octocat-widgets")
 
     def test_acquire_rejects_invalid_repo_value(self, tmp_path):
         pr = _unique_n()
@@ -935,7 +935,11 @@ class TestRepoScopedReceipts:
         """Pre-upgrade acquire (legacy receipt) / post-upgrade release (--repo
         given, slugged receipt absent): the legacy receipt must still satisfy
         ownership so release does not refuse. Uses created=true — the only path
-        that actually consults the receipt."""
+        that actually consults the receipt. The clone's origin is overridden to
+        a github.com URL that actually resolves to the --repo scope, because
+        release's dual-read now attribution-gates on the receipt's own recorded
+        path's git origin (see test_release_skips_foreign_legacy_receipt below
+        for the negative case this closes)."""
         pr = _unique_n()
         branch = f"pr-branch-{pr}"
         _remote, clone = _build_remote_and_clone(tmp_path, branch)
@@ -951,8 +955,14 @@ class TestRepoScopedReceipts:
             assert payload["data"]["reused"] is False, payload
             assert payload["data"]["reuse_reason"] == "created-git", payload
             wt_path = Path(payload["data"]["path"])
+            # Release never talks to the network, so swapping origin's URL
+            # here (after the real fetch/acquire above, which needed the
+            # actual local bare remote) is safe — it only affects what the
+            # release step's attribution check (_attributes_here) reads via
+            # `git remote get-url origin` from this worktree.
+            _run("git", "remote", "set-url", "origin", "https://github.com/octocat/widgets.git", cwd=clone)
             # Simulate the pre-upgrade receipt spelling.
-            slugged = STATE_DIR / f"octocat-widgets-{pr}-worktree.json"
+            slugged = STATE_DIR / f"7-octocat-widgets-{pr}-worktree.json"
             legacy = STATE_DIR / f"{pr}-worktree.json"
             assert slugged.exists()
             slugged.rename(legacy)
@@ -964,7 +974,57 @@ class TestRepoScopedReceipts:
             assert rpayload["status"] == "ok", rpayload
             assert not wt_path.exists()
         finally:
-            _cleanup_state_files(pr, slug="octocat-widgets")
+            _cleanup_state_files(pr, slug="7-octocat-widgets")
+
+    def test_release_skips_foreign_legacy_receipt(self, tmp_path):
+        """A legacy <PR>-worktree.json receipt whose recorded .path attributes
+        to a DIFFERENT repository (its own git origin resolves to a different
+        scope) must never be silently adopted just because it happens to exist
+        for the same PR number — mirrors
+        swe-workbench-pr-review-worktree's test_release_foreign_legacy_fallback_not_found.
+        Release must refuse (no matching ownership receipt), not remove the
+        worktree using an unverified foreign receipt."""
+        pr = _unique_n()
+        branch = f"pr-branch-{pr}"
+        _remote, clone = _build_remote_and_clone(tmp_path, branch)
+        _run("git", "fetch", "origin", branch, cwd=clone)
+        _run("git", "branch", branch, f"origin/{branch}", cwd=clone)
+
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        acquired = None
+        wt_path = None
+        try:
+            acquired = _run_acquire(clone, pr, branch, env, extra_args=["--repo", "octocat/widgets"])
+            assert acquired.returncode == 0, acquired.stderr
+            wt_path = Path(json.loads(acquired.stdout)["data"]["path"])
+            # Release never talks to the network — safe to swap origin's URL
+            # only now, after the real fetch/acquire above.
+            _run("git", "remote", "set-url", "origin", "https://github.com/octocat/widgets.git", cwd=clone)
+            slugged = STATE_DIR / f"7-octocat-widgets-{pr}-worktree.json"
+            legacy = STATE_DIR / f"{pr}-worktree.json"
+            assert slugged.exists()
+
+            # Overwrite the legacy receipt with one recorded against a
+            # DIFFERENT repository's worktree (a foreign path this run never
+            # created) rather than renaming this run's own — the point is the
+            # receipt's .path itself must attribute elsewhere.
+            foreign = tmp_path / "foreign-repo"
+            foreign.mkdir()
+            _run("git", "init", "-q", str(foreign), cwd=foreign)
+            _run("git", "remote", "add", "origin", "https://github.com/other/repo.git", cwd=foreign)
+            slugged.unlink()
+            legacy.write_text(json.dumps({"path": str(foreign), "branch": branch, "created": True}))
+
+            released = _run_release(clone, pr, str(wt_path), branch, "true", env,
+                                    extra_args=["--repo", "octocat/widgets"])
+            assert released.returncode == 0, released.stderr
+            rpayload = json.loads(released.stdout)
+            assert rpayload["status"] == "partial", rpayload
+            assert any(w.get("code") == "receipt-mismatch" for w in rpayload.get("warnings", [])), rpayload
+            assert wt_path.exists(), "must refuse to remove without a matching ownership receipt"
+        finally:
+            _cleanup_worktree(clone, wt_path, branch)
+            _cleanup_state_files(pr, slug="7-octocat-widgets")
             if acquired is not None:
                 try:
                     wt_path = Path(json.loads(acquired.stdout)["data"]["path"])

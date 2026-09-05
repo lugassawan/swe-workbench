@@ -340,10 +340,10 @@ def test_names_first_pass_and_followup_labels():
     )
     data = {item["mode"]: item for item in json.loads(result.stdout)}
     assert data["first-pass"]["label"] == f"pr-review-{n}"
-    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}"
+    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{n}"
     assert data["first-pass"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
     assert data["followup"]["label"] == f"pr-followup-{n}"
-    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}-followup"
+    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{n}-followup"
     assert data["followup"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}-followup"
 
 
@@ -356,7 +356,7 @@ def test_names_specialist_labels(mode):
     )
     data = {item["mode"]: item for item in json.loads(result.stdout)}
     assert data[mode]["label"] == f"review-{mode}-{n}"
-    assert data[mode]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{mode}-{n}"
+    assert data[mode]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{mode}-{n}"
     assert data[mode]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{mode}-{n}"
 
 
@@ -364,7 +364,7 @@ def _sweep_residuals_worktree_contract(n: str) -> tuple[set, set]:
     """Ground truth extracted from swe-workbench-sweep-residuals' own hardcoded
     WT_LABELS/WT_FALLBACKS/WT_LEGACY_FALLBACKS/WT_DELETE_BRANCH arrays -- the
     backstop this ratchet guards against silently drifting away from. Returns
-    (legacy_triples, scoped_triples-with-octocat-widgets-slug) for the same PR
+    (legacy_triples, scoped_triples-with-7-octocat-widgets-slug) for the same PR
     number: scoped fallbacks carry the `${SCOPE_SLUG:+${SCOPE_SLUG}-}` marker,
     substituted here exactly as a scoped sweep would."""
     text = SWEEP_RESIDUALS.read_text()
@@ -379,7 +379,7 @@ def _sweep_residuals_worktree_contract(n: str) -> tuple[set, set]:
         return re.findall(r'"([^"]*)"', m.group(1))
 
     labels = [s.replace("$N", n) for s in _extract("WT_LABELS")]
-    scoped = [s.replace("$N", n).replace("${SCOPE_SLUG:+${SCOPE_SLUG}-}", "octocat-widgets-")
+    scoped = [s.replace("$N", n).replace("${SCOPE_SLUG:+${SCOPE_SLUG}-}", "7-octocat-widgets-")
               for s in _extract("WT_FALLBACKS")]
     legacy = [s.replace("$N", n) for s in _extract("WT_LEGACY_FALLBACKS")]
     delete_branch = re.findall(r"\d+", _extract_dec(text))
@@ -391,7 +391,7 @@ def _sweep_residuals_worktree_contract(n: str) -> tuple[set, set]:
 
     for mode in specialist_modes:
         labels.append(f"review-{mode}-{n}")
-        scoped.append(f"/tmp/swe-workbench-pr-review/octocat-widgets-{mode}-{n}")
+        scoped.append(f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{mode}-{n}")
         legacy.append(f"/tmp/swe-workbench-pr-review/{mode}-{n}")
         delete_branch.append("1")
 
@@ -874,11 +874,11 @@ def test_names_scoped_fallbacks_with_explicit_repo():
     )
     assert result.returncode == 0, result.stderr
     data = {item["mode"]: item for item in json.loads(result.stdout)}
-    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}"
+    assert data["first-pass"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{n}"
     assert data["first-pass"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}"
-    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-{n}-followup"
+    assert data["followup"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-{n}-followup"
     assert data["followup"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/{n}-followup"
-    assert data["security"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/octocat-widgets-security-{n}"
+    assert data["security"]["fallback_path"] == f"/tmp/swe-workbench-pr-review/7-octocat-widgets-security-{n}"
     assert data["security"]["legacy_fallback_path"] == f"/tmp/swe-workbench-pr-review/security-{n}"
     # Rimba task/branch labels are per-repo git objects already — unchanged.
     assert data["first-pass"]["label"] == f"pr-review-{n}"
@@ -962,7 +962,7 @@ class TestLegacyFallbackAttribution:
             assert acquired.returncode == 0, acquired.stderr
             kv = _kv(acquired)
             assert kv["PROVIDER"] == "git"
-            assert Path(kv["WT"]).name == f"octocat-widgets-{n}"
+            assert Path(kv["WT"]).name == f"7-octocat-widgets-{n}"
             assert legacy.exists(), "foreign-origin legacy fallback must survive our acquire"
         finally:
             if acquired is not None:
