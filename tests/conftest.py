@@ -32,6 +32,14 @@ import pytest
 # fail unexpectedly on an unrelated ambient value. Tests that want to exercise the kill switch
 # opt in explicitly via env={**_CLEAN_ENV, "SWE_WORKBENCH_PI_TOOLS": "0"}.
 #
+# GIT_TERMINAL_PROMPT=0 is set because fixtures that fake HOME (e.g. _rimba_absent_env)
+# make the real ~/.gitconfig credential helper invisible, so any git operation that
+# reaches a remote requiring auth has no way to authenticate. Without this, git falls
+# back to an interactive username/password prompt on the controlling tty instead of
+# failing fast -- which, when the test runs under the pre-push hook, silently freezes
+# the developer's terminal on `git push` instead of surfacing a test failure. Failing
+# fast is always the correct behaviour for a test subprocess.
+#
 # Snapshot: built once from os.environ at pytest collection time. Session-scoped
 # fixtures that mutate GIT_* vars after import will not be reflected here.
 #
@@ -54,6 +62,7 @@ _CLEAN_ENV: Final[MappingProxyType[str, str]] = MappingProxyType(
     _clean_environment(os.environ)
     | {
         "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
         "GIT_AUTHOR_NAME": "T",
         "GIT_AUTHOR_EMAIL": "t@t.com",
         "GIT_COMMITTER_NAME": "T",

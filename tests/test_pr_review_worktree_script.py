@@ -944,7 +944,6 @@ class TestLegacyFallbackAttribution:
         own origin gates it; our slugged allocation proceeds unaffected."""
         n = _unique_n()
         repo = _build_repo_with_pr_ref(tmp_path, n)
-        _run("git", "remote", "set-url", "origin", "https://github.com/octocat/widgets.git", cwd=repo)
         foreign_base = tmp_path / "foreign"
         foreign_base.mkdir()
         foreign = _build_repo(foreign_base)
@@ -957,13 +956,18 @@ class TestLegacyFallbackAttribution:
         acquired = None
         try:
             acquired = _run_script(
-                repo, ["acquire", "--mode", "first-pass", "--pr", n], env,
+                repo,
+                ["acquire", "--mode", "first-pass", "--pr", n, "--repo", "octocat/widgets"],
+                env,
             )
             assert acquired.returncode == 0, acquired.stderr
             kv = _kv(acquired)
             assert kv["PROVIDER"] == "git"
             assert Path(kv["WT"]).name == f"7-octocat-widgets-{n}"
             assert legacy.exists(), "foreign-origin legacy fallback must survive our acquire"
+            wt = Path(kv["WT"])
+            assert wt.exists(), "acquire reported a worktree path that was never created"
+            assert (wt / f"pr_file_{n}.txt").exists(), "PR ref was not fetched into the worktree"
         finally:
             if acquired is not None:
                 try:

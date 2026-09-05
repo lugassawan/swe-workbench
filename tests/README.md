@@ -32,7 +32,10 @@ mistakenly treats the temp test directory as a bare repo too — causing
 hard-to-diagnose test failures.
 
 `_CLEAN_ENV` strips every `GIT_*` environment variable and re-adds
-`GIT_CONFIG_NOSYSTEM=1` for system-gitconfig hermeticity. Use it whenever a
+`GIT_CONFIG_NOSYSTEM=1` for system-gitconfig hermeticity, plus
+`GIT_TERMINAL_PROMPT=0` so a fixture that fakes `HOME` (and therefore has no
+credential helper) fails fast on an unauthenticated remote instead of
+blocking on an interactive username/password prompt. Use it whenever a
 test spawns a subprocess that runs `git` or a shell script that calls `git`:
 
 ```python
