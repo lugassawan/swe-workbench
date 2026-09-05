@@ -587,3 +587,307 @@ def test_missing_required_evidence_flag_exits_nonzero():
         capture_output=True, text=True, env=dict(_CLEAN_ENV),
     )
     assert result.returncode != 0
+
+
+def test_missing_required_resolve_flag_exits_nonzero():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "resolve", "--repo", "o/r"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode != 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# `resolve` subcommand
+#
+# resolve doesn't call `gh` directly — it shells out to the real sibling
+# bin/swe-workbench-reply-and-resolve, which itself calls the real
+# bin/swe-workbench-gh-timeout, which calls `gh`. Only `gh` is stubbed (via
+# the same call-index-driven STUB_BODY convention used above), so these
+# tests exercise the actual call chain end to end: exactly one
+# resolveReviewThread call site (in swe-workbench-reply-and-resolve) is ever
+# reached, never a second one from this script.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _resolve_args(*, repo="owner/repo", pr="1", threads_json, out_dir):
+    return [
+        "resolve",
+        "--repo", repo,
+        "--pr", pr,
+        "--threads-json", str(threads_json),
+        "--out-dir", str(out_dir),
+    ]
+
+
+def _run_stdin(argv: list[str], *, stub_dir: Path, state_dir: Path, responses_file: Path, stdin_input: str):
+    env = dict(_CLEAN_ENV)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
+    env["GH_STUB_STATE"] = str(state_dir)
+    env["GH_STUB_RESPONSES"] = str(responses_file)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *argv], input=stdin_input, capture_output=True, text=True, env=env
+    )
+
+
+def _row(*, thread_id="T1", comment_database_id=1, reply_body="Addressed in abc123: fix typo."):
+    return {"thread_id": thread_id, "comment_database_id": comment_database_id, "reply_body": reply_body}
+
+
+def _write_rows(tmp_path: Path, rows) -> Path:
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    return path
+
+
+def _reply_ok():
+    return _ok(json.dumps({"id": 1}))
+
+
+def _resolve_ok(thread_id="T1"):
+    return _ok(json.dumps({"data": {"resolveReviewThread": {"thread": {"id": thread_id, "isResolved": True}}}}))
+
+
+def _fail_call(stderr="gh-stub: simulated failure", exit=1):
+    return _ok(stdout="", exit=exit, stderr=stderr)
+
+
+class TestResolveHappyPath:
+    def test_all_rows_resolve_successfully(self, tmp_path):
+        rows = [_row(thread_id="T1", comment_database_id=1), _row(thread_id="T2", comment_database_id=2)]
+        responses = [_reply_ok(), _resolve_ok("T1"), _reply_ok(), _resolve_ok("T2")]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["schema"] == "swb.pr-review-threads-resolve/1"
+        assert envelope["status"] == "ok"
+        assert envelope["data"]["requested"] == 2
+        assert envelope["data"]["resolved"] == 2
+        assert envelope["data"]["failed"] == 0
+        assert envelope["data"]["failed_thread_ids"] == []
+        report = json.loads(Path(envelope["data"]["report_path"]).read_text())
+        assert len(report) == 2
+        assert all(r["success"] for r in report)
+        assert all(r["error"] is None for r in report)
+
+
+class TestResolvePartialFailure:
+    def test_mix_of_success_and_failure_rows(self, tmp_path):
+        rows = [_row(thread_id="T1", comment_database_id=1), _row(thread_id="T2", comment_database_id=2)]
+        responses = [
+            _reply_ok(),                                          # T1 reply
+            _resolve_ok("T1"),                                    # T1 resolve
+            _reply_ok(),                                          # T2 reply
+            _fail_call(stderr="gh-stub: resolve mutation boom"),  # T2 resolve fails
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["status"] == "partial"
+        assert envelope["data"]["requested"] == 2
+        assert envelope["data"]["resolved"] == 1
+        assert envelope["data"]["failed"] == 1
+        assert envelope["data"]["failed_thread_ids"] == ["T2"]
+        report = json.loads(Path(envelope["data"]["report_path"]).read_text())
+        assert report[0]["thread_id"] == "T1"
+        assert report[0]["success"] is True
+        assert report[0]["error"] is None
+        assert report[1]["thread_id"] == "T2"
+        assert report[1]["success"] is False
+        assert report[1]["error"] and "boom" in report[1]["error"]
+
+    def test_later_row_success_unaffected_by_earlier_failure(self, tmp_path):
+        rows = [_row(thread_id="T1", comment_database_id=1), _row(thread_id="T2", comment_database_id=2)]
+        responses = [
+            _fail_call(stderr="gh-stub: reply boom"),  # T1 reply fails; T1 never reaches resolve
+            _reply_ok(),                               # T2 reply
+            _resolve_ok("T2"),                          # T2 resolve
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads((out_dir / "threads-resolve-report.json").read_text())
+        assert report[0]["thread_id"] == "T1"
+        assert report[0]["success"] is False
+        assert report[1]["thread_id"] == "T2"
+        assert report[1]["success"] is True
+
+    def test_report_preserves_input_order_not_completion_order(self, tmp_path):
+        rows = [
+            _row(thread_id="T1", comment_database_id=1),
+            _row(thread_id="T2", comment_database_id=2),
+            _row(thread_id="T3", comment_database_id=3),
+        ]
+        responses = [
+            _reply_ok(), _resolve_ok("T1"),               # T1 succeeds
+            _reply_ok(), _fail_call(stderr="boom"),        # T2 fails on resolve
+            _reply_ok(), _resolve_ok("T3"),               # T3 succeeds
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads((out_dir / "threads-resolve-report.json").read_text())
+        assert [r["thread_id"] for r in report] == ["T1", "T2", "T3"]
+        assert [r["success"] for r in report] == [True, False, True]
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["failed_thread_ids"] == ["T2"]
+
+
+class TestResolveReportContent:
+    def test_report_path_contains_exact_per_row_records(self, tmp_path):
+        rows = [_row(thread_id="T-a", comment_database_id=7, reply_body="Addressed in abc: fix.")]
+        responses = [_reply_ok(), _resolve_ok("T-a")]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        report_path = Path(envelope["data"]["report_path"])
+        assert report_path == out_dir / "threads-resolve-report.json"
+        report = json.loads(report_path.read_text())
+        assert report == [{"thread_id": "T-a", "comment_database_id": 7, "success": True, "error": None}]
+
+
+class TestResolveInputValidation:
+    def test_non_list_json_fails_closed(self, tmp_path):
+        threads_json = tmp_path / "rows.json"
+        threads_json.write_text(json.dumps({"not": "a list"}))
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=threads_json, out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert result.stderr.strip() != ""
+        assert "Traceback" not in result.stderr
+
+    def test_row_missing_required_field_fails_closed(self, tmp_path):
+        rows = [{"thread_id": "T1", "comment_database_id": 1}]  # missing reply_body
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "reply_body" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_comment_database_id_true_rejected(self, tmp_path):
+        rows = [_row(comment_database_id=True)]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "comment_database_id" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_comment_database_id_false_rejected(self, tmp_path):
+        rows = [_row(comment_database_id=False)]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "comment_database_id" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_comment_database_id_negative_rejected(self, tmp_path):
+        rows = [_row(comment_database_id=-1)]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "comment_database_id" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_comment_database_id_zero_rejected(self, tmp_path):
+        rows = [_row(comment_database_id=0)]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "comment_database_id" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_malformed_repo_fails_closed(self, tmp_path):
+        rows = [_row()]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(repo="norepo", threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "--repo" in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_malformed_pr_fails_closed(self, tmp_path):
+        rows = [_row()]
+        out_dir = tmp_path / "out"
+        stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+        result = _run(
+            _resolve_args(pr="abc", threads_json=_write_rows(tmp_path, rows), out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "--pr" in result.stderr
+        assert "Traceback" not in result.stderr
+
+
+class TestResolveStdin:
+    def test_threads_json_dash_reads_stdin(self, tmp_path):
+        rows = [_row(thread_id="T1", comment_database_id=1)]
+        responses = [_reply_ok(), _resolve_ok("T1")]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        out_dir = tmp_path / "out"
+        result = _run_stdin(
+            _resolve_args(threads_json="-", out_dir=out_dir),
+            stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+            stdin_input=json.dumps(rows),
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["requested"] == 1
+        assert envelope["data"]["resolved"] == 1

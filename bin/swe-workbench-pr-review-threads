@@ -41,8 +41,27 @@ resolved worktree root before ever opening it. A path that escapes the
 worktree is treated as `anchor_status: missing` / `reason: file_deleted` (not
 a distinct reason in the schema — fail closed into the existing bucket).
 
-The `resolve` subcommand (bulk-resolving verified threads) is added by a later
-change to this same file; only `evidence` is wired up here.
+The `resolve` subcommand bulk-resolves threads the reviewer has verified as
+addressed:
+
+`resolve --repo owner/repo --pr N --threads-json PATH|- --out-dir DIR`
+
+Input is a JSON array of `{thread_id, comment_database_id, reply_body}` rows
+(a file path, or `-` for stdin). Every row is validated up front — malformed
+JSON, a non-list payload, or any row missing/mistyping a required field aborts
+before any subprocess call, printing nothing to stdout and exiting 1 (the same
+fail-closed posture as `evidence`). Once execution begins, each validated row
+is handled independently: this script shells out to the sibling
+`bin/swe-workbench-reply-and-resolve` (preserving the plugin's single
+`resolveReviewThread` GraphQL call site — this script never calls that
+mutation directly), and a non-zero exit from that subprocess marks only that
+row as failed without aborting the remaining rows. Per-row outcomes are
+written to `<out-dir>/threads-resolve-report.json`; the envelope on stdout
+(schema `swb.pr-review-threads-resolve/1`) carries only counts and the report
+path, mirroring `evidence`'s manifest-not-inline-records rationale. `status`
+is `"partial"` when any row failed, but the script still exits 0 whenever it
+reaches the point of emitting an envelope — a per-row failure is an expected,
+reported outcome, not a script-level error.
 """
 
 from __future__ import annotations
@@ -84,6 +103,15 @@ class EvidenceError(Exception):
     pass
 
 
+# `evidence` and `resolve` both validate --repo against this same shape (owner/repo, no
+# whitespace or extra slashes) — one compiled pattern, not a second literal regex.
+_REPO_RE = re.compile(r"^[^/\s]+/[^/\s]+$")
+
+
+def _repo_format_ok(repo: str | None) -> bool:
+    return bool(_REPO_RE.match(repo or ""))
+
+
 # ── gh layer ─────────────────────────────────────────────────────────────────
 
 
@@ -91,8 +119,8 @@ def _script_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-def _check_siblings(script_dir: Path) -> None:
-    for name in ("swe-workbench-gh-timeout",):
+def _check_siblings(script_dir: Path, names: tuple[str, ...] = ("swe-workbench-gh-timeout",)) -> None:
+    for name in names:
         path = script_dir / name
         if not (path.is_file() and os.access(path, os.X_OK)):
             raise EvidenceError(
@@ -324,7 +352,7 @@ def _build_envelope(
 
 
 def run_evidence(args: argparse.Namespace) -> int:
-    if not re.match(r"^[^/\s]+/[^/\s]+$", args.repo or ""):
+    if not _repo_format_ok(args.repo):
         print(
             f"swe-workbench-pr-review-threads: --repo must be in the form owner/repo, got {args.repo!r}",
             file=sys.stderr,
@@ -367,6 +395,144 @@ def run_evidence(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── resolve subcommand ────────────────────────────────────────────────────────
+
+_RESOLVE_SIBLINGS = ("swe-workbench-gh-timeout", "swe-workbench-reply-and-resolve")
+_PR_RE = re.compile(r"^[1-9][0-9]*$")
+_ERROR_TAIL_CHARS = 500
+
+
+def _row_problem(row: object) -> str | None:
+    if not isinstance(row, dict):
+        return "each row must be a JSON object"
+    if not isinstance(row.get("thread_id"), str) or not row["thread_id"]:
+        return "thread_id must be a non-empty string"
+    comment_database_id = row.get("comment_database_id")
+    # bool is a Python int subclass — exclude it explicitly so a JSON true/false never
+    # silently satisfies an int-typed field (same gotcha swe-workbench-result-check guards).
+    if (
+        not isinstance(comment_database_id, int)
+        or isinstance(comment_database_id, bool)
+        or comment_database_id <= 0
+    ):
+        return "comment_database_id must be a positive integer"
+    if not isinstance(row.get("reply_body"), str) or not row["reply_body"]:
+        return "reply_body must be a non-empty string"
+    return None
+
+
+def validate_resolve_payload(args: argparse.Namespace) -> tuple[list[dict] | None, tuple[str, str] | None]:
+    """Returns (rows, error) — error is a (field, problem) tuple, or None on success.
+
+    Fail-closed, all-or-nothing: every row is validated before any row is executed. This
+    is the ONLY all-or-nothing gate in the resolve subcommand — once it passes, per-row
+    execution proceeds independently and a single row's failure never aborts the rest.
+    """
+    if not _repo_format_ok(args.repo):
+        return None, ("--repo", "must be in the form owner/repo")
+    if not _PR_RE.match(args.pr or ""):
+        return None, ("--pr", "must match [1-9][0-9]*")
+
+    try:
+        raw = sys.stdin.read() if args.threads_json == "-" else Path(args.threads_json).read_text()
+    except OSError as exc:
+        return None, ("--threads-json", f"could not read file ({exc})")
+    try:
+        rows = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return None, ("--threads-json", f"invalid JSON ({exc})")
+    if not isinstance(rows, list):
+        return None, ("--threads-json", "must be a JSON array")
+    for i, row in enumerate(rows):
+        problem = _row_problem(row)
+        if problem:
+            return None, (f"--threads-json[{i}]", problem)
+
+    return rows, None
+
+
+def _run_reply_and_resolve(
+    script_dir: Path, owner: str, repo: str, pr: str, comment_database_id: int, thread_id: str, reply_body: str
+) -> subprocess.CompletedProcess:
+    cmd = [
+        "bash", str(script_dir / "swe-workbench-reply-and-resolve"),
+        owner, repo, str(pr), str(comment_database_id), thread_id, reply_body,
+    ]
+    # Same rationale as _gh(): always pass a (possibly empty) string so subprocess pipes
+    # and immediately closes stdin rather than inheriting the parent's.
+    return subprocess.run(cmd, input="", capture_output=True, text=True)
+
+
+def resolve_rows(script_dir: Path, owner: str, repo: str, pr: str, rows: list[dict]) -> list[dict]:
+    """Runs every row through swe-workbench-reply-and-resolve, in input order. A row's
+    non-zero exit marks only that row as failed — it never stops the loop over the
+    remaining rows, and the returned list preserves input order (not completion order)."""
+    records: list[dict] = []
+    for row in rows:
+        proc = _run_reply_and_resolve(
+            script_dir, owner, repo, pr,
+            row["comment_database_id"], row["thread_id"], row["reply_body"],
+        )
+        success = proc.returncode == 0
+        records.append({
+            "thread_id": row["thread_id"],
+            "comment_database_id": row["comment_database_id"],
+            "success": success,
+            "error": None if success else (proc.stderr or "")[-_ERROR_TAIL_CHARS:],
+        })
+    return records
+
+
+def _build_resolve_envelope(*, requested: int, resolved: int, failed_thread_ids: list[str], report_path: str) -> dict:
+    failed = requested - resolved
+    return {
+        "schema": "swb.pr-review-threads-resolve/1",
+        "status": "partial" if failed > 0 else "ok",
+        "data": {
+            "requested": requested,
+            "resolved": resolved,
+            "failed": failed,
+            "failed_thread_ids": failed_thread_ids,
+            "report_path": report_path,
+        },
+        "warnings": [],
+    }
+
+
+def run_resolve(args: argparse.Namespace) -> int:
+    rows, error = validate_resolve_payload(args)
+    if error is not None:
+        field_name, problem = error
+        print(f"swe-workbench-pr-review-threads: {field_name}: {problem}", file=sys.stderr)
+        return 1
+
+    script_dir = _script_dir()
+    try:
+        _check_siblings(script_dir, _RESOLVE_SIBLINGS)
+    except EvidenceError as exc:
+        print(f"swe-workbench-pr-review-threads: {exc}", file=sys.stderr)
+        return 1
+
+    owner, repo = args.repo.split("/", 1)
+    records = resolve_rows(script_dir, owner, repo, args.pr, rows)
+
+    report_path = Path(args.out_dir) / "threads-resolve-report.json"
+    _atomic_write_json(report_path, records)
+
+    resolved = sum(1 for r in records if r["success"])
+    failed_thread_ids = [r["thread_id"] for r in records if not r["success"]]
+    envelope = _build_resolve_envelope(
+        requested=len(rows),
+        resolved=resolved,
+        failed_thread_ids=failed_thread_ids,
+        report_path=str(report_path),
+    )
+
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -381,7 +547,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--worktree", required=True)
     evidence.add_argument("--out-dir", required=True)
 
-    # A sibling `resolve` subparser is added by a later change to this file.
+    resolve = sub.add_parser("resolve", help="Bulk-resolve threads the reviewer has verified as addressed.")
+    resolve.add_argument("--repo", required=True)
+    resolve.add_argument("--pr", required=True)
+    resolve.add_argument("--threads-json", required=True)
+    resolve.add_argument("--out-dir", required=True)
 
     return p
 
@@ -390,6 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     if args.subcommand == "evidence":
         return run_evidence(args)
+    elif args.subcommand == "resolve":
+        return run_resolve(args)
     print(f"swe-workbench-pr-review-threads: unknown subcommand {args.subcommand!r}", file=sys.stderr)
     return 1
 
