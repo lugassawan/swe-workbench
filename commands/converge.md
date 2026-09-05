@@ -118,7 +118,9 @@ RUN_DIR=$(swe-workbench-new-run-dir review-converge "$LOOP_ID")
 
 `review-converge` matches the `review-[a-z][a-z-]*` allowlist in both
 `bin/swe-workbench-new-run-dir` and `bin/swe-workbench-reap-run-dir` — no script edits needed, and
-Phase 6's cleanup works for free.
+Phase 6's cleanup works for free. The allocated name also embeds the owner-repo slug
+(name shape `review-converge-<slug>-<LOOP_ID>-<rand>`, origin-derived, legacy shape when no
+origin resolves), so a converge loop in one repository never collides with another's.
 
 ### Loop state
 

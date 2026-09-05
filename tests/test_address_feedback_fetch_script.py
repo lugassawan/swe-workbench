@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -71,18 +72,23 @@ def test_script_compiles():
 
 
 def test_snapshot_paths_match_sweep_residuals_hardcoded_literals():
-    """sweep-residuals hardcodes these three paths as literals for its own merged-PR
-    backstop sweep — they must stay byte-identical or that sweep silently stops
-    reaping this flow's state files."""
+    """sweep-residuals hardcodes these paths for its own merged-PR backstop sweep —
+    both spellings must stay byte-identical or that sweep silently stops reaping
+    this flow's state files: the legacy un-scoped names ($N) and the scoped
+    names (${SCOPE_STEM}, literal in sweep's Block A candidate array)."""
     pr = "424242"
     threads_path = STATE_DIR / f"{pr}-threads.json"
     pr_comments_path = STATE_DIR / f"{pr}-pr-comments.json"
     pr_json_path = STATE_DIR / f"{pr}.json"
 
     sweep_text = SWEEP_RESIDUALS.read_text()
-    assert f'"/tmp/swe-workbench-address-feedback/$N.json"' in sweep_text
-    assert f'"/tmp/swe-workbench-address-feedback/$N-threads.json"' in sweep_text
-    assert f'"/tmp/swe-workbench-address-feedback/$N-pr-comments.json"' in sweep_text
+    for suffix in (".json", "-threads.json", "-pr-comments.json"):
+        assert f'"$ADDR_FEEDBACK_DIR/$N{suffix}"' in sweep_text, (
+            f"legacy candidate for {suffix} drifted — sweep-residuals must keep reaping it"
+        )
+        assert f'"$ADDR_FEEDBACK_DIR/${{SCOPE_STEM}}{suffix}"' in sweep_text, (
+            f"scoped candidate for {suffix} drifted — sweep-residuals must reap the slugged spelling"
+        )
 
     assert str(pr_json_path) == f"/tmp/swe-workbench-address-feedback/{pr}.json"
     assert str(threads_path) == f"/tmp/swe-workbench-address-feedback/{pr}-threads.json"
@@ -283,14 +289,19 @@ def _gh_calls(state_dir: Path) -> list[dict]:
     return calls
 
 
-def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path):
+def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path,
+         extra_args: list[str] | None = None, cwd: Path | None = None):
     env = dict(_CLEAN_ENV)
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
     env["GH_STUB_STATE"] = str(state_dir)
     env["GH_STUB_RESPONSES"] = str(responses_file)
+    # Fresh non-git cwd by default: no origin -> legacy un-scoped paths (what these
+    # tests characterize); scoped runs pass --repo explicitly.
+    if cwd is None:
+        cwd = Path(tempfile.mkdtemp(prefix="aff-nogit-"))
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--pr", pr],
-        capture_output=True, text=True, env=env,
+        [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
+        capture_output=True, text=True, env=env, cwd=str(cwd),
     )
 
 
@@ -438,6 +449,7 @@ class TestOpenPrFullFetch:
             assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/{pr}.json"
             assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/{pr}-threads.json"
             assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/{pr}-pr-comments.json"
+            assert envelope["data"]["resume_triage_path"] == ""  # OPEN envelope, no resume point on disk
         finally:
             _cleanup_state_files(pr)
 
@@ -600,3 +612,154 @@ def test_envelope_round_trips_through_result_check(tmp_path):
         assert checked.returncode == 0, checked.stderr
     finally:
         _cleanup_state_files(pr)
+
+
+# ── Repo-scoped state paths ────────────────────────────────────
+
+
+class TestRepoScopedState:
+    def test_explicit_repo_slugs_all_snapshot_paths(self, tmp_path):
+        pr = _unique_n()
+        responses = _preflight_responses(pr) + [_ok("me\n"), _threads_page_response([]), _pr_comments_response([])]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["pr_json_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}.json"
+            assert envelope["data"]["threads_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-threads.json"
+            assert envelope["data"]["pr_comments_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-pr-comments.json"
+            assert Path(envelope["data"]["threads_path"]).exists()
+            assert Path(envelope["data"]["pr_json_path"]).exists()
+        finally:
+            for suffix in (".json", "-threads.json", "-pr-comments.json", "-triage.json"):
+                (STATE_DIR / f"7-octocat-widgets-{pr}{suffix}").unlink(missing_ok=True)
+
+    def test_invalid_repo_value_rejected(self, tmp_path):
+        pr = _unique_n()
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "bogus"])
+            assert result.returncode == 1
+            assert "invalid --repo" in result.stderr
+        finally:
+            _cleanup_state_files(pr)
+
+    def test_resume_dual_reads_legacy_triage(self, tmp_path):
+        """A pre-upgrade session left <N>-triage.json plus its paired <N>.json
+        preflight snapshot attributing to this same repo; a scoped run must
+        still see the resume point (dual-read), while writing slugged paths."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text("{}")
+        (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+            {"url": f"https://github.com/test-owner/test-repo/pull/{pr}"}))
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is True
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+    def test_resume_skips_legacy_triage_from_a_different_repo(self, tmp_path):
+        """A legacy <N>-triage.json left by an UNRELATED repository's
+        earlier same-numbered PR must never be silently offered as a resume
+        point — this is the collision the un-gated dual-read used to miss.
+        The paired <N>.json here attributes to a foreign owner/repo, so the
+        gate must reject it even though the triage file itself exists."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text(json.dumps({"foreign": "A"}))
+        (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+            {"url": f"https://github.com/some-other-owner/some-other-repo/pull/{pr}"}))
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is False
+            assert envelope["data"]["resume_triage_path"] == ""
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+    def test_resume_skips_legacy_triage_with_no_paired_preflight(self, tmp_path):
+        """A legacy <N>-triage.json with no paired <N>.json preflight snapshot
+        at all has no attribution signal — fail closed, same as every other
+        unattributable legacy artifact in this scheme, rather than trusting
+        the leftover by presence alone."""
+        pr = _unique_n()
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / f"{pr}-triage.json").write_text(json.dumps({"orphan": "A"}))
+        responses = _preflight_responses(pr, state="MERGED")
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                          responses_file=tmp_path / "gh_responses.json",
+                          extra_args=["--repo", "octocat/widgets"])
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["resume_available"] is False
+            assert envelope["data"]["resume_triage_path"] == ""
+        finally:
+            _cleanup_state_files(pr)
+            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+
+def test_envelope_exposes_triage_path(tmp_path):
+    """The skill's triage save/resume sites need the (possibly slugged) triage
+    path without reconstructing naming logic — the envelope is the contract."""
+    pr = _unique_n()
+    responses = _preflight_responses(pr, state="MERGED")
+    stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+    try:
+        result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                      responses_file=tmp_path / "gh_responses.json",
+                      extra_args=["--repo", "octocat/widgets"])
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-triage.json"
+    finally:
+        _cleanup_state_files(pr)
+        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+
+
+def test_resume_triage_path_points_at_existing_file(tmp_path):
+    """When the resume point exists only at the legacy spelling, the envelope
+    must locate the data (resume_triage_path), not just flag it — triage_path
+    keeps naming where new saves go."""
+    pr = _unique_n()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    legacy = STATE_DIR / f"{pr}-triage.json"
+    legacy.write_text(json.dumps({"t1": "A"}))
+    (STATE_DIR / f"{pr}.json").write_text(json.dumps(
+        {"url": f"https://github.com/test-owner/test-repo/pull/{pr}"}))
+    responses = _preflight_responses(pr, state="MERGED")
+    stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+    try:
+        result = _run(pr, stub_dir=stub_dir, state_dir=state_dir,
+                      responses_file=tmp_path / "gh_responses.json",
+                      extra_args=["--repo", "octocat/widgets"])
+        assert result.returncode == 0, result.stderr
+        envelope = json.loads(result.stdout)
+        assert envelope["data"]["resume_available"] is True
+        assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-triage.json"
+        assert envelope["data"]["resume_triage_path"] == str(legacy)
+        assert Path(envelope["data"]["resume_triage_path"]).exists()
+    finally:
+        _cleanup_state_files(pr)
+        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
