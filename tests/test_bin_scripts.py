@@ -45,6 +45,7 @@ SCRIPTS = {
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-repo-scope": "bash",
     "swe-workbench-result-check": "python3",
     "swe-workbench-session-scratch-adapter-claude": "bash",
     "swe-workbench-session-scratch-adapter-pi": "bash",
@@ -55,10 +56,10 @@ SCRIPTS = {
 
 # scripts known to call a sibling script by basename (script -> sibling basenames it calls)
 SIBLING_CALLERS = {
-    "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout"],
-    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
+    "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout", "swe-workbench-repo-scope"],
+    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
-    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
+    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
     "swe-workbench-preflight-pr": [
         "swe-workbench-gh-timeout",
         "swe-workbench-fetch-pr",
@@ -66,7 +67,7 @@ SIBLING_CALLERS = {
     ],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
     "swe-workbench-pr-review-threads": ["swe-workbench-gh-timeout", "swe-workbench-reply-and-resolve"],
-    "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral"],
+    "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sweep-residuals": [
         "swe-workbench-skill-script",
@@ -74,6 +75,7 @@ SIBLING_CALLERS = {
         "swe-workbench-clean-ephemeral",
         "swe-workbench-reap-run-dir",
         "swe-workbench-reap-session-scratch",
+        "swe-workbench-repo-scope",
     ],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }

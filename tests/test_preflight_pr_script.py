@@ -286,3 +286,48 @@ def test_preflight_pr_emits_exactly_the_golden_six_field_contract():
         f"6-field list.\nExpected:\n{GOLDEN_EMIT_LINES}\nGot:\n{emit_lines}"
     )
 
+
+
+# ──────────────────────────────────────────────────────
+# Repo self-attribution
+# ──────────────────────────────────────────────────────
+
+def test_preflight_default_fields_include_url_for_repo_attribution():
+    """The default FIELDS set must include `url`: every preflight
+    state file then self-attributes its repository on disk, feeding both
+    swe-workbench-repo-scope --pr-json and sweep-residuals' legacy attribution."""
+    text = SCRIPT.read_text()
+    m = re.search(r'FIELDS="\$\{3:-([^"]*)\}"', text)
+    assert m, "FIELDS default assignment not found in preflight-pr"
+    fields = m.group(1).split(",")
+    assert "url" in fields, (
+        "preflight-pr's default FIELDS must fetch `url` so state files carry their "
+        "owner/repo on disk (repo-scoped ephemeral state,)"
+    )
+
+
+def test_preflight_state_file_resolves_repo_scope():
+    """End-to-end: preflight writes the PR url into $OUT_JSON, and the
+    repo-scope helper resolves the owner-repo slug from that file alone."""
+    with tempfile.TemporaryDirectory() as stub_dir_str:
+        stub_dir = Path(stub_dir_str)
+        pr_json = (
+            '{"state":"OPEN","number":42,"headRefName":"feature-x",'
+            '"baseRefName":"main","headRefOid":"abc123","title":"t","body":"b",'
+            '"author":{"login":"octocat"},"reviewDecision":null,'
+            '"url":"https://github.com/octocat/widgets/pull/42"}'
+        )
+        _make_gh_dispatch_stub(stub_dir, pr_json=pr_json)
+        out_json = _sanctioned_out_json()
+        try:
+            result = _run_preflight("42", out_json, stub_dir=stub_dir)
+            assert result.returncode == 0, f"stderr: {result.stderr!r}"
+            scope = subprocess.run(
+                ["bash", str(ROOT / "bin" / "swe-workbench-repo-scope"),
+                 "--pr-json", str(out_json)],
+                capture_output=True, text=True, env=dict(_CLEAN_ENV),
+            )
+            assert scope.returncode == 0, f"stderr: {scope.stderr!r}"
+            assert scope.stdout == "7-octocat-widgets\n"
+        finally:
+            out_json.unlink(missing_ok=True)

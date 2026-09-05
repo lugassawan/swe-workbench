@@ -45,13 +45,15 @@ CURRENT_USER=$(printf '%s' "$RESULT" | jq -r '.data.current_user')
 PR_BRANCH=$(printf '%s' "$RESULT" | jq -r '.data.pr_branch')
 THREADS_PATH=$(printf '%s' "$RESULT" | jq -r '.data.threads_path')
 PR_COMMENTS_PATH=$(printf '%s' "$RESULT" | jq -r '.data.pr_comments_path')
+TRIAGE_PATH=$(printf '%s' "$RESULT" | jq -r '.data.triage_path')
+RESUME_TRIAGE_PATH=$(printf '%s' "$RESULT" | jq -r '.data.resume_triage_path')
 ELIGIBLE_THREADS=$(printf '%s' "$RESULT" | jq -r '.data.eligible_threads')
 SKIPPED_THREADS_CLARIFIED=$(printf '%s' "$RESULT" | jq -r '.data.skipped_threads_clarified')
 ELIGIBLE_PR_COMMENTS=$(printf '%s' "$RESULT" | jq -r '.data.eligible_pr_comments')
 SKIPPED_PR_COMMENTS=$(printf '%s' "$RESULT" | jq -r '.data.skipped_pr_comments')
 RUN_DIR=$(swe-workbench-new-run-dir address-feedback "$PR")
 ```
-`swe-workbench-address-feedback-fetch` handles `gh auth status`, fetches the PR JSON to `$JSON` (via `swe-workbench-preflight-pr`), and — when the PR is OPEN — paginates review threads and PR-level conversation comments, projecting `eligible`/`skip_reason` onto each entry (resolved/already-clarified for threads; bot/owner/marker/manual-reply exclusion for PR comments) before writing them to `$THREADS_PATH`/`$PR_COMMENTS_PATH`. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files above (including `${PR}-triage.json`, which is a cross-invocation resume point and must never move here).
+`swe-workbench-address-feedback-fetch` handles `gh auth status`, fetches the PR JSON to `$JSON` (via `swe-workbench-preflight-pr`), and — when the PR is OPEN — paginates review threads and PR-level conversation comments, projecting `eligible`/`skip_reason` onto each entry (resolved/already-clarified for threads; bot/owner/marker/manual-reply exclusion for PR comments) before writing them to `$THREADS_PATH`/`$PR_COMMENTS_PATH`. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files above (including `$TRIAGE_PATH`, which is a cross-invocation resume point and must never move here). All four state paths are repo-scoped: the fetch resolves the owner-repo slug itself — explicit `--repo` when the invocation carried a full PR URL, else the checkout's origin remote, else legacy un-scoped names — so same-numbered PRs in different repositories never collide.
 
 If `CURRENT_USER != AUTHOR_LOGIN`, warn:
 > "You are not the PR author (PR author: @AUTHOR_LOGIN, you: @CURRENT_USER). Address-feedback flows are typically owner-side. Continue anyway? Reply `yes` to proceed."
@@ -65,7 +67,7 @@ If `$ELIGIBLE_THREADS` and `$ELIGIBLE_PR_COMMENTS` are both zero, nothing is lef
 
 Then run **Phase 7 — Cleanup** and exit.
 
-If a prior triage save exists at `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, offer to resume from it.
+If the envelope's `resume_available` is true, offer to resume — reading the saved decisions from `$RESUME_TRIAGE_PATH`, which the fetch resolves to wherever the data actually lives (the scoped `$TRIAGE_PATH`, or a pre-upgrade session's legacy un-scoped `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, dual-read). New saves always go to `$TRIAGE_PATH`, so a resumed session migrates to the scoped spelling on its next save.
 
 ### Phase 2 — Worktree
 
@@ -120,7 +122,7 @@ PR comment by @{author}
 [D]eferred — skip this comment
 [Q]uit — save progress and exit
 ```
-If the owner replies `Q` at any point in either loop, save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, then run **Phase 7 — Cleanup**, and exit. Re-invocation resumes from this file (Phase 2 re-creates the worktree).
+If the owner replies `Q` at any point in either loop, save triage state to `$TRIAGE_PATH`, then run **Phase 7 — Cleanup**, and exit. Re-invocation resumes from this file (Phase 2 re-creates the worktree).
 
 ### Phase 4 — Implement + commit
 
@@ -146,12 +148,12 @@ After all replies and resolutions land, emit the follow-up CTA:
 
 > "Want me to ping the reviewer to re-check? Reply `yes` to run `/swe-workbench:review --check-followup <N>`."
 
-On the Phase 5 success path, delete the triage resume-point file. The three run-scoped state files (`${PR}.json`, `${PR}-threads.json`, `${PR}-pr-comments.json`) are reaped by **Phase 7** on every exit instead — `${PR}-triage.json` is reaped here specifically, because completion is what makes the resume point spent, and Phase 7 must never touch it (see Phase 7). The reap runs foreground; failures surface (no `2>/dev/null`):
+On the Phase 5 success path, delete the triage resume-point file. The three run-scoped state files (`$JSON`, `$THREADS_PATH`, `$PR_COMMENTS_PATH` — repo-scoped per) are reaped by **Phase 7** on every exit instead — `$TRIAGE_PATH` is reaped here specifically, because completion is what makes the resume point spent, and Phase 7 must never touch it (see Phase 7). The reap runs foreground; failures surface (no `2>/dev/null`):
 ```bash
-swe-workbench-clean-state-files "/tmp/swe-workbench-address-feedback/${PR}-triage.json"
-[ -e "/tmp/swe-workbench-address-feedback/${PR}-triage.json" ] \
-  && echo "⚠ state file NOT reaped: /tmp/swe-workbench-address-feedback/${PR}-triage.json" >&2 \
-  || echo "✓ state file reaped: /tmp/swe-workbench-address-feedback/${PR}-triage.json"
+swe-workbench-clean-state-files "$TRIAGE_PATH"
+[ -e "$TRIAGE_PATH" ] \
+  && echo "⚠ state file NOT reaped: $TRIAGE_PATH" >&2 \
+  || echo "✓ state file reaped: $TRIAGE_PATH"
 ```
 Then run **Phase 6 — Sync PR metadata**.
 
@@ -196,7 +198,7 @@ Cleanup is **failure-tolerant**: `release` always exits 0, and a genuine removal
 | PR not found | `gh pr view` fails | Abort. |
 | `CURRENT_USER != AUTHOR_LOGIN` | JSON mismatch | Warn + ask to continue. |
 | No outstanding threads | GraphQL returns 0 unresolved | Print "No open threads — nothing to address." Exit. |
-| Owner picks Q mid-triage | Loop exit | Save triage state to `/tmp/swe-workbench-address-feedback/${PR}-triage.json`, run Phase 7 cleanup, then exit. |
+| Owner picks Q mid-triage | Loop exit | Save triage state to `$TRIAGE_PATH`, run Phase 7 cleanup, then exit. |
 | Worktree removal fails | `release`'s `data.removed` is `false` | `release` still exits 0 with `status: "partial"` and a `warnings` entry — log it; do not block. |
 | Reply REST fails (404 — comment deleted) | HTTP 404 | Skip that thread, log "skipped (comment deleted)". |
 | Resolve mutation fails | GraphQL error | Reply already posted — log "reply posted but resolve failed". Continue. Do not roll back the reply. |

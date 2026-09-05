@@ -23,7 +23,7 @@
 #             improvised during review/implementation work). This one is deliberately NOT
 #             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
 #
-# Usage: swe-workbench-sweep-residuals <PR number>
+# Usage: swe-workbench-sweep-residuals <PR number> [--repo owner/repo] [--head-sha <sha>]
 # Stdout contract (always emitted, even on a non-integer arg or nothing found): one
 # JSON envelope, schema swb.sweep-residuals/1 (see shared/docs/runtime-result-contract.md):
 #   data.swept_worktrees      — count of ephemeral worktrees removed
@@ -32,12 +32,26 @@
 #   data.swept_session_files  — count of session scratchpad entries removed (Block D)
 #   data.retained_worktrees   — [{path, reason}] dirty worktrees deliberately preserved,
 #                               never force-removed
+#   data.retained_state_files — [{path, reason}] legacy (legacy) state files whose
+#                               on-disk content did not attribute to the sweeping repo
+#                               (scoped mode only; see shared/docs/repo-scoped-ephemeral-state.md)
 #   data.failed_removals      — [{path, reason}] removal attempted but the artifact is
 #                               still present
-#   data.residual_none        — true iff every count above is 0 and both arrays are empty
-# status is "partial" whenever retained_worktrees or failed_removals is non-empty, "ok"
-# otherwise. Always exits 0 — the caller's cleanup chain must never abort mid-sweep; a
+#   data.residual_none        — true iff every count above is 0 and all three arrays are empty
+# status is "partial" whenever any retained_* or failed_removals array is non-empty,
+# "ok" otherwise. Always exits 0 — the caller's cleanup chain must never abort mid-sweep; a
 # genuine partial failure is expressed through status/data, not the exit code.
+#
+# Repo scoping: --repo owner/repo (the PR record in hand, e.g. from the
+# PR URL or cleanup-merged's own gh pr view) -> cwd origin remote -> empty. Scoped
+# mode sweeps slugged (<slug>-<N>*...) names by construction (ours, never another
+# repo's) and sweeps legacy un-scoped names only when their content attributes to
+# the sweeping repo — a url field, a headRefOid fingerprint vs --head-sha, a
+# repository_url, or the artifact's own git remote. Unattributable legacy files are
+# RETAINED with a reason; an explicitly invalid --repo degrades to retain-only.
+# Unscoped mode (no slug resolved — origin absent, not malformed) keeps legacy
+# sweep semantics for legacy names (swept unconditionally after the caller proved
+# MERGED), plus the legacy worktree receipt, newly covered.
 set -euo pipefail
 
 if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
@@ -50,6 +64,7 @@ SWEPT_STATE_FILES=0
 SWEPT_RUN_DIRS=0
 SWEPT_SESSION_FILES=0
 RETAINED_ITEMS=()
+RETAINED_STATE_ITEMS=()
 FAILED_ITEMS=()
 
 # One jq-encoded {"path":...,"reason":...} object string, appended to a RETAINED_ITEMS/
@@ -61,14 +76,15 @@ _json_item() {
 
 emit_envelope() {
   local status="ok"
-  if [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ]; then
+  if [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ] || [ "${#RETAINED_STATE_ITEMS[@]}" -gt 0 ]; then
     status="partial"
   fi
 
   local residual_none="true"
   if [ "$SWEPT_WORKTREES" -gt 0 ] || [ "$SWEPT_STATE_FILES" -gt 0 ] \
     || [ "$SWEPT_RUN_DIRS" -gt 0 ] || [ "$SWEPT_SESSION_FILES" -gt 0 ] \
-    || [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ]; then
+    || [ "${#RETAINED_ITEMS[@]}" -gt 0 ] || [ "${#FAILED_ITEMS[@]}" -gt 0 ] \
+    || [ "${#RETAINED_STATE_ITEMS[@]}" -gt 0 ]; then
     residual_none="false"
   fi
 
@@ -76,9 +92,10 @@ emit_envelope() {
   # variable" under set -u when expanding a zero-element array's [@] elements, even
   # inside a command substitution; the :- default avoids that without changing the
   # expansion for a non-empty array. jq -s on empty/whitespace-only input yields [].
-  local retained_json failed_json
+  local retained_json failed_json retained_state_json
   retained_json=$(printf '%s\n' "${RETAINED_ITEMS[@]:-}" | jq -cs '.')
   failed_json=$(printf '%s\n' "${FAILED_ITEMS[@]:-}" | jq -cs '.')
+  retained_state_json=$(printf '%s\n' "${RETAINED_STATE_ITEMS[@]:-}" | jq -cs '.')
 
   jq -cn \
     --arg status "$status" \
@@ -87,17 +104,44 @@ emit_envelope() {
     --argjson swept_run_dirs "$SWEPT_RUN_DIRS" \
     --argjson swept_session_files "$SWEPT_SESSION_FILES" \
     --argjson retained_worktrees "$retained_json" \
+    --argjson retained_state_files "$retained_state_json" \
     --argjson failed_removals "$failed_json" \
     --argjson residual_none "$residual_none" \
     '{schema: "swb.sweep-residuals/1", status: $status,
       data: {swept_worktrees: $swept_worktrees, swept_state_files: $swept_state_files,
              swept_run_dirs: $swept_run_dirs, swept_session_files: $swept_session_files,
-             retained_worktrees: $retained_worktrees, failed_removals: $failed_removals,
-             residual_none: $residual_none},
+             retained_worktrees: $retained_worktrees, retained_state_files: $retained_state_files,
+             failed_removals: $failed_removals, residual_none: $residual_none},
       warnings: []}'
 }
 
-N="${1:-}"
+N=""
+REPO_ARG=""
+HEAD_SHA=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)
+      [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --repo requires a value (owner/repo)" >&2; emit_envelope; exit 0; }
+      REPO_ARG="$2"
+      shift 2
+      ;;
+    --head-sha)
+      [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --head-sha requires a value" >&2; emit_envelope; exit 0; }
+      HEAD_SHA="$2"
+      shift 2
+      ;;
+    *)
+      if [ -z "$N" ]; then
+        N="$1"
+        shift
+      else
+        echo "swe-workbench-sweep-residuals: unexpected argument: $1" >&2
+        emit_envelope
+        exit 0
+      fi
+      ;;
+  esac
+done
 
 # Non-integer (or missing) arg: emit the clean envelope and exit 0 — never abort
 # the caller's cleanup chain over a malformed argument.
@@ -117,50 +161,214 @@ SPECIALIST_MODES=(security accessibility dependency performance tests ux)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_envelope; exit 0; }
 RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
 
-# ── Block A: state-file reap (independent of git; candidates are fixed by the
-# flows' own naming conventions) ────────────────────────────────────────────
+# ── Repo-scope resolution (see shared/docs/repo-scoped-ephemeral-state.md) ──
+# Explicit --repo wins (the PR record in hand); else the cwd's origin remote;
+# else the empty slug = unscoped mode (byte-for-byte legacy behavior).
+SCOPE_SLUG=""
+SCOPE_INVALID=""
+if [ -n "$REPO_ARG" ]; then
+  SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$REPO_ARG" 2>/dev/null) || {
+    # Fail CLOSED on explicitly malformed input: this script holds deletion
+    # decisions, so a typo'd --repo degrades to retain-only (legacy state files
+    # kept with a reason, run dirs not globbed), never to an unconditional
+    # legacy sweep. A missing origin (absence, not bad input) still degrades
+    # to the legacy unscoped mode below.
+    echo "swe-workbench-sweep-residuals: invalid --repo value: $REPO_ARG (continuing retain-only)" >&2
+    SCOPE_SLUG=""
+    SCOPE_INVALID=1
+  }
+else
+  SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || SCOPE_SLUG=""
+fi
+PR_REVIEW_DIR="/tmp/swe-workbench-pr-review"
+ADDR_FEEDBACK_DIR="/tmp/swe-workbench-address-feedback"
 
+# GitHub URL forms seen in the state files -> owner-repo slug. Extracts
+# "owner/repo" only, then delegates the actual slug encoding to
+# swe-workbench-repo-scope itself (`--repo owner/repo`) rather than
+# reimplementing it here — a second, independent implementation of the same
+# encoding previously drifted out of sync with escape_owner_repo's fix
+# (reimplementing plain `\1-\2` here reintroduced the exact non-injective
+# join escape_owner_repo was fixed to eliminate), so this is the single
+# source of truth both sides of every comparison now share.
+_url_scope_slug() {
+  local owner_repo
+  owner_repo=$(printf '%s' "$1" | sed -nE \
+    -e 's#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/[0-9]+/?$#\1/\2#p' \
+    -e 's#^https://api\.github\.com/repos/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/?$#\1/\2#p')
+  [ -n "$owner_repo" ] || return 1
+  "$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$owner_repo" 2>/dev/null
+}
+
+# _attribute_legacy_state <file> <basename> — sets RETAIN_REASON (non-empty =
+# retain). Scoped mode only; the per-writer rules are the legacy attribution table.
+_attribute_legacy_state() {
+  local f="$1" base="$2" url oid repo_url rc_path origin_scope sibling
+  RETAIN_REASON=""
+  case "$base" in
+    "$N-triage.json")
+      RETAIN_REASON="legacy triage retained by policy — user decisions, unrecoverable"
+      return
+      ;;
+    "$N-pr-comments.json")
+      repo_url=$(jq -r '.[0].repository_url // empty' "$f" 2>/dev/null) || repo_url=""
+      if [ -z "$repo_url" ] || [ "$repo_url" = "null" ]; then
+        RETAIN_REASON="legacy pr-comments not attributable (no repository_url)"
+      elif [ "$(_url_scope_slug "$repo_url")" = "$SCOPE_SLUG" ]; then
+        return
+      else
+        RETAIN_REASON="legacy pr-comments belong to another repository"
+      fi
+      return
+      ;;
+    "$N-threads.json"|"$N-post-threads-"*".json")
+      # Set-paired with the same invocation's preflight JSON: a refetchable
+      # snapshot, swept iff the sibling is absent (already cleaned) or ours.
+      # The sibling lives in the file's OWN directory — $N-threads.json is an
+      # address-feedback artifact (sibling $ADDR_FEEDBACK_DIR/$N.json), while
+      # $N-post-threads-* live under $PR_REVIEW_DIR.
+      sibling="$(dirname "$f")/$N.json"
+      if [ ! -e "$sibling" ]; then
+        return
+      fi
+      url=$(jq -r '.url // empty' "$sibling" 2>/dev/null) || url=""
+      if [ -n "$url" ] && [ "$url" != "null" ]; then
+        if [ "$(_url_scope_slug "$url")" != "$SCOPE_SLUG" ]; then
+          RETAIN_REASON="paired preflight JSON belongs to another repository"
+        fi
+        return
+      fi
+      oid=$(jq -r '.headRefOid // empty' "$sibling" 2>/dev/null) || oid=""
+      if [ -z "$oid" ] || [ "$oid" = "null" ]; then
+        RETAIN_REASON="paired preflight JSON not attributable"
+      elif [ -z "$HEAD_SHA" ]; then
+        # Mirror the preflight branch: a fingerprint with nothing to compare
+        # against is unattributable, not silently sweepable — the pair must
+        # not diverge (sibling retained, threads removed) in the same pass.
+        RETAIN_REASON="paired preflight JSON not attributable (no --head-sha)"
+      elif [ "$oid" != "$HEAD_SHA" ]; then
+        RETAIN_REASON="paired preflight JSON fingerprint mismatch"
+      fi
+      return
+      ;;
+    "$N-worktree.json")
+      rc_path=$(jq -r '.path // empty' "$f" 2>/dev/null) || rc_path=""
+      if [ -n "$rc_path" ] && [ "$rc_path" != "null" ] && [ -d "$rc_path" ]; then
+        origin_scope=$( (cd "$rc_path" 2>/dev/null && "$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || true )
+        if [ "$origin_scope" = "$SCOPE_SLUG" ]; then
+          return
+        fi
+      fi
+      RETAIN_REASON="legacy worktree receipt not attributable to this repository"
+      return
+      ;;
+  esac
+  # Preflight JSONs ($N.json, $N-followup.json, $N-review-<mode>.json): url
+  # first (scoped writes), headRefOid fingerprint second (legacy writes).
+  url=$(jq -r '.url // empty' "$f" 2>/dev/null) || url=""
+  if [ -n "$url" ] && [ "$url" != "null" ]; then
+    if [ "$(_url_scope_slug "$url")" = "$SCOPE_SLUG" ]; then
+      return
+    fi
+    RETAIN_REASON="legacy preflight JSON belongs to another repository"
+    return
+  fi
+  oid=$(jq -r '.headRefOid // empty' "$f" 2>/dev/null) || oid=""
+  if [ -n "$oid" ] && [ "$oid" != "null" ] && [ -n "$HEAD_SHA" ]; then
+    if [ "$oid" = "$HEAD_SHA" ]; then
+      return
+    fi
+    RETAIN_REASON="legacy preflight JSON headRefOid fingerprint mismatch"
+    return
+  fi
+  RETAIN_REASON="legacy state file not attributable"
+}
+
+# ── Block A: state-file reap ─────────────────────────────────────────────────
+# Legacy (legacy, un-scoped) spellings — swept unconditionally in unscoped
+# mode; attributed one by one in scoped mode. Scoped spellings (when a slug
+# resolved) are ours by construction and swept unconditionally.
 STATE_FILES=(
-  "/tmp/swe-workbench-pr-review/$N.json"
-  "/tmp/swe-workbench-pr-review/$N-followup.json"
-  "/tmp/swe-workbench-address-feedback/$N.json"
-  "/tmp/swe-workbench-address-feedback/$N-threads.json"
-  "/tmp/swe-workbench-address-feedback/$N-pr-comments.json"
-  "/tmp/swe-workbench-address-feedback/$N-triage.json"
+  "$PR_REVIEW_DIR/$N.json"
+  "$PR_REVIEW_DIR/$N-followup.json"
+  "$ADDR_FEEDBACK_DIR/$N.json"
+  "$ADDR_FEEDBACK_DIR/$N-threads.json"
+  "$ADDR_FEEDBACK_DIR/$N-pr-comments.json"
+  "$ADDR_FEEDBACK_DIR/$N-triage.json"
+  "$ADDR_FEEDBACK_DIR/$N-worktree.json"
 )
 # Specialist-mode preflight state file (commands/review.md's Specialist post
 # sub-flow, Step 1): mode-scoped so it never collides with the general/followup
 # state files above.
 for mode in "${SPECIALIST_MODES[@]}"; do
-  STATE_FILES+=("/tmp/swe-workbench-pr-review/$N-review-$mode.json")
+  STATE_FILES+=("$PR_REVIEW_DIR/$N-review-$mode.json")
 done
 # workflow-pr-review-post scopes its own cache by CALLER_TAG (general, followup,
 # a specialist review mode, ...) — nullglob-scoped so a no-match glob expands to
 # zero words instead of the literal pattern (and never trips `set -u` the way an
 # empty array element expansion would on bash 3.2).
 shopt -s nullglob
-for f in /tmp/swe-workbench-pr-review/"$N"-post-threads-*.json; do
+for f in "$PR_REVIEW_DIR"/"$N"-post-threads-*.json; do
   STATE_FILES+=("$f")
 done
 shopt -u nullglob
 
-TO_REAP=()
-for f in "${STATE_FILES[@]}"; do
-  [ -e "$f" ] && TO_REAP+=("$f")
-done
+if [ -n "$SCOPE_SLUG" ]; then
+  SCOPE_STEM="${SCOPE_SLUG}-${N}"
+  STATE_FILES+=(
+    "$PR_REVIEW_DIR/${SCOPE_STEM}.json"
+    "$PR_REVIEW_DIR/${SCOPE_STEM}-followup.json"
+    "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}.json"
+    "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-threads.json"
+    "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-pr-comments.json"
+    "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-triage.json"
+    "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-worktree.json"
+  )
+  for mode in "${SPECIALIST_MODES[@]}"; do
+    STATE_FILES+=("$PR_REVIEW_DIR/${SCOPE_STEM}-review-$mode.json")
+  done
+  shopt -s nullglob
+  for f in "$PR_REVIEW_DIR"/"${SCOPE_STEM}"-post-threads-*.json; do
+    STATE_FILES+=("$f")
+  done
+  shopt -u nullglob
+fi
 
-if [ "${#TO_REAP[@]}" -gt 0 ]; then
+for f in "${STATE_FILES[@]}"; do
+  [ -e "$f" ] || continue
+  base="${f##*/}"
+  # Retain-only mode (invalid --repo): every legacy spelling is kept with a
+  # reason — no attribution is possible without a trustworthy scope.
+  if [ -n "$SCOPE_INVALID" ]; then
+    case "$base" in
+      "$N"|"$N"-*|"$N".*)
+        RETAINED_STATE_ITEMS+=("$(_json_item "$f" "retained: invalid --repo — repository scope unknown")")
+        continue
+        ;;
+    esac
+  fi
+  # Scoped mode: legacy spellings (basename starts with the bare PR number) are
+  # attributed first — a foreign repo's file is retained, never removed.
+  if [ -n "$SCOPE_SLUG" ]; then
+    case "$base" in
+      "$N"|"$N"-*|"$N".*)
+        _attribute_legacy_state "$f" "$base"
+        if [ -n "$RETAIN_REASON" ]; then
+          RETAINED_STATE_ITEMS+=("$(_json_item "$f" "$RETAIN_REASON")")
+          continue
+        fi
+        ;;
+    esac
+  fi
   # swe-workbench-clean-state-files validates all args before deleting any and
   # exits 1 on the first invalid one — never let that abort us under set -e.
-  "$SCRIPT_DIR/swe-workbench-clean-state-files" "${TO_REAP[@]}" >/dev/null 2>&1 || true
-  for f in "${TO_REAP[@]}"; do
-    if [ -e "$f" ]; then
-      FAILED_ITEMS+=("$(_json_item "$f" "state file removal failed")")
-    else
-      SWEPT_STATE_FILES=$((SWEPT_STATE_FILES + 1))
-    fi
-  done
-fi
+  "$SCRIPT_DIR/swe-workbench-clean-state-files" "$f" >/dev/null 2>&1 || true
+  if [ -e "$f" ]; then
+    FAILED_ITEMS+=("$(_json_item "$f" "state file removal failed")")
+  else
+    SWEPT_STATE_FILES=$((SWEPT_STATE_FILES + 1))
+  fi
+done
 
 # ── Block B: worktree + branch reap ─────────────────────────────────────────
 
@@ -175,11 +383,13 @@ if [ -n "${MAIN_REPO:-}" ]; then
   # name — all of these are throwaway review/spec copies except
   # address-feedback, whose branch may be the PR's real head branch.
   WT_LABELS=("pr-review-$N" "pr-followup-$N" "address-feedback-$N")
-  WT_FALLBACKS=("/tmp/swe-workbench-pr-review/$N" "/tmp/swe-workbench-pr-review/$N-followup" "")
+  WT_FALLBACKS=("$PR_REVIEW_DIR/${SCOPE_SLUG:+${SCOPE_SLUG}-}$N" "$PR_REVIEW_DIR/${SCOPE_SLUG:+${SCOPE_SLUG}-}$N-followup" "")
+  WT_LEGACY_FALLBACKS=("$PR_REVIEW_DIR/$N" "$PR_REVIEW_DIR/$N-followup" "")
   WT_DELETE_BRANCH=(1 1 0)
   for mode in "${SPECIALIST_MODES[@]}"; do
     WT_LABELS+=("review-$mode-$N")
-    WT_FALLBACKS+=("/tmp/swe-workbench-pr-review/$mode-$N")
+    WT_FALLBACKS+=("$PR_REVIEW_DIR/${SCOPE_SLUG:+${SCOPE_SLUG}-}$mode-$N")
+    WT_LEGACY_FALLBACKS+=("$PR_REVIEW_DIR/$mode-$N")
     WT_DELETE_BRANCH+=(1)
   done
 
@@ -215,13 +425,36 @@ if [ -n "${MAIN_REPO:-}" ]; then
   # "<mode>-<N>") is not the task label — so the scan above cannot find them.
   # Check the known literal paths directly. address-feedback carries no
   # fallback entry (empty string), so it is skipped here by construction.
-  wi=0
-  while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
-    if [ -z "${WT_PATHS[$wi]}" ] && [ -n "${WT_FALLBACKS[$wi]}" ] && [ -d "${WT_FALLBACKS[$wi]}" ]; then
-      WT_PATHS[wi]="${WT_FALLBACKS[$wi]}"
-    fi
-    wi=$((wi + 1))
-  done
+  # Retain-only mode (invalid --repo): never adopt /tmp fallback dirs by
+  # literal path — the rimba-label porcelain reap above stays active (it is
+  # scoped by git's own worktree registry, not by the flag).
+  if [ -z "$SCOPE_INVALID" ]; then
+    wi=0
+    while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+      if [ -z "${WT_PATHS[$wi]}" ] && [ -n "${WT_FALLBACKS[$wi]}" ] && [ -d "${WT_FALLBACKS[$wi]}" ]; then
+        WT_PATHS[wi]="${WT_FALLBACKS[$wi]}"
+      fi
+      wi=$((wi + 1))
+    done
+  fi
+  # Scoped dual-read: a pre-upgrade acquire left the worktree at
+  # the legacy spelling — remove it only when its own git remote attributes it
+  # to the sweeping repo, else retain it with a reason.
+  if [ -n "$SCOPE_SLUG" ]; then
+    wi=0
+    while [ "$wi" -lt "${#WT_LABELS[@]}" ]; do
+      legacy_fb="${WT_LEGACY_FALLBACKS[$wi]}"
+      if [ -z "${WT_PATHS[$wi]}" ] && [ -n "$legacy_fb" ] && [ "$legacy_fb" != "${WT_FALLBACKS[$wi]}" ] && [ -d "$legacy_fb" ]; then
+        origin_scope=$( (cd "$legacy_fb" 2>/dev/null && "$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || true )
+        if [ "$origin_scope" = "$SCOPE_SLUG" ]; then
+          WT_PATHS[wi]="$legacy_fb"
+        else
+          RETAINED_ITEMS+=("$(_json_item "$legacy_fb" "legacy fallback worktree not attributable to this repository")")
+        fi
+      fi
+      wi=$((wi + 1))
+    done
+  fi
 
   reap_one_worktree() {
     local label="$1" path="$2" delete_branch="$3"
@@ -273,8 +506,34 @@ fi
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
 RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 
-shopt -s nullglob
-for run_dir in "$RUN_ROOT"/*-"$N"-??????; do
+# exact-tag anchored globs. An unanchored `*-$SLUG-$N-??????` would let
+# the `*` absorb a longer foreign slug ending in "-$SLUG" (x/acme-app vs
+# acme/app, same PR N) and reap another repo's dir; anchoring on the exact
+# allowlisted tag forbids it. Unscoped mode anchors on the legacy exact shape
+# (tag-$N-??????) so slugged dirs — any repo's — are never matched there.
+# Retain-only mode (invalid --repo) skips Block C entirely; legacy run dirs
+# left unmatched are owned by new-run-dir's 24h age-gated reaper.
+run_glob=()
+if [ -z "$SCOPE_INVALID" ]; then
+  # review-converge rides along: commands/converge.md sets LOOP_ID="${PR_NUM:-0}",
+  # so a converge loop run against PR <N> allocates review-converge-<slug>-<N>-<rand>.
+  RUN_TAGS=(pr-review pr-followup address-feedback review-converge extend capture audit-emit hotfix)
+  for mode in "${SPECIALIST_MODES[@]}"; do
+    RUN_TAGS+=("review-$mode")
+  done
+  shopt -s nullglob
+  for tag in "${RUN_TAGS[@]}"; do
+    if [ -n "$SCOPE_SLUG" ]; then
+      run_glob+=("$RUN_ROOT/$tag-$SCOPE_SLUG-$N-"??????)
+    else
+      run_glob+=("$RUN_ROOT/$tag-$N-"??????)
+    fi
+  done
+  shopt -u nullglob
+fi
+# ${arr[@]+"${arr[@]}"} — bash 3.2 (stock macOS) throws "unbound variable" under
+# set -u when a nullglob-expanded assignment leaves run_glob with zero elements.
+for run_dir in ${run_glob[@]+"${run_glob[@]}"}; do
   [ -e "$run_dir" ] || continue
   "$SCRIPT_DIR/swe-workbench-reap-run-dir" "$run_dir" >/dev/null 2>&1 || true
   if [ -e "$run_dir" ]; then

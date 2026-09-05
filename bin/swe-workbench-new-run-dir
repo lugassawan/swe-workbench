@@ -13,8 +13,10 @@
 # shared/docs/runtime-result-contract.md: a single trusted value, no eval needed.
 #
 # Usage:
-#   RUN_DIR=$(swe-workbench-new-run-dir pr-review 42)
-#   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-42-a1b2c3
+#   RUN_DIR=$(swe-workbench-new-run-dir pr-review 42 [--repo owner/repo])
+#   # $RUN_DIR is now e.g. /tmp/swe-workbench-run/pr-review-octocat-widgets-42-a1b2c3
+#   # (the owner-repo slug scopes run dirs by repository; without a
+#   #  resolvable slug the legacy <prefix>-<id>-<rand> shape is used)
 #
 # <prefix> must be one of the flow prefixes swe-workbench-reap-run-dir's
 # name-shape allowlist accepts: pr-review, pr-followup, address-feedback,
@@ -35,6 +37,8 @@
 # a time anchor unsafe.
 
 set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
   awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
@@ -64,7 +68,24 @@ case "$ID" in
   ''|*[!0-9]*) reject "id must be a non-negative integer: $ID" ;;
 esac
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Repo scoping: explicit --repo owner/repo wins (the PR record in
+# hand when the invocation carried a full PR URL); otherwise the cwd's origin
+# remote; otherwise the empty slug -> legacy un-scoped naming, so behavior in
+# non-git contexts is byte-for-byte legacy.
+SCOPE_SLUG=""
+case "${3:-}" in
+  --repo)
+    [ -n "${4:-}" ] || reject "--repo requires a value (owner/repo)"
+    SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" --repo "$4") \
+      || reject "invalid --repo value: $4"
+    ;;
+  "") ;;
+  *) reject "unexpected argument: $3 (usage: new-run-dir <prefix> <id> [--repo owner/repo])" ;;
+esac
+if [ -z "$SCOPE_SLUG" ]; then
+  SCOPE_SLUG=$("$SCRIPT_DIR/swe-workbench-repo-scope" 2>/dev/null) || SCOPE_SLUG=""
+fi
+
 REAP="$SCRIPT_DIR/swe-workbench-reap-run-dir"
 
 CANON_TMP=$(cd /tmp 2>/dev/null && pwd -P) || CANON_TMP="/tmp"
@@ -86,7 +107,7 @@ NOW_EPOCH=$(date +%s)
 for entry in "$RUN_ROOT"/*; do
   [ -e "$entry" ] || continue  # no-match glob guard (nullglob not assumed)
   base="$(basename "$entry")"
-  printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)-[0-9]+-[A-Za-z0-9]{6}$' || continue
+  printf '%s' "$base" | grep -qE '^(pr-review|pr-followup|address-feedback|review-[a-z][a-z-]*|extend|capture|audit-emit|hotfix)(-[A-Za-z0-9._-]+)?-[0-9]+-[A-Za-z0-9]{6}$' || continue
   [ -O "$entry" ] || continue
   # GNU (-c) tried first: BSD/macOS stat rejects the unrecognized -c option
   # before touching any file argument, so it fails cleanly with no stdout.
@@ -106,7 +127,12 @@ done
 # Explicit-template form only — `mktemp -d -t prefix` is NOT portable between
 # macOS (BSD mktemp) and GNU mktemp (different -t semantics). mktemp's O_EXCL
 # creation is what makes two concurrent allocations for the same PR distinct.
-RUN_DIR=$(mktemp -d "${RUN_ROOT}/${PREFIX}-${ID}-XXXXXX") || reject "mktemp -d failed"
+if [ -n "$SCOPE_SLUG" ]; then
+  NAME_STEM="${PREFIX}-${SCOPE_SLUG}-${ID}"
+else
+  NAME_STEM="${PREFIX}-${ID}"
+fi
+RUN_DIR=$(mktemp -d "${RUN_ROOT}/${NAME_STEM}-XXXXXX") || reject "mktemp -d failed"
 chmod 0700 "$RUN_DIR"
 
 printf '%s\n' "$RUN_DIR"
