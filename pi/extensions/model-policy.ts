@@ -35,7 +35,7 @@ export function isKnownEffort(value: string | undefined): value is Effort {
 
 /** The providers this policy has a row for. Any other `ctx.model.provider` degrades to the
  *  parent's own current model — see resolveDispatch's `provider-unsupported` FallbackReason. */
-export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai"] as const;
+export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google"] as const;
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 export function isSupportedProvider(value: string): value is SupportedProvider {
@@ -104,6 +104,49 @@ const ZAI_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   max: "xhigh",
 };
 
+/** gemini-3.1-pro-preview's real rungs in the pinned Pi catalog (0.86.1) are {low, medium,
+ *  high} — the 0.84.4 catalog's missing medium is behind us after the Task 1 pin bump. Each cell
+ *  emits the nearest real rung to the portable effort: medium passes through, xhigh/max collapse
+ *  to high exactly where the SDK clamp puts them (probe: clampThinkingLevel(pro, "xhigh") ==
+ *  "high"). Every emitted level is real on the pin — zero nominal-vs-effective divergence (see
+ *  docs/cost-tiers.md's google note). */
+const GOOGLE_OPUS_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+  max: "high",
+};
+
+/** gemini-3.8-flash's real rungs are {low, medium, high} (0.86.1 pin; unlike 3.5/3.7-flash it
+ *  does not declare minimal — moot here, as this policy never emits off/minimal). Each cell
+ *  emits the nearest real rung to the portable effort — xhigh/max collapse to high exactly as
+ *  the SDK clamp would resolve them, so the table is the identity-table analogue for a model
+ *  whose upper rungs are unreal. Google gets a distinct model per tier (unlike zai's one-model
+ *  two-tier compression) — ids carry the tier separation, so no depth bias: sonnet's default
+ *  xhigh lands at high, matching anthropic's sonnet default depth. */
+const GOOGLE_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+  max: "high",
+};
+
+/** Same nearest-real-rung passthrough as sonnet: flash-lite genuinely supports high (probed),
+ *  so a haiku agent's declared effort passes through at its own rung or the nearest real one —
+ *  xhigh/max collapse to high. This matches every other provider's haiku cell, all of which
+ *  default to high (anthropic/zai identity tables); biasing haiku down would silently undercut
+ *  the portable effort the agent declared. Monotone, exhaustive, all-real — same guarantees as
+ *  the other two google tables. */
+const GOOGLE_HAIKU_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+  max: "high",
+};
+
 interface TierPolicy {
   /** Exact catalog id — never a pattern. */
   readonly model: string;
@@ -129,6 +172,11 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
     opus: { model: "glm-5.3", thinking: ZAI_OPUS_THINKING },
     sonnet: { model: "glm-5.3", thinking: ZAI_SONNET_THINKING },
     haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
+  },
+  google: {
+    opus: { model: "gemini-3.1-pro-preview", thinking: GOOGLE_OPUS_THINKING },
+    sonnet: { model: "gemini-3.8-flash", thinking: GOOGLE_SONNET_THINKING },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_HAIKU_THINKING },
   },
 };
 
