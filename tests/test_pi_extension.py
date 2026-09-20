@@ -1802,7 +1802,7 @@ if (registered) {
   execCalls.length = 0;
   notifyCalls.length = 0;
   out.providerUnsupportedFallback = await run(
-    "tiered-agent", "hi", { provider: "google", id: "gemini-x" }, [],
+    "tiered-agent", "hi", { provider: "google-vertex", id: "gemini-x" }, [],
   );
   out.providerUnsupportedExecCalls = execCalls.slice();
   out.providerUnsupportedNotifyCalls = notifyCalls.slice();
@@ -2431,7 +2431,7 @@ def test_subagent_effort_unknown_falls_back_to_parent_model(subagent_root, tmp_p
 
 @requires_node
 def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root, tmp_path_factory):
-    """tiered-agent's tier is known, but ctx.model.provider ("google") has no MODEL_POLICY row —
+    """tiered-agent's tier is known, but ctx.model.provider ("google-vertex") has no MODEL_POLICY row —
     resolution must fall back to the parent's own model unchanged with fallbackReason
     "provider-unsupported", even though the tier itself is recognized."""
     result = _subagent_result(subagent_root, tmp_path_factory)
@@ -2439,7 +2439,7 @@ def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root,
     assert run["ok"] is True
     args = result["providerUnsupportedExecCalls"][0]["args"]
     model_idx = args.index("--model")
-    assert args[model_idx + 1] == "google/gemini-x"
+    assert args[model_idx + 1] == "google-vertex/gemini-x"
     assert "--thinking" not in args
 
     details = run["result"]["details"]
@@ -2711,15 +2711,22 @@ _ZAI_CANDIDATES = [
     {"provider": "zai", "id": "glm-5.2"},
     {"provider": "zai", "id": "glm-5.2-highspeed"},
 ]
-_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES}
+_GOOGLE_CANDIDATES = [
+    {"provider": "google", "id": "gemini-3.1-pro-preview"},
+    {"provider": "google", "id": "gemini-3.7-flash"},
+    {"provider": "google", "id": "gemini-3.8-flash"},
+    {"provider": "google", "id": "gemini-3.5-flash-lite"},
+]
+_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES}
 _PARENT_BY_PROVIDER = {
     "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
     "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
+    "google": {"provider": "google", "id": "gemini-3.8-flash", "thinking": "medium"},
 }
 _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 
-# The ticket's 3x3 default matrix, expected (model id, thinking) per (provider, tier), fed
+# The default matrix, expected (model id, thinking) per (provider, tier), fed
 # through DEFAULT_TIER_EFFORT — same source of truth as test_pi_contract.py's
 # _TICKET_DEFAULT_MATRIX, exercised here via the real resolveDispatch() call site instead of a
 # raw MODEL_POLICY table dump.
@@ -2738,6 +2745,11 @@ _EXPECTED_DEFAULT_CELL = {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
         "haiku": ("glm-5.2-highspeed", "high"),
+    },
+    "google": {
+        "opus": ("gemini-3.1-pro-preview", "high"),
+        "sonnet": ("gemini-3.8-flash", "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
 
@@ -2764,7 +2776,7 @@ def _model_policy_result(tmp_path_factory):
 
     # One case per FallbackReason.
     cases["fallback_provider_unsupported"] = {
-        "parent": {"provider": "google", "id": "gemini-x", "thinking": "medium"},
+        "parent": {"provider": "google-vertex", "id": "gemini-x", "thinking": "medium"},
         "tier": "opus", "effort": "high", "candidates": [],
     }
     cases["fallback_tier_unknown"] = {
@@ -2854,7 +2866,7 @@ def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
     cell = result[label]
     parent = cell["model"]
     case_parent = {
-        "fallback_provider_unsupported": {"provider": "google", "id": "gemini-x"},
+        "fallback_provider_unsupported": {"provider": "google-vertex", "id": "gemini-x"},
         "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5"},

@@ -104,15 +104,15 @@ selection is exact id equality against the candidate pool — never a substring 
 heuristic — so a catalog reshuffle or a new sibling id can never silently re-point a tier at the
 wrong model.
 
-Resolution only covers three providers today — `anthropic`, `openai-codex`, and `zai` — each with
+Resolution covers four providers today — `anthropic`, `openai-codex`, `zai`, and `google` — each with
 an exact model id per tier. Feeding each tier's default effort (the table above) through
 `MODEL_POLICY` reproduces this matrix:
 
-| Tier | anthropic | openai-codex | zai |
-|---|---|---|---|
-| opus | `claude-opus-5:high` | `gpt-5.6-sol:high` | `glm-5.3:max` |
-| sonnet | `claude-sonnet-5:xhigh` | `gpt-5.6-terra:xhigh` | `glm-5.3:high` |
-| haiku | `claude-haiku-4-5:high` | `gpt-5.6-luna:high` | `glm-5.2-highspeed:high` |
+| Tier | anthropic | openai-codex | zai | google |
+|---|---|---|---|---|
+| opus | `claude-opus-5:high` | `gpt-5.6-sol:high` | `glm-5.3:max` | `gemini-3.1-pro-preview:high` |
+| sonnet | `claude-sonnet-5:xhigh` | `gpt-5.6-terra:xhigh` | `glm-5.3:high` | `gemini-3.8-flash:high` |
+| haiku | `claude-haiku-4-5:high` | `gpt-5.6-luna:high` | `glm-5.2-highspeed:high` | `gemini-3.5-flash-lite:high` |
 
 **Portable vs. effective effort.** The `effort:` value in an agent's frontmatter is *portable* —
 the same value Claude Code reads directly as reasoning effort. On Pi, `MODEL_POLICY` translates it
@@ -121,6 +121,8 @@ this translation is the identity (portable effort passes straight through). For 
 `glm-5.3` serves both the `opus` and `sonnet` tier, so thinking level is the only axis left to keep
 `opus` dispatch strictly deeper than `sonnet` dispatch for the same nominal effort — `opus`'s table
 shifts effort up toward `max`, `sonnet`'s shifts it down toward `low`, both clamped at their end.
+For `google`, every cell emits the nearest *real* rung to the portable effort — see the Google
+note below.
 
 **Z.AI clamp caveat (resolved).** The effective thinking level `MODEL_POLICY` emits used to be
 *nominal only* — the installed Pi SDK clamped it further per what its own bundled catalog
@@ -137,7 +139,14 @@ purely nominal. `tests/test_pi_contract.py` pins this directly against the bundl
 so a future catalog change that drops `glm-5.3`'s `thinkingLevelMap` again fails that test
 loudly — the signal to revisit this caveat once more, not silently drift past.
 
-**Fallback.** For any provider outside the three above, an unrecognized/missing `model:` tier, an
+**Google note.** The `google` row is the API-key provider (`GEMINI_API_KEY`); distinct model
+per tier → no depth bias: each cell emits the nearest *real* rung, exactly the SDK clamp's own
+resolution — zero nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider
+provenance (no `google-antigravity` on supported pins), `google-vertex` scope, the id-selection
+rule, and the load-bearing `>=0.86.1` peer floor are recorded once in
+`docs/decisions-task-dispatch.md`'s google ruling.
+
+**Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
 the candidate pool, `pi/extensions/subagent.ts`'s `task` tool falls back to the parent session's
 own current model and thinking level, unchanged — never to something else, never to a new
