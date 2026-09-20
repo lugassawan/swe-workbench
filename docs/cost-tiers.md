@@ -139,13 +139,12 @@ purely nominal. `tests/test_pi_contract.py` pins this directly against the bundl
 so a future catalog change that drops `glm-5.3`'s `thinkingLevelMap` again fails that test
 loudly — the signal to revisit this caveat once more, not silently drift past.
 
-**Google note.** The `google` row is the API-key provider (`GEMINI_API_KEY`; pi removed the
-built-in Gemini CLI / Antigravity logins upstream in 0.71.0 — no `google-antigravity` exists on
-supported pins; `google-vertex`, a separate provider/catalog, is out of scope). Distinct model
+**Google note.** The `google` row is the API-key provider (`GEMINI_API_KEY`); distinct model
 per tier → no depth bias: each cell emits the nearest *real* rung, exactly the SDK clamp's own
-resolution — zero nominal-vs-effective divergence. The `>=0.86.1` peer floor is load-bearing:
-0.85.x hosts dispatch `gemini-3.8-flash` silently nominal-only (degenerate thinking map);
-pre-0.85 hosts fall back `model-unavailable` with a warning. Tests pin table ≡ clamp per cell.
+resolution — zero nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider
+provenance (no `google-antigravity` on supported pins), `google-vertex` scope, the id-selection
+rule, and the load-bearing `>=0.86.1` peer floor are recorded once in
+`docs/decisions-task-dispatch.md`'s google ruling.
 
 **Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
