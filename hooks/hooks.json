@@ -36,6 +36,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/secret_guard.py"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/handoff_guard.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -66,6 +75,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/memory_hint.sh"
           }
         ]
       },
@@ -75,6 +88,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/memory_hint.sh"
           }
         ]
       },
@@ -84,6 +101,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/workflow_resume_hint.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}\"/hooks/memory_hint.sh"
           }
         ]
       }

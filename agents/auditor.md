@@ -2,6 +2,7 @@
 name: auditor
 description: Cold-start codebase audit specialist — readonly multi-domain sweep across security, performance, reliability, tooling, and testing. Surfaces ranked findings with root-cause reasoning chains and counter-evidence calibration. Invoke when you want a time-boxed audit of an unfamiliar codebase, not a single-domain depth-first pass.
 model: sonnet
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-code-review
@@ -163,3 +164,13 @@ through the language server's semantic index.
 > output), state `LSP unavailable — falling back to Grep` once and use Grep
 > for the remainder of this run. Do not retry.
 <!-- END shared/agents/lsp.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections in your context
+actually shaped your guidance, as opposed to skills that were merely present. End your response
+with this line, last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

@@ -32,7 +32,20 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 1. **Scan the current conversation** for actionable plugin-related thoughts: frustrations, lessons learned, complaints about plugin behaviour, feature ideas, or pain points. Collect up to 3 candidates with a one-line framing each.
 
-2. If conversation yields fewer than 3, **scan memory** at `~/.claude/projects/<project-slug>/memory/MEMORY.md` (where `<project-slug>` is derived from the current working directory path by replacing each `/` with `-`, then stripping any resulting leading `-`; e.g. `/Users/foo/bar` → `Users-foo-bar`). Follow symlinks to `feedback_*.md` and `project_*.md` entries referenced there. Collect additional candidates until you have up to 3, prioritising entries that mention the plugin, commands, agents, or skills by name.
+2. If conversation yields fewer than 3, **scan memory** via the runtime:
+   ```bash
+   command -v swe-workbench-memory >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   RESULT=$(swe-workbench-memory show --as claude | swe-workbench-result-check swb.memory/1) || exit 1
+   ```
+   Read entries with `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.store) \(.name) \(.description)"'`
+   — **entry order is the recency signal** (index order, newest first; there is no date
+   frontmatter). Read an entry's full body at its `.data.entries[].path` field — an absolute
+   path resolved per entry by the runtime, so a worktree/cwd-slug merged entry points at the
+   store it actually lives in. Collect additional candidates until you have up to 3,
+   prioritising entries that mention the plugin, commands, agents, or skills by name.
 
 3. Present candidates numbered 1–N (max 3) with a one-line framing each:
    ```
@@ -55,13 +68,17 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 **Granularity:** exactly one issue per selected insight — never bundle multiple insights into a single issue.
 
-1. **Load all memory.** Use the same path recipe as Branch A: `~/.claude/projects/<project-slug>/memory/`. Read `MEMORY.md`, then follow its links to every `feedback_*.md` and `project_*.md` entry it points at. Capture each entry's `name`, `description`, body, and its `type` value (older entries carry a top-level `type:`; newer entries nest it under `metadata:` — read whichever is present). Preserve `MEMORY.md`'s listed order — it is the only recency signal available (no date frontmatter exists on memory entries).
+1. **Load all memory via the runtime** (the runtime preflight from Branch A step 2 applies — do not repeat it):
+   ```bash
+   RESULT=$(swe-workbench-memory show --as claude | swe-workbench-result-check swb.memory/1) || exit 1
+   ```
+   Read every entry the envelope lists, from both stores: `printf '%s' "$RESULT" | jq -r '.data.entries[] | "\(.name) \(.description) \(.type) \(.store) \(.file)"'`. Capture each entry's `name`, `description`, and `type` straight from the envelope — the envelope's `type` field replaces the old dual frontmatter-convention read — plus its body, read from the entry's absolute `.data.entries[].path` field (resolved per entry by the runtime, so a worktree/cwd-slug merged entry points at the store it actually lives in). Preserve the entries' listed order — it is the only recency signal available (no date frontmatter exists). On disk, the claude store is a `MEMORY.md` index linking `feedback_*.md` / `project_*.md` files — shape context only; the envelope already carries every path you need.
 
 2. **Harvest conversation signal.** Separately note which plugin-related themes the current conversation itself touches. Keep this as its own set — it feeds the recency boost in step 4, it is not merged into the memory set.
 
 3. **Cluster into emergent themes.** Group the loaded entries by the semantic theme carried in their `description`/body — clusters emerge from the content itself. This is NOT a fixed taxonomy and not a path-prefix grouping (memory entries have no paths); invent a short theme label per cluster rather than picking from a predefined list. Each cluster becomes one candidate insight.
 
-4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in `MEMORY.md` order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
+4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in the entries' listed order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
 
 5. **Draft one preview body per insight**, using the Synthesis issue body shape below. Run the **Version capture** once, and the **Redaction pass** (delegation step 7) once over every drafted body — both before any display.
 
@@ -89,7 +106,7 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 **Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
 - **Title:** `[feat] <theme>: <concise enhancement>` — the `[feat]` tag drives label discovery to `enhancement` via delegation step 5c.
 - **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets citing the memory entries feeding this theme, by `name` + `type`) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
-- **Footer:** the same `_Reported via ... plugin v<version>, Claude Code <cli-version>._` footer, version captured once and shared across all picked insights.
+- **Footer:** the same `_Reported via ... plugin v<version>, <harness> <cli-version>._` footer, version captured once and shared across all picked insights.
 
 ---
 
@@ -124,16 +141,26 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
 
    ```markdown
    ---
-   _Reported via `/swe-workbench:report-issue` — plugin v<version>, Claude Code <cli-version>._
+   _Reported via `/swe-workbench:report-issue` — plugin v<version>, <harness> <cli-version>._
    ```
 
-   **Version capture (run once, before drafting):**
-   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
-   - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
+   …where `<harness>` renders as `Claude Code` or `Pi`, per the detection below.
+
+   **Harness detection (run once, before version capture).** Do not probe `PATH` — both CLIs can be installed while only one is running. Use the session env var each harness injects into its own bash tool:
+   ```bash
+   [ -n "${PI_SESSION_ID:-}" ] && echo pi || echo claude-code
+   ```
+
+   **Version capture (run once, before drafting).** Run only the two bullets (CLI + plugin) for the harness detected above; skip the other harness's bullets.
+   - **Claude Code — CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
+   - **Claude Code — plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`.
+   - **Pi — CLI version:** `pi --version`.
+   - **Pi — plugin version:** read `~/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json` directly: `python3 -c "import json; print(json.load(open('$HOME/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json'))['version'])" 2>/dev/null`.
+   - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
 
    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
 
-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
+   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, Pi / Pi Coding Agent, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
    - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
      - Email addresses → `[internal-email]`
      - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`

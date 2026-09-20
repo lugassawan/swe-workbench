@@ -1,0 +1,4 @@
+# Representative dispatch prompts for e2e-test-verifier
+run these newly-authored E2E specs and confirm they're not false-green before I trust them
+distrust this green E2E run — confirm the spec actually exercises the stated behaviour
+verify these specs against the detected E2E command and don't just take a pass at face value

@@ -2,6 +2,7 @@
 name: dependency-auditor
 description: Dependency audit specialist — manifest-graph axis covering outdated versions, deprecation, license compatibility, transitive bloat, and lockfile drift across Node, Rust, Go, and Python ecosystems. Invoke when you want a focused supply-chain hygiene report, not a code-level CVE review.
 model: haiku
+effort: high
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-security
@@ -257,3 +258,13 @@ Ticket/PR metadata — use `swe-workbench:ticket-context`, `gh issue view`, or
 `gh pr view` for those. This partial is for reading *file content* from
 external repos only.
 <!-- END shared/agents/external-repo-reading.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections in your context
+actually shaped your guidance, as opposed to skills that were merely present. End your response
+with this line, last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

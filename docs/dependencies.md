@@ -22,6 +22,13 @@ The following MCP servers enable browser-driven E2E testing and console/network 
 
 **Gate behaviour:** when a browser feature is invoked and the required server is absent, the command returns `BLOCKED: … run \`claude mcp add …\` …` and stops. It does not fall back silently or produce partial results. Non-browser `/swe-workbench:test` (unit) and non-web-UI `/swe-workbench:debug` are completely unaffected by these servers.
 
+**On the Pi Coding Agent:** none of the three browser backends above have a Pi equivalent —
+`pi/extensions/` contains no browser/Chrome/Playwright reference of any kind. This is an
+unaddressed gap, not a verified N/A ruling like `docs/decisions-pi-port.md` §1/§2/§3: the
+browser-gated commands (`/swe-workbench:test --mode e2e[-live]`, browser diagnostics in
+`/swe-workbench:debug`) will hit the same `BLOCKED:` message on Pi as when no backend is
+connected on Claude Code, since Pi has nothing registered to satisfy the gate.
+
 ## Language servers (optional, graceful-fallback)
 
 <!-- verified: Claude Code 2.1.237, macOS native, 2026-08-21 -->
@@ -37,7 +44,7 @@ reachable via `Bash` from any harness.
 |---|---|---|---|
 | `pyright-langserver`, `gopls`, `typescript-language-server`, `rust-analyzer`, `clangd`, `jdtls`, `kotlin-language-server`, `ruby-lsp`, `sourcekit-lsp`, `csharp-ls`, `dart`, `bash-language-server` — one per `language-*` skill | `bin/swe-workbench-lsp`, invoked by `swe-workbench:reviewer`, `swe-workbench:auditor`, `swe-workbench:debugger`, `swe-workbench:refactorer` | Whatever your project stack needs, e.g. `npm i -g pyright`, `go install golang.org/x/tools/gopls@latest`; this plugin declares and installs none | Optional |
 
-**Fallback behaviour:** unlike the browser servers above, language-server absence never blocks. Agents attempt one call via `bin/swe-workbench-lsp` (or the native `LSP` tool where an orchestrator can reach it). On exit 2 (a malformed anchor — the caller's own mistake), fix the anchor and retry once. On exit 3/4/5 (no server for the extension or binary missing, timeout, or server/protocol error) — or a persistent exit 2 — state `LSP unavailable — falling back to Grep` once and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries beyond that one anchor-fix attempt. Run `bin/swe-workbench-lsp check` to see per-language availability without spawning a server.
+**Fallback behaviour:** unlike the browser servers above, language-server absence never blocks. Agents attempt one call via `bin/swe-workbench-lsp`. On exit 2 (a malformed anchor — the caller's own mistake), fix the anchor and retry once. On exit 3/4/5 (no server for the extension or binary missing, timeout, or server/protocol error) — or a persistent exit 2 — state `LSP unavailable — falling back to Grep` once and use `Grep` for the remainder of the run. No `BLOCKED:` sentinel, no partial results, no repeated retries beyond that one anchor-fix attempt. Run `bin/swe-workbench-lsp check` to see per-language availability without spawning a server.
 
 ## Claude Code native tools
 
@@ -50,3 +57,10 @@ The following tools are built into Claude Code itself — no plugin install requ
 | `ExitWorktree(action: "keep"\|"remove")` | Returns the session to the main worktree. `"remove"` deletes the linked worktree dir; `"keep"` leaves it on disk. | same |
 
 These are the tools `swe-workbench:workflow-worktree-session` routes to. If a tool is not found, your Claude Code version may predate its introduction — run `claude --version` and update if needed.
+
+**On the Pi Coding Agent:** none of the three tools above have a Pi equivalent — confirmed by
+reading the installed SDK (`ExtensionContext.cwd` is a plain read-only `string`; neither
+`ExtensionContext` nor `ExtensionCommandContext` exposes a `setCwd`). This is a permanent,
+explicit N/A, not a gap: see `docs/decisions-pi-port.md` §2. `pi/extensions/tool-vocab.ts`
+tells a Pi session that `cd <absolute-path>` — the fallback `skills/workflow-worktree-session/SKILL.md`
+already documents for other harnesses — is *the* worktree-anchoring mechanism there, not a last resort.

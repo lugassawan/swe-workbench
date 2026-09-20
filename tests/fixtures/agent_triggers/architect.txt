@@ -1,0 +1,5 @@
+# Representative dispatch prompts for architect
+author an ADR that becomes the written decision record for this technology selection, since no code exists yet
+draft a cross-team RFC for decomposing this service into two independently owned services
+we need a formal decision record for this database technology selection before anyone writes code
+produce a cross-service contract spec as an architecture artifact for the next engineer

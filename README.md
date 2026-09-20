@@ -24,9 +24,17 @@ cd swe-workbench
 /plugin install swe-workbench
 ```
 
+For the [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) (a separate harness from Claude Code — not a `/plugin` install):
+
+```
+pi install git:github.com/lugassawan/swe-workbench
+```
+
+This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/decisions-pi-port.md` for the Pi-specific rulings.
+
 ## What's inside
 
-- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:hotfix`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor`, `/swe-workbench:converge` — see [docs/catalog.md](docs/catalog.md).
+- **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:hotfix`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor`, `/swe-workbench:converge`, `/swe-workbench:handoff` — see [docs/catalog.md](docs/catalog.md).
 - **Subagents** — `swe-workbench:accessibility-auditor`, `swe-workbench:architect`, `swe-workbench:auditor`, `swe-workbench:code-impl`, `swe-workbench:conflict-resolver`, `swe-workbench:contributor-auditor`, `swe-workbench:debugger`, `swe-workbench:dependency-auditor`, `swe-workbench:e2e-test-verifier`, `swe-workbench:e2e-test-writer`, `swe-workbench:migrator`, `swe-workbench:performance-tuner`, `swe-workbench:product-designer`, `swe-workbench:product-manager`, `swe-workbench:redundancy-assessor`, `swe-workbench:refactorer`, `swe-workbench:reviewer`, `swe-workbench:security-auditor`, `swe-workbench:senior-engineer`, `swe-workbench:tech-writer`, `swe-workbench:test-reviewer`, `swe-workbench:test-writer` — see [docs/catalog.md](docs/catalog.md).
 - **Principles** — Clean Architecture, DDD, SOLID, TDD, design patterns, clean code, observability, API design, concurrency, data modeling, error handling, security, product design — auto-hint by trigger keyword.
 - **Languages** — Bash, C#, Dart, Go, Java, Kotlin, Python, Ruby, Rust, SQL, Swift, TypeScript — auto-hint by file extension (subagents load deterministically via catalog injection).
@@ -52,7 +60,7 @@ When Claude Code auto-compacts a long conversation, any in-progress `swe-workben
 resume preamble so the workflow continues at the correct phase — no manual restart needed.
 The hook fires on compaction as well as on plain session startup/resume, and also nudges a
 worktree re-anchor when the session's cwd has drifted from a linked worktree. See
-[docs/workflow-state.md](docs/workflow-state.md) for the schema, lifecycle table, and a
+[shared/docs/workflow-state.md](shared/docs/workflow-state.md) for the schema, lifecycle table, and a
 manual smoke test.
 
 `.claude/cache/` is this repo's ephemeral-state directory — add it to your own repo's

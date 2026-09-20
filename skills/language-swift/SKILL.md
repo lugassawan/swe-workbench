@@ -1,6 +1,6 @@
 ---
 name: language-swift
-description: Swift idioms — optionals, value types, actors, async/await, protocols, and Result builders. Auto-load when working with .swift files, Package.swift, or when the user mentions Swift, SwiftUI, actors, async/await, Sendable, Result builders, or Swift Package Manager.
+description: Swift idioms — optionals, value types, async/await, and Result builders. Auto-load when working with .swift files, Package.swift, or when the user mentions Swift, SwiftUI, actors, Result builders, or Swift Package Manager.
 ---
 
 # Swift

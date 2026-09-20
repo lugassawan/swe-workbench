@@ -1,6 +1,6 @@
 ---
 name: comms-context
-description: Fetch on-call and discussion context from Slack threads and PagerDuty incidents — participants, timeline, and status. Auto-loads on Slack permalinks or PagerDuty incident references. Keywords — Slack, thread, permalink, PagerDuty, incident, on-call, participants.
+description: Fetch on-call and discussion context from Slack threads and PagerDuty incidents — participants, timeline, and status. Auto-loads on Slack permalinks or PagerDuty incident references. Keywords — Slack, thread, PagerDuty, on-call.
 ---
 
 ## When to invoke

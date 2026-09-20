@@ -67,6 +67,9 @@ jobs:
         if: github.actor != 'dependabot[bot]'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           # Strip HTML comments first so example text inside <!-- ... --> blocks
           # (e.g. "Issue: N/A" documentation in the PR template) does not
@@ -79,6 +82,24 @@ jobs:
           if echo "$PR_BODY_VISIBLE" | grep -iqE '^[[:space:]]*(Issue:[[:space:]]+)?N/A([[:space:]]+[—\-].+)?[[:space:]]*$'; then
             echo "Issue reference opted out with N/A — skipping check"
             exit 0
+          fi
+
+          # Allow manually-authored dependency-bump PRs that carry the same
+          # "Bumps <pkg> from <old> to <new>." line Dependabot's own PRs use —
+          # these have no linked issue either, same as the dependabot[bot]-actor case above.
+          # Gated on package.json actually being in the diff (not just body text) so a
+          # contributor can't paste this one line into an unrelated PR to dodge the check.
+          if echo "$PR_BODY_VISIBLE" | grep -qE '^Bumps .+ from .+ to .+\.$'; then
+            # A transient gh api failure falls through to the closing-keyword check below
+            # rather than failing this step outright — a real closing keyword still passes,
+            # and a PR relying solely on this opt-out correctly gets asked to add one instead
+            # of failing on an unrelated API blip.
+            CHANGED_FILES=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename' 2>/dev/null) || CHANGED_FILES=""
+            if echo "$CHANGED_FILES" | grep -qxF "package.json"; then
+              echo "Issue reference opted out with a Dependabot-style bump line — skipping check"
+              exit 0
+            fi
+            echo "Bump-style opt-out line found but package.json is not in this PR's diff — ignoring the opt-out"
           fi
 
           # Require a GitHub closing keyword (case-insensitive).
@@ -105,8 +126,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # Pins the Node that validate.py's check_dispatch_ledger_in_sync() shells out to.
+      # GitHub Actions sets CI=true by default, so that check hard-fails (rather than
+      # warning) if this step is ever removed or the runner image's Node drops below 22.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '22'
       - name: Validate plugin files
         run: bash scripts/validate.sh
+      - name: Audit for undeclared version literals
+        run: bash scripts/bump-version.sh --audit
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -115,11 +144,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Run shellcheck (warning+ on all *.sh + githooks + bin/ wrappers)
+      - name: Run shellcheck (warning+ on *.sh + auto-discovered executable extensionless bash/sh/ksh files)
         uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38  # 2.0.0
         with:
           severity: warning
-          additional_files: 'commit-msg pre-commit pre-push bin/swe-workbench-clean-ephemeral bin/swe-workbench-clean-state-files bin/swe-workbench-diff-line-lookup bin/swe-workbench-doctor bin/swe-workbench-fetch-pr bin/swe-workbench-gh-timeout bin/swe-workbench-new-run-dir bin/swe-workbench-preflight-pr bin/swe-workbench-reap-run-dir bin/swe-workbench-reply-and-resolve bin/swe-workbench-sync-pr-metadata'
           check_together: 'yes'
 
   pytest:
@@ -133,6 +161,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # 3.9 installs FIRST so the later 3.12 setup owns `python3`/`pip`, while `python3.9`
+      # stays addressable — the guard regression test (CI=true) fail-loudly demands it on
+      # every CI pytest run, mirroring the requires_node ratchet's provisioning contract.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.9'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.12'
@@ -143,8 +177,36 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '22'
+      # Installs node_modules so tests/test_pi_contract.py's pinned-catalog tests can verify
+      # MODEL_POLICY's exact ids against the bundled @earendil-works/pi-ai provider data — CI=true
+      # makes their requires_pi_ai_catalog gate fail loudly (not skip) if this step is removed.
+      - run: npm ci
       - run: pip install --require-hashes -r tests/requirements.lock
       - run: pytest tests/ -v
+
+  handoff-py39:
+    name: "handoff:python3.9"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # 3.9 installs FIRST so the later 3.12 setup owns `python3`/`pip` for pytest, while the
+      # 3.9 toolchain stays addressable as `python3.9` — what the guard regression test
+      # discovers. CI=true makes that test fail loudly (not skip) if this job ever disappears.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.9'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r tests/requirements.lock
+      # Explicit node IDs, not -k: a single-test rename must fail this job loudly at
+      # collection instead of silently shrinking the selection to the surviving match.
+      - run: >-
+          pytest tests/test_handoff_script.py::test_handoff_script_avoids_post_3_9_datetime_imports
+          tests/test_handoff_script.py::test_handoff_guard_returns_allow_under_python_3_9 -v
 
   typecheck-pi:
     name: "typecheck:pi"
@@ -157,8 +219,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '22'
-      - run: npm ci --prefix pi
-      - run: npm run typecheck --prefix pi
+      - run: npm ci
+      - run: npm run typecheck
 
   lockfile-check:
     runs-on: ubuntu-latest

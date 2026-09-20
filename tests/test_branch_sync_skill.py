@@ -92,7 +92,7 @@ def test_common_mistakes_documents_ours_theirs_inversion():
     mistakes = body.split("## Common Mistakes")[1]
     assert "--ours" in mistakes and "--theirs" in mistakes
     assert "invert" in mistakes.lower()
-    assert "apply-resolution.sh" in mistakes
+    assert "swe-workbench-apply-conflict-resolution" in mistakes
 
 
 def test_step1_stash_sets_flag_and_step7_restores_it():
@@ -152,7 +152,7 @@ def test_step5_never_calls_ours_theirs_inline():
     body = _body()
     assert "### Step 5" in body
     step5 = body.split("### Step 5")[1].split("### Step 6")[0]
-    assert "apply-resolution.sh" in step5
+    assert "swe-workbench-apply-conflict-resolution" in step5
     # The skill must not instruct calling git checkout --ours/--theirs as an
     # actual invocation (file-separator form) directly in this step — mentioning
     # the flag names in prose (e.g. "never call --ours/--theirs inline") is fine.

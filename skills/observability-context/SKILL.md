@@ -1,6 +1,6 @@
 ---
 name: observability-context
-description: Fetch production observability signals from Sentry — error, exception, stack trace, regression, and alert data. Auto-loads on Sentry references. Returns message/culprit, first-seen, frequency, and a condensed stack trace, always labeled as Phase-1 framing, never a profile.
+description: Fetch production observability signals from Sentry — error, regression, and alert data. Auto-loads on Sentry references. Returns message/culprit, first-seen, always labeled as Phase-1 framing, never a profile.
 ---
 
 ## When to invoke

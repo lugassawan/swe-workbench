@@ -1,6 +1,6 @@
 ---
 name: principle-cost-awareness
-description: Cost awareness principles — FinOps mindset, egress and data-movement charges, right-sizing, scale-to-zero, cost-per-request model, storage tier selection, observability cost, cardinality explosion, log volume. Auto-load when reasoning about cloud costs, egress topology, right-sizing instances, scale-to-zero trade-offs, storage tier selection, log sampling, or FinOps budget constraints.
+description: Cost awareness principles — FinOps mindset, right-sizing, cost-per-request model, storage tier selection, cardinality explosion, log volume. Auto-load when reasoning about cloud costs, right-sizing instances, scale-to-zero trade-offs, or FinOps budget constraints.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-COST-AWARENESS -->
 

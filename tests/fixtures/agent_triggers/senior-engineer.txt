@@ -1,0 +1,4 @@
+# Representative dispatch prompts for senior-engineer
+help me choose between two competing approaches for this service boundary before we commit
+we're scoping a brand new service, advise on the contracts and boundaries before anyone writes code
+weigh the change vectors here and tell me which architectural approach won't need rework in six months

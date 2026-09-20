@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Advisory comment-quality scanner backing the comment-reduction verified gate.
 
+Usage: git diff -M | swe-workbench-comment-scan [--help]
+
 Pure function: unified diff text in on stdin, findings + a footer out on
 stdout. No git access inside this module — callers resolve the diff by
 whatever means their context already established (see shared/agents/
@@ -817,7 +819,13 @@ def format_output(findings: list[Finding], coverage: dict) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    if len(argv) == 1 and argv[0] in ("--help", "-h"):
+        print(__doc__)
+        return 0
+
     try:
         diff_text = sys.stdin.read()
     except Exception as exc:  # fail-open: unreadable stdin

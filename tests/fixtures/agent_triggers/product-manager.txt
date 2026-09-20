@@ -1,0 +1,4 @@
+# Representative dispatch prompts for product-manager
+capture this idea for a caching layer as a well-framed GitHub issue
+turn this bug report into a properly scoped issue with acceptance criteria
+file this rough improvement thought as a GitHub issue in the current repository

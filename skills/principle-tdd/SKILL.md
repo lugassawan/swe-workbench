@@ -1,6 +1,6 @@
 ---
 name: principle-tdd
-description: Test-Driven Development (TDD) — red-green-refactor, test-first, spec first, Arrange-Act-Assert, F.I.R.S.T. principles; writing tests before code; making tests fast and isolated; test doubles (mock, stub, fake, spy), mocking-as-design-feedback, outside-in vs inside-out TDD. Auto-load when implementing a feature TDD-style, fixing a bug with tests, discussing test strategy, reviewing test quality, or writing the test before the implementation.
+description: Test-Driven Development (TDD) — red-green-refactor, spec first, Arrange-Act-Assert; making tests fast and isolated; test doubles (mock, stub, fake, spy), mocking-as-design-feedback, outside-in vs inside-out TDD. Auto-load when implementing a feature TDD-style, fixing a bug with tests, or writing the test before the implementation.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-TDD -->
 

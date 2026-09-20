@@ -1,0 +1,5 @@
+# Representative dispatch prompts for auditor
+I just inherited this codebase, give me a time-boxed audit across security, performance, and reliability
+do a cold-start sweep of this unfamiliar repo and rank the findings
+we're doing due diligence on an acquisition target's codebase, audit it broadly
+run a multi-domain audit of this repo I've never seen before

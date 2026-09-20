@@ -113,12 +113,14 @@ Only after the gate passes, allocate the run dir once:
 
 ```bash
 LOOP_ID="${PR_NUM:-0}"
-eval "$(swe-workbench-new-run-dir review-converge "$LOOP_ID")"
+RUN_DIR=$(swe-workbench-new-run-dir review-converge "$LOOP_ID")
 ```
 
 `review-converge` matches the `review-[a-z][a-z-]*` allowlist in both
 `bin/swe-workbench-new-run-dir` and `bin/swe-workbench-reap-run-dir` — no script edits needed, and
-Phase 6's cleanup works for free.
+Phase 6's cleanup works for free. The allocated name also embeds the owner-repo slug
+(name shape `review-converge-<slug>-<LOOP_ID>-<rand>`, origin-derived, legacy shape when no
+origin resolves), so a converge loop in one repository never collides with another's.
 
 ### Loop state
 
@@ -130,7 +132,7 @@ Two cross-round artifacts, both scoped to this run:
   the convergence predicate for being outside the branch diff — kept distinct from `unfounded[]`
   (see Phase 1b) since the two are different claims about a finding.
 - `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>.json` — the Tier-4
-  checkpoint (see `docs/workflow-state.md`), written at every round boundary so the round count
+  checkpoint (see `shared/docs/workflow-state.md`), written at every round boundary so the round count
   survives compaction. Use `skill: converge`, `phase: round-<N>-review` (or `-fix`, `-verify`),
   `context.notes: run_dir=<RUN_DIR>; cap=<CAP>; floor=Medium; fixed=<n>; rejected=<n>`. Deleted in
   Phase 6.
@@ -213,13 +215,16 @@ jq -c '.[] | select(.anchor == "inline")' "$RUN_DIR/round-${N}-findings.json" | 
     # `diff-line-lookup` does internally — rather than merely falling inside a hunk's numeric
     # range, which would also match unchanged context lines and defeat the "exact line, not just
     # some added line in the hunk" guarantee stated above.
+    # $(0) means the same thing as awk's whole-record variable in every awk — written this way
+    # because Pi's prompt-template argument substitution rewrites a bare dollar-zero token to
+    # the empty string. Do not "simplify" this back to a bare dollar-zero.
     IN_HUNK=$(git diff "origin/$BASE"...HEAD -- "$ROW_PATH" | awk -v line="$ROW_LINE" '
       /^@@/ {
-        if (match($0, /\+[0-9]+/)) new_line = substr($0, RSTART + 1, RLENGTH - 1) + 0
+        if (match($(0), /\+[0-9]+/)) new_line = substr($(0), RSTART + 1, RLENGTH - 1) + 0
         next
       }
       {
-        first = substr($0, 1, 1)
+        first = substr($(0), 1, 1)
         if (first == "+") {
           if (new_line == line) { print "yes"; exit }
           new_line++

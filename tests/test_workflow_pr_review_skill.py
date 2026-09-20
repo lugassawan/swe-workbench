@@ -60,13 +60,18 @@ def test_pr_review_skill_has_owner_repo_guard_clause():
 
 # --- Cleanup call-site assertions (guard bypass fix) ---
 
-def test_pr_review_skill_cleanup_uses_clean_ephemeral_script():
-    """Step 7 background cleanup and pre-flight stale removal must use swe-workbench-clean-ephemeral, not bare rm -rf."""
+def test_pr_review_skill_cleanup_uses_pr_review_worktree_script():
+    """Worktree acquire/release (including the clean-ephemeral
+    delegation and the collision-safe self-heal) live in
+    bin/swe-workbench-pr-review-worktree, not inline SKILL.md prose. Step 2/7 must
+    delegate to it rather than reimplementing rimba add / git worktree add / rm -rf."""
     text = SKILL_MD.read_text()
-    assert "swe-workbench-clean-ephemeral" in text, (
-        "SKILL.md cleanup blocks must invoke swe-workbench-clean-ephemeral — "
-        "bare 'rm -rf $WT' under /Users/... is blocked by the bash guard (exit 2)"
+    assert "swe-workbench-pr-review-worktree" in text, (
+        "SKILL.md Step 2/7 must invoke swe-workbench-pr-review-worktree acquire/release "
+        "rather than inlining worktree create/teardown prose"
     )
+    assert "swe-workbench-pr-review-worktree acquire" in text
+    assert "swe-workbench-pr-review-worktree release" in text
 
 
 def test_pr_review_skill_no_bare_rm_rf_wt():
@@ -172,4 +177,36 @@ def test_pr_review_skill_state_cleanup_has_post_check():
     assert re.search(r'✓ state file reaped:', text), (
         "SKILL.md Step 7 must include a post-reap report line '✓ state file reaped: ...' "
         "so operators can verify cleanup completed without inspecting /tmp by hand"
+    )
+
+
+# --- Reap-on-reject ordering ---
+
+def test_pr_review_skill_followup_gate_precedes_run_dir_allocation():
+    """The followup STATE gate must be hoisted above swe-workbench-new-run-dir
+    allocation — a rejected followup PR must never allocate $RUN_DIR at all,
+    rather than allocating and then leaking it."""
+    text = SKILL_MD.read_text()
+    gate_idx = text.find('[ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]')
+    run_dir_idx = text.find('swe-workbench-new-run-dir "$MODE_TAG" "$PR"')
+    assert gate_idx != -1, "SKILL.md Step 1 must contain the followup STATE gate"
+    assert run_dir_idx != -1, "SKILL.md Step 1 must contain the swe-workbench-new-run-dir call"
+    assert gate_idx < run_dir_idx, (
+        "the followup STATE gate must precede swe-workbench-new-run-dir allocation — "
+        "otherwise a rejected followup PR leaks $RUN_DIR"
+    )
+
+
+def test_pr_review_skill_followup_reject_reaps_json():
+    """The followup-reject branch must reap $JSON before exiting — the PR-keyed
+    state file is otherwise abandoned when the PR turns out to be closed/merged."""
+    text = SKILL_MD.read_text()
+    match = re.search(
+        r'if \[ "\$MODE" = followup \] && \[ "\$STATE" != "OPEN" \]; then\n(.*?)\nfi',
+        text, re.DOTALL,
+    )
+    assert match, "SKILL.md Step 1 must contain the followup-reject if-block"
+    assert 'swe-workbench-clean-state-files "$JSON"' in match.group(1), (
+        'the followup-reject branch must call swe-workbench-clean-state-files "$JSON" '
+        "before exiting, to avoid leaking the PR-keyed state file"
     )

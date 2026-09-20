@@ -1,7 +1,7 @@
 ---
 name: workflow-worktree-session
 orchestrator: true
-description: Use when the user mentions a worktree — to start, switch, resume, continue, or end a worktree session. Routes to `EnterWorktree` / `ExitWorktree` so the running claude moves into the worktree without restart. Covers switching into an existing worktree (`git worktree add` then mid-session entry), resuming or continuing work in an already-created worktree, pivoting current work into a new worktree, and exiting back. Also fires when a user describes the cd-prefix symptom ("I've been cd-ing into the worktree", "I've been cd-prefixing commands"). Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs (consent, ignore-check, baseline tests).
+description: Use when the user mentions a worktree — to start, switch, resume, continue, or end a worktree session. Covers switching into an existing worktree, resuming or continuing work in an already-created worktree, and pivoting current work into a new worktree. Does NOT replace `superpowers:using-git-worktrees` for new feature kickoffs.
 ---
 
 # Workflow: Worktree Session
@@ -56,7 +56,7 @@ Before assuming cd-entry, actively probe for context:
 git rev-parse --git-dir --git-common-dir
 ```
 
-If the two paths differ, cwd is genuinely inside a linked worktree (not the main checkout). This is necessary context but **not proof of which cause applies** — a `cd`-fallback entry produces the identical divergence, since cwd is physically inside the worktree either way. Additionally, check for a fresh `.claude/cache/workflow-state/<branch>.json` (see `docs/workflow-state.md`): a `context.worktree_root` matching the live cwd confirms this branch's workflow was operating in this worktree, but `worktree_root` is written via `git rev-parse --show-toplevel` regardless of entry method — so it does not discriminate either.
+If the two paths differ, cwd is genuinely inside a linked worktree (not the main checkout). This is necessary context but **not proof of which cause applies** — a `cd`-fallback entry produces the identical divergence, since cwd is physically inside the worktree either way. Additionally, check for a fresh `.claude/cache/workflow-state/<branch>.json` (see `shared/docs/workflow-state.md`): a `context.worktree_root` matching the live cwd confirms this branch's workflow was operating in this worktree, but `worktree_root` is written via `git rev-parse --show-toplevel` regardless of entry method — so it does not discriminate either.
 
 Git state alone cannot distinguish cd-entry from compaction-dropped tracking; the harness's internal `EnterWorktree` session state is not observable from outside. When cwd resolves to a linked worktree, state the situation without asserting a definitive cause — e.g. **"tracking may have been lost to compaction — this cannot be confirmed from git state alone, since cd-entry produces identical evidence"** — citing the `--git-dir`/`--git-common-dir` divergence and/or the `worktree_root` match as the (non-discriminating) context, not proof. Either way, proceed to the same recovery below.
 

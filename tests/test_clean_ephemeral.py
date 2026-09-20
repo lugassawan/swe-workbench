@@ -76,9 +76,10 @@ def test_removes_registered_worktree(tmp_path):
     "pr-followup-999",       # workflow-pr-review's followup-mode rimba task label
     "address-feedback-42",
     "pr-review-abc.def-1",
+    "review-security-1282",  # PR-mode specialist /swe-workbench:review rimba task label
 ])
 def test_removes_various_ephemeral_names(tmp_path, name):
-    """All three ephemeral prefix patterns are accepted when the .git file is present."""
+    """All four ephemeral prefix patterns are accepted when the .git file is present."""
     wt = make_linked_worktree(tmp_path, name)
     result = run_script(str(wt))
     assert result.returncode == 0, (

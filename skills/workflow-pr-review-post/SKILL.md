@@ -38,19 +38,22 @@ contract callers must satisfy, not a check this skill performs itself.
 | `CURRENT_USER`/`AUTHOR_LOGIN` | `--current-user`/`--author-login` | optional; empty = identity unknown (self-review flip and auto-approve both stay suppressed — never guesses) |
 | `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, body, anchor}`; `anchor=inline` rows also carry `{path, line}`. **Inline comment bodies must NOT contain the byline/remark** in any form — a `comments[]` body is `finding.body` verbatim; the byline/remark is a review-level concern the script builds once. |
 | `CALLER_TAG` | `--caller-tag` | non-empty — `general`, `followup`, or the specialist mode name; also scopes an optional `--debug-dir` dump (`<tag>-threads.json` / `<tag>-payload.json`) so two callers reviewing the same PR concurrently never collide |
+| `APPROVE_OVER_OPEN_THREADS` | `--approve-over-open-threads` | optional; empty = no override. When non-empty: a single line, ≤200 chars, must not embed the swe-workbench remark — validated by the script, not this skill |
 
 ## Post
 
 ```bash
-command -v swe-workbench-pr-review-submit >/dev/null 2>&1 || {
+command -v swe-workbench-pr-review-submit >/dev/null 2>&1 && command -v swe-workbench-result-check >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
-eval "$(swe-workbench-pr-review-submit \
+RESULT=$(swe-workbench-pr-review-submit \
   --repo "$OWNER/$REPO" --pr "$PR" --head-sha "$HEAD_SHA" --base "$BASE" \
   --decision "$DECISION" --byline "$BYLINE" --caller-tag "$CALLER_TAG" \
   --findings-json "$FINDINGS_JSON_PATH" --blocking-scope "$BLOCKING_SCOPE" \
-  --current-user "$CURRENT_USER" --author-login "$AUTHOR_LOGIN")"
+  --current-user "$CURRENT_USER" --author-login "$AUTHOR_LOGIN" \
+  --approve-over-open-threads "$APPROVE_OVER_OPEN_THREADS" \
+  | swe-workbench-result-check swb.pr-review-submit/1) || exit 1
 ```
 
 This one call replaces the fetch/dedup/pre-validate/assemble/self-review-gate/atomic-submit
@@ -62,24 +65,49 @@ comment rather than dropping them — applies the self-review + diff-scoping dec
 submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
 confirmed 422 (re-fetches HEAD via `headRefOid`, genuinely re-validates/demotes, retries once) and
 a per-comment fallback otherwise. The core never submits APPROVE on self-review — GitHub blocks a
-self-authored `APPROVE` outright, so `EVENT` is forced to `COMMENT` regardless of `$DECISION`. A
-network/5xx failure is **never** blind-retried (no idempotency
-key for this endpoint); the script confirms via a read-your-write check before conceding to the
-fallback. The core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark
-(appended to the byline on a confirmed-public repo only) — callers' own `BYLINE` stays
-identity-only and never embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for
-the full rationale, and
-[`docs/gh-api-field-flags.md`](../../docs/gh-api-field-flags.md) /
-[`docs/shell-echo-vs-printf.md`](../../docs/shell-echo-vs-printf.md) for the shell-side pitfalls
+self-authored `APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of
+`$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
+endpoint); the script confirms via a read-your-write check before conceding to the fallback. The
+core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark (appended to
+the byline on a confirmed-public repo only) — callers' own `BYLINE` stays identity-only and never
+embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for the full rationale, and
+[`shared/docs/gh-api-field-flags.md`](../../shared/docs/gh-api-field-flags.md) /
+[`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md) for the shell-side pitfalls
 building the payload in Python sidesteps entirely.
 
-`eval` sets `POSTED_INLINE`, `POSTED_PR_LEVEL`, `DEDUPED`, `SUBMITTED`, `EVENT`, `DECISION`,
-`REVIEW_URL` — every value `printf %q`-quoted. Finding bodies are never echoed to stdout, so a
-body containing shell metacharacters can never inject into the `eval`.
+The checker validates the envelope (schema `swb.pr-review-submit/1` — see
+[`shared/docs/runtime-result-contract.md`](../../shared/docs/runtime-result-contract.md)) and
+re-emits it unchanged into `$RESULT`, or the pipeline fails and `|| exit 1` aborts before any
+further step. `.data` carries `posted_inline`, `posted_pr_level`, `deduped`, `submitted`, `event`,
+`decision`, `review_url`, `blocked_by_unresolved`. Every field is report-only here — none of them
+gates a branch this skill takes independently of `.data.decision` (a blocking thread already forces
+`decision` to `COMMENT`, see "Semantic shift" below) — so every field is read straight from
+`$RESULT` with `jq` at the point it's used, always `printf '%s' "$RESULT" | jq ...` or `jq
+... <<<"$RESULT"`, **never** `echo "$RESULT" | jq`, per
+[`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md). Finding bodies
+are never echoed to stdout, so a body containing shell metacharacters can never inject into
+anything downstream.
+
+**Semantic shift:** `.data.decision = APPROVE` now means "no Critical/High in this run's findings
+**and** no open (unresolved, non-outdated) review threads on the PR" — not just the former. Any
+unresolved, non-outdated thread force-downgrades `APPROVE` to `COMMENT`, regardless of its
+severity (GitHub threads carry no severity field). This is deliberately severity-blind and
+orthogonal to the `swe-workbench:reviewer` agent's own footer, which still means "no Critical/High
+in this diff, this run" exactly as before — the two criteria can legitimately disagree.
+
+`APPROVE_OVER_OPEN_THREADS` is the one sanctioned way to submit `APPROVE` with open threads still present — when it fires (decision reaches `APPROVE`, `n_blocking > 0`, not self-review), the posted review body gains an `_Approved with {N} unresolved review thread(s) still open — override: {reason}._` line and the stderr "APPROVE downgraded" notice is suppressed for that run. `.data.approve_over_open_threads`/`.data.override_reason` report whether `--approve-over-open-threads` was **passed**, not whether it took effect — both stay `true`/populated even when the override was a no-op (e.g. self-review, or no blocking threads existed to begin with), so neither field alone is proof anything was overridden. `.data.blocked_by_unresolved` also always stays the true, non-zero count regardless of whether the override fired, so it alone isn't proof either. To confirm the override actually **prevented** a downgrade, check both conditions together: `.data.blocked_by_unresolved > 0` (there were blocking threads) **and** `.data.decision == "APPROVE"` (the decision still reached APPROVE despite them) — only that combination is conclusive.
+
+**Residual risk:** GitHub's `isOutdated` reflects diff-*position* staleness (the thread's anchored
+hunk no longer maps cleanly to HEAD), not whether the underlying concern was ever addressed — an
+unrelated edit elsewhere in the file can flip a still-valid, never-addressed thread to outdated,
+silently exempting it from the gate with no explicit action (unlike `isResolved`). Treat an
+outdated-but-unresolved thread as needing manual re-verification, not as settled.
 
 ## Step 5 — Address-feedback CTA (conditional)
 
-Call `AskUserQuestion` when the review produced something actionable — `DECISION = COMMENT`, OR `posted > 0`, OR `deduped > 0` (`posted = POSTED_INLINE + POSTED_PR_LEVEL`):
+Call `AskUserQuestion` when the review produced something actionable — `.data.decision = COMMENT`,
+OR `posted > 0`, OR `.data.deduped > 0` (`posted = .data.posted_inline + .data.posted_pr_level`,
+read from `$RESULT` at this point):
 
 ```json
 {
@@ -95,16 +123,18 @@ Call `AskUserQuestion` when the review produced something actionable — `DECISI
 }
 ```
 
-Substitute the real PR number for `<N>`. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or anything else) → no further action. Suppress silently when `DECISION = APPROVE` and `posted = 0` and `deduped = 0` (post-flip evaluation — a clean approval with nothing posted/deduped has nothing to address). Identity does NOT gate the CTA.
+Substitute the real PR number for `<N>`. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or anything else) → no further action. Suppress silently when `.data.decision = APPROVE` and `posted = 0` and `.data.deduped = 0` (post-flip evaluation — a clean approval with nothing posted/deduped has nothing to address; a blocking thread already forces `.data.decision` away from `APPROVE`, so it needs no separate check here). Identity does NOT gate the CTA.
 
 ## Failure modes
 
 | Failure | Signal | Action |
 |---|---|---|
-| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | `SUBMITTED=false` after a `422`-bearing response | Demoted to the pr-level batch (never dropped); retried once against a re-fetched HEAD, then falls back to the per-comment path |
+| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | `.data.submitted = false` after a `422`-bearing response, `status: "partial"` | Demoted to the pr-level batch (never dropped); retried once against a re-fetched HEAD, then falls back to the per-comment path |
 | Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
-| Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `EVENT=COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
-| All findings dedup-matched, or the pr-level batch post fails | `POSTED_INLINE=0` and `POSTED_PR_LEVEL=0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
+| Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
+| All findings dedup-matched, or the pr-level batch post fails | `.data.posted_inline = 0` and `.data.posted_pr_level = 0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
+| Unresolved, non-outdated review thread(s) exist from a prior review | `.data.blocked_by_unresolved > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design. Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`; or pass `APPROVE_OVER_OPEN_THREADS` to submit `APPROVE` anyway for a thread deliberately left open. |
+| Every submit path exhausted with nothing landed | `status: "partial"`, `.data.submitted = false` | The script still exits 0 (never aborts the caller's flow); treat every count in `.data` as best-effort rather than a confirmed post. |
 
 ## Common mistakes
 
@@ -113,4 +143,5 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 | Re-deriving the fetch/dedup/pre-validate/submit mechanism inline instead of calling `swe-workbench-pr-review-submit` | The script is the single source of truth for posting mechanics — every caller invokes it the same way |
 | Passing a byline that embeds the swe-workbench remark or `posted`/`deduped` counts | The script appends both once it knows the real counts and confirmed repo visibility — an embedded byline fails input-contract validation |
 | Assuming pr-level findings dedup across runs | They don't (known v1 limitation) — re-running the same specialist mode on an unchanged PR re-posts the batch |
-| Reading `$POSTED_INLINE`/etc. before checking `$SUBMITTED` | A `false` `SUBMITTED` means the fallback exhausted its options; treat the counts as best-effort in that case |
+| Reading `.data.posted_inline`/etc. before checking `.data.submitted` (or `status`) | A `false` `.data.submitted` (`status: "partial"`) means the fallback exhausted its options; treat the counts as best-effort in that case |
+| Using `echo "$RESULT" \| jq` instead of `printf '%s' "$RESULT" \| jq` or `jq ... <<<"$RESULT"` | `echo` on a JSON-bearing variable can corrupt it — see `shared/docs/shell-echo-vs-printf.md` |

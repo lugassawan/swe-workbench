@@ -1,6 +1,6 @@
 """Existence, executability, shebang, and syntax checks for bin/ scripts (issue #571, #550).
 
-bin/ is the sole home for these fifteen scripts — runtime/ is retired, and there is no
+bin/ is the sole home for these scripts — runtime/ is retired, and there is no
 wrapper/target split left to check. Each must carry the swe-workbench- prefix, be executable,
 start with a matching #!/usr/bin/env <interp> shebang, never reference $CLAUDE_PLUGIN_ROOT,
 and resolve any sibling script via dirname "$0"/"${BASH_SOURCE[0]}" (bash) or
@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
@@ -21,6 +23,9 @@ BIN = ROOT / "bin"
 
 # bare command name -> interpreter
 SCRIPTS = {
+    "swe-workbench-address-feedback-fetch": "python3",
+    "swe-workbench-address-feedback-worktree": "bash",
+    "swe-workbench-apply-conflict-resolution": "bash",
     "swe-workbench-clean-ephemeral": "bash",
     "swe-workbench-clean-state-files": "bash",
     "swe-workbench-comment-scan": "python3",
@@ -28,24 +33,50 @@ SCRIPTS = {
     "swe-workbench-doctor": "bash",
     "swe-workbench-fetch-pr": "bash",
     "swe-workbench-gh-timeout": "bash",
+    "swe-workbench-handoff": "python3",
     "swe-workbench-lsp": "python3",
+    "swe-workbench-memory": "python3",
     "swe-workbench-new-run-dir": "bash",
+    "swe-workbench-preflight-commit": "python3",
     "swe-workbench-preflight-pr": "bash",
     "swe-workbench-pr-review-submit": "python3",
+    "swe-workbench-pr-review-threads": "python3",
+    "swe-workbench-pr-review-worktree": "bash",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",
+    "swe-workbench-repo-scope": "bash",
+    "swe-workbench-result-check": "python3",
+    "swe-workbench-session-scratch-adapter-claude": "bash",
+    "swe-workbench-session-scratch-adapter-pi": "bash",
     "swe-workbench-skill-script": "bash",
+    "swe-workbench-sweep-residuals": "bash",
     "swe-workbench-sync-pr-metadata": "bash",
 }
 
 # scripts known to call a sibling script by basename (script -> sibling basenames it calls)
 SIBLING_CALLERS = {
+    "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout", "swe-workbench-repo-scope"],
+    "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
-    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir"],
-    "swe-workbench-preflight-pr": ["swe-workbench-gh-timeout", "swe-workbench-fetch-pr"],
+    "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
+    "swe-workbench-preflight-pr": [
+        "swe-workbench-gh-timeout",
+        "swe-workbench-fetch-pr",
+        "swe-workbench-clean-state-files",
+    ],
     "swe-workbench-pr-review-submit": ["swe-workbench-gh-timeout", "swe-workbench-diff-line-lookup"],
+    "swe-workbench-pr-review-threads": ["swe-workbench-gh-timeout", "swe-workbench-reply-and-resolve"],
+    "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
+    "swe-workbench-sweep-residuals": [
+        "swe-workbench-skill-script",
+        "swe-workbench-clean-state-files",
+        "swe-workbench-clean-ephemeral",
+        "swe-workbench-reap-run-dir",
+        "swe-workbench-reap-session-scratch",
+        "swe-workbench-repo-scope",
+    ],
     "swe-workbench-sync-pr-metadata": ["swe-workbench-gh-timeout"],
 }
 
@@ -241,6 +272,32 @@ def test_e2e_skill_script_rejects_traversal():
         assert result.returncode == 1, f"expected rejection for skill={skill!r} script={script!r}"
         assert result.stdout == ""
         assert result.stderr.strip(), f"expected a stderr message for skill={skill!r} script={script!r}"
+
+
+# ──────────────────────────────────────────────
+# --help / -h conformance: every script must respond to a sole --help/-h
+# argument with exit 0 and non-empty, script-identifying stdout — not just
+# rc == 0, which both swe-workbench-doctor's old "always exits 0" behavior
+# and swe-workbench-gh-timeout's unhandled-passthrough behavior would
+# satisfy vacuously.
+# ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", sorted(SCRIPTS))
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_flag_exits_zero_with_identifying_stdout(name, flag):
+    result = subprocess.run(
+        [str(BIN / name), flag],
+        capture_output=True, text=True,
+        env=dict(_CLEAN_ENV),
+    )
+    assert result.returncode == 0, (
+        f"bin/{name} {flag} must exit 0, got {result.returncode} (stderr: {result.stderr!r})"
+    )
+    assert result.stdout.strip(), f"bin/{name} {flag} must print non-empty stdout"
+    assert name in result.stdout, (
+        f"bin/{name} {flag} stdout must name the script itself, got: {result.stdout!r}"
+    )
 
 
 def test_e2e_skill_script_requires_both_args():

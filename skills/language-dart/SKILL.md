@@ -1,6 +1,6 @@
 ---
 name: language-dart
-description: Dart idioms — null safety, async/await, Futures and Streams, widget composition, and Riverpod/Bloc app architecture. Auto-load when working with .dart files, pubspec.yaml, or when the user mentions Dart, Flutter, widgets, Riverpod, Bloc, Streams, or null safety.
+description: Dart idioms — null safety, Futures and Streams, widget composition, and Riverpod app architecture. Auto-load when working with .dart files, pubspec.yaml, or when the user mentions Dart, Flutter, widgets, Riverpod, Streams, or null safety.
 ---
 
 # Dart

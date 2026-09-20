@@ -1,0 +1,4 @@
+# Representative dispatch prompts for reviewer
+I'm reviewing this PR — check correctness, design, and comment quality, not just one narrow axis
+this completed feature needs a full review covering correctness, security, design, and missing tests
+I'm reviewing this diff for a completed feature — check correctness, design, missing tests, and comment quality

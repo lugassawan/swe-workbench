@@ -23,7 +23,7 @@ updates:
       - dependency-name: "pip"
 
   - package-ecosystem: npm
-    directory: "/pi"
+    directory: "/"
     schedule:
       interval: weekly
     commit-message:

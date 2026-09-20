@@ -1,6 +1,6 @@
 ---
 name: principle-version-control
-description: Version control & collaboration hygiene — atomic commits (one logical change), commit-message quality (imperative subject, body explains why), branching strategy (feature-branch vs trunk-based), rebase vs merge trade-offs, squash vs preserve history, PR description quality (what/why/how-to-test). Auto-load when discussing commit hygiene, writing commit messages, choosing a branching strategy, debating rebase vs merge, deciding when to squash, or reviewing PR description quality.
+description: Version control & collaboration hygiene — atomic commits (one logical change), commit-message quality (imperative subject, body explains why), branching strategy (feature-branch vs trunk-based), rebase vs merge trade-offs. Auto-load when discussing commit hygiene, writing commit messages, choosing a branching strategy, debating rebase vs merge, deciding when to squash, or reviewing PR description quality.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-VERSION-CONTROL -->
 

@@ -1,0 +1,4 @@
+# Representative dispatch prompts for e2e-test-writer
+explore this live app in the browser via Playwright MCP and author durable E2E spec files with browser teardown
+drive the browser through the checkout flow — snapshot, interact, assert — and write a durable spec
+author the E2E spec files during the authoring phase, before the verifier runs them

@@ -1,6 +1,6 @@
 ---
 name: language-kotlin
-description: Kotlin idioms — null safety, coroutines, sealed interfaces, scope functions, and Flow. Auto-load when working with .kt files, build.gradle.kts, or when the user mentions Kotlin, coroutines, suspend, StateFlow, sealed interface, or Kotlin DSL.
+description: Kotlin idioms — null safety, sealed interfaces, scope functions, and Flow. Auto-load when working with .kt files, build.gradle.kts, or when the user mentions Kotlin, coroutines, StateFlow, or Kotlin DSL.
 ---
 
 # Kotlin

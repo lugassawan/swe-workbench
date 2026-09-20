@@ -116,9 +116,11 @@ For **each** file in `UNMERGED`:
 3. Prompt for one of: **keep-mine**, **keep-main**, **manual**.
    - **keep-mine / keep-main**: apply via
      ```bash
-     swe-workbench-skill-script workflow-branch-sync apply-resolution.sh "<file>" "<mine|main>" "<merge|rebase>"
+     swe-workbench-apply-conflict-resolution --file "<file>" --intent "<mine|main>" --operation "<merge|rebase>"
      ```
-     This script does the ours/theirs translation (see Common Mistakes) and stages the file — do not call `git checkout --ours/--theirs` directly from this skill.
+     This command does the ours/theirs translation (see Common Mistakes), validates a
+     merge/rebase is actually in progress and matches the declared `--operation`, and stages
+     the file — do not call `git checkout --ours/--theirs` directly from this skill.
    - **manual**: open the file in place for the user to edit, wait for confirmation. Before staging, verify no conflict markers remain: `grep -qE '^(<{7}|={7}|>{7})' "<file>"` must find **nothing**. If a marker is still present, do not stage — warn the user and re-prompt for confirmation instead of silently committing broken content. Once clean, `git add "<file>"`.
 
 After every file in `UNMERGED` has been resolved and staged:
@@ -174,7 +176,8 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | User declines to stash a dirty tree | User says no at Step 1 | Abort. Do not force-stash. |
 | rimba worktree but binary/MCP both unavailable mid-session | `$RIMBA` empty and MCP not active | Fall through to the shell fallback — never block on rimba's absence. |
 | Derived task isn't a rimba-managed worktree | `Error: worktree not found for task "<task>"` from the rimba binary (or the MCP equivalent) | Fall through to the shell fallback — this is expected for branches not created via `rimba add`, not a sync failure. |
-| A conflicting file was deleted on the chosen side | `apply-resolution.sh` reports `git checkout` failed with "does not have our/their version" | Handled in-script: resolves as `git rm` instead of aborting — no skill-level action needed. |
+| A conflicting file was deleted on the chosen side | `swe-workbench-apply-conflict-resolution` reports `git checkout` failed with "does not have our/their version" | Handled in-script: resolves as `git rm` instead of aborting — no skill-level action needed. |
+| Declared `--operation` doesn't match the operation git is actually running | `swe-workbench-apply-conflict-resolution` exits non-zero naming both the declared and detected operation, with no mutation | Re-run Step 4 (`detect-conflicts.sh`) to get the current `OPERATION` and pass that — never guess or retry with the same value. |
 | Push requested after a rebase without `--force-with-lease` | N/A — this skill always uses `--force-with-lease` under rebase | N/A — documented so a future edit doesn't regress to plain `--force`. |
 | Clean sync with `SYNC_STRATEGY=rebase` has no push path | N/A — this skill branches Step 7 on `SYNC_STRATEGY`, not `OPERATION` (which is `none` on a clean sync) | N/A — documented so a future edit doesn't regress to reading `OPERATION` for push branching. |
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 7 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
@@ -188,7 +191,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 
 | Mistake | Fix |
 |---------|-----|
-| Treat `--ours`/`--theirs` as the user's "mine"/"main" intent directly | Never. Under a **merge**, `--ours` = HEAD (your branch, "mine"), `--theirs` = the incoming default branch ("main"). Under a **rebase**, git inverts this: `--ours` = the rebase target ("main"), `--theirs` = your replayed commits ("mine"). Always route through `apply-resolution.sh`, which does this translation — never call `git checkout --ours/--theirs` inline. |
+| Treat `--ours`/`--theirs` as the user's "mine"/"main" intent directly | Never. Under a **merge**, `--ours` = HEAD (your branch, "mine"), `--theirs` = the incoming default branch ("main"). Under a **rebase**, git inverts this: `--ours` = the rebase target ("main"), `--theirs` = your replayed commits ("mine"). Always route through `swe-workbench-apply-conflict-resolution`, which does this translation — never call `git checkout --ours/--theirs` inline. |
 | Assume `mcp__rimba__sync` defaults match this skill's defaults | They don't. rimba's `sync` **rebases by default** (pass `merge: true` for merge) and **pushes by default** (pass `no_push: true` to suppress it). This skill defaults to **merge** and **never** auto-pushes. Always pass `no_push: true` / `--no-push` regardless of strategy. |
 | Hardcode `main` as the default branch | Never. `preflight-guard.sh` detects `DEFAULT_BRANCH` via `gh repo view` with a `git symbolic-ref` fallback — the plugin runs against arbitrary repos. |
 | Treat the first `git rebase --continue` as "done" | A rebase replays one commit at a time and can pause again on the very next one. Re-run `detect-conflicts.sh` after every `--continue` and loop back into Step 5 until `OPERATION=none`. |

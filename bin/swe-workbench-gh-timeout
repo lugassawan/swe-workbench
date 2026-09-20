@@ -4,7 +4,15 @@
 # Degrades to plain `gh` when neither `timeout` nor `gtimeout` (macOS/coreutils) is present.
 # On timeout, exits 124 and prints a diagnostic to stderr so a stall is not misreported
 # by a caller (e.g. swe-workbench-fetch-pr's "PR not found" branch).
+# Usage: swe-workbench-gh-timeout <gh-subcommand> [args...]
+# A sole --help/-h argument prints this header instead of running gh — pass a subcommand first
+# (e.g. `swe-workbench-gh-timeout api --help`) to reach gh's own --help for that subcommand.
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
 
 secs="${GH_TIMEOUT_SECS:-60}"
 # Require >=1: a 0 duration means "disable the timer" to GNU timeout/gtimeout, which would

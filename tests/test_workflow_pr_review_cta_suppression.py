@@ -62,8 +62,9 @@ def test_cta_outcome_axis_present():
     """The CTA emission block must reference the outcome axis conditions."""
     text = POST_CORE_SKILL.read_text()
     block = _suppression_block(text)
-    assert "DECISION = COMMENT" in block or "DECISION=COMMENT" in block, (
-        "CTA block must mention DECISION = COMMENT as an actionable outcome"
+    assert ".data.decision = COMMENT" in block or ".data.decision=COMMENT" in block, (
+        "CTA block must mention .data.decision = COMMENT as an actionable outcome — "
+        "field reads moved from a shell $DECISION var to the .data.decision envelope path"
     )
     assert "posted > 0" in block, "CTA block must mention posted > 0 as an actionable outcome"
     assert "deduped > 0" in block, "CTA block must mention deduped > 0 as an actionable outcome"
@@ -96,14 +97,20 @@ def test_cta_uses_ask_user_question():
 
 def test_consumers_delegate_cta_not_duplicate_it():
     """workflow-pr-review (both first-pass and followup modes) must NOT re-duplicate
-    the CTA mechanism — it delegates to the core instead (issue #499)."""
+    the CTA mechanism — it delegates to the core instead (issue #499).
+
+    Note: workflow-pr-review's own Step 5.5 (own-thread verification/override) calls
+    AskUserQuestion for an unrelated, differently-scoped prompt (open-thread override,
+    not the address-feedback CTA) — so this test pins the absence of the CTA's own
+    question text specifically, not a blanket ban on the AskUserQuestion tool name.
+    """
     for skill_name in ("workflow-pr-review",):
         text = (ROOT / "skills" / skill_name / "SKILL.md").read_text()
         assert "swe-workbench:workflow-pr-review-post" in text, (
             f"{skill_name}/SKILL.md must invoke swe-workbench:workflow-pr-review-post "
             "instead of re-implementing the CTA/dedup/submit mechanism inline."
         )
-        assert "AskUserQuestion" not in text, (
-            f"{skill_name}/SKILL.md must not duplicate the AskUserQuestion CTA block — "
+        assert "Want me to help address this feedback?" not in text, (
+            f"{skill_name}/SKILL.md must not duplicate the CTA's AskUserQuestion block — "
             "that mechanism now lives solely in workflow-pr-review-post/SKILL.md."
         )

@@ -12,9 +12,17 @@
 # from any cwd, including an ephemeral PR worktree.
 set -euo pipefail
 
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 PR="${1:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
 OUT_JSON="${2:?Usage: swe-workbench-preflight-pr <PR> <out_json> [fields]}"
-FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision}"
+# `url` rides along for repo self-attribution: every state file
+# carries its owner/repo on disk (swe-workbench-repo-scope --pr-json, and
+# sweep-residuals' legacy-artifact attribution both read it).
+FIELDS="${3:-state,number,headRefName,baseRefName,headRefOid,title,body,author,reviewDecision,url}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -22,6 +30,20 @@ bash "$SCRIPT_DIR/swe-workbench-gh-timeout" auth status >/dev/null || {
   echo "gh not authenticated. Run 'gh auth login'." >&2
   exit 1
 }
+
+# The fetch below creates $OUT_JSON. Every abort past this point is this
+# script's own failure, so it owns removing the artifact it created --
+# callers structurally cannot, because eval "$(...)" discards this script's
+# exit status. Cleanup errors are suppressed: on an error path the original
+# failure is the news, and a reap complaint must not mask it. A function
+# (rather than an inline trap string) so shellcheck can track `rc`'s
+# assignment within its own scope.
+_preflight_pr_cleanup() {
+  local rc=$?
+  [ "$rc" -eq 0 ] || bash "$SCRIPT_DIR/swe-workbench-clean-state-files" "$OUT_JSON" >/dev/null 2>&1 || true
+  exit "$rc"
+}
+trap _preflight_pr_cleanup EXIT
 
 bash "$SCRIPT_DIR/swe-workbench-fetch-pr" "$PR" "$OUT_JSON" "$FIELDS"
 

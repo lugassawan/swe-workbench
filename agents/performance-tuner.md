@@ -2,6 +2,7 @@
 name: performance-tuner
 description: Performance triage specialist — profile-driven hotspot analysis for confirmed bottlenecks. Refuses speculative optimization requests by demanding profiling evidence first. Invoke when you have a profile (flame graph, allocation report, query log, benchmark) and need a ranked hotspot read with optimization recommendations, not when you "feel" something is slow.
 model: sonnet
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-performance
@@ -201,3 +202,13 @@ Group findings by severity, highest first: Critical → High → Medium → Low.
 
 If no findings, say so explicitly: "No \<domain\> issues found in this diff." Silence is not a passing grade.
 <!-- END shared/agents/severity-output-contract.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections in your context
+actually shaped your guidance, as opposed to skills that were merely present. End your response
+with this line, last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

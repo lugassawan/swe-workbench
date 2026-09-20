@@ -1,6 +1,6 @@
 ---
 name: principle-testing
-description: Testing strategy and architecture — test pyramid (unit / integration / e2e), test doubles taxonomy (stub / mock / spy / fake), coverage-vs-confidence, mutation testing, flaky-test triage, contract testing, property-based and characterization tests, fixtures and test data builders. Distinct from principle-tdd which covers the red-green-refactor micro-cycle. Auto-load when discussing test strategy, mock vs real dependency, coverage adequacy, test pyramid balance, flaky test diagnosis, contract testing, or test architecture.
+description: Testing strategy and architecture — test pyramid (unit / integration / e2e), test doubles taxonomy (stub / mock / spy / fake), coverage-vs-confidence, mutation testing, flaky-test triage, contract testing, fixtures and test data builders. Distinct from principle-tdd which covers the red-green-refactor micro-cycle. Auto-load when discussing test strategy, mock vs real dependency, coverage adequacy, test pyramid balance, flaky test diagnosis, or test architecture.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-TESTING -->
 

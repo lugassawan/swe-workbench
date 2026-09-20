@@ -1,6 +1,6 @@
 ---
 name: workflow-bug-triage
-description: Use when investigating a bug to root-cause and FILE a GitHub issue rather than fixing immediately — counterpart to /swe-workbench:debug (which patches). Enforces the Iron Law (no patches without root cause), runs a 4-phase loop (Investigation, Pattern Analysis, Hypothesis, File issue), and produces a structured issue with code-path table and impact assessment.
+description: Use when investigating a bug to root-cause and FILE a GitHub issue rather than fixing immediately — counterpart to /swe-workbench:debug (which patches). Enforces the Iron Law (no patches without root cause), and produces a structured issue with code-path table and impact assessment.
 orchestrator: true
 ---
 
@@ -48,7 +48,7 @@ If `superpowers:systematic-debugging` is unavailable, run the same loop inline �
 
 ## Checkpoint behavior
 
-After entering each phase, write the workflow state file so the investigation can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). After Phase 4 (issue filed), delete the state file.
+After entering each phase, write the workflow state file so the investigation can survive auto-compaction (see `shared/docs/workflow-state.md` for the schema and path). After Phase 4 (issue filed), delete the state file.
 
 ## 4-phase flow
 

@@ -1,6 +1,6 @@
 ---
 name: workflow-development
-description: "Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end — delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, run the 5-phase implementation flow, or orchestrate parallel agents (Mode C)."
+description: "Development workflow — full lifecycle from Branch → Implement → Verify → Review → Deliver. Activated by /swe-workbench:implement, /swe-workbench:design, /swe-workbench:refactor, /swe-workbench:debug, /swe-workbench:test, /swe-workbench:architect, /swe-workbench:migrate, and /swe-workbench:document when the plan being authored modifies the codebase (Mode A) or when driving an implementation (Mode B). Entry point to execute a written implementation plan end to end — delegates to superpowers:executing-plans and superpowers:subagent-driven-development with the full 5-phase lifecycle. Skip for pure design / analysis output. Can also be invoked directly to author a Workflow section, or orchestrate parallel agents (Mode C)."
 orchestrator: true
 ---
 
@@ -194,7 +194,7 @@ Reproduce the template's `## Workflow` body **in full and verbatim** — copy ev
 ## Implementation-Time Behavior (Mode B)
 
 1. **Announce transitions**: `Phase N complete — <summary>. Moving to Phase N+1: <name>.`
-2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `docs/workflow-state.md` for the schema and path). Populate `context.worktree_root` with `git rev-parse --show-toplevel` at the Phase 1 checkpoint (omit when working in the main checkout). At Phase 5 success, delete the state file.
+2. **Checkpoint**: after each phase transition, write the workflow state file so the session can survive auto-compaction (see `shared/docs/workflow-state.md` for the schema and path). Populate `context.worktree_root` with `git rev-parse --show-toplevel` at the Phase 1 checkpoint (omit when working in the main checkout). At Phase 5 success, delete the state file.
 3. **Delegate to sub-skills**: don't re-implement what a sub-skill already does.
 4. **Track phase state** — sub-skill completed Phases 3 or 4 with evidence → mark them "completed by sub-skill".
 5. **Handle failures and no phase skipping** combined:

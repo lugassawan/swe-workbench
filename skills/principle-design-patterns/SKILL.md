@@ -1,6 +1,6 @@
 ---
 name: principle-design-patterns
-description: Design patterns — Gang of Four and beyond. Strategy, factory method, observer, decorator, adapter, facade, template method, command, repository, dependency injection. Auto-load when designing class structure, refactoring toward a pattern, or evaluating whether a pattern applies.
+description: Design patterns — Gang of Four and beyond. Strategy, factory method, observer, adapter, template method, dependency injection. Auto-load when designing class structure, or evaluating whether a pattern applies.
 ---
 <!-- preload-canary: SWB-PRELOAD-PRINCIPLE-DESIGN-PATTERNS -->
 

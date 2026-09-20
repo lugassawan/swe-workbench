@@ -1,6 +1,6 @@
 ---
 name: language-bash
-description: Bash idioms — strict mode, quoting, parameter expansion, arrays, pipefail, trap cleanup, idempotency, heredocs, and POSIX portability. Auto-load when working with .sh, .bash files, or when the user mentions bash, shell, sh, shellcheck, set -e, or pipefail.
+description: Bash idioms — strict mode, parameter expansion, arrays, trap cleanup, heredocs, and POSIX portability. Auto-load when working with .sh, .bash files, or when the user mentions bash, shell, shellcheck, set -e, or pipefail.
 ---
 
 # Bash
@@ -134,4 +134,4 @@ output="$(bash script.sh arg 2>&1)"; cd "$eval_cwd"; eval "$output"
 - `cat file | grep` (UUOC) — use `grep pattern file`.
 - `set -x` in production — use `PS4` with a debug flag and enable only in targeted blocks.
 - Piping or redirecting a variable through `echo` (`echo "$JSON" | cmd`, `echo "$JSON" > file`) — zsh expands backslash escapes and corrupts embedded JSON; use `printf '%s' "$VAR"` instead.
-- `printf "$VAR"` as the "fix" for the above — `$VAR` becomes the *format string*, so a `%s` inside it reads a nonexistent argument. Always `printf '%s' "$VAR"` (see [docs/shell-echo-vs-printf.md](../../docs/shell-echo-vs-printf.md)).
+- `printf "$VAR"` as the "fix" for the above — `$VAR` becomes the *format string*, so a `%s` inside it reads a nonexistent argument. Always `printf '%s' "$VAR"` (see [shared/docs/shell-echo-vs-printf.md](../../shared/docs/shell-echo-vs-printf.md)).

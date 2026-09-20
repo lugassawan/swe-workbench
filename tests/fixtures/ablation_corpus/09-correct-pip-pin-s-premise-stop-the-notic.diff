@@ -1,0 +1,147 @@
+diff --git a/.github/dependabot.yml b/.github/dependabot.yml
+index 2453087..299f800 100644
+--- a/.github/dependabot.yml
++++ b/.github/dependabot.yml
+@@ -13,3 +13,11 @@ updates:
+       interval: weekly
+     commit-message:
+       prefix: "[chore]"
++    # pip is pinned below 26.2 for a permanent reason, not a temporary one —
++    # see tests/build-requirements.txt. A widening PR here can't be merged
++    # (it breaks pip-compile immediately) and only churns an un-mergeable
++    # red PR. This also suppresses pip security advisories; accepted
++    # because pip lives only in an ephemeral, hashed build venv that never
++    # processes untrusted input, and its version is pinned by us regardless.
++    ignore:
++      - dependency-name: "pip"
+diff --git a/.github/workflows/pr.yml b/.github/workflows/pr.yml
+index 589d00a..69e2491 100644
+--- a/.github/workflows/pr.yml
++++ b/.github/workflows/pr.yml
+@@ -8,6 +8,9 @@ on:
+ permissions:
+   contents: read
+ 
++env:
++  PIP_DISABLE_PIP_VERSION_CHECK: "1"
++
+ concurrency:
+   group: pr-validation-${{ github.ref }}
+   cancel-in-progress: true
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 80f10af..9f9a3da 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -8,6 +8,9 @@ on:
+ permissions:
+   contents: read
+ 
++env:
++  PIP_DISABLE_PIP_VERSION_CHECK: "1"
++
+ concurrency:
+   group: release-${{ github.ref }}
+   cancel-in-progress: false
+diff --git a/.github/workflows/skill-triggers.yml b/.github/workflows/skill-triggers.yml
+index ca4798b..1ea605f 100644
+--- a/.github/workflows/skill-triggers.yml
++++ b/.github/workflows/skill-triggers.yml
+@@ -5,6 +5,9 @@ on:
+     - cron: '0 7 * * *'  # 07:00 UTC daily
+   workflow_dispatch: {}   # manual re-run after a fix
+ 
++env:
++  PIP_DISABLE_PIP_VERSION_CHECK: "1"
++
+ jobs:
+   smoke:
+     name: BM25 trigger smoke
+diff --git a/scripts/lock-pip-requirements.sh b/scripts/lock-pip-requirements.sh
+index fa873e5..87a7a04 100755
+--- a/scripts/lock-pip-requirements.sh
++++ b/scripts/lock-pip-requirements.sh
+@@ -30,6 +30,11 @@ done
+ 
+ # ── Preflight ──────────────────────────────────────────────────
+ 
++# Silence pip's "new release available" notice (WARNING level — a bare -q
++# only drops INFO, so --quiet on the install below doesn't catch it) and
++# skip its PyPI version-check network call in this otherwise-hermetic step.
++export PIP_DISABLE_PIP_VERSION_CHECK=1
++
+ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ 
+ # Prefer python3.12; fall back to python3 if it is already 3.12.x.
+diff --git a/tests/build-requirements.lock b/tests/build-requirements.lock
+index 968a7e7..cdd69a7 100644
+--- a/tests/build-requirements.lock
++++ b/tests/build-requirements.lock
+@@ -12,9 +12,9 @@ click==8.4.2 \
+     --hash=sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6 \
+     --hash=sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76
+     # via pip-tools
+-packaging==26.2 \
+-    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
+-    --hash=sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661
++packaging==26.3 \
++    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
++    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+     # via
+     #   build
+     #   wheel
+diff --git a/tests/build-requirements.txt b/tests/build-requirements.txt
+index 249f693..ff22f34 100644
+--- a/tests/build-requirements.txt
++++ b/tests/build-requirements.txt
+@@ -1,5 +1,9 @@
+ pip-tools==7.5.3
+-# pip 26.2 removed pip._internal.utils.compat.stdlib_pkgs, which pip-tools'
+-# own sync module still imports — breaks even the latest pip-tools (7.6.0)
+-# as of 2026-08-02. Pin below it until upstream ships a fix.
++# pip 26.2 permanently removed pip._internal.utils.compat.stdlib_pkgs
++# (pip PR #14133); pip-tools' sync module still imports it, breaking every
++# pip-tools release including the latest (7.6.0). pip maintainers closed
++# pip#14214 as not_planned / "wrong project" — pip will never restore the
++# symbol. The fix has to land in pip-tools (tracked, still open, as of
++# 2026-08-02: pip-tools#2436). Pin below 26.2 until pip-tools stops
++# depending on pip internals — not until a newer pip ships.
+ pip<26.2
+diff --git a/tests/requirements.lock b/tests/requirements.lock
+index a2a8329..3884966 100644
+--- a/tests/requirements.lock
++++ b/tests/requirements.lock
+@@ -8,9 +8,9 @@ iniconfig==2.3.0 \
+     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
+     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
+     # via pytest
+-packaging==26.2 \
+-    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
+-    --hash=sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661
++packaging==26.3 \
++    --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
++    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+     # via pytest
+ pluggy==1.6.0 \
+     --hash=sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3 \
+diff --git a/tests/test_lock_pip_requirements.py b/tests/test_lock_pip_requirements.py
+index fdce9d4..d8bf79e 100644
+--- a/tests/test_lock_pip_requirements.py
++++ b/tests/test_lock_pip_requirements.py
+@@ -176,6 +176,17 @@ class TestBuildRequirementsSource:
+             "tests/build-requirements.txt must pin pip-tools to an exact version"
+         )
+ 
++    def test_build_requirements_txt_caps_pip(self):
++        content = BUILD_REQ_TXT.read_text()
++        assert re.search(r"^pip<26\.2\s*$", content, re.M), (
++            "tests/build-requirements.txt must cap pip below 26.2 — that "
++            "release permanently removed pip._internal.utils.compat."
++            "stdlib_pkgs (pip#14214, closed not_planned), which pip-tools "
++            "still imports. Removing or widening this cap (e.g. to "
++            "pip<26.5) breaks pip-compile the moment pip actually reaches "
++            "that version."
++        )
++
+ 
+ class TestBuildRequirementsLock:
+     def test_build_requirements_lock_exists(self):

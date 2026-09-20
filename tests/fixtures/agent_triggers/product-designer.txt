@@ -1,0 +1,4 @@
+# Representative dispatch prompts for product-designer
+review this new signup form for usability and visual hierarchy issues
+audit this dashboard redesign for information architecture and design-system compliance
+check the interaction design of this new modal for UX problems

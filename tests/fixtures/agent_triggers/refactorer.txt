@@ -1,0 +1,4 @@
+# Representative dispatch prompts for refactorer
+this function is a mess, refactor it into smaller pieces before I add the new feature
+clean up this class using Fowler's extract-method catalog without changing behavior
+refactor this messy module in small, behavior-preserving steps with green tests between each

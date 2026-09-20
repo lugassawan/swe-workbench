@@ -1,0 +1,4 @@
+# Representative dispatch prompts for redundancy-assessor
+check whether the file I added on this branch duplicates something main grew independently
+assess redundancy between my branch's new utility and what merged into main meanwhile
+does this whole-file candidate overlap functionally with what the default branch added?

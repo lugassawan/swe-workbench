@@ -1,11 +1,12 @@
 """Tests for bin/swe-workbench-new-run-dir — run-scoped scratch directory allocation.
 
 Mirrors tests/test_reap_run_dir.py and tests/test_clean_ephemeral.py. Each
-test invokes the script as a subprocess and parses its `RUN_DIR=<path>`
-stdout contract.
+test invokes the script as a subprocess and reads its bare-path stdout contract
+(Tier S per shared/docs/runtime-result-contract.md — a single trusted scalar,
+no envelope, no eval; a caller reads it as `RUN_DIR=$(swe-workbench-new-run-dir ...)`).
 
-Exit code 0 + `RUN_DIR=<path>` printed -> allocation succeeded.
-Exit code 1                            -> rejected invocation.
+Exit code 0 + the bare path printed -> allocation succeeded.
+Exit code 1                         -> rejected invocation.
 """
 
 import os
@@ -23,25 +24,23 @@ REPO_ROOT = Path(__file__).parent.parent
 
 RUN_ROOT = Path("/tmp/swe-workbench-run")
 
-_RUN_DIR_RE = re.compile(r"^RUN_DIR=(.+)$", re.MULTILINE)
 
-
-def run_script(*args: str, env=None):
+def run_script(*args: str, env=None, cwd=None):
     merged_env = dict(_CLEAN_ENV)
     if env is not None:
         merged_env.update(env)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True, text=True,
-        cwd=str(REPO_ROOT),
+        cwd=str(cwd) if cwd else str(REPO_ROOT),
         env=merged_env,
     )
 
 
 def parse_run_dir(stdout: str) -> str:
-    m = _RUN_DIR_RE.search(stdout)
-    assert m, f"expected RUN_DIR=<path> in stdout, got: {stdout!r}"
-    return m.group(1).strip()
+    path = stdout.strip()
+    assert path, f"expected a bare path in stdout, got: {stdout!r}"
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -72,8 +71,10 @@ def test_allocates_run_dir_for_pr_review():
     assert result.returncode == 0, f"stderr: {result.stderr!r}"
     run_dir = Path(parse_run_dir(result.stdout))
     assert run_dir.is_dir(), "RUN_DIR must exist as a directory"
-    assert run_dir.name.startswith("pr-review-42-")
-    assert re.fullmatch(r"pr-review-42-[A-Za-z0-9]{6}", run_dir.name)
+    # cwd=REPO_ROOT has an origin remote, so no-flag allocation auto-scopes
+    #: pr-review-<owner-repo-slug>-42-XXXXXX.
+    assert run_dir.name.startswith("pr-review-")
+    assert re.fullmatch(r"pr-review-[a-zA-Z0-9._-]+-42-[A-Za-z0-9]{6}", run_dir.name)
 
 
 def test_run_dir_mode_is_0700():
@@ -196,3 +197,64 @@ def test_sweep_never_touches_pr_review_state_dir():
         assert sentinel.exists(), "sweep must never reach /tmp/swe-workbench-pr-review/"
     finally:
         sentinel.unlink(missing_ok=True)
+
+
+# ──────────────────────────────────────────────────────
+# Repo-scoped allocation
+# ──────────────────────────────────────────────────────
+
+def test_allocation_with_explicit_repo_embeds_slug():
+    r = run_script("pr-review", "42", "--repo", "octocat/widgets")
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    base = os.path.basename(parse_run_dir(r.stdout))
+    assert re.fullmatch(r"pr-review-7-octocat-widgets-42-[A-Za-z0-9]{6}", base)
+
+
+def test_allocation_without_repo_uses_origin_slug():
+    # cwd=REPO_ROOT has an origin remote -> auto-scoped allocation.
+    r = run_script("pr-review", "42")
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    base = os.path.basename(parse_run_dir(r.stdout))
+    assert re.fullmatch(r"pr-review-[a-zA-Z0-9._-]+-42-[A-Za-z0-9]{6}", base)
+    # The slug segment is a real owner-repo pair (contains the repo's own
+    # name — swe-workbench-repo-scope length-prefixes owner with its own
+    # character count before joining owner and repo so the slug stays
+    # injective), not just any charset run.
+    assert "-swe-workbench-" in base
+
+
+def test_allocation_falls_back_to_legacy_naming_outside_git(tmp_path):
+    d = tmp_path / "plain"
+    d.mkdir()
+    r = run_script("pr-review", "42", cwd=d)
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    base = os.path.basename(parse_run_dir(r.stdout))
+    assert re.fullmatch(r"pr-review-42-[A-Za-z0-9]{6}", base)
+
+
+def test_invalid_repo_value_rejected():
+    r = run_script("pr-review", "42", "--repo", "not-a-scope")
+    assert r.returncode == 1
+    assert "invalid --repo value" in r.stderr
+
+
+def test_repo_flag_requires_value():
+    r = run_script("pr-review", "42", "--repo")
+    assert r.returncode == 1
+
+
+def test_unexpected_third_argument_rejected():
+    r = run_script("pr-review", "42", "bogus")
+    assert r.returncode == 1
+    assert "unexpected argument" in r.stderr
+
+
+def test_orphan_sweep_reaps_slugged_shape():
+    # Slugged-name dir older than the sweep threshold is reaped at allocation.
+    stale = RUN_ROOT / "pr-review-octocat-widgets-42-zzzzzz"
+    stale.mkdir(parents=True, exist_ok=True)
+    old = time.time() - 25 * 3600
+    os.utime(stale, (old, old))
+    r = run_script("pr-review", "43", "--repo", "octocat/widgets")
+    assert r.returncode == 0, f"stderr: {r.stderr!r}"
+    assert not stale.exists()

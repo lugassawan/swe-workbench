@@ -1,0 +1,4 @@
+# Representative dispatch prompts for tech-writer
+generate a README section and non-obvious inline comments for this new module, matching the repo's existing tone
+our documentation is stale and drifting from the code, write updated docs from this diff
+generate an ADR/OVERVIEW doc from this diff and conversation context, matching the repo's existing tone and conventions

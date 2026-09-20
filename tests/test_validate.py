@@ -172,6 +172,72 @@ class TestCheckMarketplaceJson:
 
 
 # ──────────────────────────────────────────────
+# check_pi_package_json
+# ──────────────────────────────────────────────
+
+class TestCheckPiPackageJson:
+    def _plugin_data(self):
+        return {"name": "test-plugin", "version": "1.0.0", "description": "d"}
+
+    def _valid_package_json(self):
+        return {
+            "name": "swe-workbench-pi",
+            "version": "1.0.0",
+            "private": True,
+            "type": "module",
+            "pi": {"extensions": ["./pi/extensions/index.ts"]},
+        }
+
+    def _write(self, root, data):
+        (root / "package.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def test_matching_passes(self, reset_validate):
+        root = reset_validate
+        self._write(root, self._valid_package_json())
+        validate.check_pi_package_json(self._plugin_data())
+        assert len(validate.FAILURES) == 0
+
+    def test_version_mismatch(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["version"] = "9.9.9"
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("version" in f for f in validate.FAILURES)
+
+    def test_not_private_fails(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["private"] = False
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("private" in f for f in validate.FAILURES)
+
+    def test_missing_pi_extensions_fails(self, reset_validate):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["pi"] = {}
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("pi.extensions" in f for f in validate.FAILURES)
+
+    @pytest.mark.parametrize("forbidden_key", ["skills", "prompts", "themes"])
+    def test_forbidden_pi_key_fails(self, reset_validate, forbidden_key):
+        root = reset_validate
+        data = self._valid_package_json()
+        data["pi"][forbidden_key] = ["whatever"]
+        self._write(root, data)
+        validate.check_pi_package_json(self._plugin_data())
+        assert any(f"pi.{forbidden_key}" in f for f in validate.FAILURES)
+
+    def test_json_parse_error(self, reset_validate):
+        root = reset_validate
+        (root / "package.json").write_text("{not valid json", encoding="utf-8")
+        validate.check_pi_package_json(self._plugin_data())
+        assert any("JSON parse error" in f for f in validate.FAILURES)
+
+
+# ──────────────────────────────────────────────
 # check_hooks_json
 # ──────────────────────────────────────────────
 
@@ -466,10 +532,167 @@ class TestCheckBinWrappers:
 # ──────────────────────────────────────────────
 
 class TestCheckSkills:
-    def _valid_skill(self, name="my-skill", extra_lines=0):
-        body = f"---\nname: {name}\ndescription: A skill\n---\n"
+    def _valid_skill(
+        self,
+        name: str = "my-skill",
+        extra_lines: int = 0,
+        description: str = "A skill",
+    ) -> str:
+        body = f"---\nname: {name}\ndescription: {description}\n---\n"
         body += "x\n" * extra_lines
         return body
+
+    @pytest.mark.parametrize("description", ["x" * 1024, "😀" * 512])
+    def test_description_at_pi_cap_passes(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    def test_double_quoted_description_at_pi_cap_passes(self, reset_validate) -> None:
+        root = reset_validate
+        description = f'"{"x" * 1024}"'
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("description", ["", "   ", '"  "'])
+    def test_empty_or_whitespace_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize("description", ["-.nan", "+.nan"])
+    def test_signed_nan_description_scalars_pass(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize("description", ["-", "?"])
+    def test_lone_yaml_mapping_indicators_fail(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Skill text # rationale",
+            "Skill#tag",
+            '"Skill #tag" # rationale',
+            "'Skill ''text'' #tag' # rationale",
+            '"A \\tquoted \\"value\\""',
+            '"' + r"\U0001F600" * 512 + '"',
+            "yes",
+            "no",
+            "on",
+            "off",
+            "0b101",
+            "1_000",
+            r'"\uD83D\uDE00"',
+            r'"\uD800"',
+            r'"\uDC00"',
+            '"true"',
+            "'0xFF'",
+        ],
+    )
+    def test_yaml_string_description_scalars_pass(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert validate.FAILURES == []
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            " # rationale",
+            "null",
+            "~",
+            "true",
+            "false",
+            "123",
+            "1.5",
+            "1e3",
+            "0o755",
+            "0xFF",
+            ".inf",
+            ".nan",
+            "[]",
+            "{}",
+            "\n  - Skill text",
+            "\n  text: Skill text",
+            "Skill: text",
+            '"Skill text',
+            "'Skill text",
+            '"Skill text" trailing',
+        ],
+    )
+    def test_non_string_or_malformed_yaml_description_fails(
+        self, reset_validate, description: str
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any("description is required" in failure for failure in validate.FAILURES)
+
+    @pytest.mark.parametrize(
+        ("description", "expected_length"),
+        [
+            ("x" * 1025, 1025),
+            ("😀" * 513, 1026),
+            ('"' + r"\U0001F600" * 513 + '"', 1026),
+        ],
+    )
+    def test_description_over_pi_cap_fails(
+        self,
+        reset_validate,
+        description: str,
+        expected_length: int,
+    ) -> None:
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": self._valid_skill(description=description)},
+        )
+        validate.check_skills()
+        assert any(
+            f"description exceeds 1024 characters ({expected_length})" in failure
+            for failure in validate.FAILURES
+        ), validate.FAILURES
 
     def test_valid_skill_passes(self, reset_validate):
         root = reset_validate
@@ -579,6 +802,123 @@ class TestCheckSkillCapHeadroom:
         make_plugin_tree(root, skills={"my-skill": "No frontmatter\n" + ("x\n" * 200)})
         validate.check_skill_cap_headroom()
         assert len(validate.WARNINGS) == 0
+
+
+# ──────────────────────────────────────────────
+# check_description_budget
+# ──────────────────────────────────────────────
+
+class TestCheckDescriptionBudget:
+    def test_constants_exact_values(self):
+        # Ratchet: assert the exact measured bound, not "a bound exists" —
+        # a regex/inequality check here would let a defeating widening slip
+        # through unnoticed. See scripts/validate.py's constant comments for
+        # where these numbers come from.
+        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20436
+        assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
+        assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900
+
+    def test_skills_under_budget_no_failure(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(
+            root, skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"}
+        )
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+
+    def test_skills_over_budget_fails(self, reset_validate):
+        root = reset_validate
+        # "word " * 5000 minus the trailing space is 24999 chars, over the
+        # 20332-char SKILL_DESCRIPTION_BUDGET_CHARS total.
+        long_desc = ("word " * 5000).strip()
+        make_plugin_tree(
+            root, skills={"my-skill": f"---\nname: my-skill\ndescription: {long_desc}\n---\n"}
+        )
+        validate.check_description_budget()
+        assert any("total skill description budget exceeded" in f for f in validate.FAILURES)
+
+    def test_per_skill_over_cap_warns_but_never_fails(self, reset_validate):
+        root = reset_validate
+        # 849 chars: over 90% of PER_SKILL_DESCRIPTION_CAP_CHARS (810) but
+        # under the cap itself (900) and nowhere near the 20332 total budget.
+        desc = ("word " * 170).strip()
+        make_plugin_tree(
+            root, skills={"my-skill": f"---\nname: my-skill\ndescription: {desc}\n---\n"}
+        )
+        validate.check_description_budget()
+        assert any("per-skill budget cap" in w for w in validate.WARNINGS)
+        assert len(validate.FAILURES) == 0
+
+    def test_agents_under_budget_no_failure(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n",
+            encoding="utf-8",
+        )
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+
+    def test_agents_over_budget_fails(self, reset_validate):
+        root = reset_validate
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        # "word " * 2000 minus the trailing space is 9999 chars, over the
+        # 6087-char AGENT_DESCRIPTION_BUDGET_CHARS total.
+        long_desc = ("word " * 2000).strip()
+        (agents_dir / "my-agent.md").write_text(
+            f"---\nname: my-agent\ndescription: {long_desc}\n---\n",
+            encoding="utf-8",
+        )
+        validate.check_description_budget()
+        assert any("total agent description budget exceeded" in f for f in validate.FAILURES)
+
+    def test_malformed_frontmatter_skipped(self, reset_validate):
+        root = reset_validate
+        make_plugin_tree(root, skills={"my-skill": "No frontmatter\n"})
+        validate.check_description_budget()
+        assert len(validate.FAILURES) == 0
+        assert len(validate.WARNINGS) == 0
+
+    def test_cache_hit_path_matches_direct_read(self, reset_validate):
+        """main()/validate.sh always call check_description_budget(cache=cache)
+        with a real _build_cache() result — exercise that path explicitly,
+        not just the cache=None direct-read fallback the other tests above use."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"},
+        )
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        (agents_dir / "my-agent.md").write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n",
+            encoding="utf-8",
+        )
+        cache = validate._build_cache()
+        validate.check_description_budget(cache=cache)
+        assert len(validate.FAILURES) == 0
+
+    def test_cache_none_sentinel_is_skipped_without_double_reporting(self, reset_validate):
+        """A None cache entry (unreadable file) is check_skills's/check_agents's
+        failure to report, not this check's — it must not raise and must not
+        count toward either budget total."""
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"my-skill": "---\nname: my-skill\ndescription: A short skill description.\n---\n"},
+        )
+        skill_md = root / "skills" / "my-skill" / "SKILL.md"
+        agents_dir = root / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        agent_md = agents_dir / "my-agent.md"
+        agent_md.write_text(
+            "---\nname: my-agent\ndescription: A short agent description.\n---\n", encoding="utf-8"
+        )
+        cache = ({agent_md: None}, {skill_md: None})
+        validate.check_description_budget(cache=cache)
+        assert len(validate.FAILURES) == 0
 
 
 # ──────────────────────────────────────────────
@@ -1699,6 +2039,25 @@ class TestCheckBareActionableRefs:
         )
         validate.check_bare_actionable_refs()
         assert any("foo" in f for f in validate.FAILURES)
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".superpowers/sdd/brief.md"),
+            Path("docs/superpowers/plans/brief.md"),
+        ],
+    )
+    def test_ignored_local_planning_roots_are_excluded(self, reset_validate, relative_path):
+        root = reset_validate
+        make_plugin_tree(
+            root,
+            skills={"foo": "---\nname: foo\ndescription: d\n---\n"},
+        )
+        planning_file = root / relative_path
+        planning_file.parent.mkdir(parents=True)
+        planning_file.write_text("Invoke `foo` skill.\n", encoding="utf-8")
+        validate.check_bare_actionable_refs()
+        assert validate.FAILURES == []
 
     def test_bare_id_in_readme_fails(self, reset_validate):
         root = reset_validate
@@ -3729,7 +4088,7 @@ class TestPhase4DispatchesBothReviewers:
 class TestCheckNoEchoVarHazard:
     """zsh (the user's likely login shell) expands backslash escapes in echo's
     argument, corrupting embedded JSON piped or redirected through it (#549).
-    See docs/shell-echo-vs-printf.md."""
+    See shared/docs/shell-echo-vs-printf.md."""
 
     def _skill_with_block(self, root, name, block_lines):
         skill_dir = root / "skills" / name

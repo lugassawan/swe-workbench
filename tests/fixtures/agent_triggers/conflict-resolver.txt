@@ -1,0 +1,4 @@
+# Representative dispatch prompts for conflict-resolver
+resolve this merge conflict in config.py, tell me whether to keep mine or keep main
+advise on this rebase conflict hunk by hunk with a recommendation
+which side is correct in this conflicting file from my in-progress merge?

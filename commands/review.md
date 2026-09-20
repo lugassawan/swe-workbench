@@ -12,7 +12,11 @@ Review code with senior-engineer depth. Two dimensions — fully orthogonal:
 
 Parse `$ARGUMENTS` left-to-right:
 
-0. If `--check-followup <N>` is present (where `N` is a PR number), strip it and enter **Followup mode** — see `## Followup mode` below. All other flags and argument parsing are skipped.
+0. If `--approve-over-open-threads "<reason>"` is present, strip it from `$ARGUMENTS` first — before any other flag parsing below, so it survives regardless of which mode is subsequently selected — and carry `<reason>` through as `$APPROVE_OVER_OPEN_THREADS` to whichever delegation this command makes to `swe-workbench:workflow-pr-review`: both the PR-mode `MODE=auto` delegation (`PR mode` below) and the Followup-mode `MODE=followup` delegation (`Followup mode` below), since the skill's Step 5.5 reads `$APPROVE_OVER_OPEN_THREADS` to pre-answer its own `AskUserQuestion` prompt. Absent this flag, `$APPROVE_OVER_OPEN_THREADS` stays empty and Step 5.5 prompts normally. This flag is meaningless outside `general`/`--check-followup` mode — a postable specialist mode or `contributor-trust` never reaches `swe-workbench:workflow-pr-review`, so it's silently unused there.
+
+   **When this flag is safe to use:** only *after* Step 5.5 (in `skills/workflow-pr-review/SKILL.md`) has actually run its verification pass and reported which threads remain open. It exists to answer — or pre-empt — the `AskUserQuestion` prompt Step 5.5 raises once genuinely-unresolved threads remain, for a thread the PR owner deliberately chose to leave open (e.g. a deferred follow-up). It is not a blanket way to force an approval without ever looking at what's still unresolved — supplying it on a first invocation just skips the prompt on faith that nothing in the still-open set actually needs a look.
+
+0.5. If `--check-followup <N>` is present (where `N` is a PR number), strip it and enter **Followup mode** — see `## Followup mode` below. All other flags and argument parsing (besides item 0 above, already stripped) are skipped.
 
 1. If a `--mode <value>` flag is present, extract it and normalize the alias:
 
@@ -83,7 +87,7 @@ Ground judgements in SOLID and Clean Architecture principles. Do not nitpick for
 
 ## PR mode
 
-**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=first-pass`, passing the resolved PR number.
+**When `--mode` is absent or `--mode general`:** invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=auto`, passing the resolved PR number and `$APPROVE_OVER_OPEN_THREADS` (parsed in Step 1 item 0 above, possibly empty). The skill self-detects first-pass vs. followup by checking whether this reviewer already has a review on the PR and whether it's still open — `--check-followup <N>` below remains available as an explicit override that always forces `MODE=followup`.
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`), ephemeral worktree under `/tmp/swe-workbench-pr-review/<N>`, ticket-context chain, reviewer invocation with footer instruction, decision-footer parsing, GraphQL thread fetch + dedup + REST inline-comment post, `gh pr review --approve|--comment` submission, non-blocking cleanup. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and failure-mode handling.
 
@@ -97,9 +101,11 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **The post/skip `AskUserQuestion` prompt below fires in exactly one case: a postable specialist mode (security, accessibility, dependency, performance, tests, ux) resolved in PR mode.** It never fires for `contributor-trust` (advisory-only, see above — stops before reaching this section) and never fires for local-diff mode (there is no PR to post to — see the explicit "no posting prompt" note in `## Local-diff mode` above). General mode has its own posting flow inside `swe-workbench:workflow-pr-review` and does not go through this sub-flow either.
 
-1. **Preflight:** reuse `swe-workbench-preflight-pr` for `owner`/`repo`/`head_sha`/`base`/`author_login` — pass `JSON="/tmp/swe-workbench-pr-review/${PR}-review-${MODE}.json"` (mode-scoped, distinct from `swe-workbench:workflow-pr-review`'s own `${PR}.json` (first-pass mode) and `${PR}-followup.json` (followup mode), so a specialist run never collides with a concurrent general or followup review of the same PR) — plus `gh api /user -q .login` for `current_user`. Also allocate this sub-flow's own run-scoped scratch dir: `eval "$(swe-workbench-new-run-dir "review-${MODE}" "$PR")"` — `$RUN_DIR` is a mode-0700 directory under `/tmp/swe-workbench-run/` for ad-hoc bash artifacts, distinct from the mode-scoped state file above.
-2. **Ephemeral worktree:** `rimba add pr:<N> --task "review-<mode>-<N>" --skip-deps --skip-hooks` when rimba is available. When rimba is absent, use the direct-git fallback from `swe-workbench:workflow-pr-review` Step 2 but with the same mode-scoped naming as the rimba path — `WT="/tmp/swe-workbench-pr-review/<mode>-${PR}"`, branch `review-<mode>-${PR}` — so a specialist run's worktree/branch never collides with a general review's `pr-review-${PR}` or another specialist mode's own run.
+1. **Preflight:** reuse `swe-workbench-preflight-pr` for `owner`/`repo`/`head_sha`/`base`/`author_login`. Derive the repo scope first: `SCOPE_SLUG=$(swe-workbench-repo-scope 2>/dev/null) || SCOPE_SLUG=""` — then pass `JSON="/tmp/swe-workbench-pr-review/${SCOPE_SLUG:+${SCOPE_SLUG}-}${PR}-review-${MODE}.json"` (mode-scoped and repo-scoped, distinct from `swe-workbench:workflow-pr-review`'s own first-pass/followup files, so a specialist run never collides with a concurrent general or followup review of the same PR — and same-numbered PRs in different repositories never collide with each other; empty slug falls back to the legacy un-scoped names) — plus `gh api /user -q .login` for `current_user`. Also allocate this sub-flow's own run-scoped scratch dir: `RUN_DIR=$(swe-workbench-new-run-dir "review-${MODE}" "$PR")` — `$RUN_DIR` is a mode-0700 directory under `/tmp/swe-workbench-run/`, slug-scoped by the same ladder, for ad-hoc bash artifacts, distinct from the mode-scoped state file above.
+2. **Ephemeral worktree:** `eval "$(swe-workbench-pr-review-worktree acquire --mode "$MODE" --pr "$PR")"` — the same command `swe-workbench:workflow-pr-review` Step 2 uses, passed this sub-flow's own normalized `$MODE` (e.g. `security`). Sets `$WT` (absolute path), `$TASK`/`$BRANCH` (`review-<mode>-<N>`), `$PROVIDER`, `$CREATED` — the mode-scoped naming (so a specialist run's worktree/branch never collides with a general review's `pr-review-<N>` or another specialist mode's own run) is derived internally by that command, not by this sub-flow.
 3. Run the specialist auditor against `git -C "$WT" diff "origin/$BASE"...HEAD`; print severity-organized findings (unchanged from the existing specialist output above).
+
+   **On auditor error:** call `eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent failed)"` (preserves the worktree for inspection — this is an aborted-mid-scan state, the same terminal intent `swe-workbench:workflow-pr-review` Step 5 uses), reap `$JSON` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, then stop — there are no findings to prompt on.
 4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (matching the `AskUserQuestion` pattern `swe-workbench:workflow-pr-review-post`'s own Step 5 CTA already uses, for the same reason: a clickable button beats "type a keyword"):
 
    ```json
@@ -116,7 +122,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
    }
    ```
 
-   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `${PR}-review-${MODE}.json` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, then tear down the worktree in the background using the **same task name Step 2 created** (`rimba remove "review-<mode>-<N>" --force`, or the matching git-fallback branch/worktree cleanup) — this is a clean exit, not an aborted-mid-scan state, so unlike `swe-workbench:workflow-pr-review` Step 5's abort case the worktree is NOT preserved for inspection.
+   Substitute the real PR number for `<N>`. On **Skip** (or any other answer), stop — no posting; reap this sub-flow's own `$JSON` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, then tear down the worktree via `eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent declined)"` — this is a clean exit, not an aborted-mid-scan state, so unlike the auditor-error branch above (or `swe-workbench:workflow-pr-review` Step 5's abort case) the worktree is removed, not preserved for inspection.
 5. **On `Post`:** normalize the auditor's documented finding rows into `FINDINGS[]` — `severity` and `body` (fold any extra columns, e.g. `swe-workbench:test-reviewer`'s `Category`, into `body`) from every row; `path`/`line` from `File:Line` when present. Set `anchor=inline` when a `File:Line` exists AND the line falls on a `+` line (not a context line) in `git -C "$WT" diff "origin/$BASE"...HEAD`; `anchor=pr-level` otherwise — `swe-workbench:dependency-auditor` rows have no `File:Line` and always anchor `pr-level`. Derive `DECISION`: at least one row with `severity ∈ {Critical, High}` → `COMMENT`; otherwise `APPROVE` (no footer to parse — these auditors don't emit one; this mirrors the general reviewer's own APPROVE-unless-Critical/High convention rather than flipping to `COMMENT` on any finding regardless of severity). Invoke `swe-workbench:workflow-pr-review-post` with:
    - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
    - `DECISION` — as derived above.
@@ -126,7 +132,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
    - `RUN_DIR` — this sub-flow's own Step 1 allocation, for the core's optional mid-workflow debug persist.
    - `FINDINGS[]` — as normalized above.
 
-   Then reap `${PR}-review-${MODE}.json` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, and tear down the worktree in the background using the same task name Step 2 created (as in the `skip` case above).
+   Then reap `$JSON` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, and tear down the worktree via `eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent completed)"`.
 
 ## Followup mode
 
@@ -134,6 +140,6 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 
 **Purpose:** the reviewer has already posted a full review; the owner pushed fixes; this re-checks for new findings, posts only truly-new inline comments, and submits APPROVE or COMMENT.
 
-Invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=followup`, passing the resolved PR number.
+Invoke `swe-workbench:workflow-pr-review` via the `Skill` tool with `MODE=followup`, passing the resolved PR number and `$APPROVE_OVER_OPEN_THREADS` (parsed in Step 1 item 0, possibly empty).
 
 The skill owns: pre-flight (`gh auth`, `gh pr view`, plus a followup-only open-PR gate), ephemeral worktree (`--task "pr-followup-$PR"` to avoid colliding with prior primary-review worktrees), ticket-context chain, `swe-workbench:reviewer` agent invocation, dedup against existing threads (Jaccard ≥ 0.4, ±5-line), posts only truly-new inline comments, and submits an APPROVE or COMMENT review event. See `skills/workflow-pr-review/SKILL.md` for the full 7-step contract and its mode-resolution table.

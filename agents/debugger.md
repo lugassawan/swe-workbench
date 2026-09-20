@@ -2,6 +2,7 @@
 name: debugger
 description: Bug-fix specialist — root-cause via systematic-debugging, then a minimal behavior-changing fix with a regression test. Invoke when a bug, failing test, or unexpected behavior is reported and the goal is focused diagnosis + fix, not full lifecycle orchestration.
 model: sonnet
+effort: xhigh
 tools: Read, Edit, Grep, Glob, Bash, Skill
 skills:
   - swe-workbench:principle-solid
@@ -202,3 +203,13 @@ the comment — say so as part of the `KEEP` reason (e.g. `KEEP RESTATES:foo.py:
 overlap is coincidental identifier reuse`). Verdict accounting is about coverage (every finding
 addressed), not about the detector always being right.
 <!-- END shared/agents/comment-scan.md -->
+<!-- BEGIN shared/agents/preload-canary-citation.md -->
+# Preload citation
+
+Before your final response, review which `## Preloaded skill: <id>` sections in your context
+actually shaped your guidance, as opposed to skills that were merely present. End your response
+with this line, last, always: `SWB-CANARIES-APPLIED: <comma-separated skill ids, or NONE>`
+
+Use the exact `swe-workbench:<id>` form from the section header. Zero applicable skills still emits
+the line with `NONE` — never omit it.
+<!-- END shared/agents/preload-canary-citation.md -->

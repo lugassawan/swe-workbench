@@ -10,6 +10,14 @@ the input contract, the Step 5 AskUserQuestion CTA (main-thread-only, can't
 move into a script), and the failure-mode/common-mistakes documentation
 stay in skills/workflow-pr-review-post/SKILL.md.
 
+Prints one JSON envelope to stdout on success (schema `swb.pr-review-submit/1`, see
+shared/docs/runtime-result-contract.md): `status` is "ok" when the review was
+successfully submitted (by any of the atomic/retry/fallback paths) and "partial"
+when every path was exhausted with nothing landed — the script still exits 0 either
+way, since the caller's cleanup chain must never abort on a posting failure. An
+input-contract validation failure (see `validate_payload`) exits 1 with no stdout at
+all — never a partial envelope.
+
 Atomicity and idempotency rationale (why this isn't a simple per-finding
 loop): the GitHub Reviews API's POST .../pulls/{n}/reviews accepts a
 comments[] array and posts the whole batch as one review in one call. That
@@ -40,8 +48,8 @@ stringified indices ({"comments":{"0":{...}}}), not an array — GitHub's
 Reviews API requires an array and rejects the object shape outright. This
 module builds the payload as real Python data structures and serializes it
 once with json.dumps, which sidesteps that failure mode entirely (see
-docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
-docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
+shared/docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
+shared/docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
 neither applies here since no shell ever sees this payload as a string to
 re-interpret).
 
@@ -59,7 +67,6 @@ import argparse
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -95,6 +102,7 @@ class Thread:
     head_comment_id: str | None
     head_comment_body: str
     reactor_logins: set[str] = field(default_factory=set)
+    is_outdated: bool = False
 
 
 def thread_matches(finding_path: str, finding_line: int, finding_body: str, thread: Thread) -> bool:
@@ -107,23 +115,44 @@ def thread_matches(finding_path: str, finding_line: int, finding_body: str, thre
     return jaccard(finding_body, thread.head_comment_body) >= JACCARD_THRESHOLD
 
 
+def blocking_threads(threads: list[Thread]) -> list[Thread]:
+    """Unresolved, non-outdated threads block APPROVE: any severity — GitHub
+    review threads carry no severity field, and a reviewer's severity label isn't
+    durable across runs. isResolved/isOutdated are the only release valves."""
+    return [t for t in threads if not t.is_resolved and not t.is_outdated]
+
+
 def build_byline(byline: str, is_private: bool | None, n_inline: int, posted_pr_level: int, deduped: int) -> str:
     remark = REMARK_TEXT if is_private is False else ""
     return f"{byline}{remark}. Posted {n_inline} inline comment(s) and {posted_pr_level} PR-level note(s), deduped {deduped}."
 
 
-def build_summary(decision: str, byline_full: str, is_self_review: bool) -> str:
+def build_summary(
+    decision: str, byline_full: str, is_self_review: bool, override_note: str | None = None, n_blocking: int = 0
+) -> str:
     if is_self_review:
         return f"{byline_full}\n"
-    return f"**Review Decision: {decision}**\n\n{byline_full}\n"
+    summary = f"**Review Decision: {decision}**\n\n{byline_full}\n"
+    if override_note is not None:
+        summary += f"\n_Approved with {n_blocking} unresolved review thread(s) still open — override: {override_note}._\n"
+    return summary
 
 
-def resolve_event(decision: str, blocking_scope: str, current_user: str, author_login: str) -> tuple[str, str, bool, bool]:
+def resolve_event(
+    decision: str,
+    blocking_scope: str,
+    current_user: str,
+    author_login: str,
+    n_blocking_threads: int = 0,
+    override: bool = False,
+) -> tuple[str, str, bool, bool]:
     """Returns (event, decision, is_self_review, identity_known)."""
     identity_known = bool(current_user) and bool(author_login)
     is_self_review = identity_known and current_user == author_login
     if decision == "COMMENT" and blocking_scope == "OUT-OF-DIFF-ONLY" and identity_known and not is_self_review:
         decision = "APPROVE"
+    if decision == "APPROVE" and n_blocking_threads > 0 and not (override and not is_self_review):
+        decision = "COMMENT"
     event = "COMMENT" if is_self_review else decision
     return event, decision, is_self_review, identity_known
 
@@ -185,7 +214,7 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
       reviewThreads(first: 100, after: $after) {
         pageInfo { endCursor hasNextPage }
         nodes {
-          id isResolved path line startLine
+          id isResolved isOutdated path line startLine
           comments(first: 10) {
             nodes {
               id databaseId body
@@ -223,6 +252,7 @@ def _thread_from_node(node: dict) -> Thread:
         head_comment_id=(head or {}).get("id"),
         head_comment_body=(head or {}).get("body") or "",
         reactor_logins=reactors,
+        is_outdated=bool(node.get("isOutdated")),
     )
 
 
@@ -493,9 +523,14 @@ def _repo_is_private(owner: str, repo: str) -> bool | None:
 _BLOCKING_SCOPES = ("NONE", "OUT-OF-DIFF-ONLY", "IN-DIFF")
 
 
+def _remark_problem(text: str) -> str | None:
+    return "must not embed the swe-workbench remark" if REMARK_TEXT in text else None
+
+
 def _byline_problem(byline: str) -> str | None:
-    if REMARK_TEXT in byline:
-        return "must not embed the swe-workbench remark"
+    problem = _remark_problem(byline)
+    if problem:
+        return problem
     if re.search(r"(?i)\bposted\b", byline) or re.search(r"(?i)\bdeduped\b", byline):
         return "must not embed posted/deduped counts"
     return None
@@ -545,6 +580,15 @@ def validate_payload(args) -> tuple[list[dict] | None, tuple[str, str] | None]:
     for field_name, value in (("--current-user", args.current_user), ("--author-login", args.author_login)):
         if value and not re.match(r"^[^\s]+$", value):
             return None, (field_name, "must be a plain login string")
+    if args.approve_over_open_threads:
+        reason = args.approve_over_open_threads
+        if "\n" in reason:
+            return None, ("--approve-over-open-threads", "must be a single line")
+        if len(reason) > 200:
+            return None, ("--approve-over-open-threads", "must be at most 200 characters")
+        problem = _remark_problem(reason)
+        if problem:
+            return None, ("--approve-over-open-threads", problem)
 
     try:
         raw = sys.stdin.read() if args.findings_json == "-" else Path(args.findings_json).read_text()
@@ -580,12 +624,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--blocking-scope", default="IN-DIFF")
     p.add_argument("--current-user", default="")
     p.add_argument("--author-login", default="")
+    p.add_argument("--approve-over-open-threads", default="")
     p.add_argument("--debug-dir", default=None)
     return p
-
-
-def _emit(key: str, value) -> None:
-    print(f"{key}={shlex.quote(str(value))}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,16 +652,29 @@ def main(argv: list[str] | None = None) -> int:
 
         posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
 
+        n_blocking = len(blocking_threads(threads))
+        override = bool(args.approve_over_open_threads)
         event, decision, is_self_review, _identity_known = resolve_event(
-            args.decision, args.blocking_scope, args.current_user, args.author_login,
+            args.decision, args.blocking_scope, args.current_user, args.author_login, n_blocking, override=override,
         )
+        _, decision_without_gate, _, _ = resolve_event(
+            args.decision, args.blocking_scope, args.current_user, args.author_login, override=False,
+        )
+        override_used = override and n_blocking > 0 and not is_self_review and decision == "APPROVE"
+        if n_blocking > 0 and decision_without_gate == "APPROVE" and decision != "APPROVE" and not override_used:
+            print(
+                f"[info] APPROVE downgraded to {decision} — {n_blocking} unresolved review "
+                "thread(s) still open, blocking approval.",
+                file=sys.stderr,
+            )
+        override_note = args.approve_over_open_threads if override_used else None
         is_private = _repo_is_private(owner, repo)
 
         comments = [{"path": f["path"], "line": f["line"], "side": "RIGHT", "body": f["body"]} for f in in_diff]
 
         def summary_fn(n_inline: int, pr_level_count: int) -> str:
             byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
-            return build_summary(decision, byline_full, is_self_review)
+            return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
 
         result = submit_review(
             owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
@@ -639,13 +693,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         (debug_dir / f"{args.caller_tag}-payload.json").write_text(json.dumps(comments, indent=2))
 
-    _emit("POSTED_INLINE", result.posted_inline)
-    _emit("POSTED_PR_LEVEL", result.posted_pr_level)
-    _emit("DEDUPED", deduped)
-    _emit("SUBMITTED", "true" if result.submitted else "false")
-    _emit("EVENT", event)
-    _emit("DECISION", decision)
-    _emit("REVIEW_URL", result.review_url)
+    envelope = {
+        "schema": "swb.pr-review-submit/1",
+        "status": "ok" if result.submitted else "partial",
+        "data": {
+            "posted_inline": result.posted_inline,
+            "posted_pr_level": result.posted_pr_level,
+            "deduped": deduped,
+            "submitted": result.submitted,
+            "event": event,
+            "decision": decision,
+            "review_url": result.review_url,
+            "blocked_by_unresolved": n_blocking,
+            "approve_over_open_threads": bool(args.approve_over_open_threads),
+            "override_reason": args.approve_over_open_threads,
+        },
+        "warnings": [],
+    }
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
     return 0
 
 

@@ -1,5 +1,5 @@
 """Smoke harness: each skill's triggers.txt prompts must rank that skill #1
-(or within its documented sibling set) by BM25 against all 22 skill
+(or within its documented sibling set) by BM25 against all 60 skill
 descriptions. Catches description drift that would prevent auto-trigger.
 
 Run locally:   pytest tests/test_skill_triggers.py -v
@@ -257,6 +257,63 @@ def test_workflow_family_margin(skill_name, prompt, real_corpus, real_index, sib
         f"(margin {margin:.3f} < {_FAMILY_MARGIN}). "
         f"Tighten skills/{skill_name}/SKILL.md description to reduce overlap with "
         f"`{nearest_name}`."
+    )
+
+
+# ── Self-rank margin report ────────────────────────────────────────────
+
+# Corpus-wide floor for the worst per-skill margin (target score minus the
+# best-scoring non-sibling competitor, computed the same way for every
+# fixture regardless of whether that fixture passes via rank #1 or the
+# sibling-set escape hatch). This is an *early-warning* signal ahead of
+# _SCORE_MARGIN=0.1's hard failure — the same pathology
+# CAP_HEADROOM_WARN_FRACTION already fixed for SKILL.md line caps, applied to
+# descriptions. Measured against the live corpus at authoring time (before
+# description compression): principle-performance's
+# "what should I profile before optimizing this slow request" fixture scores
+# 0.05563039534899428 against its best non-sibling competitor
+# (principle-cost-awareness). Rounded down to 4 decimals so float
+# recomputation on another machine can never trip a false failure.
+_MEASURED_MIN_MARGIN = 0.0556
+
+
+def _self_rank_worst_margins(corpus, index, fixtures, sibling_sets):
+    """Return {skill_name: worst_margin} — for each skill, the minimum over
+    its own fixtures of (target_score - best-scoring non-sibling score)."""
+    worst = {}
+    for skill_name, prompt in fixtures:
+        ranked = _rank_skills(prompt, corpus, index)
+        scores = dict(ranked)
+        target_score = scores[skill_name]
+        _all_groups = [s for s in sibling_sets if skill_name in s]
+        my_siblings = set().union(*_all_groups) if _all_groups else {skill_name}
+        non_sib_scores = [sc for n, sc in ranked if n not in my_siblings]
+        best_non_sib = max(non_sib_scores) if non_sib_scores else 0.0
+        margin = target_score - best_non_sib
+        worst[skill_name] = min(worst.get(skill_name, margin), margin)
+    return worst
+
+
+def test_self_rank_margin_report(real_corpus, real_index, sibling_sets):
+    """Print a sorted worst-margin-per-skill table and fail if the
+    corpus-wide minimum drops below the recorded _MEASURED_MIN_MARGIN.
+
+    Unlike test_prompt_ranks_target_skill_top1 (which only gates fixtures
+    that rank #1), this computes a margin for every fixture regardless of
+    which mechanism makes it pass, so it catches near-misses hiding behind
+    the sibling-set escape hatch too.
+    """
+    worst = _self_rank_worst_margins(real_corpus, real_index, _FIXTURES, sibling_sets)
+    ordered = sorted(worst.items(), key=lambda kv: kv[1])
+    table = "\n".join(f"  {margin:8.4f}  {name}" for name, margin in ordered[:20])
+    print(f"\nself-rank margin report (worst 20, ascending):\n{table}")
+    corpus_min = min(worst.values())
+    assert corpus_min >= _MEASURED_MIN_MARGIN, (
+        f"corpus-wide minimum self-rank margin dropped to {corpus_min:.4f} "
+        f"(< recorded floor {_MEASURED_MIN_MARGIN}). Worst offender: "
+        f"{ordered[0][0]!r}. If this is an intentional, reviewed description "
+        f"change, re-measure and update _MEASURED_MIN_MARGIN to the new exact "
+        f"value — do not widen it as a guess."
     )
 
 

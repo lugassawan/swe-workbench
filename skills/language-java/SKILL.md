@@ -1,6 +1,6 @@
 ---
 name: language-java
-description: Java idioms — records, sealed types, virtual threads, streams, and JDK 21+ patterns. Auto-load when working with .java files, pom.xml, build.gradle, or when the user mentions Java, JVM, Spring, Maven, Gradle, records, sealed classes, or virtual threads.
+description: Java idioms — records, sealed types, virtual threads, and JDK 21+ patterns. Auto-load when working with .java files, pom.xml, build.gradle, or when the user mentions Java, JVM, Spring, Maven, Gradle, sealed classes, or virtual threads.
 ---
 
 # Java

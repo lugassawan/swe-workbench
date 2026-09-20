@@ -1,0 +1,4 @@
+# Representative dispatch prompts for test-reviewer
+audit this test suite for flakiness and over-mocking at internal boundaries
+review these tests for behaviour-vs-implementation drift and coverage gaps, don't rewrite them
+are these tests flaky, over-mocked, or just pinning implementation details — give me a depth-first audit

@@ -1,0 +1,4 @@
+# Representative dispatch prompts for migrator
+migrate this table's schema from the old shape to the new one across multiple deployments
+plan an expand-backfill-switch-contract migration for renaming this column safely
+we need to migrate this API from v1 to v2 with a reversible, independently deployable rollout

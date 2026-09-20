@@ -1,4 +1,4 @@
-"""Structural assertions for bin/swe-workbench-preflight-pr (Fix A).
+"""Structural + behavioural assertions for bin/swe-workbench-preflight-pr.
 
 Mirrors tests/test_fetch_pr_script.py conventions.
 Verifies that preflight-pr.sh:
@@ -7,10 +7,24 @@ Verifies that preflight-pr.sh:
   - emits only safe scalars via printf %q (BASE, HEAD_SHA, AUTHOR_LOGIN, OWNER, REPO, STATE)
   - NEVER echoes title or body (free-text → eval-injection risk)
   - uses set -euo pipefail
+  - owns cleanup of $OUT_JSON on its own failure (an EXIT trap), and leaves
+    $OUT_JSON in place on success — a caller invokes it as eval "$(...)", which
+    structurally discards the script's own exit status, so the script must
+    reap its own artifact rather than relying on the caller to do so.
+
+Tier Q per shared/docs/runtime-result-contract.md's S/Q/J decision test: every emitted
+value is already a printf %q-quoted, eval-safe scalar, and title/body are already
+routed around eval entirely via $OUT_JSON — migrating to the standard envelope buys
+no capability here. test_preflight_pr_emits_exactly_the_golden_six_field_contract
+below is the hardening ratchet that ticket asked for in place of a migration: any
+accidental addition, removal, reordering, or format change to the 6-field contract
+must fail here and force a deliberate update, rather than silently drifting.
 """
 
 import re
 import subprocess
+import tempfile
+import uuid
 from pathlib import Path
 
 from conftest import _CLEAN_ENV
@@ -124,3 +138,196 @@ def test_preflight_bash_syntax():
         f"bash -n bin/swe-workbench-preflight-pr failed:\n{result.stderr}"
     )
 
+
+# ── Behavioural: own-artifact cleanup ────────────────────────────────────────
+#
+# Extends the _make_gh_stub / PATH-prepend pattern from test_fetch_pr_script.py
+# to an argument-dispatching stub, since preflight-pr drives three distinct
+# `gh` subcommands (auth status, pr view, repo view) through the real sibling
+# scripts (swe-workbench-gh-timeout, swe-workbench-fetch-pr) rather than a
+# single call.
+
+def _make_gh_dispatch_stub(stub_dir: Path, *, pr_json: str, pr_exit: int = 0,
+                            owner: str = "test-owner", repo: str = "test-repo") -> None:
+    """Write a fake gh binary that dispatches on subcommand.
+
+    - `auth status`            -> exit 0
+    - `pr view ...`            -> emit `pr_json`, exit `pr_exit`
+    - `repo view --json owner` -> emit `owner`, exit 0
+    - `repo view --json name`  -> emit `repo`, exit 0
+    """
+    stub_dir.mkdir(exist_ok=True)
+    pr_json_file = stub_dir / "_pr_view_output"
+    pr_json_file.write_text(pr_json)
+    stub = stub_dir / "gh"
+    stub.write_text(f"""#!/bin/sh
+case "$1" in
+  auth)
+    [ "$2" = "status" ] && exit 0
+    exit 1
+    ;;
+  pr)
+    if [ "$2" = "view" ]; then
+      cat '{pr_json_file}'
+      exit {pr_exit}
+    fi
+    exit 1
+    ;;
+  repo)
+    if [ "$2" = "view" ]; then
+      for a in "$@"; do
+        case "$a" in
+          *owner*) echo '{owner}'; exit 0 ;;
+          *name*) echo '{repo}'; exit 0 ;;
+        esac
+      done
+    fi
+    exit 1
+    ;;
+esac
+exit 1
+""")
+    stub.chmod(0o755)
+
+
+def _run_preflight(pr: str, out_json: Path, *, stub_dir: Path):
+    env = dict(_CLEAN_ENV)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
+    return subprocess.run(
+        ["bash", str(SCRIPT), pr, str(out_json)],
+        capture_output=True, text=True,
+        cwd=str(ROOT),
+        env=env,
+    )
+
+
+# $OUT_JSON must be a sanctioned path — swe-workbench-clean-state-files (invoked
+# by the trap) rejects anything outside /tmp/swe-workbench-{pr-review,
+# address-feedback}/ or the bare-/tmp basename allowlist, so a tmp_path fixture
+# path would make the trap a silent no-op and the assertions below would pass
+# for the wrong reason. A unique basename avoids the shared-/tmp race with a
+# concurrent session.
+def _sanctioned_out_json() -> Path:
+    return Path(f"/tmp/swe-workbench-pr-review/{uuid.uuid4().hex}.json")
+
+
+def test_preflight_trap_removes_out_json_on_null_field_abort():
+    """author.login == null trips the L33-39 field-emptiness loop -> exit 1 ->
+    the EXIT trap must remove $OUT_JSON (the script's own failed artifact)."""
+    with tempfile.TemporaryDirectory() as stub_dir_str:
+        stub_dir = Path(stub_dir_str)
+        pr_json = (
+            '{"state":"OPEN","number":1,"headRefName":"feature-x",'
+            '"baseRefName":"main","headRefOid":"abc123","title":"t","body":"b",'
+            '"author":{"login":null},"reviewDecision":null}'
+        )
+        _make_gh_dispatch_stub(stub_dir, pr_json=pr_json)
+        out_json = _sanctioned_out_json()
+        try:
+            result = _run_preflight("1", out_json, stub_dir=stub_dir)
+            assert result.returncode != 0, (
+                f"Expected non-zero exit on null author.login\nstderr: {result.stderr!r}"
+            )
+            assert not out_json.exists(), (
+                "the trap must remove $OUT_JSON when the script aborts after creating it — "
+                "a caller invoking this via eval \"$(...)\" cannot do this cleanup itself, "
+                "since eval discards the script's exit status"
+            )
+        finally:
+            out_json.unlink(missing_ok=True)
+
+
+def test_preflight_trap_leaves_out_json_on_success():
+    """Fully valid PR JSON -> script exits 0 -> $OUT_JSON must remain (it is the
+    deliverable callers read title/body/headRefName from)."""
+    with tempfile.TemporaryDirectory() as stub_dir_str:
+        stub_dir = Path(stub_dir_str)
+        pr_json = (
+            '{"state":"OPEN","number":1,"headRefName":"feature-x",'
+            '"baseRefName":"main","headRefOid":"abc123","title":"t","body":"b",'
+            '"author":{"login":"octocat"},"reviewDecision":null}'
+        )
+        _make_gh_dispatch_stub(stub_dir, pr_json=pr_json)
+        out_json = _sanctioned_out_json()
+        try:
+            result = _run_preflight("1", out_json, stub_dir=stub_dir)
+            assert result.returncode == 0, (
+                f"Expected exit 0 on valid PR JSON\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            )
+            assert out_json.exists(), (
+                "the trap must NOT remove $OUT_JSON on a successful run — over-broad "
+                "trap logic would delete the file callers rely on for title/body/headRefName"
+            )
+        finally:
+            out_json.unlink(missing_ok=True)
+
+
+# ── Golden-literal ratchet: the exact 6-field %q-quoted contract ────────────
+
+GOLDEN_EMIT_LINES = [
+    "printf 'BASE=%q\\n'         \"$BASE\"",
+    "printf 'HEAD_SHA=%q\\n'     \"$HEAD_SHA\"",
+    "printf 'AUTHOR_LOGIN=%q\\n' \"$AUTHOR_LOGIN\"",
+    "printf 'OWNER=%q\\n'        \"$OWNER\"",
+    "printf 'REPO=%q\\n'         \"$REPO\"",
+    "printf 'STATE=%q\\n'        \"$STATE\"",
+]
+
+
+def test_preflight_pr_emits_exactly_the_golden_six_field_contract():
+    """Pins the script's entire emitted contract as a literal — not just presence of
+    each field name, but the exact printf %q line for each, in this exact order.
+    Tier Q means the ratchet is the hardening, not an envelope migration; a change
+    here must be a deliberate, reviewed edit to this golden list."""
+    lines = SCRIPT.read_text().splitlines()
+    emit_lines = [ln for ln in lines if ln.lstrip().startswith("printf '") and "%q" in ln]
+    assert emit_lines == GOLDEN_EMIT_LINES, (
+        f"bin/swe-workbench-preflight-pr's emitted contract drifted from the golden "
+        f"6-field list.\nExpected:\n{GOLDEN_EMIT_LINES}\nGot:\n{emit_lines}"
+    )
+
+
+
+# ──────────────────────────────────────────────────────
+# Repo self-attribution
+# ──────────────────────────────────────────────────────
+
+def test_preflight_default_fields_include_url_for_repo_attribution():
+    """The default FIELDS set must include `url`: every preflight
+    state file then self-attributes its repository on disk, feeding both
+    swe-workbench-repo-scope --pr-json and sweep-residuals' legacy attribution."""
+    text = SCRIPT.read_text()
+    m = re.search(r'FIELDS="\$\{3:-([^"]*)\}"', text)
+    assert m, "FIELDS default assignment not found in preflight-pr"
+    fields = m.group(1).split(",")
+    assert "url" in fields, (
+        "preflight-pr's default FIELDS must fetch `url` so state files carry their "
+        "owner/repo on disk (repo-scoped ephemeral state,)"
+    )
+
+
+def test_preflight_state_file_resolves_repo_scope():
+    """End-to-end: preflight writes the PR url into $OUT_JSON, and the
+    repo-scope helper resolves the owner-repo slug from that file alone."""
+    with tempfile.TemporaryDirectory() as stub_dir_str:
+        stub_dir = Path(stub_dir_str)
+        pr_json = (
+            '{"state":"OPEN","number":42,"headRefName":"feature-x",'
+            '"baseRefName":"main","headRefOid":"abc123","title":"t","body":"b",'
+            '"author":{"login":"octocat"},"reviewDecision":null,'
+            '"url":"https://github.com/octocat/widgets/pull/42"}'
+        )
+        _make_gh_dispatch_stub(stub_dir, pr_json=pr_json)
+        out_json = _sanctioned_out_json()
+        try:
+            result = _run_preflight("42", out_json, stub_dir=stub_dir)
+            assert result.returncode == 0, f"stderr: {result.stderr!r}"
+            scope = subprocess.run(
+                ["bash", str(ROOT / "bin" / "swe-workbench-repo-scope"),
+                 "--pr-json", str(out_json)],
+                capture_output=True, text=True, env=dict(_CLEAN_ENV),
+            )
+            assert scope.returncode == 0, f"stderr: {scope.stderr!r}"
+            assert scope.stdout == "7-octocat-widgets\n"
+        finally:
+            out_json.unlink(missing_ok=True)

@@ -1,32 +1,38 @@
-"""Tests for skills/workflow-cleanup-merged/scripts/sweep-residuals.sh.
+"""Tests for bin/swe-workbench-sweep-residuals.
 
 PR-scoped backstop invoked by workflow-cleanup-merged's Residual Sweep step, after
 cleanup-merged has already independently verified via `gh pr view` that the PR is
 MERGED. Force-removes rimba worktrees (pr-review-<N>, pr-followup-<N>,
-address-feedback-<N>) and their /tmp/swe-workbench-* state-file JSON, all scoped to
-one specific PR number.
+address-feedback-<N>, review-<mode>-<N> per postable specialist mode) and their
+/tmp/swe-workbench-* state-file JSON, all scoped to one specific PR number.
 
 Mirrors tests/test_delete_branches.py's harness conventions: real git repos built
 with subprocess.run(..., env=_CLEAN_ENV), no mocking of git itself. State-file tests
 use real /tmp/swe-workbench-* paths (like tests/test_clean_state_files.py) with a
 unique high PR number per test to avoid cross-test / cross-run collisions.
+
+The `KEY=VALUE` stdout contract was later replaced with the standard JSON envelope
+(schema `swb.sweep-residuals/1`, see shared/docs/runtime-result-contract.md) —
+`retained_worktrees`/`failed_removals` are now `[{path, reason}]` arrays rather than
+bare counts. `_assert_contract`'s `retained_wt`/`failed` parameters still take an
+expected *count* (checked against array length) so nearly every existing call site
+is unchanged; a handful of dedicated tests assert the actual path/reason content.
 """
 
+import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from conftest import _CLEAN_ENV
 
-SCRIPT = (
-    Path(__file__).parent.parent
-    / "skills"
-    / "workflow-cleanup-merged"
-    / "scripts"
-    / "sweep-residuals.sh"
-)
+ROOT = Path(__file__).parent.parent
+SCRIPT = ROOT / "bin" / "swe-workbench-sweep-residuals"
+REVIEW_MD = Path(__file__).parent.parent / "commands" / "review.md"
 
 TMP = Path("/tmp")
 PR_REVIEW_DIR = TMP / "swe-workbench-pr-review"
@@ -45,7 +51,7 @@ def _run(*args, cwd) -> subprocess.CompletedProcess:
 
 
 def _build_repo(base: Path) -> Path:
-    """A minimal git repo (no remote needed — sweep-residuals.sh never pushes/fetches)."""
+    """A minimal git repo (no remote needed — swe-workbench-sweep-residuals never pushes/fetches)."""
     repo = base / "main_repo"
     _run("git", "init", str(repo), cwd=base)
     _run("git", "config", "user.email", "test@example.com", cwd=repo)
@@ -78,9 +84,9 @@ def _rimba_absent_env(fake_home: Path) -> dict:
     return env
 
 
-def _run_script(repo: Path, n: str, env: dict) -> subprocess.CompletedProcess:
+def _run_script(repo: Path, n: str, env: dict, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["bash", str(SCRIPT), n],
+        ["bash", str(SCRIPT), n, *extra],
         cwd=str(repo),
         capture_output=True,
         text=True,
@@ -95,22 +101,48 @@ def _assert_contract(
     residual_none: str,
     swept_rd: str = "0",
     swept_ssf: str = "0",
+    retained_wt: str = "0",
+    failed: str = "0",
+    retained_sf: str = "0",
 ) -> None:
+    """`retained_wt`/`failed`/`retained_sf` are expected *counts* — checked against
+    the length of the `data.retained_worktrees`/`data.failed_removals`/
+    `data.retained_state_files` arrays, not their content."""
     assert result.returncode == 0, (
         f"Script must always exit 0 (rc={result.returncode})\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
     )
-    lines = result.stdout.strip().splitlines()
-    expected = [
-        f"SWEPT_WORKTREES={swept_wt}",
-        f"SWEPT_STATE_FILES={swept_sf}",
-        f"SWEPT_RUN_DIRS={swept_rd}",
-        f"SWEPT_SESSION_FILES={swept_ssf}",
-        f"RESIDUAL_NONE={residual_none}",
-    ]
-    assert lines == expected, (
-        f"Expected stdout={expected}, got {lines!r}\n"
-        f"Full stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+    payload = json.loads(result.stdout)
+    assert payload["schema"] == "swb.sweep-residuals/1"
+    assert payload["warnings"] == []
+    expected_status = "partial" if (int(retained_wt) > 0 or int(failed) > 0 or int(retained_sf) > 0) else "ok"
+    assert payload["status"] == expected_status, (
+        f"expected status={expected_status!r}, got {payload['status']!r}\nFull payload: {payload!r}"
+    )
+    data = payload["data"]
+    actual = {
+        "swept_worktrees": data["swept_worktrees"],
+        "swept_state_files": data["swept_state_files"],
+        "swept_run_dirs": data["swept_run_dirs"],
+        "swept_session_files": data["swept_session_files"],
+        "retained_worktrees": len(data["retained_worktrees"]),
+        "failed_removals": len(data["failed_removals"]),
+        "retained_state_files": len(data["retained_state_files"]),
+        "residual_none": data["residual_none"],
+    }
+    expected = {
+        "swept_worktrees": int(swept_wt),
+        "swept_state_files": int(swept_sf),
+        "swept_run_dirs": int(swept_rd),
+        "swept_session_files": int(swept_ssf),
+        "retained_worktrees": int(retained_wt),
+        "failed_removals": int(failed),
+        "retained_state_files": int(retained_sf),
+        "residual_none": bool(int(residual_none)),
+    }
+    assert actual == expected, (
+        f"Expected data={expected}, got {actual!r}\n"
+        f"Full payload: {payload!r}\nstderr: {result.stderr!r}"
     )
 
 
@@ -227,7 +259,7 @@ class TestAddressFeedbackWorktreePreservesBranch:
             assert not wt_path.exists(), "address-feedback worktree must be removed"
             assert _branch_exists(repo, pr_head_branch), (
                 "address-feedback's branch is the PR's real head branch — "
-                "sweep-residuals.sh must NEVER `git branch -D` it"
+                "swe-workbench-sweep-residuals must NEVER `git branch -D` it"
             )
         finally:
             _cleanup_worktree(repo, wt_path, None)
@@ -261,7 +293,10 @@ class TestDirtyWorktreeSkipped:
             (tmp_path / "fake_home").mkdir(exist_ok=True)
             result = _run_script(repo, n, env)
 
-            _assert_contract(result, "0", "0", "1")
+            # This is the ticket's headline bug: a dirty worktree that is
+            # correctly skipped (not force-removed) must still be counted —
+            # RESIDUAL_NONE must NOT be 1 just because nothing was swept.
+            _assert_contract(result, "0", "0", "0", retained_wt="1")
             assert wt_path.exists(), "dirty worktree must NOT be force-removed"
             assert (wt_path / "uncommitted.txt").exists(), (
                 "uncommitted file must survive — this is the data-loss guard"
@@ -272,7 +307,56 @@ class TestDirtyWorktreeSkipped:
             assert "uncommitted" in result.stderr.lower() or "dirty" in result.stderr.lower(), (
                 f"a dirty-skip warning must be printed to stderr, got: {result.stderr!r}"
             )
+            # The actual capability gain of the envelope migration: retained_worktrees
+            # carries which path and why, not just a bare count.
+            retained = json.loads(result.stdout)["data"]["retained_worktrees"]
+            assert retained == [{"path": str(wt_path), "reason": "1 uncommitted change(s)"}], retained
         finally:
+            _cleanup_worktree(repo, wt_path, branch)
+
+
+# ── FAILED_REMOVALS: a genuinely-attempted-but-failed removal is counted ────
+
+
+class TestFailedRemovalCounted:
+    """FAILED_REMOVALS must go nonzero when a removal is actually attempted and
+    actually fails — every other test in this file only proves the counter
+    stays 0 in the happy path. Denying write permission on the worktree
+    directory itself makes both `git worktree remove --force` and the
+    swe-workbench-clean-ephemeral fallback unable to unlink its contents
+    (POSIX: removing an entry needs write+execute on its *containing*
+    directory), so the directory survives both attempts — this is portable
+    across Linux and macOS (no OS-specific immutable-flag mechanism needed).
+    """
+
+    def test_worktree_removal_failure_is_counted(self, tmp_path):
+        if os.geteuid() == 0:
+            pytest.skip("permission-denial is not enforceable when running as root")
+
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        branch = f"pr-review-{n}"
+        wt_path = PR_REVIEW_DIR / n
+
+        _run("git", "branch", branch, cwd=repo)
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(wt_path), branch, cwd=repo)
+        os.chmod(wt_path, 0o555)
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "0", failed="1")
+            assert wt_path.exists(), (
+                "removal must have genuinely failed — the worktree directory "
+                "must still be present on disk"
+            )
+            failed_removals = json.loads(result.stdout)["data"]["failed_removals"]
+            assert failed_removals == [{"path": str(wt_path), "reason": "worktree removal failed"}], failed_removals
+        finally:
+            os.chmod(wt_path, 0o755)
             _cleanup_worktree(repo, wt_path, branch)
 
 
@@ -478,43 +562,559 @@ class TestSessionScratchpadReap:
         _assert_contract(result, "0", "0", "1")
 
 
-# ── eval safety (script feeds `eval "$(...)"` per the SKILL.md wiring) ──────
+# ── specialist-review artifact coverage (PR-mode /swe-workbench:review) ─────
+#
+# commands/review.md's postable specialist modes each create their own
+# mode-scoped preflight state file, rimba worktree label, and direct-Git
+# fallback worktree — none of which the pre-fix script's allowlists knew
+# about (only the Block C run-dir class was transitively covered, because its
+# glob happens to also match review-<mode>-<N>-??????).
+
+SPECIALIST_MODES = ["security", "accessibility", "dependency", "performance", "tests", "ux"]
 
 
-def test_eval_stdout_only_does_not_create_stray_files(tmp_path):
-    """Production pattern: eval "$(sweep-residuals.sh <N>)" — stdout only.
+class TestSpecialistStateFileReap:
+    @pytest.mark.parametrize("mode", SPECIALIST_MODES)
+    def test_specialist_state_file_reaped(self, tmp_path, mode):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        state_file = PR_REVIEW_DIR / f"{n}-review-{mode}.json"
+        state_file.write_text("{}")
 
-    Capture BEFORE cd-ing to a different directory (the eval/cwd trap): the
-    script needs a valid git cwd to resolve MAIN_REPO, or it would exit early
-    via the "could not resolve MAIN_REPO" path and under-report.
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "1", "0")
+            assert not state_file.exists(), f"{state_file} must be reaped"
+        finally:
+            state_file.unlink(missing_ok=True)
+
+
+class TestSpecialistWorktreeReapedViaPorcelain:
+    """The rimba-label path (basename == 'review-<mode>-<N>') is discoverable
+    by the porcelain scan directly — no fallback-path lookup needed."""
+
+    @pytest.mark.parametrize("mode", SPECIALIST_MODES)
+    def test_specialist_worktree_and_branch_reaped(self, tmp_path, mode):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        branch = f"review-{mode}-{n}"
+        wt_dir = tmp_path / "specialist_wt_parent"
+        wt_dir.mkdir(exist_ok=True)
+        wt_path = wt_dir / branch
+
+        _run("git", "worktree", "add", "-b", branch, str(wt_path), cwd=repo)
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "1", "0", "0")
+            assert not wt_path.exists(), "specialist worktree must be removed"
+            assert not _branch_exists(repo, branch), (
+                "specialist review branches are throwaway copies — must be force-deleted"
+            )
+        finally:
+            _cleanup_worktree(repo, wt_path, branch)
+
+
+class TestSpecialistDirectGitFallbackWorktreeReaped:
+    """rimba-absent fallback convention (commands/review.md Step 2): the worktree
+    is checked out --detach at /tmp/swe-workbench-pr-review/<mode>-<N> — its
+    basename does not match the review-<mode>-<N> label, so only the fallback
+    literal-path check (not the porcelain scan) can find it."""
+
+    @pytest.mark.parametrize("mode", SPECIALIST_MODES)
+    def test_specialist_fallback_worktree_and_branch_reaped(self, tmp_path, mode):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        branch = f"review-{mode}-{n}"
+        wt_path = PR_REVIEW_DIR / f"{mode}-{n}"
+
+        _run("git", "branch", branch, cwd=repo)
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(wt_path), branch, cwd=repo)
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "1", "0", "0")
+            assert not wt_path.exists(), "specialist fallback worktree must be removed"
+            assert not _branch_exists(repo, branch)
+        finally:
+            _cleanup_worktree(repo, wt_path, branch)
+
+
+class TestSpecialistDirtyWorktreeRetained:
+    def test_dirty_specialist_worktree_retained_and_counted(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        mode = "security"
+        branch = f"review-{mode}-{n}"
+        wt_path = PR_REVIEW_DIR / f"{mode}-{n}"
+
+        _run("git", "branch", branch, cwd=repo)
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        _run("git", "worktree", "add", "--detach", str(wt_path), branch, cwd=repo)
+        (wt_path / "uncommitted.txt").write_text("local-only work\n")
+
+        try:
+            env = _rimba_absent_env(tmp_path / "fake_home")
+            (tmp_path / "fake_home").mkdir(exist_ok=True)
+            result = _run_script(repo, n, env)
+
+            _assert_contract(result, "0", "0", "0", retained_wt="1")
+            assert wt_path.exists(), "dirty specialist worktree must NOT be force-removed"
+            assert _branch_exists(repo, branch)
+        finally:
+            _cleanup_worktree(repo, wt_path, branch)
+
+
+def test_unrelated_pr_specialist_artifacts_untouched(tmp_path):
+    """Sweeping PR N must not touch another PR's specialist-mode artifacts."""
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    other_n = _unique_n()
+    mode = "ux"
+    PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
+    other_state_file = PR_REVIEW_DIR / f"{other_n}-review-{mode}.json"
+    other_state_file.write_text("{}")
+
+    other_branch = f"review-{mode}-{other_n}"
+    other_wt_path = PR_REVIEW_DIR / f"{mode}-{other_n}"
+    _run("git", "branch", other_branch, cwd=repo)
+    _run("git", "worktree", "add", "--detach", str(other_wt_path), other_branch, cwd=repo)
+
+    try:
+        env = _rimba_absent_env(tmp_path / "fake_home")
+        (tmp_path / "fake_home").mkdir(exist_ok=True)
+        result = _run_script(repo, n, env)
+
+        _assert_contract(result, "0", "0", "1")
+        assert other_state_file.exists(), "an unrelated PR's specialist state file must survive"
+        assert other_wt_path.exists(), "an unrelated PR's specialist worktree must survive"
+        assert _branch_exists(repo, other_branch)
+    finally:
+        other_state_file.unlink(missing_ok=True)
+        _cleanup_worktree(repo, other_wt_path, other_branch)
+
+
+def test_specialist_modes_match_review_md_postable_list():
+    """Drift guard: the script's SPECIALIST_MODES must match commands/review.md's
+    postable-mode list. Adding a 7th postable mode there without updating the
+    script must fail here rather than silently re-opening the coverage gap this
+    ticket closed.
     """
+    script_text = SCRIPT.read_text()
+    match = re.search(r"SPECIALIST_MODES=\(([^)]*)\)", script_text)
+    assert match, "bin/swe-workbench-sweep-residuals must declare SPECIALIST_MODES=(...)"
+    script_modes = match.group(1).split()
+
+    review_text = REVIEW_MD.read_text()
+    postable_match = re.search(r"postable specialist value \(([^)]*)\)", review_text)
+    assert postable_match, (
+        "commands/review.md must name the postable specialist value list in parentheses"
+    )
+    review_modes = [m.strip() for m in postable_match.group(1).split(",")]
+
+    assert script_modes == review_modes, (
+        f"SPECIALIST_MODES={script_modes} in bin/swe-workbench-sweep-residuals must match "
+        f"commands/review.md's postable specialist list {review_modes}"
+    )
+
+
+# ── envelope round-trip (replaces the old eval-safety test class; production pattern
+#    is now RESULT=$(sweep-residuals <N> | result-check swb.sweep-residuals/1) || exit 1) ──
+
+
+def test_envelope_round_trips_through_result_check(tmp_path):
+    """stdout must be a bare JSON envelope — no `eval`-able KEY=VALUE lines, and it
+    must validate cleanly against the checker's registered schema."""
     repo = _build_repo(tmp_path)
     n = _unique_n()
     env = _rimba_absent_env(tmp_path / "fake_home")
     (tmp_path / "fake_home").mkdir(exist_ok=True)
 
-    eval_cwd = tmp_path / "eval_cwd"
-    eval_cwd.mkdir()
-    (eval_cwd / "decoy").write_text("")
+    result = _run_script(repo, n, env)
+    assert result.returncode == 0, result.stderr
 
-    assert '"' not in str(eval_cwd) and '"' not in str(SCRIPT) and '"' not in n
+    checker = ROOT / "bin" / "swe-workbench-result-check"
+    checked = subprocess.run(
+        [sys.executable, str(checker), "swb.sweep-residuals/1"],
+        input=result.stdout, capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout) == json.loads(result.stdout)
 
-    runner = (
-        f'output="$(bash "{SCRIPT}" "{n}")"; '
-        f'cd "{eval_cwd}"; '
-        f'eval "$output" 2>/dev/null || true; '
-        f'echo "RESIDUAL_NONE_SEEN=$RESIDUAL_NONE"'
-    )
-    result = subprocess.run(
-        ["bash", "-c", runner], cwd=str(repo), capture_output=True, text=True, env=env,
-    )
-    assert result.returncode == 0, f"bash runner failed:\n{result.stderr}"
-    assert "RESIDUAL_NONE_SEEN=1" in result.stdout, (
-        f"eval'd contract did not set RESIDUAL_NONE in the caller's shell: {result.stdout!r}"
+
+def test_stdout_contains_no_eval_able_key_value_lines(tmp_path):
+    """Regression lock for the migration itself — a stray `KEY=VALUE` line surviving
+    in stdout would silently re-open the eval-injection hazard this ticket closes."""
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    env = _rimba_absent_env(tmp_path / "fake_home")
+    (tmp_path / "fake_home").mkdir(exist_ok=True)
+
+    result = _run_script(repo, n, env)
+    assert result.returncode == 0, result.stderr
+    assert not re.search(r"^[A-Z_]+=", result.stdout, re.MULTILINE), (
+        f"stdout must be a bare JSON envelope, no shell KEY=VALUE lines: {result.stdout!r}"
     )
 
-    stray = [f for f in eval_cwd.iterdir() if f.name != "decoy"]
-    assert not stray, (
-        f"Stray files created in {eval_cwd} via eval of the script's stdout: "
-        f"{[f.name for f in stray]}"
-    )
+
+# ── Repo-scoped dual-read sweep ──────────────────────────────
+
+
+def _build_scoped_repo(base: Path, origin_url: str = "https://github.com/octocat/widgets.git") -> Path:
+    """A repo whose origin remote is a github URL, so the sweep resolves a slug
+    and runs in scoped mode."""
+    repo = _build_repo(base)
+    _run("git", "remote", "add", "origin", origin_url, cwd=repo)
+    return repo
+
+
+def _scoped_env(tmp_path: Path) -> dict:
+    (tmp_path / "fake_home").mkdir(exist_ok=True)
+    return _rimba_absent_env(tmp_path / "fake_home")
+
+
+class TestRepoScopedStateFileSweep:
+    def test_scoped_sweeps_own_slugged_files_and_leaves_foreign_slugged(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}.json"
+        foreign = PR_REVIEW_DIR / f"other-repo-{n}.json"
+        own.write_text("{}")
+        foreign.write_text("{}")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not own.exists()
+            assert foreign.exists(), "a foreign repo's slugged state file must never be touched"
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert retained == [], retained
+        finally:
+            own.unlink(missing_ok=True)
+            foreign.unlink(missing_ok=True)
+
+    def test_explicit_repo_flag_drives_scope_from_plain_cwd(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}.json"
+        own.write_text("{}")
+        try:
+            result = _run_script(plain, n, _scoped_env(tmp_path), "--repo", "octocat/widgets")
+            _assert_contract(result, "0", "1", "0")
+            assert not own.exists()
+        finally:
+            own.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_foreign_retained(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": "https://github.com/other/repo/pull/" + n}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists()
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert retained == [{"path": str(f), "reason": retained[0]["reason"]}]
+            assert "another repository" in retained[0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_ours_swept(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": f"https://github.com/octocat/widgets/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not f.exists()
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_preflight_url_ours_swept_hyphenated_repo_name(self, tmp_path):
+        """_url_scope_slug delegates to swe-workbench-repo-scope itself now —
+        this pins that a repo name containing a hyphen (this repo's own name
+        is a real-world instance) is recognized as attributable, which a
+        reimplemented `\\1-\\2` join previously failed for any hyphenated
+        owner/repo, since it never agreed with escape_owner_repo's actual
+        slug encoding."""
+        repo = _build_scoped_repo(tmp_path, "https://github.com/lugassawan/swe-workbench.git")
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text(json.dumps({"url": f"https://github.com/lugassawan/swe-workbench/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not f.exists(), "hyphenated-name owner/repo must still be recognized as our own"
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_headrefoid_fingerprint(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        match = PR_REVIEW_DIR / f"{n}.json"
+        mismatch = PR_REVIEW_DIR / f"{n}-followup.json"
+        match.write_text(json.dumps({"headRefOid": "a" * 40}))
+        mismatch.write_text(json.dumps({"headRefOid": "b" * 40}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path), "--head-sha", "a" * 40)
+            _assert_contract(result, "0", "1", "0", retained_sf="1")
+            assert not match.exists()
+            assert mismatch.exists()
+        finally:
+            match.unlink(missing_ok=True)
+            mismatch.unlink(missing_ok=True)
+
+    def test_legacy_triage_always_retained(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        f = ADDR_FEEDBACK_DIR / f"{n}-triage.json"
+        f.write_text(json.dumps({"123": "ADDRESSED"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists(), "legacy triage carries user decisions — always retained"
+            retained = json.loads(result.stdout)["data"]["retained_state_files"]
+            assert "triage" in retained[0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+
+    def test_legacy_pr_comments_repository_url_attribution(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        ours = ADDR_FEEDBACK_DIR / f"{n}-pr-comments.json"
+        theirs = ADDR_FEEDBACK_DIR / f"{n}-threads.json"  # pairing probe: foreign sibling below
+        ours.write_text(json.dumps([{"id": 1, "repository_url": "https://api.github.com/repos/octocat/widgets"}]))
+        theirs.write_text("[]")
+        # Foreign sibling preflight JSON in the threads file's OWN directory:
+        # itself retained AND retains the threads file via set-pairing.
+        sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
+        sibling.write_text(json.dumps({"url": f"https://github.com/other/repo/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0", retained_sf="2")
+            assert not ours.exists()
+            assert theirs.exists(), "threads paired with a foreign same-directory sibling must be retained"
+            assert sibling.exists()
+        finally:
+            ours.unlink(missing_ok=True)
+            theirs.unlink(missing_ok=True)
+            sibling.unlink(missing_ok=True)
+
+    def test_legacy_worktree_receipt_attributed_by_path_remote(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        ours = ADDR_FEEDBACK_DIR / f"{n}-worktree.json"
+        theirs = ADDR_FEEDBACK_DIR / f"{n}-pr-comments.json"
+        # own receipt points at a worktree of the scoped repo
+        own_wt = tmp_path / "own_wt"
+        _run("git", "worktree", "add", "--detach", str(own_wt), "main", cwd=repo)
+        ours.write_text(json.dumps({"path": str(own_wt), "branch": "b", "created": "true"}))
+        # theirs: empty-array pr-comments has no repository_url -> not attributable
+        theirs.write_text("[]")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0", retained_sf="1")
+            assert not ours.exists()
+            assert theirs.exists()
+        finally:
+            ours.unlink(missing_ok=True)
+            theirs.unlink(missing_ok=True)
+            _run("git", "worktree", "remove", "--force", str(own_wt), cwd=repo)
+
+
+class TestRepoScopedRunDirSweep:
+    def test_scoped_glob_only_reaps_own_slug(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        own = RUN_ROOT / f"pr-review-7-octocat-widgets-{n}-a1b2c3"
+        foreign = RUN_ROOT / f"pr-review-other-repo-{n}-b2c3d4"
+        legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
+        for d in (own, foreign, legacy):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not own.exists()
+            assert foreign.exists(), "foreign repo's run dir must not be reaped by a scoped sweep"
+            assert legacy.exists(), "legacy run dirs belong to the 24h age-gated reaper, not this sweep"
+        finally:
+            for d in (own, foreign, legacy):
+                shutil.rmtree(d, ignore_errors=True)
+
+
+class TestRepoScopedFallbackWorktreeSweep:
+    def test_legacy_fallback_worktree_attributed_by_origin(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        foreign_base = tmp_path / "foreign"
+        foreign_base.mkdir()
+        foreign_repo = _build_scoped_repo(foreign_base, "https://github.com/other/repo.git")
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / n
+        theirs = PR_REVIEW_DIR / f"{n}-followup"
+        _run("git", "worktree", "add", "--detach", str(own), "main", cwd=repo)
+        _run("git", "worktree", "add", "--detach", str(theirs), "main", cwd=foreign_repo)
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "1", "0", "0", retained_wt="1")
+            assert not own.exists()
+            assert theirs.exists(), "foreign-origin legacy fallback worktree must be retained"
+        finally:
+            _cleanup_worktree(repo, own, None)
+            _cleanup_worktree(foreign_repo, theirs, None)
+
+
+# ── Review fixes: exact-tag run-dir matching, sibling pairing, invalid --repo ──
+
+
+class TestRunDirExactTagMatching:
+    def test_slug_suffix_collision_not_swept(self, tmp_path):
+        """A foreign slug ENDING with our slug (our own resolves to
+        "4-acme-app" for acme/app) plus the same PR number must not match —
+        the exact-tag anchor forbids the `*` from absorbing a longer slug."""
+        repo = _build_scoped_repo(tmp_path, "https://github.com/acme/app.git")
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        own = RUN_ROOT / f"pr-review-4-acme-app-{n}-a1b2c3"
+        foreign = RUN_ROOT / f"pr-review-x-4-acme-app-{n}-b2c3d4"
+        for d in (own, foreign):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not own.exists()
+            assert foreign.exists(), "suffix-colliding foreign slug must not be swept"
+        finally:
+            shutil.rmtree(own, ignore_errors=True)
+            shutil.rmtree(foreign, ignore_errors=True)
+
+    def test_unscoped_mode_never_matches_slugged_dirs(self, tmp_path):
+        """Unscoped mode (no origin) must sweep ONLY legacy exact shapes — a
+        slugged dir (any repo's) is not a legacy name."""
+        repo = _build_repo(tmp_path)  # no remote -> unscoped
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        legacy = RUN_ROOT / f"pr-review-{n}-c3d4e5"
+        slugged = RUN_ROOT / f"pr-review-7-octocat-widgets-{n}-d4e5f6"
+        for d in (legacy, slugged):
+            d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not legacy.exists()
+            assert slugged.exists(), "unscoped sweep must not touch slugged dirs"
+        finally:
+            shutil.rmtree(legacy, ignore_errors=True)
+            shutil.rmtree(slugged, ignore_errors=True)
+
+
+class TestThreadsSiblingDirectory:
+    def test_legacy_threads_paired_with_addr_feedback_sibling(self, tmp_path):
+        """$N-threads.json is an address-feedback artifact: its set-pair sibling
+        is $ADDR_FEEDBACK_DIR/$N.json (same directory), never the pr-review
+        flow's $N.json. Foreign sibling in the SAME directory -> retained."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        threads = ADDR_FEEDBACK_DIR / f"{n}-threads.json"
+        foreign_sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
+        threads.write_text("[]")
+        foreign_sibling.write_text(json.dumps({"url": f"https://github.com/other/repo/pull/{n}"}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_sf="2")
+            assert threads.exists(), "threads paired with a foreign same-directory sibling must be retained"
+            assert foreign_sibling.exists()
+        finally:
+            threads.unlink(missing_ok=True)
+            foreign_sibling.unlink(missing_ok=True)
+
+
+class TestSiblingNoHeadShaRetains:
+    def test_sibling_fingerprint_without_head_sha_retains_pair(self, tmp_path):
+        """oid-without---head-sha: the pair (sibling + threads) must both be
+        retained — never sibling-retained-threads-swept divergence."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        ADDR_FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+        threads = ADDR_FEEDBACK_DIR / f"{n}-threads.json"
+        sibling = ADDR_FEEDBACK_DIR / f"{n}.json"
+        threads.write_text("[]")
+        sibling.write_text(json.dumps({"headRefOid": "a" * 40}))
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))  # no --head-sha
+            _assert_contract(result, "0", "0", "0", retained_sf="2")
+            assert threads.exists() and sibling.exists()
+            payload = json.loads(result.stdout)
+            reasons = " | ".join(r["reason"] for r in payload["data"]["retained_state_files"])
+            assert "no --head-sha" in reasons
+        finally:
+            threads.unlink(missing_ok=True)
+            sibling.unlink(missing_ok=True)
+
+
+class TestRunDirConvergeTag:
+    def test_converge_shaped_run_dir_swept_when_pr_keyed(self, tmp_path):
+        """review-converge-<slug>-<N>-<rand> is a sanctioned producer shape and
+        must stay sweepable when its LOOP_ID was a PR number."""
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        d = RUN_ROOT / f"review-converge-7-octocat-widgets-{n}-a1b2c3"
+        d.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not d.exists()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+class TestInvalidRepoFailsClosed:
+    def test_invalid_repo_retains_legacy_state_and_skips_run_dirs(self, tmp_path):
+        """A typo'd explicit --repo must not degrade to an unconditional legacy
+        sweep: legacy state files are retained with a reason, run dirs are not
+        globbed, and the envelope reports partial."""
+        repo = _build_repo(tmp_path)  # no origin: scope comes only from the flag
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        f = PR_REVIEW_DIR / f"{n}.json"
+        f.write_text("{}")
+        run_dir = RUN_ROOT / f"pr-review-{n}-e5f6a7"
+        run_dir.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path), "--repo", "bogus")
+            assert result.returncode == 0
+            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            assert f.exists(), "invalid --repo must retain legacy state files"
+            assert run_dir.exists(), "invalid --repo must not glob run dirs"
+            payload = json.loads(result.stdout)
+            assert "invalid --repo" in payload["data"]["retained_state_files"][0]["reason"]
+        finally:
+            f.unlink(missing_ok=True)
+            shutil.rmtree(run_dir, ignore_errors=True)

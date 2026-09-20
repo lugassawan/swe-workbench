@@ -11,8 +11,8 @@ Behavioral paths under test:
   - Not-found paths (exit 1): absent entirely, found on a context line, found on a removed line
   - Ambiguity (exit 2): multiple matching `+` lines, stdout empty, all candidates on stderr
   - Git-internal modes: default (git diff HEAD), --staged, --range=<rev>
-  - Wiring: SCRIPTS dict, pr.yml shellcheck list, bin/README.md, agents/reviewer.md,
-    workflow-pr-review-post/SKILL.md
+  - Wiring: SCRIPTS dict, shellcheck auto-discovery contract, --help output,
+    agents/reviewer.md, workflow-pr-review-post/SKILL.md
 """
 
 import os
@@ -396,19 +396,25 @@ def test_bin_scripts_dict_contains_diff_line_lookup():
     )
 
 
-def test_pr_yml_shellcheck_list_contains_wrapper():
-    text = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
-    assert "bin/swe-workbench-diff-line-lookup" in text, (
-        ".github/workflows/pr.yml shellcheck additional_files must list "
-        "bin/swe-workbench-diff-line-lookup"
+def test_shellcheck_coverage_contract_contains_wrapper():
+    """Assert the auto-discovery contract behaviorally covers every SCRIPTS entry."""
+    import test_shellcheck_coverage as coverage
+    from test_bin_scripts import SCRIPTS
+
+    covered = {path.name for path, _ in coverage.CANDIDATES}
+    assert set(SCRIPTS) <= covered, (
+        "every test_bin_scripts.SCRIPTS entry must feed the auto-discovery contract — "
+        "together with test_bin_scripts_dict_contains_diff_line_lookup above, that transitively "
+        "proves swe-workbench-diff-line-lookup stays lint-covered after the #641 list removal"
     )
 
 
-def test_bin_readme_has_row():
-    text = (ROOT / "bin" / "README.md").read_text()
-    assert "swe-workbench-diff-line-lookup" in text, (
-        "bin/README.md must document swe-workbench-diff-line-lookup in the current scripts table"
+def test_help_flag_names_the_script():
+    result = subprocess.run(
+        [str(SCRIPT), "--help"], capture_output=True, text=True, env=dict(_CLEAN_ENV)
     )
+    assert result.returncode == 0
+    assert "swe-workbench-diff-line-lookup" in result.stdout
 
 
 def test_reviewer_agent_references_helper():

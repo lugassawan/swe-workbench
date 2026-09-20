@@ -1,0 +1,271 @@
+diff --git a/.github/ISSUE_TEMPLATE/bug_report.md b/.github/ISSUE_TEMPLATE/bug_report.md
+index 5bf75dc..dc3ac00 100644
+--- a/.github/ISSUE_TEMPLATE/bug_report.md
++++ b/.github/ISSUE_TEMPLATE/bug_report.md
+@@ -16,14 +16,22 @@ assignees: ''
+ - [ ] Subagent
+ - [ ] Slash command
+ - [ ] Hook
++- [ ] Pi adapter — `pi/extensions/`
+ - [ ] Documentation
+ - [ ] Build / CI / release
+ 
+ **Specific surface** (e.g., `swe-workbench:principle-tdd`, `/swe-workbench:review`, `swe-workbench:debugger`):
+ 
+-## Claude Code version
++## Harness
+ 
+-<!-- Output of: claude --version -->
++<!-- Check the harness you hit this on. -->
++- [ ] Claude Code
++- [ ] Pi Coding Agent
++
++## Harness version
++
++<!-- Claude Code: output of `claude --version`
++     Pi:          output of `pi --version` -->
+ 
+ ## Plugin version
+ 
+diff --git a/.github/ISSUE_TEMPLATE/chore_maintenance.md b/.github/ISSUE_TEMPLATE/chore_maintenance.md
+index 8e5fc14..64e44ff 100644
+--- a/.github/ISSUE_TEMPLATE/chore_maintenance.md
++++ b/.github/ISSUE_TEMPLATE/chore_maintenance.md
+@@ -13,7 +13,7 @@ assignees: ''
+ - [ ] CI / workflow (`.github/workflows/`, actions)
+ - [ ] Dependency / tooling bump
+ - [ ] Repository config (templates, Dependabot, labels)
+-- [ ] Release / packaging (`.claude-plugin/`, `scripts/`)
++- [ ] Release / packaging (`.claude-plugin/`, `package.json`, `scripts/`)
+ 
+ ## Surface
+ 
+diff --git a/.github/ISSUE_TEMPLATE/feature_request.md b/.github/ISSUE_TEMPLATE/feature_request.md
+index 3ba57ef..ea0b444 100644
+--- a/.github/ISSUE_TEMPLATE/feature_request.md
++++ b/.github/ISSUE_TEMPLATE/feature_request.md
+@@ -24,6 +24,7 @@ assignees: ''
+ - [ ] Subagent
+ - [ ] Slash command
+ - [ ] Hook
++- [ ] Pi adapter — `pi/extensions/`
+ - [ ] Documentation
+ - [ ] Build / CI / release
+ 
+diff --git a/commands/report-issue.md b/commands/report-issue.md
+index fb9d04b..4e3bcb4 100644
+--- a/commands/report-issue.md
++++ b/commands/report-issue.md
+@@ -89,7 +89,7 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
+ **Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
+ - **Title:** `[feat] <theme>: <concise enhancement>` — the `[feat]` tag drives label discovery to `enhancement` via delegation step 5c.
+ - **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets citing the memory entries feeding this theme, by `name` + `type`) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
+-- **Footer:** the same `_Reported via ... plugin v<version>, Claude Code <cli-version>._` footer, version captured once and shared across all picked insights.
++- **Footer:** the same `_Reported via ... plugin v<version>, <harness> <cli-version>._` footer, version captured once and shared across all picked insights.
+ 
+ ---
+ 
+@@ -124,16 +124,26 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
+ 
+    ```markdown
+    ---
+-   _Reported via `/swe-workbench:report-issue` — plugin v<version>, Claude Code <cli-version>._
++   _Reported via `/swe-workbench:report-issue` — plugin v<version>, <harness> <cli-version>._
+    ```
+ 
+-   **Version capture (run once, before drafting):**
+-   - **Plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`. If this returns no output (not installed from cache), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.  
+-   - **CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
++   …where `<harness>` renders as `Claude Code` or `Pi`, per the detection below.
++
++   **Harness detection (run once, before version capture).** Do not probe `PATH` — both CLIs can be installed while only one is running. Use the session env var each harness injects into its own bash tool:
++   ```bash
++   [ -n "${PI_SESSION_ID:-}" ] && echo pi || echo claude-code
++   ```
++
++   **Version capture (run once, before drafting).** Run only the two bullets (CLI + plugin) for the harness detected above; skip the other harness's bullets.
++   - **Claude Code — CLI version:** `claude --version` — strip the leading `Claude Code ` prefix to get the bare semver.
++   - **Claude Code — plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`.
++   - **Pi — CLI version:** `pi --version`.
++   - **Pi — plugin version:** read `~/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json` directly: `python3 -c "import json; print(json.load(open('$HOME/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json'))['version'])" 2>/dev/null`.
++   - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
+ 
+    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
+ 
+-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
++   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, Pi / Pi Coding Agent, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
+    - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
+      - Email addresses → `[internal-email]`
+      - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`
+diff --git a/docs/catalog.md b/docs/catalog.md
+index 777822b..9a28fe3 100644
+--- a/docs/catalog.md
++++ b/docs/catalog.md
+@@ -18,7 +18,7 @@ Pi Coding Agent coverage of these commands/skills/agents is ratcheted by `tests/
+ | `/swe-workbench:implement <ticket or description>` | Drive a feature end-to-end — branch, plan, TDD build, verify, review, PR. Orchestrates the full 5-phase `swe-workbench:workflow-development` lifecycle. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
+ | `/swe-workbench:hotfix <ticket, issue URL, or symptom>` | Ship a fast branch-based P0 fix — plain branch (never a worktree), minimal fix with TDD relaxed, PR opened ready-for-review *before* verify/review, then verify + review run against the open PR. Tags the PR with a deferred-verification marker; `swe-workbench:workflow-cleanup-merged` offers a regression-test backfill follow-up at merge time. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
+ | `/swe-workbench:capture <one-line thought>` | Capture an idea, bug, or improvement as a well-framed GitHub issue via the `swe-workbench:product-manager` subagent. Auth + repo detection, product framing, duplicate scan, draft preview, and user-confirm gate before filing. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
+-| `/swe-workbench:report-issue [<one-line thought>]` | File a plugin bug or feature request directly into `lugassawan/swe-workbench` from any working directory. Mirrors `/swe-workbench:capture`'s flow but hardcodes the target repo, auto-attaches plugin + Claude Code versions, and drafts from conversation/memory when invoked with no argument. |
++| `/swe-workbench:report-issue [<one-line thought>]` | File a plugin bug or feature request directly into `lugassawan/swe-workbench` from any working directory. Mirrors `/swe-workbench:capture`'s flow but hardcodes the target repo, auto-attaches plugin + harness versions, and drafts from conversation/memory when invoked with no argument. |
+ | `/swe-workbench:extend <sub-idea>` | Capture a mid-PR sub-idea and implement it onto the open PR's branch — no new branch, no new PR. Preserves Verify → Review → Deliver. Add `--grill` for grill-me interrogation mode (else prompts standard vs grill-me, standard recommended). |
+ | `/swe-workbench:address-feedback <PR number>` | Help the PR owner address review feedback — per-thread ADDRESSED/CLARIFIED/DEFERRED triage, fix application, commit, REST reply posting, and GraphQL thread resolution. |
+ | `/swe-workbench:audit-codebase [--time-box <dur>] [--scope <list>] [--depth <quick\|standard\|deep>]` | Cold-start, time-boxed, multi-domain defect sweep — ranked findings with reasoning chains. Use for take-home assessments, post-acquisition reviews, and tech-debt sweeps. |
+diff --git a/tests/test_issue_templates.py b/tests/test_issue_templates.py
+index 281c167..b54b96e 100644
+--- a/tests/test_issue_templates.py
++++ b/tests/test_issue_templates.py
+@@ -42,3 +42,68 @@ def test_issue_template_frontmatter_label(filename: str, expected_label: str) ->
+         f"{filename}: expected labels: {expected_label!r}, got {actual!r}"
+         + (" — regression guard for #336" if filename == "chore_maintenance.md" else "")
+     )
++
++
++def test_bug_report_has_harness_section():
++    """bug_report.md must offer a harness-agnostic environment section: a checkbox
++    selector naming both harnesses, and a version field naming both capture commands."""
++    text = (TEMPLATES_DIR / "bug_report.md").read_text(encoding="utf-8")
++
++    assert "## Harness" in text, (
++        "bug_report.md must include a '## Harness' section (replacing the old "
++        "Claude-Code-only '## Claude Code version' field)"
++    )
++    assert "## Claude Code version" not in text, (
++        "bug_report.md must not retain the single-harness '## Claude Code version' heading"
++    )
++    harness_pos = text.find("## Harness")
++    version_pos = text.find("## Harness version", harness_pos)
++    assert version_pos != -1, (
++        "bug_report.md must include a '## Harness version' section after '## Harness'"
++    )
++    plugin_pos = text.find("## Plugin version", version_pos)
++    assert plugin_pos != -1, (
++        "bug_report.md must retain '## Plugin version' after '## Harness version'"
++    )
++
++    harness_block = text[harness_pos:version_pos]
++    assert "Claude Code" in harness_block, (
++        "bug_report.md '## Harness' section must name Claude Code"
++    )
++    assert "Pi Coding Agent" in harness_block, (
++        "bug_report.md '## Harness' section must name the Pi Coding Agent"
++    )
++
++    version_block = text[version_pos:plugin_pos]
++    assert "claude --version" in version_block, (
++        "bug_report.md '## Harness version' section must give the Claude Code capture command"
++    )
++    assert "pi --version" in version_block, (
++        "bug_report.md '## Harness version' section must give the Pi capture command"
++    )
++
++
++@pytest.mark.parametrize("filename", ["bug_report.md", "feature_request.md"])
++def test_surface_checklist_has_pi_adapter_row(filename: str) -> None:
++    """bug_report.md and feature_request.md must both list the Pi adapter as a surface,
++    keeping the two checklists in parity."""
++    text = (TEMPLATES_DIR / filename).read_text(encoding="utf-8")
++    assert "Pi adapter" in text and "pi/extensions/" in text, (
++        f"{filename} must include a 'Pi adapter — `pi/extensions/`' row in its surface checklist"
++    )
++
++
++def test_chore_template_names_package_json_in_release_row():
++    """chore_maintenance.md's Release / packaging row must name package.json alongside
++    .claude-plugin/ and scripts/ — package.json is the Pi install manifest."""
++    text = (TEMPLATES_DIR / "chore_maintenance.md").read_text(encoding="utf-8")
++    release_line = next(
++        (line for line in text.splitlines() if "Release / packaging" in line), None
++    )
++    assert release_line is not None, (
++        "chore_maintenance.md must include a 'Release / packaging' row"
++    )
++    assert "package.json" in release_line, (
++        "chore_maintenance.md's 'Release / packaging' row must name package.json "
++        "(the Pi install manifest) alongside .claude-plugin/ and scripts/"
++    )
+diff --git a/tests/test_pi_contract.py b/tests/test_pi_contract.py
+index 7d05670..58485ab 100644
+--- a/tests/test_pi_contract.py
++++ b/tests/test_pi_contract.py
+@@ -866,7 +866,14 @@ def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_facto
+     globally) — this test provides real coverage on any developer machine with `pi` installed,
+     and will start providing CI coverage automatically if a future CI change adds a `pi`
+     install step to the pytest job. Skipping here is a documented, intentional trade-off, not a
+-    silent no-op."""
++    silent no-op.
++
++    `run_probe` passes `--no-extensions` alongside its own explicit `--extension`: on a
++    developer machine that has ever run `pi install git:github.com/lugassawan/swe-workbench`
++    (e.g. to dogfood the Pi port), that install persists as a globally-discovered extension
++    registering its own `task` tool, which collides with this probe's `task` tool registration.
++    `--no-extensions` disables discovery of that pre-existing global registration while still
++    honoring the explicit `--extension` path (per `pi --help`), keeping the probe hermetic."""
+     pi_bin = shutil.which("pi")
+     if pi_bin is None:
+         pytest.skip("requires a global `pi` CLI on PATH — not provisioned in this repo's pytest CI job")
+@@ -881,7 +888,10 @@ def test_exclude_tools_structurally_prevents_task_tool_activation(tmp_path_facto
+     )
+ 
+     def run_probe(exclude):
+-        args = [pi_bin, "-p", "--extension", str(wrapper), "--no-session", "--mode", "text"]
++        args = [
++            pi_bin, "-p", "--no-extensions", "--extension", str(wrapper),
++            "--no-session", "--mode", "text",
++        ]
+         if exclude:
+             args += ["--exclude-tools", "task,subagent"]
+         result = subprocess.run(args, capture_output=True, text=True, env=dict(_CLEAN_ENV), timeout=30)
+diff --git a/tests/test_report_issue_command.py b/tests/test_report_issue_command.py
+index daacdb0..dedd8d7 100644
+--- a/tests/test_report_issue_command.py
++++ b/tests/test_report_issue_command.py
+@@ -57,7 +57,8 @@ def test_report_issue_documents_product_manager_override():
+ 
+ 
+ def test_report_issue_attaches_version_footer():
+-    """commands/report-issue.md must capture plugin version and Claude Code version for the footer."""
++    """commands/report-issue.md must capture plugin version and harness version for the footer,
++    for both the Claude Code and Pi harnesses."""
+     text = REPORT_ISSUE_MD.read_text()
+     assert "plugin.json" in text, (
+         "commands/report-issue.md must read plugin.json to capture the plugin version"
+@@ -65,6 +66,28 @@ def test_report_issue_attaches_version_footer():
+     assert "claude --version" in text, (
+         "commands/report-issue.md must run 'claude --version' to capture the CLI version"
+     )
++    assert "pi --version" in text, (
++        "commands/report-issue.md must run 'pi --version' to capture the Pi CLI version"
++    )
++    assert "PI_SESSION_ID" in text, (
++        "commands/report-issue.md must detect the Pi harness via the PI_SESSION_ID env var"
++    )
++
++
++def test_report_issue_footer_names_both_harnesses():
++    """Both footer occurrences (memory-synthesis branch and delegation step 7) must
++    parameterise the harness name rather than hardcoding 'Claude Code'."""
++    text = REPORT_ISSUE_MD.read_text()
++    count = text.count("<harness> <cli-version>")
++    assert count == 2, (
++        "commands/report-issue.md must parameterise 'Claude Code <cli-version>' as "
++        f"'<harness> <cli-version>' in both footer occurrences (Branch B synthesis + "
++        f"delegation step 7) — found {count}"
++    )
++    assert "Claude Code <cli-version>" not in text, (
++        "commands/report-issue.md must not hardcode 'Claude Code <cli-version>' in the "
++        "footer any more — both occurrences must parameterise the harness name"
++    )
+ 
+ 
+ def test_report_issue_supports_blank_argument():
+@@ -104,6 +127,10 @@ def test_report_issue_redaction_has_allowlist():
+     assert "swe-workbench" in allowlist_block, (
+         "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
+     )
++    assert "Pi" in allowlist_block, (
++        "commands/report-issue.md must name 'Pi' as an allowlisted token, so a Pi bug "
++        "report doesn't get its own harness name redacted"
++    )
+ 
+ 
+ def test_report_issue_redaction_has_placeholder_vocabulary():

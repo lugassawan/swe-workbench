@@ -5,6 +5,8 @@ import json
 import os
 import py_compile
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,10 +20,41 @@ WARNINGS = []
 BASE_SKILL_CAP = 150
 ORCHESTRATOR_SKILL_CAP = 300
 
+# Pi compares JavaScript String.length, so count UTF-16 code units.
+PI_SKILL_DESCRIPTION_CAP = 1024
+
 # Headroom warning threshold (#567): fraction of a skill's cap at which
 # check_skill_cap_headroom() starts warning, ahead of check_skills()'s hard
 # failure at 100%.
 CAP_HEADROOM_WARN_FRACTION = 0.90
+
+# Description-frontmatter session-token budgets. PI_SKILL_DESCRIPTION_CAP
+# above is a Pi *platform* ceiling on one skill's description string — a hard
+# technical limit unrelated to cost, and it permits 2.4x growth from a typical
+# description before ever failing a build. These three constants are a
+# different thing: a *session token budget* on the aggregate char cost every
+# Claude Code / Pi session pays for the whole catalog's description:
+# frontmatter before the user types anything. Neither makes the other
+# redundant — check_skills() still enforces the platform ceiling per-skill;
+# check_description_budget() below enforces the catalog-wide cost and an
+# early per-skill warning well ahead of that ceiling.
+#
+# Set from the catalog's measured, post-review description totals (not the
+# compressor's own unreviewed floor — see scripts/compress-descriptions.py).
+# Adding a 61st skill, a 23rd agent, or lengthening an existing description
+# enough to cross either budget requires consciously raising the constant
+# here, with the reason recorded in that commit — that friction is the point,
+# it is what stands between the catalog and slow, unnoticed session-tax growth.
+SKILL_DESCRIPTION_BUDGET_CHARS = 20436
+AGENT_DESCRIPTION_BUDGET_CHARS = 6087
+
+# Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP
+# so it warns well before a single description could ever trip that hard
+# platform failure. The post-review corpus tops out at 726 chars
+# (workflow-development); this leaves headroom for legitimate growth while
+# still catching one description ballooning long before it could silently
+# eat the whole catalog budget above.
+PER_SKILL_DESCRIPTION_CAP_CHARS = 900
 
 # Hook events that fire unconditionally and have no tool name to match against.
 # Do NOT add PreToolUse / PostToolUse here — those are tool-matcher events and
@@ -80,6 +113,32 @@ def warn(path, reason):
 
 _FM_KEY_RE = re.compile(r'^([\w][\w-]*):\s*(.*)$')
 _FM_ITEM_RE = re.compile(r'^-\s+(.*\S)\s*$')
+_YAML_DESCRIPTION_NON_STRING_RE = re.compile(
+    r"^(?:~|null|true|false|[-+]?(?:[0-9]+|0[oO][0-7]+|0[xX][0-9A-Fa-f]+|"
+    r"(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|"
+    r"[0-9]+[eE][-+]?[0-9]+|\.inf)|\.nan)$",
+    re.IGNORECASE,
+)
+_YAML_DOUBLE_QUOTE_ESCAPES = {
+    "0": "\0",
+    "a": "\a",
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "v": "\v",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    "N": "\x85",
+    "_": "\xa0",
+    "L": "\u2028",
+    "P": "\u2029",
+}
+_YAML_HEX_ESCAPE_WIDTHS = {"x": 2, "u": 4, "U": 8}
 
 
 def parse_frontmatter(path, text=None):
@@ -120,6 +179,112 @@ def parse_frontmatter(path, text=None):
         else:
             pending = None
     return result
+
+
+def _parse_description(value: object) -> str | None:
+    """Return a description string from the supported YAML scalar subset."""
+    if not isinstance(value, str):
+        return None
+    if value.startswith('"'):
+        description = _parse_double_quoted_description(value)
+    elif value.startswith("'"):
+        description = _parse_single_quoted_description(value)
+    else:
+        description = _parse_plain_description(value)
+    if description is None or not description.strip():
+        return None
+    return description
+
+
+def _parse_double_quoted_description(value: str) -> str | None:
+    characters = []
+    index = 1
+    while index < len(value):
+        character = value[index]
+        if character == '"':
+            return "".join(characters) if _is_comment_or_end(value, index + 1) else None
+        if character == "\\":
+            escape = _decode_yaml_escape(value, index)
+            if escape is None:
+                return None
+            decoded, index = escape
+            characters.append(decoded)
+            continue
+        characters.append(character)
+        index += 1
+    return None
+
+
+def _decode_yaml_escape(value: str, index: int) -> tuple[str, int] | None:
+    escape_index = index + 1
+    if escape_index >= len(value):
+        return None
+    escape = value[escape_index]
+    if escape in _YAML_DOUBLE_QUOTE_ESCAPES:
+        return _YAML_DOUBLE_QUOTE_ESCAPES[escape], escape_index + 1
+    width = _YAML_HEX_ESCAPE_WIDTHS.get(escape)
+    if width is None:
+        return None
+    end = escape_index + 1 + width
+    digits = value[escape_index + 1 : end]
+    if len(digits) != width or not all(character in "0123456789abcdefABCDEF" for character in digits):
+        return None
+    codepoint = int(digits, 16)
+    if 0xD800 <= codepoint <= 0xDBFF:
+        surrogate_end = end + 6
+        surrogate = value[end:surrogate_end]
+        if surrogate.startswith("\\u") and len(surrogate) == 6:
+            low_digits = surrogate[2:]
+            if all(character in "0123456789abcdefABCDEF" for character in low_digits):
+                low_surrogate = int(low_digits, 16)
+                if 0xDC00 <= low_surrogate <= 0xDFFF:
+                    astral_codepoint = 0x10000 + (codepoint - 0xD800) * 0x400 + low_surrogate - 0xDC00
+                    return chr(astral_codepoint), surrogate_end
+    if codepoint > 0x10FFFF:
+        return None
+    return chr(codepoint), end
+
+
+def _parse_single_quoted_description(value: str) -> str | None:
+    characters = []
+    index = 1
+    while index < len(value):
+        if value[index] != "'":
+            characters.append(value[index])
+            index += 1
+            continue
+        if index + 1 < len(value) and value[index + 1] == "'":
+            characters.append("'")
+            index += 2
+            continue
+        return "".join(characters) if _is_comment_or_end(value, index + 1) else None
+    return None
+
+
+def _is_comment_or_end(value: str, index: int) -> bool:
+    trailing = value[index:]
+    return not trailing.strip() or (trailing[0].isspace() and trailing.lstrip().startswith("#"))
+
+
+def _parse_plain_description(value: str) -> str | None:
+    value = _strip_plain_yaml_comment(value)
+    if (
+        not value
+        or _YAML_DESCRIPTION_NON_STRING_RE.fullmatch(value)
+        or value.startswith(("[", "{", "!", "&", "*", "|", ">"))
+        or value in {"-", "?"}
+        or value.startswith(("- ", "? "))
+        or re.search(r":(?:[ \t]|$)", value)
+    ):
+        return None
+    return value
+
+
+def _strip_plain_yaml_comment(value: str) -> str:
+    for index, character in enumerate(value):
+        if character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value
 
 
 # ──────────────────────────────────────────────
@@ -207,6 +372,40 @@ def check_marketplace_json(plugin_data):
             )
 
 
+def check_pi_package_json(plugin_data):
+    """Root package.json (the `pi install git:...` manifest) must stay version-locked
+    with plugin.json and keep the shape resources_discover's skill/command routing depends on:
+    `private: true` (blocks an accidental `npm publish`) and `pi.extensions` present with no
+    `pi.skills`/`pi.prompts`/`pi.themes` sibling key — the manifest route's loader recurses into
+    subdirectories where resources_discover's does not, so declaring any of those here would
+    silently republish a future nested skills/commands subdirectory as a top-level artifact (see
+    docs/decisions-pi-port.md §4)."""
+    path = ROOT / "package.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        fail(path.relative_to(ROOT), f"JSON parse error: {e}")
+        return
+    if plugin_data and data.get("version") != plugin_data.get("version"):
+        fail(
+            path.relative_to(ROOT),
+            f"version {data.get('version')!r} != plugin.json version {plugin_data.get('version')!r}",
+        )
+    if data.get("private") is not True:
+        fail(path.relative_to(ROOT), "'private' must be true")
+    pi_block = data.get("pi")
+    if not isinstance(pi_block, dict) or "extensions" not in pi_block:
+        fail(path.relative_to(ROOT), "'pi.extensions' must be present")
+    else:
+        for forbidden in ("skills", "prompts", "themes"):
+            if forbidden in pi_block:
+                fail(
+                    path.relative_to(ROOT),
+                    f"'pi.{forbidden}' must be absent — resources_discover must stay the sole "
+                    "source of truth for skill/command paths (see docs/decisions-pi-port.md §4)",
+                )
+
+
 # Closed-form shape for every hooks.json command string (issue #557): an
 # explicit interpreter plus a quoted, braced CLAUDE_PLUGIN_ROOT expansion.
 # This is a positive invariant this repo owns, not validation against the
@@ -261,7 +460,7 @@ def check_hooks_json():
                     fail(
                         path.relative_to(ROOT),
                         f"hooks.{event}[{i}].hooks[{j}] carries an 'if' condition — no hooks.json "
-                        f"entry may use 'if' (see docs/plugin-platform-decisions.md §4)",
+                        f"entry may use 'if' (see docs/decisions-hooks.md §1)",
                     )
 
 
@@ -301,6 +500,18 @@ def check_skills(cache=None):
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'name'")
         if "description" not in fm:
             fail(skill_md.relative_to(ROOT), "frontmatter missing required field: 'description'")
+        else:
+            description = _parse_description(fm["description"])
+            if description is None:
+                fail(skill_md.relative_to(ROOT), "description is required")
+            else:
+                description_length = len(description.encode("utf-16-le", "surrogatepass")) // 2
+                if description_length > PI_SKILL_DESCRIPTION_CAP:
+                    fail(
+                        skill_md.relative_to(ROOT),
+                        f"description exceeds {PI_SKILL_DESCRIPTION_CAP} characters "
+                        f"({description_length})",
+                    )
         if fm.get("name") != skill_dir_name:
             fail(
                 skill_md.relative_to(ROOT),
@@ -350,6 +561,94 @@ def check_skill_cap_headroom(cache=None):
                 f"{line_count} lines — within {round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% "
                 f"of the {cap}-line cap; consider extracting content before it hits the hard cap",
             )
+
+
+def _description_char_length(fm):
+    """Return the UTF-16 code-unit length of a parsed frontmatter's
+    description, or None if missing/malformed. Same measurement check_skills()
+    uses for PI_SKILL_DESCRIPTION_CAP, reused here so the two checks can
+    never drift on what counts as a description's length."""
+    if fm is None or "description" not in fm:
+        return None
+    description = _parse_description(fm["description"])
+    if description is None:
+        return None
+    return len(description.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def check_description_budget(cache=None):
+    """Catalog-wide description: session-token budget, plus an early
+    per-skill warning ahead of PI_SKILL_DESCRIPTION_CAP's hard platform
+    failure. See the SKILL_DESCRIPTION_BUDGET_CHARS comment above for why
+    this is not redundant with that cap. Never calls fail() for the
+    per-skill warning — only the two catalog-wide totals are hard failures.
+    Skills/agents with missing or malformed frontmatter are skipped here;
+    check_skills()/check_agents() already report those.
+    """
+    skills_dir = ROOT / "skills"
+    agents_dir = ROOT / "agents"
+    skills_cache = cache[1] if cache is not None else None
+    agents_cache = cache[0] if cache is not None else None
+
+    skill_total = 0
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        if skills_cache is not None and skill_md in skills_cache:
+            text = skills_cache[skill_md]
+            if text is None:
+                continue  # unreadable — already reported by check_skills
+        else:
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        length = _description_char_length(parse_frontmatter(skill_md, text=text))
+        if length is None:
+            continue  # missing/malformed — already reported by check_skills
+        skill_total += length
+        threshold = PER_SKILL_DESCRIPTION_CAP_CHARS * CAP_HEADROOM_WARN_FRACTION
+        if length > threshold:
+            warn(
+                skill_md.relative_to(ROOT),
+                f"description is {length} chars — within "
+                f"{round((1 - CAP_HEADROOM_WARN_FRACTION) * 100)}% of the "
+                f"{PER_SKILL_DESCRIPTION_CAP_CHARS}-char per-skill budget cap; "
+                "trim it with scripts/compress-descriptions.py before it forces "
+                "a catalog-wide budget increase",
+            )
+
+    if skill_total > SKILL_DESCRIPTION_BUDGET_CHARS:
+        fail(
+            skills_dir.relative_to(ROOT),
+            f"total skill description budget exceeded: {skill_total} chars "
+            f"(cap {SKILL_DESCRIPTION_BUDGET_CHARS}). Compress an existing "
+            "description with scripts/compress-descriptions.py, or raise "
+            "SKILL_DESCRIPTION_BUDGET_CHARS with a recorded reason.",
+        )
+
+    agent_total = 0
+    for agent_md in sorted(agents_dir.glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                continue  # unreadable — already reported by check_agents
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+        length = _description_char_length(parse_frontmatter(agent_md, text=text))
+        if length is None:
+            continue  # missing/malformed — already reported by check_agents
+        agent_total += length
+
+    if agent_total > AGENT_DESCRIPTION_BUDGET_CHARS:
+        fail(
+            agents_dir.relative_to(ROOT),
+            f"total agent description budget exceeded: {agent_total} chars "
+            f"(cap {AGENT_DESCRIPTION_BUDGET_CHARS}). Compress an existing "
+            "description with scripts/compress-descriptions.py --agents, or "
+            "raise AGENT_DESCRIPTION_BUDGET_CHARS with a recorded reason.",
+        )
 
 
 _ORCHESTRATOR_NAMESPACED_REF_RE = re.compile(r'`swe-workbench:([\w-]+)`')
@@ -588,6 +887,7 @@ def check_skill_skill_refs(cache=None):
 
 _BARE_ID_RE = re.compile(r'`([\w-]+)`')
 _PROSE_REF_EXEMPTION_MARKER = '<!-- validate: prose-ref -->'
+_LOCAL_PLANNING_ROOTS = (Path(".superpowers"), Path("docs/superpowers"))
 
 
 def _bare_actionable_id_set():
@@ -610,7 +910,8 @@ def check_bare_actionable_refs(cache=None):
     dispatch id (e.g. "Delegate to the `senior-engineer` subagent") is never
     validated and can silently drift from the namespaced form used for the
     identical construct elsewhere. This is a single flat rule with no
-    heuristic: every markdown file in the repo (outside tests/ and
+    heuristic: every markdown file in the repo (outside tests/, the
+    gitignored local planning roots .superpowers/ and docs/superpowers/, and
     _NEVER_SCAN_DIRS) is scanned, fenced code blocks are stripped first
     (_strip_fenced_code_blocks — preserves line numbers so messages stay
     accurate), and any bare id that resolves to a real skill or agent fails —
@@ -637,6 +938,8 @@ def check_bare_actionable_refs(cache=None):
     for md in sorted(ROOT.rglob("*.md")):
         rel = md.relative_to(ROOT)
         if rel.parts[0] == "tests":
+            continue
+        if any(rel.is_relative_to(planning_root) for planning_root in _LOCAL_PLANNING_ROOTS):
             continue
         if _NEVER_SCAN_DIRS & set(rel.parts):
             continue
@@ -1084,6 +1387,108 @@ def check_shared_blocks_in_sync(cache=None):
                      "scripts/sync-shared-blocks.py --write")
 
 
+# The dispatch-ledger generator is part of this validator's toolchain, not part of the
+# tree being validated: it is always this repo's own copy, resolved from validate.py's
+# own location, and it is pointed at the tree under test via --root. That split is what
+# lets an isolated-tree test redirect ROOT to a synthetic plugin tree and still exercise
+# the real generator against it.
+_DISPATCH_LEDGER_SCRIPT = Path(__file__).parent / "dispatch-ledger.mjs"
+_DISPATCH_LEDGER_OUTPUT = "docs/dispatch-ledger.md"
+# --experimental-strip-types (needed to load pi/extensions/agent-spec.ts) requires Node 22+,
+# the same floor tests/test_pi_extension.py pins for its own behavioural tests.
+_DISPATCH_LEDGER_MIN_NODE = 22
+
+
+def _node_child_env():
+    """Environment for a `node` child: everything except the GIT_* vars.
+
+    Neither `node --version` nor the dispatch-ledger generator touches git, and validate.sh is
+    routinely run from inside a git hook, which exports GIT_DIR / GIT_INDEX_FILE and friends.
+    Passing those through to an unrelated child is the kind of ambient-context leak that makes a
+    tool behave differently depending on how it happened to be invoked, so strip them.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _node_major_version(node):
+    """Major version of the `node` at *node*, or None if it can't be determined."""
+    if node is None:
+        return None
+    try:
+        result = subprocess.run(
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_node_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    try:
+        # "v22.6.0\n" -> 22
+        return int(result.stdout.strip().lstrip("v").split(".")[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def check_dispatch_ledger_in_sync():
+    """docs/dispatch-ledger.md must match what scripts/dispatch-ledger.mjs regenerates.
+
+    Validator-side counterpart of `node --experimental-strip-types
+    scripts/dispatch-ledger.mjs --check`, wired in here for the same reason
+    check_shared_blocks_in_sync() is wired in above: without a validator-side
+    check, the ledger's entire purpose — making a newly preloaded skill show up
+    as a reviewable diff in the dispatch-cost snapshot — depends on someone
+    remembering to run the generator by hand.
+
+    Node gating mirrors tests/test_pi_extension.py's CI ratchet: a missing or
+    too-old Node downgrades to a warning locally, so a contributor without
+    Node 22 can still run validate.sh, but hard-fails under CI, where the
+    workflow pins Node 22 precisely so this check always genuinely runs.
+    """
+    if not _DISPATCH_LEDGER_SCRIPT.is_file():
+        return
+    rel = Path("scripts") / _DISPATCH_LEDGER_SCRIPT.name
+    node = shutil.which("node")
+    major = _node_major_version(node)
+    if major is None or major < _DISPATCH_LEDGER_MIN_NODE:
+        detail = (
+            "no usable `node` found on PATH"
+            if major is None
+            else f"node {major} is older than the required {_DISPATCH_LEDGER_MIN_NODE}"
+        )
+        message = (
+            f"could not verify {_DISPATCH_LEDGER_OUTPUT} is in sync: {detail} "
+            "(--experimental-strip-types is needed to load pi/extensions/agent-spec.ts)"
+        )
+        if os.environ.get("CI"):
+            fail(rel, message)
+        else:
+            warn(rel, message)
+        return
+    try:
+        result = subprocess.run(
+            [
+                node,
+                "--experimental-strip-types",
+                str(_DISPATCH_LEDGER_SCRIPT),
+                "--check",
+                "--root",
+                str(ROOT),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=_node_child_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        fail(rel, f"could not run the dispatch-ledger check: {e}")
+        return
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or "(no output)"
+        fail(rel, f"{_DISPATCH_LEDGER_OUTPUT} check failed: {detail}")
+
+
 _INERT_AT_INCLUDE_RE = re.compile(r'@\.\./shared/|@\./shared/')
 
 
@@ -1330,7 +1735,7 @@ def check_hook_script_permissions():
 
 # Every bin/ wrapper must be invokable as a bare command once <plugin>/bin is
 # on PATH: exec-bit set, a #!/usr/bin/env <interp> shebang (any interpreter,
-# not just bash — see docs/plugin-platform-decisions.md), and the
+# not just bash — see docs/decisions-bin-path.md §2), and the
 # swe-workbench- prefix that is the only guard against colliding with a
 # user's own PATH entries (bin/ has no other enforcement mechanism for it).
 _SHEBANG_RE = re.compile(r'^#!/usr/bin/env \S+\n')
@@ -1373,6 +1778,50 @@ def check_bin_wrappers():
             "swe-workbench-<name> commands (see #571); do not recreate the "
             "wrapper/script split",
         )
+
+
+_BASH_HELP_MARKER = "awk 'NR>1 && /^#/"
+_PY_HELP_MARKER_RE = re.compile(r'\(\s*"--help",\s*"-h"\s*\)')
+_PY_ARGPARSE_RE = re.compile(r'\bimport argparse\b|\bargparse\.ArgumentParser\(')
+
+
+def check_bin_help_flags():
+    """Every bin/swe-workbench-* script must intercept a sole --help/-h
+    argument — this ratchet is what keeps the duplicated bash awk-header
+    blocks (inline by design, not extracted to a shared bin/lib/ file) and
+    the python docstring-print idiom from drifting apart. argparse-based
+    python scripts are exempt: their -h/--help comes free from argparse
+    itself and carries no literal marker to check."""
+    bin_dir = ROOT / "bin"
+    if not bin_dir.is_dir():
+        return
+    for wrapper in sorted(bin_dir.iterdir()):
+        if not wrapper.is_file() or wrapper.name == "README.md":
+            continue
+        if not wrapper.name.startswith("swe-workbench-"):
+            continue  # already flagged by check_bin_wrappers()
+        rel = wrapper.relative_to(ROOT)
+        try:
+            text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if text.startswith("#!/usr/bin/env python3"):
+            if _PY_ARGPARSE_RE.search(text):
+                continue
+            if not (_PY_HELP_MARKER_RE.search(text) and "__doc__" in text):
+                fail(
+                    rel,
+                    'must intercept a sole --help/-h argument via '
+                    '`if len(argv) == 1 and argv[0] in ("--help", "-h"): print(__doc__)`',
+                )
+        elif text.startswith("#!/usr/bin/env bash"):
+            if _BASH_HELP_MARKER not in text:
+                fail(
+                    rel,
+                    "must intercept a sole --help/-h argument via the canonical awk-header "
+                    "block placed immediately after `set` and before any argument-consuming "
+                    "line",
+                )
 
 
 # ──────────────────────────────────────────────
@@ -1916,9 +2365,10 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
     `is_hazard_line` returns True. `message` is called with the 1-indexed
     line number and must return the failure reason string.
 
-    docs/ is intentionally excluded from the scanned roots — the sibling doc
+    docs/ and shared/docs/ are intentionally excluded from the scanned roots — the sibling doc
     page must show the bad pattern as a worked example without tripping this
-    guard (#549). Known limitation: scans raw lines with no heredoc-body
+    guard (#549; extended when the worked-example pages relocated out of
+    docs/). Known limitation: scans raw lines with no heredoc-body
     awareness, so a worked "here's the wrong way" example placed inside a
     heredoc (rather than behind a '#' comment, which the command-position
     regex already exempts) would be misread as a real hazard — narrow and
@@ -1936,6 +2386,8 @@ def _scan_bash_blocks_for_hazard(cache, is_hazard_line, message):
         if not base.is_dir():
             continue
         for md in sorted(base.rglob("*.md")):
+            if md.is_relative_to(ROOT / "shared" / "docs"):
+                continue  # worked-example pages live here now
             if sub_cache is not None and md in sub_cache:
                 text = sub_cache[md]
                 if text is None:
@@ -1957,7 +2409,7 @@ def check_no_echo_var_hazard(cache=None):
     """Flag bash blocks in skills/, commands/, agents/ that pipe or redirect a
     variable through `echo` — zsh (the user's likely login shell) expands
     backslash escapes in echo's argument, corrupting embedded JSON (#549).
-    Use printf '%s' instead; see docs/shell-echo-vs-printf.md.
+    Use printf '%s' instead; see shared/docs/shell-echo-vs-printf.md.
     """
     _scan_bash_blocks_for_hazard(
         cache,
@@ -1965,7 +2417,7 @@ def check_no_echo_var_hazard(cache=None):
         lambda ln: (
             f"line {ln}: bash block pipes/redirects a variable through 'echo' — "
             f"zsh expands backslash escapes and corrupts JSON; use printf '%s' "
-            f"(see docs/shell-echo-vs-printf.md)"
+            f"(see shared/docs/shell-echo-vs-printf.md)"
         ),
     )
 
@@ -1976,7 +2428,7 @@ def check_no_printf_var_format(cache=None):
     dangerous) translation of `echo "$VAR"`: `$VAR` becomes the FORMAT, so a
     literal `%s` inside it reads a nonexistent argument, and `%n` is a
     memory-write primitive in some `printf(1)` implementations. Always
-    `printf '%s' "$VAR"` — see docs/shell-echo-vs-printf.md.
+    `printf '%s' "$VAR"` — see shared/docs/shell-echo-vs-printf.md.
     """
     _scan_bash_blocks_for_hazard(
         cache,
@@ -1984,7 +2436,7 @@ def check_no_printf_var_format(cache=None):
         lambda ln: (
             f"line {ln}: bash block passes a bare variable as printf's format "
             f"string — a literal %s/%n inside it is read as a format directive; "
-            f"use printf '%s' \"$VAR\" (see docs/shell-echo-vs-printf.md)"
+            f"use printf '%s' \"$VAR\" (see shared/docs/shell-echo-vs-printf.md)"
         ),
     )
 
@@ -2060,9 +2512,11 @@ def main():
 
     plugin_data = check_plugin_json()
     check_marketplace_json(plugin_data)
+    check_pi_package_json(plugin_data)
     check_hooks_json()
     check_skills(cache=cache)
     check_skill_cap_headroom(cache=cache)
+    check_description_budget(cache=cache)
     check_orchestrator_flag_earned(cache=cache)
     check_skill_trigger_fixtures()
     check_agents(cache=cache)
@@ -2077,6 +2531,7 @@ def main():
     check_workflow_full_fidelity_mandate()
     check_catalog_completeness(cache=cache)
     check_shared_blocks_in_sync(cache=cache)
+    check_dispatch_ledger_in_sync()
     check_no_inert_at_includes(cache=cache)
     check_language_pointer_matches_disk(cache=cache)
     check_adapter_blocks(cache=cache)
@@ -2086,6 +2541,7 @@ def main():
     check_hook_scripts()
     check_hook_script_permissions()
     check_bin_wrappers()
+    check_bin_help_flags()
     check_test_subprocess_env()
     check_no_cycles(cache=cache)
     check_browser_tool_gate(cache=cache)
@@ -2095,7 +2551,7 @@ def main():
     check_no_unenumerated_tmp_write(cache=cache)
 
     if WARNINGS:
-        print(f"WARNING — {len(WARNINGS)} skill(s) near their line cap:")
+        print(f"WARNING — {len(WARNINGS)} item(s) near a cap or budget:")
         for w in WARNINGS:
             print(w)
         print()

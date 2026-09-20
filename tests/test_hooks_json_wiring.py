@@ -7,7 +7,7 @@ silently killing the hook — for bash_guard.sh and secret_guard.py that means
 a security control stops vetting tool calls with no error surfaced. Pinning
 `bash -c` here (never `$SHELL`/`sh`) is load-bearing: a harness that shelled
 out via zsh would report green against the pre-fix strings and guard nothing.
-See docs/plugin-platform-decisions.md for background.
+See docs/decisions-hooks.md for background.
 """
 
 import json
@@ -175,3 +175,52 @@ def test_sh_scripts_use_bash():
     assert cmds, "no .sh hook commands found in hooks.json"
     for cmd in cmds:
         assert cmd.startswith("bash "), f"expected bash interpreter, got: {cmd!r}"
+
+
+def test_memory_hint_registered_for_every_session_start_matcher():
+    """hooks/memory_hint.sh must fire on all three SessionStart matchers —
+    memory injection has to survive cold start, --resume/--continue, and
+    auto-compaction, exactly like the resume hint."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    session_start = data["hooks"]["SessionStart"]
+    matchers = {entry.get("matcher") for entry in session_start}
+    assert matchers == {"startup", "resume", "compact"}, (
+        f"expected SessionStart matchers startup|resume|compact, got: {sorted(matchers)!r}"
+    )
+    for entry in session_start:
+        matcher = entry.get("matcher")
+        memory_hooks = [
+            hook
+            for hook in entry.get("hooks", [])
+            if "memory_hint.sh" in hook["command"]
+        ]
+        assert len(memory_hooks) == 1, (
+            f"expected exactly one memory_hint.sh hook under SessionStart/{matcher}, "
+            f"got {len(memory_hooks)}"
+        )
+        assert memory_hooks[0] == {
+            "type": "command",
+            "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/memory_hint.sh',
+        }
+
+
+def test_handoff_guard_registered_after_secret_guard_for_mutating_tools():
+    """The handoff guard must cover Bash|Edit|Write and sit after secret_guard.py
+    so the secret gate vets content before ownership is evaluated."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    pre_tool_use = data["hooks"]["PreToolUse"]
+    commands = [
+        hook["command"]
+        for entry in pre_tool_use
+        for hook in entry.get("hooks", [])
+    ]
+    secret_index = next(i for i, cmd in enumerate(commands) if "secret_guard.py" in cmd)
+    handoff_commands = [i for i, cmd in enumerate(commands) if "handoff_guard.py" in cmd]
+    assert handoff_commands, "handoff_guard.py not registered in PreToolUse"
+    assert all(i > secret_index for i in handoff_commands)
+    matchers = [entry.get("matcher") for entry in pre_tool_use]
+    assert "Bash|Edit|Write" in matchers, (
+        f"expected a Bash|Edit|Write matcher for the handoff guard, got: {matchers!r}"
+    )
+    handoff_entry = next(entry for entry in pre_tool_use if "handoff_guard.py" in str(entry))
+    assert handoff_entry["matcher"] == "Bash|Edit|Write"

@@ -195,13 +195,20 @@ def test_preflight_pr_referenced_in_pr_review_followup_mode():
 
 
 def test_preflight_pr_referenced_in_address_feedback_skill():
-    """workflow-address-feedback SKILL.md Phase 1 must use swe-workbench-preflight-pr."""
+    """workflow-address-feedback SKILL.md Phase 1 must reach swe-workbench-preflight-pr
+    (now transitively, via swe-workbench-address-feedback-fetch) and consume
+    its output through the standard envelope + swe-workbench-result-check contract, not
+    eval "$(...)" sourcing (retired along with the direct preflight-pr call)."""
     text = (ROOT / "skills" / "workflow-address-feedback" / "SKILL.md").read_text()
     assert "swe-workbench-preflight-pr" in text, (
-        "workflow-address-feedback SKILL.md Phase 1 must invoke swe-workbench-preflight-pr"
+        "workflow-address-feedback SKILL.md Phase 1 must reference swe-workbench-preflight-pr"
     )
-    assert 'eval "$(' in text, (
-        "workflow-address-feedback SKILL.md must use eval \"$(...)\" to source preflight output"
+    assert "swe-workbench-address-feedback-fetch" in text, (
+        "workflow-address-feedback SKILL.md Phase 1 must invoke swe-workbench-address-feedback-fetch"
+    )
+    assert "swe-workbench-result-check swb.address-feedback-fetch/1" in text, (
+        "workflow-address-feedback SKILL.md must validate the fetch envelope via "
+        "swe-workbench-result-check swb.address-feedback-fetch/1"
     )
 
 

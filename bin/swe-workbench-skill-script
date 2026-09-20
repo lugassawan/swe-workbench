@@ -2,6 +2,12 @@
 # Invoke a skill-local scripts/ helper without any skill-prose path construction.
 # Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]
 set -euo pipefail
+
+if [ $# -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+  exit 0
+fi
+
 SKILL="${1:?Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]}"
 SCRIPT="${2:?Usage: swe-workbench-skill-script <skill-name> <script-name> [args...]}"
 shift 2

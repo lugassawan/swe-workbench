@@ -13,34 +13,65 @@ full implementation, invocable directly by its bare `swe-workbench-<name>` comma
 | `bin/` | Plugin-runtime scripts executed on end-user machines | Skills / commands / agents at runtime |
 | `scripts/` | Repo-dev / CI tooling: release, setup, validation | Developers from a checkout; CI pipelines |
 
-## Current scripts
+Every script documents itself: run `swe-workbench-<name> --help` for usage, arguments, and behavior
+— there is no separate script-by-script table here to keep in sync with the code as scripts change.
+The scripts in this directory that carry a `#!/usr/bin/env python3` shebang instead of
+`#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
+`swe-workbench-handoff`, `swe-workbench-lsp`, `swe-workbench-memory`,
+`swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
+`swe-workbench-preflight-commit`, and `swe-workbench-result-check`. `comment-scan` is a pure
+diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md` for the
+canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON and
+multi-call state-machine handling (422 retry, read-your-write confirmation) more than bash's
+process-spawning idioms; `lsp` speaks JSON-RPC framing to a spawned language server subprocess,
+which needs a real threaded reader loop bash can't give it; `preflight-commit` classifies
+NUL-delimited raw staged paths and emits JSON — bash would need `jq` for escaping arbitrary path
+bytes and a second regex dialect (Oniguruma) for matching, a second engine to audit in a security
+gate that should have exactly one; `result-check` needs the same JSON-object type/shape validation
+`preflight-commit` does, for the same reason; `address-feedback-fetch` needed the same
+paginated-cursor state machine as `pr-review-submit` (a `reviewThreads(first:100, after:$after)` /
+`pageInfo{endCursor hasNextPage}` loop) plus JSON emission over arbitrary-byte review-comment text,
+where bash would again mean a second escaping engine (`jq`) layered under the same shell
+process-spawning idioms `pr-review-submit` already rejected for the identical reason.
+`pr-review-threads` needs the same paginated-cursor GraphQL state machine
+`pr-review-submit`/`address-feedback-fetch` already use — a third copy of the same
+`reviewThreads(first:100, after:$after)` pagination shape — plus filesystem/git-log
+evidence-gathering a shell script would need `jq` and a second regex engine for. `memory` resolves
+both harnesses' store paths, scans record input for secrets, and flock-serializes concurrent appends
+— that dual-store path resolution, JSON envelope emission, secret scan, and lock handling need
+Python's `json`/`re`/`fcntl`, where bash would need `jq` as a second escaping engine. Unlike
+`comment-scan` (advisory, correctly fails open), `preflight-commit`, `result-check`,
+`address-feedback-fetch`, and `pr-review-threads` fail closed: an error is a hard non-zero exit with
+nothing on stdout, never a silent "clean". Same bare-command convention applies; only the
+interpreter differs.
 
-| Script | Purpose |
-|--------|---------|
-| `swe-workbench-clean-ephemeral` | Safe `rm -rf` for ephemeral git worktrees (sanity-checked before removal) |
-| `swe-workbench-clean-state-files` | Safe `rm -f` for per-invocation `/tmp` state files |
-| `swe-workbench-comment-scan` | Advisory comment-quality scanner — reads a unified diff on stdin, prints findings + a footer; never exits non-zero |
-| `swe-workbench-diff-line-lookup` | Resolve the post-diff line number for a literal code snippet (`path:line`) from a git diff or piped unified diff; refuses to guess on ambiguous matches. Default (no flag) mode is invisible to brand-new untracked files — `git add` (or pass `--staged`) first |
-| `swe-workbench-doctor` | Read-only preflight check of runtime dependencies (gh, git, jq, rimba, claude, python3) |
-| `swe-workbench-fetch-pr` | Fetch a PR's metadata JSON via `gh pr view`; exits 1 if the PR is inaccessible |
-| `swe-workbench-gh-timeout` | Run a `gh` call under a per-call deadline (default 60s, override via `GH_TIMEOUT_SECS`); degrades to unbounded `gh` when neither `timeout` nor `gtimeout` is on PATH |
-| `swe-workbench-lsp` | Stdlib-only LSP JSON-RPC client — semantic code navigation (`refs`/`def`/`impl`/`callers`/`callees`/`hover`/`symbols`/`wsymbols`/`check`) reachable via `Bash` regardless of whether the harness's own `LSP` tool is wired up for subagents |
-| `swe-workbench-new-run-dir` | Allocate a mode-0700 run-scoped scratch dir under `/tmp/swe-workbench-run/` (`mktemp -d`, explicit template); also runs the age-gated (24h) orphan sweep at allocation time |
-| `swe-workbench-pr-review-submit` | Posting mechanism for workflow-pr-review-post's `## Post` section: fetch review threads (paginated), Jaccard dedup + 👍 reactions, diff-line pre-validate, pr-level batching, self-review/diff-scoping decision flip, atomic Reviews-API submit with a bounded 422 retry and a per-comment fallback. `--findings-json <path\|->` in; `printf %q`-quoted `KEY=VALUE` lines out |
-| `swe-workbench-reap-run-dir` | Safe `rm -rf` for a single run-scoped scratch dir allocated by `swe-workbench-new-run-dir` (depth-exactly-one, name-shape, ownership, and `.git`-absence checks) |
-| `swe-workbench-reap-session-scratch` | Safe content-clear (directory preserved) for the current harness session's scratchpad, resolved via `$CLAUDE_CODE_SESSION_ID` and a filesystem glob — no path argument; any guard failure is a silent no-op |
-| `swe-workbench-reply-and-resolve` | Post a PR review thread reply (REST) and optionally resolve it (GraphQL) |
-| `swe-workbench-skill-script` | Invoke a skill-local `scripts/<name>.sh` helper (`swe-workbench-skill-script <skill> <script> [args...]`) — rejects traversal, resolves the plugin root itself so no skill has to |
-| `swe-workbench-sync-pr-metadata` | Apply a revised title and/or body to an existing PR (address-feedback Phase 6 drift sync) |
+## Result contract
 
-`swe-workbench-comment-scan`, `swe-workbench-lsp`, and `swe-workbench-pr-review-submit` are the
-three scripts in this directory with a `#!/usr/bin/env python3` shebang instead of
-`#!/usr/bin/env bash`. `comment-scan` is a pure diff-in/findings-out function (no git calls of its
-own; see `shared/agents/comment-scan.md` for the canonical diff command); `pr-review-submit` does
-call `git`/`gh` but needed Python's JSON and multi-call state-machine handling (422 retry,
-read-your-write confirmation) more than bash's process-spawning idioms; `lsp` speaks JSON-RPC
-framing to a spawned language server subprocess, which needs a real threaded reader loop bash
-can't give it. Same bare-command convention applies; only the interpreter differs.
+A script whose result has real structure to lose — a list of records, per-item failure detail, or
+genuine partial-success semantics — emits one JSON envelope on stdout instead of `KEY=VALUE` lines
+for `eval`:
+
+```json
+{
+  "schema": "swb.<command>/<major>",
+  "status": "ok" | "partial" | "failed",
+  "data": { "...": "command-specific typed fields" },
+  "warnings": [ { "code": "...", "message": "...", "subject": "optional" } ]
+}
+```
+
+A consuming skill pipes it through `swe-workbench-result-check <schema>` in place of `eval`:
+
+```bash
+RESULT=$(swe-workbench-sweep-residuals "$PR" | swe-workbench-result-check swb.sweep-residuals/1) || exit 1
+```
+
+This is **not** a mandate for every script — a producer whose output is a handful of trusted
+scalars (`swe-workbench-preflight-pr`'s 6 `printf %q`-quoted fields, `swe-workbench-new-run-dir`'s
+bare path) has nothing to gain from it and stays exactly as it is. See
+[`shared/docs/runtime-result-contract.md`](../shared/docs/runtime-result-contract.md) for the full
+spec: the envelope shape, the exact-match versioning rule, the S/Q/J decision test for whether a
+given script should migrate, and the two-tier field-handling recipe for a consuming `SKILL.md`.
 
 ## Reference pattern
 
@@ -60,7 +91,7 @@ swe-workbench-<name> [args...]
 `<plugin>/bin` is appended to the Bash tool's `PATH` while the plugin is enabled, so
 `swe-workbench-<name>` resolves without any path construction. The `command -v` preflight converts
 "command not found → exit 127, possibly rationalized away as unavailable" into a loud, actionable
-abort ("reinstall or update the swe-workbench plugin") — see `docs/plugin-platform-decisions.md` for
+abort ("reinstall or update the swe-workbench plugin") — see [docs/decisions-bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/decisions-bin-path.md) for
 why this replaced the old `$CLAUDE_PLUGIN_ROOT`-existence guard rather than simply dropping it. A
 script that calls a sibling script (e.g. `swe-workbench-preflight-pr` calling
 `swe-workbench-fetch-pr`) resolves it via `dirname "$0"`/`dirname "${BASH_SOURCE[0]}"`, never a bare
@@ -70,7 +101,11 @@ exact form.
 A skill with its own `scripts/` helpers (e.g. `swe-workbench:workflow-cleanup-merged`, `swe-workbench:workflow-branch-sync`)
 never constructs a path to them either. It invokes `swe-workbench-skill-script <skill> <script>
 [args...]`, which resolves the plugin root itself and execs the target — see
-`docs/plugin-platform-decisions.md` for why this replaced the doctor-anchor `_RT=` derivation that
+[docs/decisions-bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/decisions-bin-path.md) for why this replaced the doctor-anchor `_RT=` derivation that
 briefly stood in for it. The dispatcher always execs the target via `bash` (mirroring
 `swe-workbench-fetch-pr`'s sibling-call form) rather than relying on the target's own shebang, so
-every skill-local `scripts/*.sh` helper is assumed to be bash.
+every skill-local `scripts/*.sh` helper is assumed to be bash. A `bin/` script itself reaches a
+skill-local helper the same way — `swe-workbench-sweep-residuals` resolves
+`swe-workbench:workflow-cleanup-merged`'s `resolve-rimba.sh` via `"$SCRIPT_DIR/swe-workbench-skill-script"
+workflow-cleanup-merged resolve-rimba.sh`, since that helper has another consumer inside the skill
+itself and stays skill-local rather than being promoted alongside its caller.
