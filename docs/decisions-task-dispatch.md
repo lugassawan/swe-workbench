@@ -111,9 +111,24 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   split is real, dispatch-visible behavior — not merely nominal; verified, not reimplemented, in
   `tests/test_pi_contract.py`'s pinned-catalog test, which fails loudly if a future catalog bump
   drops that map again), and the four fallback reasons.
+- The `google` provider row follows the same rules with one addition — a *nearest-real-rung*
+  thinking policy. Google's provider string is `google` (`GEMINI_API_KEY`): pi removed the
+  built-in Google Gemini CLI and Google Antigravity logins upstream in 0.71.0, so no
+  `google-antigravity` provider exists on supported pins — "antigravity/gemini" requests resolve
+  to this API-key provider — and `google-vertex` (a separate provider string and catalog) stays
+  out of scope until a real Vertex-parent dispatch is reported. Ids are picked by newest numeric
+  id present in the repo pin, kept aligned with the runtime host, and never a `-latest` alias
+  (rolling re-points); `gemini-3.8-flash` required deliberately bumping the pin to 0.86.1 while
+  google dispatch was unreleased, with peer floors synced per repo convention — on older hosts a
+  google parent degrades gracefully (pro's `medium` clamps up to `high`; the 3.8 id falls back
+  `model-unavailable` → parent-clone with a visible warning). Google gets a distinct model per
+  tier (unlike zai's one-model compression), so its tables carry no depth bias: each cell emits
+  the nearest *real* rung to the portable effort — exactly what the SDK's own
+  `clampThinkingLevel` resolves an unreal level to — and `tests/test_pi_contract.py` pins that
+  table ≡ clamp equivalence per cell against the bundled catalog.
 
 `tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
-exhaustiveness check over `MODEL_POLICY`'s 3 providers x 3 tiers x 5 efforts ratchet the tier and
+exhaustiveness check over `MODEL_POLICY`'s 4 providers x 3 tiers x 5 efforts ratchet the tier and
 effort vocabulary against the live `agents/*.md` inventory, the same pattern `docs/decisions-ci-validation.md` §1 already uses for
 tool tokens and skill ids — plus a pinned-catalog test asserting every cell's exact model id
 actually exists in the bundled Pi SDK's provider data.
