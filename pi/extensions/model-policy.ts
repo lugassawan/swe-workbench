@@ -104,13 +104,9 @@ const ZAI_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   max: "xhigh",
 };
 
-/** Google gets a distinct model per tier (unlike zai's one-model two-tier compression), so
- *  ids carry the tier separation and the tables carry no depth bias: every cell emits the
- *  nearest *real* rung to the portable effort — exactly what the SDK's own clampThinkingLevel
- *  resolves an unreal level to (real levels per the pinned catalog — see docs/cost-tiers.md's
- *  google note; tests pin table ≡ clamp per cell, so a catalog divergence re-splits this
- *  const). Every emitted level is catalog-real on the pin — zero nominal-vs-effective
- *  divergence. */
+/** Nearest *real* rung to the portable effort — what the SDK's own clampThinkingLevel resolves
+ *  an unreal level to, so every emitted level is catalog-real (no depth bias: google has a
+ *  distinct model per tier). Tests pin table ≡ clamp; see docs/cost-tiers.md's google note. */
 const GOOGLE_NEAREST_REAL_RUNG: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "low",
   medium: "medium",

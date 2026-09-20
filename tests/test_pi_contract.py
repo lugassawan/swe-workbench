@@ -1017,7 +1017,7 @@ def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_du
             )
 
 
-# The ticket's 3x3 default matrix (docs/cost-tiers.md's "On the Pi Coding Agent" table),
+# The default matrix (docs/cost-tiers.md's "On the Pi Coding Agent" table),
 # reproduced by feeding DEFAULT_TIER_EFFORT[tier] through MODEL_POLICY[provider][tier].thinking —
 # this is the one source of truth the matrix is asserted against, not a second hand-copied table.
 _TICKET_DEFAULT_MATRIX = {
@@ -1082,15 +1082,8 @@ def test_zai_thinking_tables_are_monotone_and_gapless_across_all_efforts(model_p
 
 @requires_node
 def test_google_thinking_tables_are_real_rungs_and_ordered_across_all_efforts(model_policy_dump):
-    """Full-table pin for all three google cells, mirroring the zai verbatim pin. Every emitted
-    level is the nearest REAL rung to the portable effort for that cell's model (probed on the
-    0.86.1 pin: pro and 3.8-flash -> {low, medium, high}; flash-lite -> {minimal, low, medium,
-    high}) — exactly what the SDK's own clampThinkingLevel resolves an unreal level to, made
-    explicit. The SDK clamp therefore never rewrites a google dispatch (zero
-    nominal-vs-effective divergence), and the tables are the identity-table analogue for a
-    provider whose upper rungs are unreal. Distinct model ids carry tier separation; defaults
-    land at high/high/high — no depth bias, matching every other provider's haiku cell and the
-    clamp's own resolution of sonnet's xhigh."""
+    """Full-table pin for all three google cells, mirroring the zai verbatim pin: nearest-real-rung
+    passthrough, no depth bias (distinct model per tier). Defaults land at high/high/high."""
     assert model_policy_dump["policy"]["google"]["opus"]["thinking"] == {
         "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
     }
@@ -1255,15 +1248,10 @@ console.log(JSON.stringify(dump));
 @requires_node
 @requires_pi_ai_catalog
 def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_policy_dump):
-    """Drives the REAL SDK clamp functions against the REAL pinned catalog for every google
-    MODEL_POLICY model id (same posture as the zai clamp pin), and asserts the central google
-    invariant: each cell's thinking table EQUALS the SDK clamp's own resolution of the nominal
-    effort (nearest real rung) — the tables explicitize the clamp, never bias it. Also asserts
-    only the stable intersection across catalog pins — pro declares at least low/high and never
-    xhigh/max (0.86.1 pin: {low, medium, high}); flash declares at least low/medium/
-    high — so the test pins semantics, not one pin's data shape. If a catalog bump changes what
-    these models really support, this fails loudly: the signal to revisit MODEL_POLICY's google
-    tables and docs/cost-tiers.md's google note, not a silent clamp to discover later."""
+    """Drives the REAL SDK clamp against the REAL pinned catalog (zai-clamp-pin posture) and
+    asserts table ≡ clamp per (tier, effort), plus the stable supported-level intersection
+    across pins. A catalog bump that changes real levels fails loudly — revisit the google
+    tables, not a silent clamp."""
     node = shutil.which("node")
     assert node is not None
     assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gated this

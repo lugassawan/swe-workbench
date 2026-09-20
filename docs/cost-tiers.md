@@ -139,22 +139,13 @@ purely nominal. `tests/test_pi_contract.py` pins this directly against the bundl
 so a future catalog change that drops `glm-5.3`'s `thinkingLevelMap` again fails that test
 loudly — the signal to revisit this caveat once more, not silently drift past.
 
-**Google note.** The `google` row (API-key `google` — `GEMINI_API_KEY`; pi removed the built-in
-Google Gemini CLI and Google Antigravity logins upstream in 0.71.0, so no `google-antigravity`
-provider exists on supported pins, and `google-vertex` — a separate provider string and catalog —
-stays out of scope) gets a distinct model per tier, so its tables carry no depth bias: each cell
-emits the nearest *real* rung to the portable effort, exactly what the installed SDK's own
-`clampThinkingLevel` resolves an unreal level to (`xhigh`/`max` → `high`; every emitted level is
-catalog-real — zero nominal-vs-effective divergence, the property zai's tables only approximate).
-`gemini-3.8-flash` required bumping the repo's `@earendil-works/pi-coding-agent` pin to 0.86.1 —
-deliberate, while google dispatch was unreleased — and the `>=0.86.1` peer floor is load-bearing,
-not cosmetic: hosts older than the pin are unsupported, in two different ways (verified against
-the packed 0.85.1 catalog): pre-0.85 hosts lack the id entirely (`model-unavailable` fallback
-with a visible warning), while 0.85.x hosts carry the id with a degenerate thinking map — a
-*silent* nominal-only dispatch with no warning, the one divergence class this row otherwise
-eliminates. The zero-divergence guarantee holds on `>=0.86.1` only. `tests/test_pi_contract.py` pins table ≡ clamp per cell
-against the bundled catalog, so a catalog bump that changes what these models really support
-fails loudly.
+**Google note.** The `google` row is the API-key provider (`GEMINI_API_KEY`; pi removed the
+built-in Gemini CLI / Antigravity logins upstream in 0.71.0 — no `google-antigravity` exists on
+supported pins; `google-vertex`, a separate provider/catalog, is out of scope). Distinct model
+per tier → no depth bias: each cell emits the nearest *real* rung, exactly the SDK clamp's own
+resolution — zero nominal-vs-effective divergence. The `>=0.86.1` peer floor is load-bearing:
+0.85.x hosts dispatch `gemini-3.8-flash` silently nominal-only (degenerate thinking map);
+pre-0.85 hosts fall back `model-unavailable` with a warning. Tests pin table ≡ clamp per cell.
 
 **Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
