@@ -1802,7 +1802,7 @@ if (registered) {
   execCalls.length = 0;
   notifyCalls.length = 0;
   out.providerUnsupportedFallback = await run(
-    "tiered-agent", "hi", { provider: "google", id: "gemini-x" }, [],
+    "tiered-agent", "hi", { provider: "google-vertex", id: "gemini-x" }, [],
   );
   out.providerUnsupportedExecCalls = execCalls.slice();
   out.providerUnsupportedNotifyCalls = notifyCalls.slice();
@@ -2431,7 +2431,7 @@ def test_subagent_effort_unknown_falls_back_to_parent_model(subagent_root, tmp_p
 
 @requires_node
 def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root, tmp_path_factory):
-    """tiered-agent's tier is known, but ctx.model.provider ("google") has no MODEL_POLICY row —
+    """tiered-agent's tier is known, but ctx.model.provider ("google-vertex") has no MODEL_POLICY row —
     resolution must fall back to the parent's own model unchanged with fallbackReason
     "provider-unsupported", even though the tier itself is recognized."""
     result = _subagent_result(subagent_root, tmp_path_factory)
@@ -2439,7 +2439,7 @@ def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root,
     assert run["ok"] is True
     args = result["providerUnsupportedExecCalls"][0]["args"]
     model_idx = args.index("--model")
-    assert args[model_idx + 1] == "google/gemini-x"
+    assert args[model_idx + 1] == "google-vertex/gemini-x"
     assert "--thinking" not in args
 
     details = run["result"]["details"]
@@ -2764,7 +2764,7 @@ def _model_policy_result(tmp_path_factory):
 
     # One case per FallbackReason.
     cases["fallback_provider_unsupported"] = {
-        "parent": {"provider": "google", "id": "gemini-x", "thinking": "medium"},
+        "parent": {"provider": "google-vertex", "id": "gemini-x", "thinking": "medium"},
         "tier": "opus", "effort": "high", "candidates": [],
     }
     cases["fallback_tier_unknown"] = {
@@ -2854,7 +2854,7 @@ def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
     cell = result[label]
     parent = cell["model"]
     case_parent = {
-        "fallback_provider_unsupported": {"provider": "google", "id": "gemini-x"},
+        "fallback_provider_unsupported": {"provider": "google-vertex", "id": "gemini-x"},
         "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5"},
