@@ -2711,15 +2711,22 @@ _ZAI_CANDIDATES = [
     {"provider": "zai", "id": "glm-5.2"},
     {"provider": "zai", "id": "glm-5.2-highspeed"},
 ]
-_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES}
+_GOOGLE_CANDIDATES = [
+    {"provider": "google", "id": "gemini-3.1-pro-preview"},
+    {"provider": "google", "id": "gemini-3.7-flash"},
+    {"provider": "google", "id": "gemini-3.8-flash"},
+    {"provider": "google", "id": "gemini-3.5-flash-lite"},
+]
+_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES}
 _PARENT_BY_PROVIDER = {
     "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
     "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
+    "google": {"provider": "google", "id": "gemini-3.8-flash", "thinking": "medium"},
 }
 _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 
-# The ticket's 3x3 default matrix, expected (model id, thinking) per (provider, tier), fed
+# The default matrix, expected (model id, thinking) per (provider, tier), fed
 # through DEFAULT_TIER_EFFORT — same source of truth as test_pi_contract.py's
 # _TICKET_DEFAULT_MATRIX, exercised here via the real resolveDispatch() call site instead of a
 # raw MODEL_POLICY table dump.
@@ -2738,6 +2745,11 @@ _EXPECTED_DEFAULT_CELL = {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
         "haiku": ("glm-5.2-highspeed", "high"),
+    },
+    "google": {
+        "opus": ("gemini-3.1-pro-preview", "high"),
+        "sonnet": ("gemini-3.8-flash", "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
 
