@@ -1,4 +1,4 @@
-pip-tools==7.5.3
+pip-tools==7.6.1
 # pip 26.2 permanently removed pip._internal.utils.compat.stdlib_pkgs
 # (pip PR #14133); pip-tools' sync module still imports it, breaking every
 # pip-tools release including the latest (7.6.0). pip maintainers closed
