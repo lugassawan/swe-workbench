@@ -119,9 +119,11 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   out of scope until a real Vertex-parent dispatch is reported. Ids are picked by newest numeric
   id present in the repo pin, kept aligned with the runtime host, and never a `-latest` alias
   (rolling re-points); `gemini-3.8-flash` required deliberately bumping the pin to 0.86.1 while
-  google dispatch was unreleased, with peer floors synced per repo convention — on older hosts a
-  google parent degrades gracefully (pro's `medium` clamps up to `high`; the 3.8 id falls back
-  `model-unavailable` → parent-clone with a visible warning). Google gets a distinct model per
+  google dispatch was unreleased, with peer floors synced per repo convention — and the
+  `>=0.86.1` floor is load-bearing: pre-0.85 hosts lack the 3.8 id entirely
+  (`model-unavailable` fallback with a visible warning), while 0.85.x hosts carry it with a
+  degenerate thinking map — a *silent* nominal-only dispatch with no warning (verified against
+  the packed 0.85.1 catalog), the one divergence class this row otherwise eliminates. Google gets a distinct model per
   tier (unlike zai's one-model compression), so its tables carry no depth bias: each cell emits
   the nearest *real* rung to the portable effort — exactly what the SDK's own
   `clampThinkingLevel` resolves an unreal level to — and `tests/test_pi_contract.py` pins that

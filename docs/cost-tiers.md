@@ -147,9 +147,12 @@ emits the nearest *real* rung to the portable effort, exactly what the installed
 `clampThinkingLevel` resolves an unreal level to (`xhigh`/`max` → `high`; every emitted level is
 catalog-real — zero nominal-vs-effective divergence, the property zai's tables only approximate).
 `gemini-3.8-flash` required bumping the repo's `@earendil-works/pi-coding-agent` pin to 0.86.1 —
-deliberate, while google dispatch was unreleased — and on older hosts a google parent degrades
-gracefully (pro's `medium` clamps up to `high`; the 3.8 id falls back `model-unavailable` →
-parent-clone with a visible warning). `tests/test_pi_contract.py` pins table ≡ clamp per cell
+deliberate, while google dispatch was unreleased — and the `>=0.86.1` peer floor is load-bearing,
+not cosmetic: hosts older than the pin are unsupported, in two different ways (verified against
+the packed 0.85.1 catalog): pre-0.85 hosts lack the id entirely (`model-unavailable` fallback
+with a visible warning), while 0.85.x hosts carry the id with a degenerate thinking map — a
+*silent* nominal-only dispatch with no warning, the one divergence class this row otherwise
+eliminates. The zero-divergence guarantee holds on `>=0.86.1` only. `tests/test_pi_contract.py` pins table ≡ clamp per cell
 against the bundled catalog, so a catalog bump that changes what these models really support
 fails loudly.
 
