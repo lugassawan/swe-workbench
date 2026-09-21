@@ -25,6 +25,75 @@ function isNonEmptyTrimmedString(value) {
   return typeof value === "string" && value.length > 0 && value === value.trim();
 }
 
+function capturedText(value) {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+const SAFE_PI_EVENT_TYPES = new Set([
+  "session",
+  "agent_start",
+  "agent_end",
+  "agent_settled",
+  "turn_start",
+  "turn_end",
+  "message_start",
+  "message_update",
+  "message_end",
+  "tool_execution_start",
+  "tool_execution_update",
+  "tool_execution_end",
+  "queue_update",
+  "compaction_start",
+  "compaction_end",
+  "entry_appended",
+  "session_info_changed",
+  "thinking_level_changed",
+  "auto_retry_start",
+  "auto_retry_end",
+  "summarization_retry_scheduled",
+  "summarization_retry_attempt_start",
+  "summarization_retry_finished",
+  "bash_execution_update",
+]);
+
+function lastPiEventType(ndjson) {
+  let lastType = "none";
+  for (const line of ndjson.split("\n")) {
+    try {
+      const event = JSON.parse(line);
+      if (event && typeof event.type === "string") {
+        lastType = SAFE_PI_EVENT_TYPES.has(event.type) ? event.type : "unknown";
+      }
+    } catch {
+      // Partial NDJSON commonly ends mid-event when the child is killed; ignore its content.
+    }
+  }
+  return lastType;
+}
+
+/** Formats spawn failures without echoing captured provider output or model reasoning. */
+export function formatPiSpawnError(details) {
+  const stdout = capturedText(details.stdout);
+  const stderr = capturedText(details.stderr);
+  const stdoutBytes =
+    Number.isSafeInteger(details.stdoutBytes) && details.stdoutBytes >= 0
+      ? details.stdoutBytes
+      : new TextEncoder().encode(stdout).length;
+  const stderrBytes =
+    Number.isSafeInteger(details.stderrBytes) && details.stderrBytes >= 0
+      ? details.stderrBytes
+      : new TextEncoder().encode(stderr).length;
+  const metadata =
+    `label=${JSON.stringify(String(details.label))} ` +
+    `elapsed=${details.elapsedMs}ms limit=${details.timeoutMs}ms ` +
+    `stdoutBytes=${stdoutBytes} stderrBytes=${stderrBytes} ` +
+    `lastEventType=${lastPiEventType(stdout)} code=${details.errorCode ?? "unknown"}`;
+  if (details.errorCode === "ETIMEDOUT") return `pi dispatch timed out — ${metadata}`;
+  return `failed to spawn "pi": ${details.errorMessage} — ${metadata}`;
+}
+
 /** " | " is the field boundary, not bare `|` — a field may itself contain a bare pipe
  *  (e.g. a Suggested fix mentioning `string | number`). */
 const FIELD_SEPARATOR = " | ";

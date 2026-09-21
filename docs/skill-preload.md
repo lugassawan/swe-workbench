@@ -216,7 +216,10 @@ mv .claude/cache/dispatch-probes/ablation-runs.jsonl \
 Choose one stable sweep ID and explicit model for the whole agent. Smoke-test every pair first
 (zero dispatches), then run one skill pair at a time so cost and coverage can be checked between
 pairs. Re-running the same command safely skips already-persisted arms. A per-pair lock prevents
-concurrent resumes from duplicating paid dispatches; after a crash, inspect the JSONL and confirm
+concurrent resumes from duplicating paid dispatches. A timeout reports the exact diff/arm, elapsed
+and configured time, captured byte counts, and the last parseable Pi event type without echoing
+partial model output; use `lastEventType=none` versus a streamed event type to distinguish no
+provider progress from an interrupted active stream. After a crash, inspect the JSONL and confirm
 no probe process remains before removing the stale lock path named by the error:
 
 ```bash
