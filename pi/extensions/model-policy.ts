@@ -35,7 +35,7 @@ export function isKnownEffort(value: string | undefined): value is Effort {
 
 /** The providers this policy has a row for. Any other `ctx.model.provider` degrades to the
  *  parent's own current model — see resolveDispatch's `provider-unsupported` FallbackReason. */
-export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google"] as const;
+export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google", "antigravity"] as const;
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 export function isSupportedProvider(value: string): value is SupportedProvider {
@@ -142,6 +142,11 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
     haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
   },
   google: {
+    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
+  },
+  antigravity: {
     opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },

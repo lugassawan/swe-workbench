@@ -2769,12 +2769,20 @@ _GOOGLE_CANDIDATES = [
     {"provider": "google", "id": "gemini-3.7-flash"},
     {"provider": "google", "id": "gemini-3.5-flash-lite"},
 ]
-_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES}
+_ANTIGRAVITY_CANDIDATES = [
+    {"provider": "antigravity", "id": "gemini-3.1-pro-preview"},
+    {"provider": "antigravity", "id": "gemini-3.1-pro"},
+    {"provider": "antigravity", "id": "gemini-3.7-flash"},
+    {"provider": "antigravity", "id": "gemini-3.8-flash"},
+    {"provider": "antigravity", "id": "gemini-3.5-flash-lite"},
+]
+_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES, "antigravity": _ANTIGRAVITY_CANDIDATES}
 _PARENT_BY_PROVIDER = {
     "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
     "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
     "google": {"provider": "google", "id": "gemini-3.7-flash", "thinking": "medium"},
+    "antigravity": {"provider": "antigravity", "id": "gemini-3.7-flash", "thinking": "medium"},
 }
 _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 
@@ -2799,6 +2807,11 @@ _EXPECTED_DEFAULT_CELL = {
         "haiku": ("glm-5.2-highspeed", "high"),
     },
     "google": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
+    },
+    "antigravity": {
         "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
         "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
