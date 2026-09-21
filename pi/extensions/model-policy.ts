@@ -35,7 +35,7 @@ export function isKnownEffort(value: string | undefined): value is Effort {
 
 /** The providers this policy has a row for. Any other `ctx.model.provider` degrades to the
  *  parent's own current model — see resolveDispatch's `provider-unsupported` FallbackReason. */
-export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google"] as const;
+export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google", "antigravity"] as const;
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 export function isSupportedProvider(value: string): value is SupportedProvider {
@@ -116,8 +116,8 @@ const GOOGLE_NEAREST_REAL_RUNG: Readonly<Record<Effort, ThinkingLevel>> = {
 };
 
 interface TierPolicy {
-  /** Exact catalog id — never a pattern. */
-  readonly model: string;
+  /** Exact catalog id(s) — never a pattern. If multiple, tried in order until one is available in candidates. */
+  readonly model: string | readonly string[];
   /** Exhaustive portable-effort -> provider-effective-thinking-level map, all 5 efforts. */
   readonly thinking: Readonly<Record<Effort, ThinkingLevel>>;
 }
@@ -142,8 +142,13 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
     haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
   },
   google: {
-    opus: { model: "gemini-3.1-pro-preview", thinking: GOOGLE_NEAREST_REAL_RUNG },
-    sonnet: { model: "gemini-3.8-flash", thinking: GOOGLE_NEAREST_REAL_RUNG },
+    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
+  },
+  antigravity: {
+    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
 };
@@ -214,7 +219,12 @@ export function resolveDispatch(params: {
   if (!isKnownEffort(effort)) return fallback("effort-unknown");
 
   const policy = MODEL_POLICY[parent.provider][tier];
-  const match = candidates.find((c) => c.provider === parent.provider && c.id === policy.model);
+  const models = typeof policy.model === "string" ? [policy.model] : policy.model;
+  let match: ModelCandidate | undefined;
+  for (const modelId of models) {
+    match = candidates.find((c) => c.provider === parent.provider && c.id === modelId);
+    if (match) break;
+  }
   if (!match) return fallback("model-unavailable");
 
   return {

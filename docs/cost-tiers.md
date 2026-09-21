@@ -110,8 +110,8 @@ an exact model id per tier. Feeding each tier's default effort (the table above)
 
 | Tier | anthropic | openai-codex | zai | google |
 |---|---|---|---|---|
-| opus | `claude-opus-5:high` | `gpt-5.6-sol:high` | `glm-5.3:max` | `gemini-3.1-pro-preview:high` |
-| sonnet | `claude-sonnet-5:xhigh` | `gpt-5.6-terra:xhigh` | `glm-5.3:high` | `gemini-3.8-flash:high` |
+| opus | `claude-opus-5:high` | `gpt-5.6-sol:high` | `glm-5.3:max` | `gemini-3.1-pro-preview:high` (or `gemini-3.1-pro:high`) |
+| sonnet | `claude-sonnet-5:xhigh` | `gpt-5.6-terra:xhigh` | `glm-5.3:high` | `gemini-3.8-flash:high` (or `gemini-3.7-flash:high`) |
 | haiku | `claude-haiku-4-5:high` | `gpt-5.6-luna:high` | `glm-5.2-highspeed:high` | `gemini-3.5-flash-lite:high` |
 
 **Portable vs. effective effort.** The `effort:` value in an agent's frontmatter is *portable* —

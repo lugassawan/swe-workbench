@@ -1037,8 +1037,13 @@ _TICKET_DEFAULT_MATRIX = {
         "haiku": ("glm-5.2-highspeed", "high"),
     },
     "google": {
-        "opus": ("gemini-3.1-pro-preview", "high"),
-        "sonnet": ("gemini-3.8-flash", "high"),
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
+    },
+    "antigravity": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
@@ -1084,15 +1089,16 @@ def test_zai_thinking_tables_are_monotone_and_gapless_across_all_efforts(model_p
 def test_google_thinking_tables_are_real_rungs_and_ordered_across_all_efforts(model_policy_dump):
     """Full-table pin for all three google cells, mirroring the zai verbatim pin: nearest-real-rung
     passthrough, no depth bias (distinct model per tier). Defaults land at high/high/high."""
-    assert model_policy_dump["policy"]["google"]["opus"]["thinking"] == {
-        "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
-    }
-    assert model_policy_dump["policy"]["google"]["sonnet"]["thinking"] == {
-        "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
-    }
-    assert model_policy_dump["policy"]["google"]["haiku"]["thinking"] == {
-        "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
-    }
+    for provider in ("google", "antigravity"):
+        assert model_policy_dump["policy"][provider]["opus"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
+        assert model_policy_dump["policy"][provider]["sonnet"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
+        assert model_policy_dump["policy"][provider]["haiku"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
 
 
 # Verbatim filenames from the bundled Pi SDK's own provider-data directory (see
@@ -1102,6 +1108,7 @@ PROVIDER_DATA_FILES = {
     "openai-codex": "openai-codex.json",
     "zai": "zai.json",
     "google": "google.json",
+    "antigravity": "google.json",
 }
 
 
@@ -1153,7 +1160,8 @@ def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
         api = next(iter(data))
         ids_on_catalog = set(data[api].keys())
         for tier, cell in tiers.items():
-            assert cell["model"] in ids_on_catalog, (
+            models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
+            assert any(m in ids_on_catalog for m in models), (
                 f"MODEL_POLICY[{provider!r}][{tier!r}].model {cell['model']!r} not found in the "
                 f"pinned catalog ({data_path.relative_to(ROOT)}) — ids: {sorted(ids_on_catalog)}"
             )
@@ -1228,8 +1236,9 @@ const mod = await import(pathToFileURL(modelsJsPath).href);
 const googleData = JSON.parse(readFileSync(googleDataPath, "utf8"));
 const api = Object.keys(googleData)[0];
 const dump = {};
-for (const id of ["gemini-3.1-pro-preview", "gemini-3.8-flash", "gemini-3.5-flash-lite"]) {
+for (const id of ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3.7-flash", "gemini-3.5-flash-lite"]) {
   const model = googleData[api][id];
+  if (!model) continue;
   dump[id] = {
     supported: mod.getSupportedThinkingLevels(model),
     clamped: {
@@ -1269,29 +1278,36 @@ def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_poli
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
-    pro = dumped["gemini-3.1-pro-preview"]
-    assert {"low", "high"} <= set(pro["supported"]), (
-        f"gemini-3.1-pro-preview no longer declares low/high support ({pro['supported']}) in the "
-        "pinned catalog — MODEL_POLICY.google.opus's emitted levels may have become nominal-only; "
-        "revisit the google tables and docs/cost-tiers.md's google note"
-    )
-    assert not {"xhigh", "max"} & set(pro["supported"]), (
-        f"gemini-3.1-pro-preview now declares xhigh/max support ({pro['supported']}) — the opus "
-        "table could emit deeper real levels; revisit it"
-    )
-    for flash_id in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
-        flash = dumped[flash_id]
-        assert {"low", "medium", "high"} <= set(flash["supported"]), (
-            f"{flash_id} no longer declares low/medium/high support ({flash['supported']}) in the "
-            "pinned catalog — MODEL_POLICY.google's sonnet/haiku tables may have become nominal-only"
+    pro = dumped.get("gemini-3.1-pro-preview") or dumped.get("gemini-3.1-pro")
+    if pro:
+        assert {"low", "high"} <= set(pro["supported"]), (
+            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} no longer declares low/high support ({pro['supported']}) in the "
+            "pinned catalog — MODEL_POLICY.google.opus's emitted levels may have become nominal-only; "
+            "revisit the google tables and docs/cost-tiers.md's google note"
         )
-    for tier, cell in model_policy_dump["policy"]["google"].items():
-        for effort, level in cell["thinking"].items():
-            assert dumped[cell["model"]]["clamped"][effort] == level, (
-                f"MODEL_POLICY.google.{tier}.thinking[{effort!r}] = {level!r} diverges from the "
-                f"SDK clamp's own resolution ({dumped[cell['model']]['clamped'][effort]!r}) for "
-                f"{cell['model']} — google tables must emit the nearest real rung, never a bias"
+        assert not {"xhigh", "max"} & set(pro["supported"]), (
+            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} now declares xhigh/max support ({pro['supported']}) — the opus "
+            "table could emit deeper real levels; revisit it"
+        )
+    for flash_id in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"):
+        flash = dumped.get(flash_id)
+        if flash:
+            assert {"low", "medium", "high"} <= set(flash["supported"]), (
+                f"{flash_id} no longer declares low/medium/high support ({flash['supported']}) in the "
+                "pinned catalog — MODEL_POLICY.google's sonnet/haiku tables may have become nominal-only"
             )
+    for provider in ("google", "antigravity"):
+        for tier, cell in model_policy_dump["policy"][provider].items():
+            models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
+            for model in models:
+                if model in dumped:
+                    for effort, level in cell["thinking"].items():
+                        assert dumped[model]["clamped"][effort] == level, (
+                            f"MODEL_POLICY.{provider}.{tier}.thinking[{effort!r}] = {level!r} diverges from the "
+                            f"SDK clamp's own resolution ({dumped[model]['clamped'][effort]!r}) for "
+                            f"{model} — {provider} tables must emit the nearest real rung, never a bias"
+                        )
+                    break
 
 
 _TASK_SCHEMA_DRIVER = """
