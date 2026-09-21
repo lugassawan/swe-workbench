@@ -122,7 +122,12 @@ only print a `USAGE` block on an unrecognized argument; `preload-telemetry.py` h
   scripts/preload-telemetry.py cache` to see the accumulated history.
 - The ablation harness (condition 3) — also human-run, same constraint: `node
   --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit
-  <skill-id>`, then `scripts/preload-probe.mjs ablate --report` to see the accumulated results.
+  <skill-id> --sweep <id> --model <provider>/<id>`, then `scripts/preload-probe.mjs ablate
+  --report --sweep <id>` to see the accumulated results. Live runs require a clean git worktree
+  and persist the commit, model, corpus fingerprint, prompt fingerprint, usage, and cost with
+  every arm; corpus files are snapshotted once so the hashed bytes are the dispatched bytes, and
+  the harness rejects a final provider/model identity that differs from the explicit `--model`
+  value.
 
 Everything the last three write accumulates under `.claude/cache/` (`skill-usage/canary-citations.jsonl`, `dispatch-probes/cache-runs.jsonl`, `dispatch-probes/ablation-runs.jsonl`), which is gitignored — that raw data is local to whoever ran the command and is never committed or shared. Only a short human-written summary of a run makes it into the repo, in the section below.
 
@@ -199,16 +204,45 @@ measured. The defer tier is the first place to re-examine once it is. Recorded d
 #### Human sweep runbook
 
 The ablation harness spawns nested `pi` — run it from an interactive terminal, never from
-CI or an agent context (`hooks/bash_guard.sh` blocks nested pi). Smoke-test with `--dry-run`
-(zero dispatches) first, then run one agent's loop, then its report:
+CI or an agent context (`hooks/bash_guard.sh` blocks nested pi). Start from a clean git
+worktree. Before the first schema-v2 sweep, archive any legacy pilot file if the command
+reports `unsupported ablation record schema`; do not merge it into authoritative evidence:
 
 ```bash
+mv .claude/cache/dispatch-probes/ablation-runs.jsonl \
+  ".claude/cache/dispatch-probes/ablation-runs.legacy-$(date +%Y%m%d%H%M%S).jsonl"
+```
+
+Choose one stable sweep ID and explicit model for the whole agent. Smoke-test every pair first
+(zero dispatches), then run one skill pair at a time so cost and coverage can be checked between
+pairs. Re-running the same command safely skips already-persisted arms. A per-pair lock prevents
+concurrent resumes from duplicating paid dispatches; after a crash, inspect the JSONL and confirm
+no probe process remains before removing the stale lock path named by the error:
+
+```bash
+sweep=c3-$(date +%F)-default
+model=openai-codex/gpt-5.6-sol
+agent=<agent-id>
+
 for s in <skill-a> <skill-b> …; do
   node --experimental-strip-types scripts/preload-probe.mjs ablate \
-    --agent <agent-id> --corpus tests/fixtures/ablation_corpus --omit "$s"
+    --agent "$agent" --corpus tests/fixtures/ablation_corpus --omit "$s" --dry-run
 done
-node --experimental-strip-types scripts/preload-probe.mjs ablate --report --agent <agent-id>
+
+for s in <skill-a> <skill-b> …; do
+  node --experimental-strip-types scripts/preload-probe.mjs ablate \
+    --agent "$agent" --corpus tests/fixtures/ablation_corpus --omit "$s" \
+    --sweep "$sweep" --model "$model"
+  node --experimental-strip-types scripts/preload-probe.mjs ablate \
+    --report --sweep "$sweep" --agent "$agent"
+done
 ```
+
+The report is fail-closed: it emits no summary for a skill until every corpus diff has exactly
+one baseline and one omit arm with consistent model, commit, corpus, and prompt provenance.
+The system prompt imposes one ablation-specific pipe format across all agent roles, and any prose,
+malformed line, incomplete usage/cost, duplicate, partial, legacy, or mixed-provenance evidence
+exits nonzero. Stop on that failure; do not transcribe a result until the complete report succeeds.
 
 Per-agent `--omit` lists — bare skill ids from the ledger's per-(agent, skill) breakdown,
 all ≥ 500 est. tokens:
@@ -237,8 +271,8 @@ recorded line — condition 4 is provider-dependent (0.0000 on the uncached defa
 vs ≥ 0.998 on zai, both 2026-08-31), so a lost/downgraded figure is only interpretable
 alongside the provider that produced it. Results accumulate under
 `.claude/cache/dispatch-probes/ablation-runs.jsonl` (local, gitignored); after each agent,
-record dated `agent=… omitted=…: lost=N downgraded=M` lines under
-`## Recorded measurements` below — verbatim figures only.
+record dated `agent=… omitted=…: lost=N downgraded=M model=…` lines under
+`## Recorded measurements` below — verbatim report figures only.
 
 ## Recorded measurements
 
