@@ -26,14 +26,14 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@earendil-works/pi-tui": "0.85.1",
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-tui": "0.86.1",
     "@types/node": "^26.5.1",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.85.1 <1",
-    "@earendil-works/pi-tui": ">=0.85.1 <1"
+    "@earendil-works/pi-coding-agent": ">=0.86.1 <1",
+    "@earendil-works/pi-tui": ">=0.86.1 <1"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

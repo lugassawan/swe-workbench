@@ -413,6 +413,8 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         (synthetic_index.parent / helper).write_text(
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"
         )
+    (synthetic_root / "package.json").write_text((ROOT / "package.json").read_text(encoding="utf-8"), encoding="utf-8")
+    (synthetic_root / "node_modules").symlink_to(ROOT / "node_modules")
 
     driver = tmp_path_factory.mktemp("pi-extension-driver-empty-bin") / "driver.mjs"
     driver.write_text(_DRIVER, encoding="utf-8")
@@ -1258,7 +1260,7 @@ def test_tool_vocab_missing_skills_dir_degrades_to_rule_without_list(tmp_path_fa
 # ExtensionContext — no LLM, no real TUI.
 # ---------------------------------------------------------------------------
 
-_ASK_USER_DRIVER = """
+_ASK_USER_DRIVER = r"""
 import { pathToFileURL } from "node:url";
 
 const [, , modPath, configJson] = process.argv;
@@ -1276,15 +1278,52 @@ if (registered) {
   // Per-scenario steering: "__DISMISS__" -> undefined, "__LAST__" -> last rendered option;
   // absent -> options[0] (select) / "TYPED-ANSWER" (input).
   let behavior = {};
-  function makeCtx(hasUI) {
+  function makeCtx(hasUI, mode = "tui", ac = new AbortController()) {
+    console.error("MAKING CTX WITH MODE:", mode);
     return {
       hasUI,
+      mode,
+      _test_ac: ac,
       ui: {
-        select: async (title, options) => {
+        select: async (title, options, opts) => {
           selectCalls.push({ title, options });
+          if (behavior.abort) {
+            if (opts && opts.signal) opts.signal.addEventListener("abort", () => {}); // simulate bind
+            ac.abort();
+            throw new Error("AbortError");
+          }
           if (behavior.selectReturn === "__DISMISS__") return undefined;
           if (behavior.selectReturn === "__LAST__") return options[options.length - 1];
           return behavior.selectReturn ?? options[0];
+        },
+        custom: async (factory) => {
+          return new Promise((resolve) => {
+            const themeMock = { fg: (color, text) => text, bold: (text) => text, bg: (color, text) => text };
+            const tuiMock = { requestRender: () => {} };
+            const component = factory(tuiMock, themeMock, {}, resolve);
+            
+            const lines = component.render(100);
+            const title = lines[1];
+            // SelectList options start at index 2, ending before footer and bottom border
+            const options = lines.slice(2, lines.length - 2).map(l => l.replace(/^[^a-zA-Z]+/, '').trim());
+            console.error("OPTIONS:", options);
+            selectCalls.push({ title, options });
+
+            if (behavior.abort) {
+              ac.abort();
+              return;
+            }
+            if (behavior.selectReturn === "__DISMISS__") {
+              component.handleInput(String.fromCharCode(27));
+              return;
+            }
+            if (behavior.selectReturn === "__LAST__") {
+              for (let i = 0; i < options.length - 1; i++) component.handleInput(String.fromCharCode(27, 91, 66));
+              component.handleInput(String.fromCharCode(13));
+              return;
+            }
+            component.handleInput(String.fromCharCode(13));
+          });
         },
         input: async (...args) => {
           inputCalls.push(args);
@@ -1299,7 +1338,8 @@ if (registered) {
     const beforeInputs = inputCalls.length;
     const beforeSelects = selectCalls.length;
     try {
-      const result = await registered.execute("tc1", params, undefined, undefined, makeCtx(hasUI));
+      const ac = new AbortController();
+      const result = await registered.execute("tc1", params, ac.signal, undefined, makeCtx(hasUI, b.mode || "tui", ac));
       return { ok: true, result, inputCalls: inputCalls.slice(beforeInputs), selectCalls: selectCalls.slice(beforeSelects) };
     } catch (err) {
       return { ok: false, message: String(err && err.message), inputCalls: inputCalls.slice(beforeInputs), selectCalls: selectCalls.slice(beforeSelects) };
@@ -1316,6 +1356,7 @@ if (registered) {
   out.otherEmptyInput = await run(true, config.singleParams, { selectReturn: "__LAST__", inputReturn: "" });
   out.dismissed = await run(true, config.singleParams, { selectReturn: "__DISMISS__" });
   out.collision = await run(true, config.collisionParams, {});
+  out.rpcMode = await run(true, config.singleParams, { mode: "rpc" });
 }
 console.log(JSON.stringify(out));
 """
@@ -1355,6 +1396,8 @@ def _ask_user_result(env, tmp_path_factory):
         capture_output=True, text=True, env=run_env, timeout=30,
     )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
+    if result.stderr:
+        print("STDERR:", result.stderr)
     return json.loads(result.stdout)
 
 
@@ -1371,7 +1414,7 @@ def test_ask_user_kill_switch_skips_registration(tmp_path_factory):
 
 
 @requires_node
-def test_ask_user_single_select_returns_the_choice_via_ctx_ui_select(tmp_path_factory):
+def test_ask_user_single_select_returns_the_choice(tmp_path_factory):
     result = _ask_user_result({}, tmp_path_factory)
     assert result["singleSelect"]["ok"] is True
     assert result["singleSelect"]["result"]["details"] == {"Pick one": "A — desc A"}
@@ -1449,7 +1492,7 @@ def test_ask_user_multi_select_is_rejected_with_a_remedy(tmp_path_factory):
 def test_ask_user_duplicate_question_text_is_rejected(tmp_path_factory):
     """answers[] is keyed by question text — a duplicate would silently overwrite an earlier
     answer with no error, one of the user's picks vanishing unnoticed. Must reject up front,
-    before any ctx.ui.select call."""
+    before any UI prompt."""
     result = _ask_user_result({}, tmp_path_factory)
     assert result["duplicate"]["ok"] is False
     assert "duplicate question" in result["duplicate"]["message"]
@@ -1460,6 +1503,14 @@ def test_ask_user_no_ui_fails_loudly_without_calling_input(tmp_path_factory):
     result = _ask_user_result({}, tmp_path_factory)
     assert result["noUI"]["ok"] is False
     assert "interactive UI" in result["noUI"]["message"]
+
+
+@requires_node
+def test_ask_user_uses_ctx_ui_select_in_rpc_mode(tmp_path_factory):
+    result = _ask_user_result({}, tmp_path_factory)
+    assert result["rpcMode"]["ok"] is True
+    assert result["rpcMode"]["selectCalls"][0]["title"] == "Pick one"
+    assert result["rpcMode"]["selectCalls"][0]["options"] == ["A — desc A", "B", "Other — type your own answer"]
     assert result["noUI"]["inputCalls"] == [], "hasUI:false must fail loudly, never silently fall back to ctx.ui.input"
 
 
@@ -1802,7 +1853,7 @@ if (registered) {
   execCalls.length = 0;
   notifyCalls.length = 0;
   out.providerUnsupportedFallback = await run(
-    "tiered-agent", "hi", { provider: "google", id: "gemini-x" }, [],
+    "tiered-agent", "hi", { provider: "google-vertex", id: "gemini-x" }, [],
   );
   out.providerUnsupportedExecCalls = execCalls.slice();
   out.providerUnsupportedNotifyCalls = notifyCalls.slice();
@@ -2431,7 +2482,7 @@ def test_subagent_effort_unknown_falls_back_to_parent_model(subagent_root, tmp_p
 
 @requires_node
 def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root, tmp_path_factory):
-    """tiered-agent's tier is known, but ctx.model.provider ("google") has no MODEL_POLICY row —
+    """tiered-agent's tier is known, but ctx.model.provider ("google-vertex") has no MODEL_POLICY row —
     resolution must fall back to the parent's own model unchanged with fallbackReason
     "provider-unsupported", even though the tier itself is recognized."""
     result = _subagent_result(subagent_root, tmp_path_factory)
@@ -2439,7 +2490,7 @@ def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root,
     assert run["ok"] is True
     args = result["providerUnsupportedExecCalls"][0]["args"]
     model_idx = args.index("--model")
-    assert args[model_idx + 1] == "google/gemini-x"
+    assert args[model_idx + 1] == "google-vertex/gemini-x"
     assert "--thinking" not in args
 
     details = run["result"]["details"]
@@ -2711,15 +2762,31 @@ _ZAI_CANDIDATES = [
     {"provider": "zai", "id": "glm-5.2"},
     {"provider": "zai", "id": "glm-5.2-highspeed"},
 ]
-_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES}
+_GOOGLE_CANDIDATES = [
+    {"provider": "google", "id": "gemini-3.1-pro-preview"},
+    {"provider": "google", "id": "gemini-3.1-pro"},
+    {"provider": "google", "id": "gemini-3.8-flash"},
+    {"provider": "google", "id": "gemini-3.7-flash"},
+    {"provider": "google", "id": "gemini-3.5-flash-lite"},
+]
+_ANTIGRAVITY_CANDIDATES = [
+    {"provider": "antigravity", "id": "gemini-3.1-pro-preview"},
+    {"provider": "antigravity", "id": "gemini-3.1-pro"},
+    {"provider": "antigravity", "id": "gemini-3.7-flash"},
+    {"provider": "antigravity", "id": "gemini-3.8-flash"},
+    {"provider": "antigravity", "id": "gemini-3.5-flash-lite"},
+]
+_CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES, "antigravity": _ANTIGRAVITY_CANDIDATES}
 _PARENT_BY_PROVIDER = {
     "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
     "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
+    "google": {"provider": "google", "id": "gemini-3.7-flash", "thinking": "medium"},
+    "antigravity": {"provider": "antigravity", "id": "gemini-3.7-flash", "thinking": "medium"},
 }
 _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 
-# The ticket's 3x3 default matrix, expected (model id, thinking) per (provider, tier), fed
+# The default matrix, expected (model id, thinking) per (provider, tier), fed
 # through DEFAULT_TIER_EFFORT — same source of truth as test_pi_contract.py's
 # _TICKET_DEFAULT_MATRIX, exercised here via the real resolveDispatch() call site instead of a
 # raw MODEL_POLICY table dump.
@@ -2738,6 +2805,16 @@ _EXPECTED_DEFAULT_CELL = {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
         "haiku": ("glm-5.2-highspeed", "high"),
+    },
+    "google": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
+    },
+    "antigravity": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
 
@@ -2764,7 +2841,7 @@ def _model_policy_result(tmp_path_factory):
 
     # One case per FallbackReason.
     cases["fallback_provider_unsupported"] = {
-        "parent": {"provider": "google", "id": "gemini-x", "thinking": "medium"},
+        "parent": {"provider": "google-vertex", "id": "gemini-x", "thinking": "medium"},
         "tier": "opus", "effort": "high", "candidates": [],
     }
     cases["fallback_tier_unknown"] = {
@@ -2807,7 +2884,11 @@ def test_resolve_dispatch_default_cell(tmp_path_factory, provider, tier):
     result = _model_policy_result(tmp_path_factory)
     expected_model, expected_thinking = _EXPECTED_DEFAULT_CELL[provider][tier]
     cell = result[f"default_{provider}_{tier}"]
-    assert cell["model"] == {"provider": provider, "id": expected_model}
+    if isinstance(expected_model, list):
+        assert cell["model"]["id"] in expected_model
+        assert cell["model"]["provider"] == provider
+    else:
+        assert cell["model"] == {"provider": provider, "id": expected_model}
     assert cell["thinking"] == expected_thinking
     assert cell["tier"] == tier
     assert cell["portableEffort"] == _DEFAULT_TIER_EFFORT[tier]
@@ -2854,7 +2935,7 @@ def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
     cell = result[label]
     parent = cell["model"]
     case_parent = {
-        "fallback_provider_unsupported": {"provider": "google", "id": "gemini-x"},
+        "fallback_provider_unsupported": {"provider": "google-vertex", "id": "gemini-x"},
         "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
         "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5"},

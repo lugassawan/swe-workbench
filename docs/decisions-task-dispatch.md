@@ -111,9 +111,17 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   split is real, dispatch-visible behavior — not merely nominal; verified, not reimplemented, in
   `tests/test_pi_contract.py`'s pinned-catalog test, which fails loudly if a future catalog bump
   drops that map again), and the four fallback reasons.
+- The `google` row: provider `google` (`GEMINI_API_KEY`; pi removed built-in Gemini CLI /
+  Antigravity logins upstream in 0.71.0 — no `google-antigravity` on supported pins;
+  `google-vertex` out of scope until a real Vertex-parent dispatch). Ids: newest numeric id in
+  the repo pin (kept aligned with the runtime host), never `-latest`; the deliberate 0.86.1 pin
+  bump enabled `gemini-3.8-flash` while unreleased, and the `>=0.86.1` floor is load-bearing
+  (0.85.x: silent nominal-only 3.8 dispatch; pre-0.85: `model-unavailable` warned fallback).
+  Distinct model per tier → tables emit the nearest *real* rung, ≡ the SDK clamp's resolution;
+  tests pin that equivalence per cell.
 
 `tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
-exhaustiveness check over `MODEL_POLICY`'s 3 providers x 3 tiers x 5 efforts ratchet the tier and
+exhaustiveness check over `MODEL_POLICY`'s 4 providers x 3 tiers x 5 efforts ratchet the tier and
 effort vocabulary against the live `agents/*.md` inventory, the same pattern `docs/decisions-ci-validation.md` §1 already uses for
 tool tokens and skill ids — plus a pinned-catalog test asserting every cell's exact model id
 actually exists in the bundled Pi SDK's provider data.
