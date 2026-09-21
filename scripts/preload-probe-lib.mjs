@@ -77,6 +77,9 @@ export function parseAblationResponse(responseText) {
     const line = rawLine.trim();
     if (!line || CANARY_FOOTER_RE.test(line)) continue;
     if (NO_ISSUES_SENTENCE_RE.test(line)) {
+      if (sawNoIssues) {
+        throw new Error("ablation response contained a duplicate no-issues sentence");
+      }
       sawNoIssues = true;
       continue;
     }

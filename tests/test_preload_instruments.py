@@ -1233,6 +1233,15 @@ class TestParsePipeDelimitedFindings:
         assert findings == []
 
     @requires_node
+    def test_ablation_response_rejects_duplicate_no_issues_sentences(self):
+        outcome = _call_lib_function_outcome(
+            "parseAblationResponse",
+            "No architecture issues found in this diff.\nNo ablation issues found in this diff.",
+        )
+        assert outcome["thrown"] is True
+        assert "duplicate no-issues sentence" in outcome["message"]
+
+    @requires_node
     def test_ablation_response_rejects_prose_beside_a_valid_finding(self):
         text = (
             "Here is my review:\n"
