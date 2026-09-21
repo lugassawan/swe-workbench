@@ -143,7 +143,7 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
   },
   google: {
     opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
-    sonnet: { model: "gemini-3.7-flash", thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
 };

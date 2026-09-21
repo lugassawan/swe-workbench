@@ -1038,7 +1038,7 @@ _TICKET_DEFAULT_MATRIX = {
     },
     "google": {
         "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
-        "sonnet": ("gemini-3.7-flash", "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
@@ -1282,7 +1282,7 @@ def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_poli
             f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} now declares xhigh/max support ({pro['supported']}) — the opus "
             "table could emit deeper real levels; revisit it"
         )
-    for flash_id in ("gemini-3.7-flash", "gemini-3.5-flash-lite"):
+    for flash_id in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"):
         flash = dumped.get(flash_id)
         if flash:
             assert {"low", "medium", "high"} <= set(flash["supported"]), (

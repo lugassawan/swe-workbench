@@ -2765,6 +2765,7 @@ _ZAI_CANDIDATES = [
 _GOOGLE_CANDIDATES = [
     {"provider": "google", "id": "gemini-3.1-pro-preview"},
     {"provider": "google", "id": "gemini-3.1-pro"},
+    {"provider": "google", "id": "gemini-3.8-flash"},
     {"provider": "google", "id": "gemini-3.7-flash"},
     {"provider": "google", "id": "gemini-3.5-flash-lite"},
 ]
@@ -2799,7 +2800,7 @@ _EXPECTED_DEFAULT_CELL = {
     },
     "google": {
         "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
-        "sonnet": ("gemini-3.7-flash", "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
