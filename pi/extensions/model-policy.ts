@@ -35,7 +35,7 @@ export function isKnownEffort(value: string | undefined): value is Effort {
 
 /** The providers this policy has a row for. Any other `ctx.model.provider` degrades to the
  *  parent's own current model — see resolveDispatch's `provider-unsupported` FallbackReason. */
-export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai"] as const;
+export const SUPPORTED_PROVIDERS = ["anthropic", "openai-codex", "zai", "google"] as const;
 export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 export function isSupportedProvider(value: string): value is SupportedProvider {
@@ -104,6 +104,17 @@ const ZAI_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   max: "xhigh",
 };
 
+/** Nearest *real* rung to the portable effort — what the SDK's own clampThinkingLevel resolves
+ *  an unreal level to, so every emitted level is catalog-real (no depth bias: google has a
+ *  distinct model per tier). Tests pin table ≡ clamp; see docs/cost-tiers.md's google note. */
+const GOOGLE_NEAREST_REAL_RUNG: Readonly<Record<Effort, ThinkingLevel>> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+  max: "high",
+};
+
 interface TierPolicy {
   /** Exact catalog id — never a pattern. */
   readonly model: string;
@@ -129,6 +140,11 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
     opus: { model: "glm-5.3", thinking: ZAI_OPUS_THINKING },
     sonnet: { model: "glm-5.3", thinking: ZAI_SONNET_THINKING },
     haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
+  },
+  google: {
+    opus: { model: "gemini-3.1-pro-preview", thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: "gemini-3.8-flash", thinking: GOOGLE_NEAREST_REAL_RUNG },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
 };
 
