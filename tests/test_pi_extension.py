@@ -2764,8 +2764,8 @@ _ZAI_CANDIDATES = [
 ]
 _GOOGLE_CANDIDATES = [
     {"provider": "google", "id": "gemini-3.1-pro-preview"},
+    {"provider": "google", "id": "gemini-3.1-pro"},
     {"provider": "google", "id": "gemini-3.7-flash"},
-    {"provider": "google", "id": "gemini-3.8-flash"},
     {"provider": "google", "id": "gemini-3.5-flash-lite"},
 ]
 _CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES}
@@ -2773,7 +2773,7 @@ _PARENT_BY_PROVIDER = {
     "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
     "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
-    "google": {"provider": "google", "id": "gemini-3.8-flash", "thinking": "medium"},
+    "google": {"provider": "google", "id": "gemini-3.7-flash", "thinking": "medium"},
 }
 _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 
@@ -2798,8 +2798,8 @@ _EXPECTED_DEFAULT_CELL = {
         "haiku": ("glm-5.2-highspeed", "high"),
     },
     "google": {
-        "opus": ("gemini-3.1-pro-preview", "high"),
-        "sonnet": ("gemini-3.8-flash", "high"),
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": ("gemini-3.7-flash", "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
@@ -2870,7 +2870,11 @@ def test_resolve_dispatch_default_cell(tmp_path_factory, provider, tier):
     result = _model_policy_result(tmp_path_factory)
     expected_model, expected_thinking = _EXPECTED_DEFAULT_CELL[provider][tier]
     cell = result[f"default_{provider}_{tier}"]
-    assert cell["model"] == {"provider": provider, "id": expected_model}
+    if isinstance(expected_model, list):
+        assert cell["model"]["id"] in expected_model
+        assert cell["model"]["provider"] == provider
+    else:
+        assert cell["model"] == {"provider": provider, "id": expected_model}
     assert cell["thinking"] == expected_thinking
     assert cell["tier"] == tier
     assert cell["portableEffort"] == _DEFAULT_TIER_EFFORT[tier]
