@@ -211,6 +211,134 @@ def test_every_pi_spawn_is_bounded_by_a_timeout_and_a_maxbuffer():
     )
 
 
+@requires_node
+def test_timeout_diagnostic_identifies_arm_without_echoing_partial_content():
+    """A timed-out paid arm must identify where it stalled without leaking captured reasoning.
+
+    Regression target: replacing the structured formatter with the former bare
+    ``spawnSync pi ETIMEDOUT`` message loses the diff/arm and all progress metadata; including
+    raw stdout/stderr instead leaks model reasoning and possibly provider diagnostics.
+    """
+    sensitive = "SENSITIVE MODEL REASONING"
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "message_start", "private": sensitive}),
+            "not-json",
+            json.dumps({"type": "message_update", "delta": sensitive}),
+        ]
+    )
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900123,
+            "timeoutMs": 900000,
+            "stdout": stdout,
+            "stderr": sensitive,
+        },
+    )
+
+    assert "pi dispatch timed out" in outcome
+    assert 'label="01.diff omit(principle-clean-architecture)"' in outcome
+    assert "elapsed=900123ms" in outcome
+    assert "limit=900000ms" in outcome
+    assert re.search(r"stdoutBytes=[1-9][0-9]*", outcome)
+    assert re.search(r"stderrBytes=[1-9][0-9]*", outcome)
+    assert "lastEventType=message_update" in outcome
+    assert "code=ETIMEDOUT" in outcome
+    assert sensitive not in outcome
+
+
+@requires_node
+def test_timeout_diagnostic_rejects_untrusted_event_type_content():
+    sensitive = "sensitive_model_reasoning"
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": json.dumps({"type": sensitive}),
+            "stderr": "",
+        },
+    )
+
+    assert "lastEventType=unknown" in outcome
+    assert sensitive not in outcome
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "session",
+        "agent_start",
+        "agent_end",
+        "agent_settled",
+        "turn_start",
+        "turn_end",
+        "message_start",
+        "message_update",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_end",
+        "queue_update",
+        "compaction_start",
+        "compaction_end",
+        "entry_appended",
+        "session_info_changed",
+        "thinking_level_changed",
+        "auto_retry_start",
+        "auto_retry_end",
+        "summarization_retry_scheduled",
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+        "bash_execution_update",
+    ],
+)
+def test_timeout_diagnostic_recognizes_documented_pi_event_types(event_type: str):
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff baseline",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": json.dumps({"type": event_type}),
+            "stderr": "",
+        },
+    )
+
+    assert f"lastEventType={event_type}" in outcome
+
+
+@requires_node
+def test_timeout_diagnostic_uses_raw_captured_byte_counts():
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": "\ufffd",
+            "stderr": "\ufffd",
+            "stdoutBytes": 1,
+            "stderrBytes": 2,
+        },
+    )
+
+    assert "stdoutBytes=1" in outcome
+    assert "stderrBytes=2" in outcome
+
+
 _PRELOAD_CANARY_BEGIN = "<!-- BEGIN shared/agents/preload-canary-citation.md -->"
 _PRELOAD_CANARY_END = "<!-- END shared/agents/preload-canary-citation.md -->"
 
@@ -1925,6 +2053,62 @@ printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","provider":"
         assert result.returncode != 0
         assert "usage.cost.total" in result.stderr
         assert calls_file.read_text().splitlines() == ["call"]
+        assert not self._ablation_runs_file(project_dir).exists()
+
+    @requires_node
+    def test_spawn_failure_names_the_pending_arm_and_persists_no_evidence(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        """Removing label propagation from runPiOnce must lose this operator-safe context."""
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        (corpus_dir / "01.diff").write_text("diff --git a/a.ts b/a.ts\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": str(bin_dir),
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+        }
+        result = _run_probe(
+            [
+                "ablate",
+                "--agent",
+                real_agent_id,
+                "--corpus",
+                str(corpus_dir),
+                "--omit",
+                "principle-ddd",
+                "--sweep",
+                self.SWEEP,
+                "--model",
+                self.MODEL,
+            ],
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert 'label="01.diff baseline"' in result.stderr
+        assert "code=ENOENT" in result.stderr
+        assert "stdoutBytes=0" in result.stderr
+        assert "stderrBytes=0" in result.stderr
+        assert "lastEventType=none" in result.stderr
         assert not self._ablation_runs_file(project_dir).exists()
 
     @requires_node

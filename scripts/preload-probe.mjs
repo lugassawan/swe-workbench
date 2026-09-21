@@ -38,6 +38,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import {
   extractFinalAssistantText,
+  formatPiSpawnError,
   modelIdentityOrDispatchError,
   parseAblationResponse,
   planAblationArms,
@@ -326,25 +327,39 @@ const DISPATCH_TIMEOUT_MS = 15 * 60 * 1000;
  *  truncating at a default. */
 const DISPATCH_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 
-/** Runs `pi` once with the given argv and captures stdout as text. Throws (with captured stderr)
- *  on a missing binary, a timeout, an output-size overrun, or a non-zero exit — never swallows a
- *  dispatch failure. */
-function runPiOnce(args) {
+/** Runs `pi` once with the given argv and captures stdout as text. Spawn failures expose only
+ *  sanitized progress metadata; non-zero exits retain stderr. No dispatch failure is swallowed. */
+function runPiOnce(args, label) {
+  const startedAt = Date.now();
   const result = spawnSync("pi", args, {
-    encoding: "utf8",
     timeout: DISPATCH_TIMEOUT_MS,
     maxBuffer: DISPATCH_MAX_BUFFER_BYTES,
   });
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const stdout = result.stdout?.toString("utf8") ?? "";
+  const stderr = result.stderr?.toString("utf8") ?? "";
   if (result.error) {
-    throw new Error(`failed to spawn "pi": ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? "").trim() || "(no stderr)";
     throw new Error(
-      `pi exited ${result.status}${result.signal ? ` (signal ${result.signal})` : ""} — ${stderr}`,
+      formatPiSpawnError({
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
+        label,
+        elapsedMs,
+        timeoutMs: DISPATCH_TIMEOUT_MS,
+        stdout,
+        stderr,
+        stdoutBytes: result.stdout?.length ?? 0,
+        stderrBytes: result.stderr?.length ?? 0,
+      }),
     );
   }
-  return result.stdout ?? "";
+  if (result.status !== 0) {
+    const diagnosticStderr = stderr.trim() || "(no stderr)";
+    throw new Error(
+      `pi exited ${result.status}${result.signal ? ` (signal ${result.signal})` : ""} — ${diagnosticStderr}`,
+    );
+  }
+  return stdout;
 }
 
 /** Writes `systemPrompt` to a fresh temp file, runs `fn(promptFilePath)`, and always cleans up —
@@ -485,7 +500,7 @@ function formatRunSummary(label, usage) {
 function dispatchArmMeasurement({ systemPrompt, prompt, model, label }) {
   return withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ prompt, promptFilePath, model });
-    const stdout = runPiOnce(args);
+    const stdout = runPiOnce(args, label);
     const usage = usageOrDispatchError(stdout, label);
     modelIdentityOrDispatchError(stdout, model);
     const text = extractFinalAssistantText(stdout);
@@ -536,8 +551,11 @@ async function mainCache({ agent, dryRun, model }) {
   const { firstUsage, secondUsage } = withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ promptFilePath, model });
     return {
-      firstUsage: usageOrDispatchError(runPiOnce(args), "run 1 (cold)"),
-      secondUsage: usageOrDispatchError(runPiOnce(args), "run 2 (repeat, same prefix)"),
+      firstUsage: usageOrDispatchError(runPiOnce(args, "run 1 (cold)"), "run 1 (cold)"),
+      secondUsage: usageOrDispatchError(
+        runPiOnce(args, "run 2 (repeat, same prefix)"),
+        "run 2 (repeat, same prefix)",
+      ),
     };
   });
 
