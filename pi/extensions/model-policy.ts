@@ -107,18 +107,9 @@ const ZAI_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
 /** Nearest *real* rung to the portable effort — what the SDK's own clampThinkingLevel resolves
  *  an unreal level to, so every emitted level is catalog-real (no depth bias: google has a
  *  distinct model per tier). Tests pin table ≡ clamp; see docs/cost-tiers.md's google note. */
-const GOOGLE_FLASH_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
+const GOOGLE_NEAREST_REAL_RUNG: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "low",
   medium: "medium",
-  high: "high",
-  xhigh: "high",
-  max: "high",
-};
-
-/** Nearest *real* rung for Google Opus models (pro) which do not support 'medium' */
-const GOOGLE_OPUS_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
-  low: "low",
-  medium: "high",
   high: "high",
   xhigh: "high",
   max: "high",
@@ -151,14 +142,14 @@ export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<Mo
     haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
   },
   google: {
-    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_OPUS_THINKING },
-    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_FLASH_THINKING },
-    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_FLASH_THINKING },
+    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
   antigravity: {
-    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_OPUS_THINKING },
-    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_FLASH_THINKING },
-    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_FLASH_THINKING },
+    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
 };
 

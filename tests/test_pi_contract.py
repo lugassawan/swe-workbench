@@ -1091,7 +1091,7 @@ def test_google_thinking_tables_are_real_rungs_and_ordered_across_all_efforts(mo
     passthrough, no depth bias (distinct model per tier). Defaults land at high/high/high."""
     for provider in ("google", "antigravity"):
         assert model_policy_dump["policy"][provider]["opus"]["thinking"] == {
-            "low": "low", "medium": "high", "high": "high", "xhigh": "high", "max": "high",
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
         }
         assert model_policy_dump["policy"][provider]["sonnet"]["thinking"] == {
             "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
