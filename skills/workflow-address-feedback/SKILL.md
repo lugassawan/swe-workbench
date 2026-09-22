@@ -159,7 +159,7 @@ Then run **Phase 6 — Sync PR metadata**.
 
 ### Phase 6 — Sync PR metadata (when fixes were committed)
 
-Skipped when `$FIX_SHA` is unset (no fixes committed in Phase 4). Otherwise fetches the live PR title/body, commit subjects, and diff stat, judges drift against the title and `## Summary` section, and — on detected drift, after a `Reply \`yes\`` preview gate — applies a revised title/summary via `swe-workbench-sync-pr-metadata` while preserving `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other sections. Full fetch commands, drift-judging criteria, and apply mechanics live in `reference/sync-pr-metadata.md`. Then run **Phase 7 — Cleanup**.
+Skipped when `$FIX_SHA` is unset (no fixes committed in Phase 4). Otherwise fetches the live PR title/body, commit subjects, and diff stat, judges drift against the title and `## Summary` section, and — on detected drift, after a `Reply \`yes\`` preview gate — completely re-writes/rephrases the PR title (if needed) and the `## Summary` section to keep them clean (instead of just appending updates) via `swe-workbench-sync-pr-metadata` while preserving `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other sections. Full fetch commands, drift-judging criteria, and apply mechanics live in `reference/sync-pr-metadata.md`. Then run **Phase 7 — Cleanup**.
 
 ### Phase 7 — Cleanup (always)
 
