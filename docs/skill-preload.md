@@ -308,6 +308,16 @@ A place to record what the live instruments actually reported, since the raw JSO
   ($0.1828), run 2 input=36452 cacheRead=0 ($0.1829).
   On the default model the full ~30–36k-token preloaded prefix is billed fresh at full input
   price on every back-to-back dispatch — zero cache reads, unchanged cost run over run.
+- **senior-engineer C3 ablation — 3 of 11 skill pairs complete (2026-09-22)** — sweep
+  `c3-2026-09-22-default-r2`, commit `9c0ae169081dc4032c9e4735264271a0c563dc3a`, 10-diff
+  corpus, and 20 persisted arms per completed pair. Verbatim report figures:
+  - `agent=senior-engineer omitted=principle-clean-architecture: lost=8 downgraded=0 model=openai-codex/gpt-5.6-sol`
+  - `agent=senior-engineer omitted=principle-data-modeling: lost=12 downgraded=0 model=openai-codex/gpt-5.6-sol`
+  - `agent=senior-engineer omitted=principle-ddd: lost=9 downgraded=0 model=openai-codex/gpt-5.6-sol`
+  Each pair has nonzero lost findings, so demotion condition 3 fails and all three skills stay
+  preloaded. The 60 successful arms recorded $4.521256; failed and timed-out calls are excluded
+  from that figure. The remaining eight pairs are deferred pending citation telemetry and a new
+  explicit budget because no skill can be demoted while condition 2 remains uncollected.
 - **C3 decision: proceed (re-scoped) (2026-08-31)** — R1 assessment: on the configured default
   model (openai-codex/gpt-5.6-sol) the repeat-dispatch cache-read fraction is 0.0000 for all
   three probed agents — ≤ 0.5, so R1 survives, demotion condition 4 becomes usable, and per
