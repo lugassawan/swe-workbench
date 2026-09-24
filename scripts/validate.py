@@ -1599,6 +1599,80 @@ def check_language_pointer_matches_disk(cache=None):
              f"stale language skill id(s) with no matching skills/ dir: {', '.join(stale)}")
 
 
+# Output-discipline block coverage per writer agent — presence enforced here,
+# byte-parity by check_shared_blocks_in_sync().
+_COMMENT_DISCIPLINE_AGENTS = (
+    "code-impl",
+    "debugger",
+    "refactorer",
+    "test-writer",
+    "e2e-test-writer",
+    "migrator",
+)
+_DOCS_DISCIPLINE_AGENTS = (
+    "debugger",
+    "refactorer",
+    "test-writer",
+    "e2e-test-writer",
+    "migrator",
+)
+_COMMENT_SCAN_AGENTS = _COMMENT_DISCIPLINE_AGENTS
+
+
+def check_output_discipline_coverage(cache=None):
+    """Writer agents must carry the output-discipline shared blocks.
+
+    Enforces coverage (check_shared_blocks_in_sync enforces parity of
+    existing blocks): a writer missing comment-discipline / docs-discipline
+    / comment-scan fails here. code-impl is deliberately excluded from
+    docs-discipline (file_set containment is strictly stronger); carrying
+    that block there is itself a failure.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    required = {
+        "comment-discipline.md": _COMMENT_DISCIPLINE_AGENTS,
+        "docs-discipline.md": _DOCS_DISCIPLINE_AGENTS,
+        "comment-scan.md": _COMMENT_SCAN_AGENTS,
+    }
+    forbidden = {"docs-discipline.md": ("code-impl",)}
+
+    texts = {}
+    for stem in sorted(set(_COMMENT_DISCIPLINE_AGENTS)):
+        agent_md = ROOT / "agents" / f"{stem}.md"
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError as e:
+                fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
+                continue
+        texts[stem] = text
+
+    for block, stems in required.items():
+        marker = f"<!-- BEGIN shared/agents/{block} -->"
+        for stem in stems:
+            if stem in texts and marker not in texts[stem]:
+                fail(
+                    Path("agents") / f"{stem}.md",
+                    f"missing <!-- BEGIN shared/agents/{block} --> block — "
+                    "add an empty sentinel pair and run "
+                    "scripts/sync-shared-blocks.py --write",
+                )
+    for block, stems in forbidden.items():
+        marker = f"<!-- BEGIN shared/agents/{block} -->"
+        for stem in stems:
+            if stem in texts and marker in texts[stem]:
+                fail(
+                    Path("agents") / f"{stem}.md",
+                    f"carries <!-- BEGIN shared/agents/{block} --> but must not — "
+                    "file_set containment already binds this agent",
+                )
+
+
 def check_examples():
     """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
     skills_dir = ROOT / "skills"
@@ -2534,6 +2608,7 @@ def main():
     check_dispatch_ledger_in_sync()
     check_no_inert_at_includes(cache=cache)
     check_language_pointer_matches_disk(cache=cache)
+    check_output_discipline_coverage(cache=cache)
     check_adapter_blocks(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
