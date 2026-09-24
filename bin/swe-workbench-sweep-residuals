@@ -555,15 +555,10 @@ shopt -u nullglob
 # diffs keyed only by PR number. Report exact, owned, non-symlink matches so the
 # envelope cannot claim clean, but never delete them.
 if [ -n "$SCOPE_SLUG" ] && [ -z "$SCOPE_INVALID" ]; then
-  LEGACY_REVIEW_TAGS=(pr-review pr-followup)
-  for mode in "${SPECIALIST_MODES[@]}"; do
-    LEGACY_REVIEW_TAGS+=("review-$mode")
-  done
-
   legacy_run_glob=()
   root_diff_glob=()
   shopt -s nullglob
-  for tag in "${LEGACY_REVIEW_TAGS[@]}"; do
+  for tag in "${RUN_TAGS[@]}"; do
     legacy_run_glob+=("$RUN_ROOT/$tag-$N-"??????)
   done
   root_diff_glob=("$CANON_TMP/pr-$N-"*.diff)

@@ -999,6 +999,18 @@ class TestRepoScopedRunDirSweep:
         finally:
             shutil.rmtree(legacy, ignore_errors=True)
 
+    def test_scoped_sweep_reports_address_feedback_legacy_run_dir(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        legacy = RUN_ROOT / f"address-feedback-{n}-a1b2c3"
+        legacy.mkdir(parents=True)
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_artifacts="1")
+            assert legacy.exists()
+        finally:
+            shutil.rmtree(legacy, ignore_errors=True)
+
     def test_scoped_sweep_ignores_unsafe_or_unrelated_legacy_run_dirs(self, tmp_path):
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()

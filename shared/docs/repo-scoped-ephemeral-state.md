@@ -99,7 +99,7 @@ slugged names unconditionally (ours by construction) and legacy names only when 
 | `<N>-triage.json` | **Always retained** — user decisions, unrecoverable; a spent resume point ages out with `/tmp` |
 | `<N>-worktree.json` receipt | Receipt `.path`'s own `git remote get-url origin` == scope; missing path ⇒ retain |
 | Legacy fallback worktree dirs | Dir's own git origin == scope; else retain |
-| Legacy remote-review run dirs | Exact owned, non-symlink `<remote-review-tag>-<N>-<6 alnum>` matches are reported in `retained_artifacts`, never deleted; PR number alone cannot attribute them to a repository |
+| Legacy known-prefix run dirs | Exact owned, non-symlink `<allowlisted-tag>-<N>-<6 alnum>` matches are reported in `retained_artifacts`, never deleted; PR number alone cannot attribute them to a repository |
 | Root reviewer diffs | Exact owned, regular, non-symlink `/tmp/pr-<N>-*.diff` matches are reported in `retained_artifacts`, never deleted; new remote reviews write under a scoped run dir instead |
 | Other legacy run dirs | Never swept here — `new-run-dir`'s 24h age-gated orphan reaper owns them (that reaper is deliberately shape-wide — any repo's stale run dir, `mtime`-gated — pre-existing GC semantics, not repo-scoped) |
 
@@ -114,7 +114,7 @@ the PR MERGED, plus one deliberate addition: the legacy `<N>-worktree.json` rece
 covered (legacy sweeps never touched it). Block C matches deletable run dirs with
 **exact-tag anchored globs** (`<tag>-<slug>-<N>-??????` per allowlisted tag, legacy
 `<tag>-<N>-??????` unscoped) — an unanchored `*` could absorb a longer foreign slug ending
-in `-<slug>`. In scoped mode, exact legacy remote-review matches are detected separately
+in `-<slug>`. In scoped mode, exact legacy allowlisted-tag matches are detected separately
 and retained; a conservative same-number false positive is preferable to deleting another
 repository's artifact.
 
