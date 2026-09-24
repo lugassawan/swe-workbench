@@ -26,6 +26,8 @@ SCAN_WIRED_AGENTS = {
     "debugger": ROOT / "agents" / "debugger.md",
     "refactorer": ROOT / "agents" / "refactorer.md",
     "test-writer": ROOT / "agents" / "test-writer.md",
+    "e2e-test-writer": ROOT / "agents" / "e2e-test-writer.md",
+    "migrator": ROOT / "agents" / "migrator.md",
 }
 
 

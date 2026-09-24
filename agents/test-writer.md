@@ -82,7 +82,7 @@ The boundary line: domain ↔ infrastructure is the only seam where test doubles
 3. Enumerate behaviours: happy path, boundaries, error paths. Skip pure plumbing covered by higher-level tests.
 4. Write the smallest test that fails for the right reason, then verify it passes against current code.
 5. Apply Arrange / Act / Assert with a blank line between sections.
-6. Run the relevant test command; report pass / fail. Run the comment scan per the rules under "Shared references" and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`).
+6. Run the relevant test command; report pass / fail. Run the comment scan per the rules under "Shared references" and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`). Comments in the tests you write follow the comment-discipline block (whole-unit rewrite, never append fragments); docs stay solicited per the docs-discipline block.
 
 ## Absolute rules
 
@@ -103,6 +103,21 @@ The boundary line: domain ↔ infrastructure is the only seam where test doubles
 
 ## Shared references
 
+<!-- BEGIN shared/agents/comment-discipline.md -->
+# Comment discipline (authoring)
+
+- **New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps** (Comment discipline) and avoid unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay). When a doc comment is warranted, follow the language's idiomatic form — one summary sentence first; see the relevant `language-*` skill's Doc comments section (only guaranteed for languages with a doc-comment idiom — `swe-workbench:language-bash` and `swe-workbench:language-sql` have none).
+- **Reassess existing comments whose described code you change — don't leave them by default.** If an edit changes the code a comment describes, decide whether the comment is still necessary: drop it if it no longer adds WHY, or rephrase it if the rationale still applies but no longer matches the new code. A stale comment left behind by an edit is a defect, not a formatting nit.
+- **Treat the whole comment unit as the unit of update — never append fragments.** The unit is the doc-comment block of the changed function/method/class, or the inline comment run inside the changed region. When you change described code, or add a comment near an existing one, read the entire unit plus the code it describes, then rewrite the unit as one coherent piece. Appending a new comment line alongside an existing comment that covers the same code is a defect even when each line is individually on-cap. Scope the rewrite to what the change touched: rephrase what the change made inaccurate, and leave untouched any comment the change left accurate — no diff inflation.
+<!-- END shared/agents/comment-discipline.md -->
+<!-- BEGIN shared/agents/docs-discipline.md -->
+# Docs discipline (no unsolicited documentation)
+
+- **No net-new documentation artifacts** — `SUMMARY.md`, `NOTES.md`, `IMPLEMENTATION_NOTES.md`, unsolicited ADRs, README rewrites — unless the brief, task, or your own output contract explicitly names the file.
+- **No edits to existing documentation** (`README*`, `docs/*`, any `*.md`) unless the brief/task explicitly names the file, or your own agent contract assigns it (e.g. framework-detection artifacts your Process section sanctions).
+- **Ad-hoc mid-task artifacts** (fixtures, intermediate outputs) **go to the session scratchpad or the supplied `scratch_dir`** — never the repo tree.
+- **If a doc change seems warranted but wasn't requested, recommend it in your output — don't write it.** Route actual doc authoring to `swe-workbench:tech-writer`.
+<!-- END shared/agents/docs-discipline.md -->
 <!-- BEGIN shared/agents/comment-scan.md -->
 # Comment-scan invocation
 
@@ -120,6 +135,7 @@ command -v swe-workbench-comment-scan >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+git add -N -- . 2>/dev/null || true
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 MERGE_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null || true)
 git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | swe-workbench-comment-scan
@@ -133,6 +149,10 @@ treated as "not applicable" rather than "misconfigured") instead of erroring lou
 preflight — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
+`git add -N` (intent-to-add) puts untracked files into the diff — without it, a writer whose output is
+entirely new files (e2e specs, new test files) scans an empty diff and reads as clean, which is false
+assurance on exactly the files it just wrote. Intent-to-add is an index marker only; `git reset --`
+clears it.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work
 in one pass without picking up main's own post-branch-point changes as if they were yours. If
 `MERGE_BASE` comes back empty (unrelated-history repo), the fallback diffs straight against the

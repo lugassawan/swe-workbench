@@ -9,7 +9,9 @@ import re
 from validate import ROOT
 
 EXPECTED_SHARED_AGENT_STEMS = {
+    "comment-discipline",
     "comment-scan",
+    "docs-discipline",
     "external-repo-reading",
     "language-skill-required",
     "languages",
