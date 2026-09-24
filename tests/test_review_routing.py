@@ -1,8 +1,8 @@
 """Structural tests for /review mode-routing (issue #172)."""
 import re
 from pathlib import Path
-import pytest
 
+import pytest
 
 REVIEW_PATH = Path(__file__).parent.parent / "commands" / "review.md"
 SECURITY_REVIEW_PATH = Path(__file__).parent.parent / "commands" / "security-review.md"
