@@ -134,10 +134,8 @@ def test_followup_mode_passes_caller_tag_followup():
 
 
 def test_followup_mode_state_suffix_resolves_to_followup_json():
-    """The followup branch of the mode-resolution table must set STATE_SUFFIX="-followup",
-    so that the ${PR}${STATE_SUFFIX}.json state-file path expressed in Step 7 resolves to
-    ${PR}-followup.json in followup mode (preserving the original #218/#428 regression:
-    followup mode's own preflight state file must be reaped by name)."""
+    """Followup preflight names its scoped JSON with `-followup`, then Step 7
+    reaps the exact path through `$JSON` rather than reconstructing a legacy name."""
     text = SKILL_MD.read_text()
     assert 'STATE_SUFFIX="-followup"' in text, (
         'SKILL.md mode table must set STATE_SUFFIX="-followup" for followup mode'
@@ -145,9 +143,8 @@ def test_followup_mode_state_suffix_resolves_to_followup_json():
     assert "swe-workbench-clean-state-files" in text, (
         "SKILL.md Step 7 must call swe-workbench-clean-state-files to remove its own per-run state file"
     )
-    assert "/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json" in text, (
-        "SKILL.md Step 7 must pass /tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json to "
-        "swe-workbench-clean-state-files, so followup mode reaps ${PR}-followup.json"
+    assert 'swe-workbench-clean-state-files "$JSON"' in text, (
+        "SKILL.md Step 7 must reap the exact repo-scoped followup path held in $JSON"
     )
 
 

@@ -186,6 +186,24 @@ class TestReviewModeRouting:
             "Specialist post sub-flow must pass CALLER_TAG to workflow-pr-review-post"
         )
 
+    def test_specialist_subflow_explicitly_scopes_run_dir_to_preflight_repo(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow = text.split("\n## Specialist post sub-flow\n", 1)[1]
+        assert (
+            'swe-workbench-new-run-dir "review-${MODE}" "$PR" --repo "$OWNER/$REPO"'
+            in subflow
+        )
+
+    def test_specialist_subflow_passes_run_dir_as_auditor_scratch_boundary(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        step3 = text.split("3. Run the specialist auditor")[1].split(
+            "4. **Prompt:**"
+        )[0]
+        assert "$RUN_DIR" in step3
+        assert "materialized" in step3.lower()
+        assert "/tmp" in step3
+        assert "scratchpad" in step3.lower()
+
     def test_specialist_subflow_reaps_own_state_file(self):
         """The specialist sub-flow's own mode-scoped preflight JSON must be reaped via
         swe-workbench-clean-state-files in both the skip and post branches (PR #520 review feedback)."""
