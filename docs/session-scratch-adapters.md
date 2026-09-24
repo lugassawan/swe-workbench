@@ -174,6 +174,9 @@ nothing:
   `--session-dir`, or the JSONL session location, and never borrows Claude's
   `/tmp/claude-<uid>` namespace. Retention is the only safe behavior without a sanctioned
   path contract.
+- Remote PR-review orchestrators do not depend on a Pi harness scratch path: they allocate
+  a plugin-owned, repository-scoped `RUN_DIR`, pass it to reviewer/auditor subagents as the
+  only materialized-artifact location, and reap it through the normal run-dir lifecycle.
 
 When Pi grows a sanctioned scratch contract — or swe-workbench adopts its own
 scratch-writing lifecycle — only the Pi adapter, its tests, and this page change. The

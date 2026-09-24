@@ -65,6 +65,8 @@ EXPECTED_REGISTRY = {
         "swept_run_dirs": "int",
         "swept_session_files": "int",
         "retained_worktrees": "list[path_reason]",
+        "retained_state_files": "list[path_reason]",
+        "retained_artifacts": "list[path_reason]",
         "failed_removals": "list[path_reason]",
         "residual_none": "bool",
     },
@@ -236,6 +238,8 @@ def test_list_path_reason_field_valid_and_invalid():
             "swept_worktrees": 1, "swept_state_files": 0, "swept_run_dirs": 0,
             "swept_session_files": 0,
             "retained_worktrees": [{"path": "/tmp/x", "reason": "dirty"}],
+            "retained_state_files": [],
+            "retained_artifacts": [],
             "failed_removals": [],
             "residual_none": False,
         },
@@ -244,6 +248,11 @@ def test_list_path_reason_field_valid_and_invalid():
 
     envelope["data"]["retained_worktrees"] = [{"path": "/tmp/x"}]  # missing reason
     assert rc.validate_envelope("swb.sweep-residuals/1", envelope) != []
+
+    envelope["data"]["retained_worktrees"] = []
+    envelope["data"]["retained_artifacts"] = [{"path": "/tmp/pr-42-review.diff"}]
+    problems = rc.validate_envelope("swb.sweep-residuals/1", envelope)
+    assert any("retained_artifacts" in problem for problem in problems)
 
 
 def test_warnings_must_be_list_of_code_message_objects():
