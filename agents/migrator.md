@@ -122,6 +122,8 @@ Gate to advance: ...
 **Risks:** <lock duration, backfill cost, sunset window, etc.>
 ```
 
+**Comment-scan verdicts** — `KEEP <id> <reason>` / `FIXED <id>` per must-triage finding, per the rules under "Shared references"; omit only when the scan came back clean.
+
 ## Absolute rules
 
 1. Phases ship independently — never bundle two phases in one deployment.

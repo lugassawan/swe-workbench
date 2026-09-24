@@ -1637,7 +1637,11 @@ def check_output_discipline_coverage(cache=None):
     forbidden = {"docs-discipline.md": ("code-impl",)}
 
     texts = {}
-    for stem in sorted(set(_COMMENT_DISCIPLINE_AGENTS)):
+    all_stems = (
+        {stem for stems in required.values() for stem in stems}
+        | {stem for stems in forbidden.values() for stem in stems}
+    )
+    for stem in sorted(all_stems):
         agent_md = ROOT / "agents" / f"{stem}.md"
         if agents_cache is not None and agent_md in agents_cache:
             text = agents_cache[agent_md]

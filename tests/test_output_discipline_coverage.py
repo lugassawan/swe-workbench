@@ -86,3 +86,12 @@ def test_missing_agent_file_fails(reset_validate):
     (reset_validate / "agents" / "migrator.md").unlink()
     validate.check_output_discipline_coverage()
     assert any("migrator.md" in f for f in validate.FAILURES)
+
+
+def test_unreadable_cached_agent_fails(reset_validate):
+    _write_all(reset_validate)
+    agent_md = reset_validate / "agents" / "debugger.md"
+    validate.check_output_discipline_coverage(cache=({agent_md: None}, {}))
+    assert any(
+        "debugger.md" in f and "could not read" in f for f in validate.FAILURES
+    )
