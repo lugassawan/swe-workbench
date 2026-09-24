@@ -436,6 +436,12 @@ def test_cleanup_merged_reports_retained_legacy_artifacts():
     assert "retained artifact" in step7.lower()
     assert "path" in step7.lower() and "reason" in step7.lower()
 
+    failure_table = body.split("## Failure Mode Table")[1].split(
+        "### Recovery Examples"
+    )[0]
+    assert "retained_state_files" in failure_table
+    assert "retained_artifacts" in failure_table
+
 
 def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
     """Step 5's session-scratchpad sweep must be documented as scoped by session id,
