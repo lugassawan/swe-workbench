@@ -32,6 +32,7 @@ from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "bin" / "swe-workbench-sweep-residuals"
+NEW_RUN_DIR = ROOT / "bin" / "swe-workbench-new-run-dir"
 REVIEW_MD = Path(__file__).parent.parent / "commands" / "review.md"
 
 TMP = Path("/tmp")
@@ -809,15 +810,18 @@ class TestRepoScopedStateFileSweep:
             own.unlink(missing_ok=True)
             foreign.unlink(missing_ok=True)
 
-    def test_explicit_repo_flag_drives_scope_from_plain_cwd(self, tmp_path):
-        plain = tmp_path / "plain"
-        plain.mkdir()
+    def test_explicit_repo_state_scope_overrides_mismatching_origin(self, tmp_path):
+        repo = _build_scoped_repo(
+            tmp_path, "https://github.com/unrelated/project.git"
+        )
         n = _unique_n()
         PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
         own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}.json"
         own.write_text("{}")
         try:
-            result = _run_script(plain, n, _scoped_env(tmp_path), "--repo", "octocat/widgets")
+            result = _run_script(
+                repo, n, _scoped_env(tmp_path), "--repo", "octocat/widgets"
+            )
             _assert_contract(result, "0", "1", "0")
             assert not own.exists()
         finally:
@@ -950,6 +954,48 @@ class TestRepoScopedStateFileSweep:
 
 
 class TestRepoScopedRunDirSweep:
+    def test_allocator_and_sweeper_share_explicit_scope_across_mismatching_origins(
+        self, tmp_path
+    ):
+        allocator_base = tmp_path / "allocator"
+        sweeper_base = tmp_path / "sweeper"
+        allocator_base.mkdir()
+        sweeper_base.mkdir()
+        allocator_repo = _build_scoped_repo(
+            allocator_base, "https://github.com/fork/widgets.git"
+        )
+        sweeper_repo = _build_scoped_repo(
+            sweeper_base, "https://github.com/unrelated/project.git"
+        )
+        n = _unique_n()
+        env = _scoped_env(tmp_path)
+        allocated = subprocess.run(
+            [
+                "bash",
+                str(NEW_RUN_DIR),
+                "pr-followup",
+                n,
+                "--repo",
+                "octocat/widgets",
+            ],
+            cwd=str(allocator_repo),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        assert allocated.returncode == 0, allocated.stderr
+        run_dir = Path(allocated.stdout.strip())
+        try:
+            result = _run_script(
+                sweeper_repo, n, env, "--repo", "octocat/widgets"
+            )
+            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            assert not run_dir.exists()
+            assert json.loads(result.stdout)["data"]["retained_artifacts"] == []
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
     def test_scoped_glob_only_reaps_own_slug(self, tmp_path):
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()
@@ -1037,6 +1083,18 @@ class TestRepoScopedRunDirSweep:
 
 
 class TestRootReviewerDiffRetention:
+    def test_unscoped_sweep_reports_owned_root_diff_without_deleting(self, tmp_path):
+        repo = _build_repo(tmp_path)
+        n = _unique_n()
+        diff_file = TMP / f"pr-{n}-review.diff"
+        diff_file.write_text("diff --git a/a b/a\n")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_artifacts="1")
+            assert diff_file.exists()
+        finally:
+            diff_file.unlink(missing_ok=True)
+
     def test_scoped_sweep_reports_owned_root_diff_without_deleting(self, tmp_path):
         repo = _build_scoped_repo(tmp_path)
         n = _unique_n()
@@ -1224,14 +1282,24 @@ class TestInvalidRepoFailsClosed:
         f.write_text("{}")
         run_dir = RUN_ROOT / f"pr-review-{n}-e5f6a7"
         run_dir.mkdir()
+        diff_file = TMP / f"pr-{n}-review.diff"
+        diff_file.write_text("diff --git a/a b/a\n")
         try:
             result = _run_script(repo, n, _scoped_env(tmp_path), "--repo", "bogus")
             assert result.returncode == 0
-            _assert_contract(result, "0", "0", "0", retained_sf="1")
+            _assert_contract(
+                result, "0", "0", "0", retained_sf="1", retained_artifacts="2"
+            )
             assert f.exists(), "invalid --repo must retain legacy state files"
             assert run_dir.exists(), "invalid --repo must not glob run dirs"
+            assert diff_file.exists(), "invalid --repo must retain root reviewer diffs"
             payload = json.loads(result.stdout)
             assert "invalid --repo" in payload["data"]["retained_state_files"][0]["reason"]
+            assert {item["path"] for item in payload["data"]["retained_artifacts"]} == {
+                str(run_dir.resolve()),
+                str(diff_file.resolve()),
+            }
         finally:
             f.unlink(missing_ok=True)
             shutil.rmtree(run_dir, ignore_errors=True)
+            diff_file.unlink(missing_ok=True)

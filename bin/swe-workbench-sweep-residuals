@@ -518,16 +518,17 @@ RUN_ROOT="${CANON_TMP}/swe-workbench-run"
 # acme/app, same PR N) and reap another repo's dir; anchoring on the exact
 # allowlisted tag forbids it. Unscoped mode anchors on the legacy exact shape
 # (tag-$N-??????) so slugged dirs — any repo's — are never matched there.
-# Retain-only mode (invalid --repo) skips Block C entirely; legacy run dirs
-# left unmatched are owned by new-run-dir's 24h age-gated reaper.
+# Retain-only mode (invalid --repo) skips the deletion pass; its exact legacy
+# matches are reported below so cleanup cannot falsely claim no residuals.
+# review-converge rides along: commands/converge.md sets LOOP_ID="${PR_NUM:-0}",
+# so a converge loop run against PR <N> allocates review-converge-<slug>-<N>-<rand>.
+RUN_TAGS=(pr-review pr-followup address-feedback review-converge extend capture audit-emit hotfix)
+for mode in "${SPECIALIST_MODES[@]}"; do
+  RUN_TAGS+=("review-$mode")
+done
+
 run_glob=()
 if [ -z "$SCOPE_INVALID" ]; then
-  # review-converge rides along: commands/converge.md sets LOOP_ID="${PR_NUM:-0}",
-  # so a converge loop run against PR <N> allocates review-converge-<slug>-<N>-<rand>.
-  RUN_TAGS=(pr-review pr-followup address-feedback review-converge extend capture audit-emit hotfix)
-  for mode in "${SPECIALIST_MODES[@]}"; do
-    RUN_TAGS+=("review-$mode")
-  done
   shopt -s nullglob
   for tag in "${RUN_TAGS[@]}"; do
     if [ -n "$SCOPE_SLUG" ]; then
@@ -551,39 +552,52 @@ for run_dir in ${run_glob[@]+"${run_glob[@]}"}; do
 done
 shopt -u nullglob
 
-# Scoped cleanup cannot prove which repository owns legacy run dirs or reviewer
-# diffs keyed only by PR number. Report exact, owned, non-symlink matches so the
-# envelope cannot claim clean, but never delete them.
-if [ -n "$SCOPE_SLUG" ] && [ -z "$SCOPE_INVALID" ]; then
-  legacy_run_glob=()
-  root_diff_glob=()
-  shopt -s nullglob
+# Cleanup cannot prove which repository owns reviewer diffs keyed only by PR
+# number. Scoped and retain-only modes likewise cannot attribute legacy run dirs.
+# Report exact, owned, non-symlink matches so the envelope cannot claim clean,
+# but never delete them.
+legacy_run_glob=()
+root_diff_glob=()
+shopt -s nullglob
+if [ -n "$SCOPE_SLUG" ] || [ -n "$SCOPE_INVALID" ]; then
   for tag in "${RUN_TAGS[@]}"; do
     legacy_run_glob+=("$RUN_ROOT/$tag-$N-"??????)
   done
-  root_diff_glob=("$CANON_TMP/pr-$N-"*.diff)
-  shopt -u nullglob
-
-  for legacy_run_dir in ${legacy_run_glob[@]+"${legacy_run_glob[@]}"}; do
-    [ -d "$legacy_run_dir" ] || continue
-    [ ! -L "$legacy_run_dir" ] || continue
-    [ -O "$legacy_run_dir" ] || continue
-    legacy_suffix=${legacy_run_dir##*-}
-    printf '%s' "$legacy_suffix" | grep -qE '^[A-Za-z0-9]{6}$' || continue
-    RETAINED_ARTIFACT_ITEMS+=("$(_json_item "$legacy_run_dir" "legacy run dir is not attributable to the scoped repository")")
-  done
-
-  for root_diff in ${root_diff_glob[@]+"${root_diff_glob[@]}"}; do
-    [ -f "$root_diff" ] || continue
-    [ ! -L "$root_diff" ] || continue
-    [ -O "$root_diff" ] || continue
-    root_diff_name=${root_diff##*/}
-    root_diff_suffix=${root_diff_name#pr-"$N"-}
-    root_diff_suffix=${root_diff_suffix%.diff}
-    [ -n "$root_diff_suffix" ] || continue
-    RETAINED_ARTIFACT_ITEMS+=("$(_json_item "$root_diff" "root reviewer diff is not attributable to the scoped repository")")
-  done
 fi
+root_diff_glob=("$CANON_TMP/pr-$N-"*.diff)
+shopt -u nullglob
+
+for legacy_run_dir in ${legacy_run_glob[@]+"${legacy_run_glob[@]}"}; do
+  [ -d "$legacy_run_dir" ] || continue
+  [ ! -L "$legacy_run_dir" ] || continue
+  [ -O "$legacy_run_dir" ] || continue
+  legacy_suffix=${legacy_run_dir##*-}
+  printf '%s' "$legacy_suffix" | grep -qE '^[A-Za-z0-9]{6}$' || continue
+  if [ -n "$SCOPE_INVALID" ]; then
+    retained_reason="legacy run dir retained because --repo is invalid"
+  else
+    retained_reason="legacy run dir is not attributable to the scoped repository"
+  fi
+  RETAINED_ARTIFACT_ITEMS+=("$(_json_item "$legacy_run_dir" "$retained_reason")")
+done
+
+for root_diff in ${root_diff_glob[@]+"${root_diff_glob[@]}"}; do
+  [ -f "$root_diff" ] || continue
+  [ ! -L "$root_diff" ] || continue
+  [ -O "$root_diff" ] || continue
+  root_diff_name=${root_diff##*/}
+  root_diff_suffix=${root_diff_name#pr-"$N"-}
+  root_diff_suffix=${root_diff_suffix%.diff}
+  [ -n "$root_diff_suffix" ] || continue
+  if [ -n "$SCOPE_INVALID" ]; then
+    retained_reason="root reviewer diff retained because --repo is invalid"
+  elif [ -n "$SCOPE_SLUG" ]; then
+    retained_reason="root reviewer diff is not attributable to the scoped repository"
+  else
+    retained_reason="root reviewer diff is not attributable to a repository"
+  fi
+  RETAINED_ARTIFACT_ITEMS+=("$(_json_item "$root_diff" "$retained_reason")")
+done
 
 # ── Block D: session scratchpad (NOT <N>-keyed — see SKILL.md Step 5 / AC4) ─────────────
 # The scratchpad files an agent improvises during review/implementation work never carry

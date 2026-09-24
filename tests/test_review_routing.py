@@ -186,11 +186,13 @@ class TestReviewModeRouting:
             "Specialist post sub-flow must pass CALLER_TAG to workflow-pr-review-post"
         )
 
-    def test_specialist_subflow_explicitly_scopes_run_dir_to_preflight_repo(self):
+    def test_specialist_subflow_uses_one_repo_source_for_state_and_run_dir_scope(self):
         text = REVIEW_PATH.read_text(encoding="utf-8")
         subflow = text.split("\n## Specialist post sub-flow\n", 1)[1]
+        assert 'PR_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)' in subflow
+        assert 'swe-workbench-repo-scope --repo "$PR_REPO"' in subflow
         assert (
-            'swe-workbench-new-run-dir "review-${MODE}" "$PR" --repo "$OWNER/$REPO"'
+            'swe-workbench-new-run-dir "review-${MODE}" "$PR" --repo "$PR_REPO"'
             in subflow
         )
 

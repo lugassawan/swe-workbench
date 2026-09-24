@@ -70,10 +70,17 @@ case "$MODE" in
   *) echo "Unknown MODE: $MODE (expected auto, first-pass, or followup)" >&2; exit 1 ;;
 esac
 echo "Mode: $MODE"
-# Repo scope: origin-derived slug scopes the shared /tmp state
-# namespace by repository; an unresolvable origin keeps legacy un-scoped names.
-SCOPE_SLUG=$(swe-workbench-repo-scope 2>/dev/null) || SCOPE_SLUG=""
-JSON="/tmp/swe-workbench-pr-review/${SCOPE_SLUG:+${SCOPE_SLUG}-}${PR}${STATE_SUFFIX}.json"
+# Resolve the gh-selected repository once so the state file and run directory
+# cannot diverge when the checkout origin is a fork or gh has a default repo.
+PR_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner) || {
+  echo "Could not determine the selected repository. Run 'gh repo view' to verify it." >&2
+  exit 1
+}
+SCOPE_SLUG=$(swe-workbench-repo-scope --repo "$PR_REPO") || {
+  echo "Could not derive repository scope for $PR_REPO." >&2
+  exit 1
+}
+JSON="/tmp/swe-workbench-pr-review/${SCOPE_SLUG}-${PR}${STATE_SUFFIX}.json"
 eval "$(swe-workbench-preflight-pr "$PR" "$JSON")"
 if [ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]; then
   swe-workbench-clean-state-files "$JSON"
@@ -81,10 +88,10 @@ if [ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]; then
   exit 1
 fi
 CURRENT_USER=$(gh api /user -q .login)
-RUN_DIR=$(swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$OWNER/$REPO")
+RUN_DIR=$(swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO")
 ```
 
-`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context). The JSON path is `${SCOPE_SLUG:+${SCOPE_SLUG}-}${PR}${STATE_SUFFIX}.json`: first-pass leaves `STATE_SUFFIX` empty (`<slug>-${PR}.json`); followup sets it to `-followup` (`<slug>-${PR}-followup.json`), so both can coexist for the same PR — and the owner-repo slug (resolved once above via `swe-workbench-repo-scope`) keeps same-numbered PRs in different repositories from ever colliding; with no resolvable origin remote the empty slug falls back to the legacy un-scoped names. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/`, itself slug-scoped by the same ladder, for this run's own ad-hoc bash artifacts (assembled JSON payloads, submit-response captures) that this flow's bash produces but never enumerates ahead of time. Distinct from `$JSON` above, which is a deliberate PR-keyed state file reaped by name in Step 7. The `if [ "$MODE" = followup ] …` guard is followup-only: a first-pass review proceeds regardless of PR state, while a followup re-check only makes sense while the PR is still open for further pushes. This gate runs immediately after the preflight fetch and before `$RUN_DIR` is allocated, so a rejected followup reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap.
+`preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context). The JSON path is `${SCOPE_SLUG}-${PR}${STATE_SUFFIX}.json`: first-pass leaves `STATE_SUFFIX` empty (`<slug>-${PR}.json`); followup sets it to `-followup` (`<slug>-${PR}-followup.json`), so both can coexist for the same PR. `PR_REPO` comes from the repository selected by `gh` (including `gh repo set-default`), and the same value is passed to `swe-workbench-repo-scope` and `swe-workbench-new-run-dir`; a fork checkout therefore cannot split state and run artifacts across two repository slugs. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc artifacts (assembled JSON payloads, submit-response captures) that this flow's bash produces but never enumerates ahead of time. Distinct from `$JSON` above, which is a deliberate PR-keyed state file reaped by name in Step 7. The `if [ "$MODE" = followup ] …` guard is followup-only: a first-pass review proceeds regardless of PR state, while a followup re-check only makes sense while the PR is still open for further pushes. This gate runs immediately after the preflight fetch and before `$RUN_DIR` is allocated, so a rejected followup reaps `$JSON` inline rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap.
 
 ### Step 2 — Ephemeral worktree
 

@@ -47,10 +47,14 @@ missing script.
 
 A backward-incompatible change to a producer's `data` shape bumps the major
 (`swb.foo/1` → `swb.foo/2`) and updates every consumer in the same PR. There is no
-dual-emit period — see "No dual-emit" below. Adding a field that makes an existing
-claim more accurate is compatible: for example, `swb.sweep-residuals/1` added
-`retained_artifacts` so its existing `status: partial` and `residual_none: false`
-semantics include detected artifacts that cannot safely be deleted.
+dual-emit period — see "No dual-emit" below. Adding a required field that makes
+an existing claim more accurate may keep the same schema only because this plugin
+ships its sole in-tree producer and every checker consumer in lockstep. For example,
+`swb.sweep-residuals/1` added required
+`retained_artifacts` while updating the producer and registry together, so its
+existing `status: partial` and `residual_none: false` semantics include detected
+artifacts that cannot safely be deleted. An older or out-of-tree producer that omits
+the field does not satisfy the updated `/1` contract.
 
 ## Exit code and `status` are orthogonal
 

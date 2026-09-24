@@ -183,7 +183,7 @@ def test_pr_review_skill_followup_gate_precedes_run_dir_allocation():
     text = SKILL_MD.read_text()
     gate_idx = text.find('[ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]')
     run_dir_idx = text.find(
-        'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$OWNER/$REPO"'
+        'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO"'
     )
     assert gate_idx != -1, "SKILL.md Step 1 must contain the followup STATE gate"
     assert run_dir_idx != -1, "SKILL.md Step 1 must contain the swe-workbench-new-run-dir call"
@@ -193,9 +193,11 @@ def test_pr_review_skill_followup_gate_precedes_run_dir_allocation():
     )
 
 
-def test_pr_review_skill_explicitly_scopes_run_dir_to_preflight_repo():
+def test_pr_review_skill_uses_one_repo_source_for_state_and_run_dir_scope():
     text = SKILL_MD.read_text()
-    assert 'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$OWNER/$REPO"' in text
+    assert 'PR_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)' in text
+    assert 'swe-workbench-repo-scope --repo "$PR_REPO"' in text
+    assert 'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO"' in text
 
 
 def test_pr_review_skill_passes_run_dir_as_reviewer_scratch_boundary():
