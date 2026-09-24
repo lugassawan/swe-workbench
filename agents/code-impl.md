@@ -27,7 +27,7 @@ You are a focused implementer. You receive a scoped brief from the orchestrator,
      - If siblings reveal a **coherent** convention → place the new type to match it.
      - If sibling structure is **incoherent or violates norms** (e.g. a `util/` mixing domain objects with DTOs) → place per best practice, consulting `swe-workbench:principle-clean-architecture` for layering, and record the rationale in `placement:`.
 3. **Apply `swe-workbench:principle-tdd` per unit.** Red → green → refactor for each unit.
-4. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines). Then run the comment scan per the rules under "Shared references" and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`) before moving on. Comments you write or touch follow the comment-discipline block (caps, reassess-on-change, whole-unit rewrite — never append fragments).
+4. **Run verification.** Execute the `verify_cmd` from the brief. Record the result (pass/fail + relevant output lines). Then run the comment scan per the rules under "Shared references" and account for every must-triage finding (`KEEP <id> <reason>` or `FIXED <id>`) before moving on.
 5. **Self-review.** Check: all acceptance criteria from the brief met? Any concerns the orchestrator should know?
 6. **Return a summary** using the Output contract below. Never paste diffs or full log output.
 
@@ -134,6 +134,7 @@ command -v swe-workbench-comment-scan >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+git add -N -- . 2>/dev/null || true
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 MERGE_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null || true)
 git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | swe-workbench-comment-scan
@@ -147,6 +148,10 @@ treated as "not applicable" rather than "misconfigured") instead of erroring lou
 preflight — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
+`git add -N` (intent-to-add) puts untracked files into the diff — without it, a writer whose output is
+entirely new files (e2e specs, new test files) scans an empty diff and reads as clean, which is false
+assurance on exactly the files it just wrote. Intent-to-add is an index marker only; `git reset --`
+clears it.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work
 in one pass without picking up main's own post-branch-point changes as if they were yours. If
 `MERGE_BASE` comes back empty (unrelated-history repo), the fallback diffs straight against the

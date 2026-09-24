@@ -58,7 +58,7 @@ Match what exists. Do not impose defaults.
 - Match existing style; never impose defaults.
 - Cite commit hash or file:line for every factual claim in committed artifacts; conversation excerpt is acceptable in drafts only.
 - Never invent behavior. If the diff doesn't show it, don't document it.
-- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs. Stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline).
+- Inline comments: only non-obvious WHY. Never WHAT, never task references, never callsite breadcrumbs. Stay within `swe-workbench:principle-clean-code`'s per-language comment caps (Comment discipline). Comments you add or touch follow the comment-discipline block under "Shared references" (reassess-on-change, whole-unit rewrite — never append fragments).
 - Preview before writing for net-new top-level files; write directly for edits to existing docs.
 - Out of scope: API reference from type signatures; `plugin.json` metadata.
 
@@ -106,6 +106,16 @@ reading or writing, when one exists for that language. Invoke it via the `Skill`
 <!-- END shared/agents/language-skill-required.md -->
 
 **Language skill (required):** Identify the language(s) in scope and invoke the matching `language-*` skill (e.g., `swe-workbench:language-python` for `.py` files). State which language skill(s) you loaded, or note "N/A" if no language-specific code is in scope.
+
+## Shared references
+
+<!-- BEGIN shared/agents/comment-discipline.md -->
+# Comment discipline (authoring)
+
+- **New comments stay within `swe-workbench:principle-clean-code`'s per-language comment caps** (Comment discipline) and avoid unnecessary comments (WHAT-not-WHY, restates-the-code, commented-out code, over-explained / decision-essay). When a doc comment is warranted, follow the language's idiomatic form — one summary sentence first; see the relevant `language-*` skill's Doc comments section (only guaranteed for languages with a doc-comment idiom — `swe-workbench:language-bash` and `swe-workbench:language-sql` have none).
+- **Reassess existing comments whose described code you change — don't leave them by default.** If an edit changes the code a comment describes, decide whether the comment is still necessary: drop it if it no longer adds WHY, or rephrase it if the rationale still applies but no longer matches the new code. A stale comment left behind by an edit is a defect, not a formatting nit.
+- **Treat the whole comment unit as the unit of update — never append fragments.** The unit is the doc-comment block of the changed function/method/class, or the inline comment run inside the changed region. When you change described code, or add a comment near an existing one, read the entire unit plus the code it describes, then rewrite the unit as one coherent piece. Appending a new comment line alongside an existing comment that covers the same code is a defect even when each line is individually on-cap. Scope the rewrite to what the change touched: rephrase what the change made inaccurate, and leave untouched any comment the change left accurate — no diff inflation.
+<!-- END shared/agents/comment-discipline.md -->
 
 <!-- BEGIN shared/agents/preload-canary-citation.md -->
 # Preload citation

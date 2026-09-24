@@ -71,7 +71,7 @@ You are a migrator. Every intermediate state in a migration must satisfy three p
 
 ## Rollback gate
 
-No phase ships without rollback (or forward-recovery for Phase 5) documented in the same commit. Each rollback entry specifies:
+No phase ships without rollback (or forward-recovery for Phase 5) documented in the same commit. The entry lives in the phase commit message (or a brief-named doc) — sanctioned as assigned-by-your-own-contract under the docs-discipline block. Each rollback entry specifies:
 
 - **Trigger** — the observable signal that initiates rollback (error rate, parity failure, latency spike).
 - **Mechanism** — exact command or flag flip to revert.
@@ -202,6 +202,7 @@ command -v swe-workbench-comment-scan >/dev/null 2>&1 || {
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+git add -N -- . 2>/dev/null || true
 DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 MERGE_BASE=$(git merge-base HEAD "origin/$DEFAULT_BRANCH" 2>/dev/null || true)
 git diff -M "${MERGE_BASE:-origin/$DEFAULT_BRANCH}" | swe-workbench-comment-scan
@@ -215,6 +216,10 @@ treated as "not applicable" rather than "misconfigured") instead of erroring lou
 preflight — don't drop the check when copying the snippet.
 
 `-M` detects renames so a moved function's untouched doc comment isn't misread as newly added.
+`git add -N` (intent-to-add) puts untracked files into the diff — without it, a writer whose output is
+entirely new files (e2e specs, new test files) scans an empty diff and reads as clean, which is false
+assurance on exactly the files it just wrote. Intent-to-add is an index marker only; `git reset --`
+clears it.
 Diffing from the merge-base (not `origin/main` directly) covers committed + staged + unstaged work
 in one pass without picking up main's own post-branch-point changes as if they were yours. If
 `MERGE_BASE` comes back empty (unrelated-history repo), the fallback diffs straight against the

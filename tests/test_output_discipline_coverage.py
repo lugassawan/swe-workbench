@@ -1,15 +1,18 @@
 """Structural tests: output-discipline block coverage per writer agent.
 
-Acceptance criteria: every code-writing agent carries the comment-discipline
-and comment-scan shared blocks; every writer except code-impl (whose
-`file_set` containment is strictly stronger) also carries docs-discipline;
-and code-impl must NOT carry docs-discipline, guarding against reflexive
-blanket embeds.
+The writer set is derived from tools: frontmatter (Edit or Write), so the
+matrix catches a brand-new writer with no tuple edit. Explicit exemptions:
+product-manager (non-code), tech-writer (docs are its lane — comment-
+discipline only, no scan, no docs-discipline), and code-impl is forbidden
+from docs-discipline (file_set binds strictly harder).
 """
 
 from pathlib import Path
 
 import validate
+
+WRITER_TOOLS = "Read, Write, Edit, Grep, Glob, Bash"
+NON_WRITER_TOOLS = "Read, Grep, Bash"
 
 WRITERS = {
     "code-impl": {"comment-discipline.md", "comment-scan.md"},
@@ -18,11 +21,22 @@ WRITERS = {
     "test-writer": {"comment-discipline.md", "comment-scan.md", "docs-discipline.md"},
     "e2e-test-writer": {"comment-discipline.md", "comment-scan.md", "docs-discipline.md"},
     "migrator": {"comment-discipline.md", "comment-scan.md", "docs-discipline.md"},
+    "tech-writer": {"comment-discipline.md"},
+    "product-manager": set(),  # exempt: non-code agent
 }
+NON_WRITERS = {"reviewer", "auditor"}
 
 
-def _write_agent(root: Path, stem: str, blocks: set[str]) -> None:
-    body = f"# {stem}\n"
+def _write_agent(
+    root: Path, stem: str, blocks: set[str], tools: str = WRITER_TOOLS
+) -> None:
+    body = (
+        "---\n"
+        f"name: {stem}\n"
+        f"tools: {tools}\n"
+        "---\n"
+        f"# {stem}\n"
+    )
     for block in sorted(blocks):
         body += (
             f"<!-- BEGIN shared/agents/{block} -->\n"
@@ -35,8 +49,9 @@ def _write_agent(root: Path, stem: str, blocks: set[str]) -> None:
 
 
 def _write_all(root: Path, overrides: dict[str, set[str]] | None = None) -> None:
-    for stem, blocks in WRITERS.items():
-        _write_agent(root, stem, (overrides or {}).get(stem, blocks))
+    for stem, blocks in {**WRITERS, **{s: set() for s in NON_WRITERS}}.items():
+        tools = NON_WRITER_TOOLS if stem in NON_WRITERS else WRITER_TOOLS
+        _write_agent(root, stem, (overrides or {}).get(stem, blocks), tools)
 
 
 def test_full_coverage_passes(reset_validate):
@@ -72,6 +87,24 @@ def test_missing_comment_scan_fails(reset_validate):
     )
 
 
+def test_new_writer_without_blocks_fails(reset_validate):
+    """Derivation catch: an unknown agent with Edit tools needs the blocks."""
+    _write_all(reset_validate)
+    _write_agent(reset_validate, "fresh-writer", set())
+    validate.check_output_discipline_coverage()
+    assert any(
+        "fresh-writer.md" in f and "comment-discipline" in f
+        for f in validate.FAILURES
+    )
+
+
+def test_non_writer_without_blocks_passes(reset_validate):
+    """Read-only agents are outside the matrix entirely."""
+    _write_all(reset_validate)
+    validate.check_output_discipline_coverage()
+    assert not any("reviewer.md" in f for f in validate.FAILURES)
+
+
 def test_code_impl_with_docs_discipline_fails(reset_validate):
     overrides = {"code-impl": WRITERS["code-impl"] | {"docs-discipline.md"}}
     _write_all(reset_validate, overrides)
@@ -81,11 +114,14 @@ def test_code_impl_with_docs_discipline_fails(reset_validate):
     )
 
 
-def test_missing_agent_file_fails(reset_validate):
+def test_deleted_writer_is_out_of_scope(reset_validate):
+    """Derivation means a deleted writer produces no coverage failure —
+    agent existence itself is pinned by test_shared_relocation's inventory
+    and the Pi contract golden inventory, not by this check."""
     _write_all(reset_validate)
     (reset_validate / "agents" / "migrator.md").unlink()
     validate.check_output_discipline_coverage()
-    assert any("migrator.md" in f for f in validate.FAILURES)
+    assert not any("migrator.md" in f for f in validate.FAILURES)
 
 
 def test_unreadable_cached_agent_fails(reset_validate):
@@ -95,3 +131,17 @@ def test_unreadable_cached_agent_fails(reset_validate):
     assert any(
         "debugger.md" in f and "could not read" in f for f in validate.FAILURES
     )
+
+
+def test_stale_exemption_fails(reset_validate):
+    """An exemption naming a non-writer is stale config, not a free pass."""
+    _write_all(reset_validate)
+    validate._DOCS_DISCIPLINE_EXEMPT = frozenset({"ghost"})
+    try:
+        validate.check_output_discipline_coverage()
+        assert any(
+            "_DOCS_DISCIPLINE_EXEMPT" in f and "ghost" in f
+            for f in validate.FAILURES
+        )
+    finally:
+        validate._DOCS_DISCIPLINE_EXEMPT = frozenset({"tech-writer"})
