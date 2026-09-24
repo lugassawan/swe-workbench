@@ -120,16 +120,16 @@ The same script also sweeps two additional artifact classes (labeled Block C and
 `swe-workbench-sweep-residuals`'s own comments — unrelated to Step 3's "Block D" hook-interruption checks in
 `sync-and-verify.sh`, a different script entirely):
 
-- **The run-dir sweep.** Any `/tmp/swe-workbench-run/*-<owner-repo-slug>-<number>-??????` directory allocated by `swe-workbench-new-run-dir` for this PR (e.g. left behind by a flow killed before its own `swe-workbench-reap-run-dir` call) is reaped via `swe-workbench-reap-run-dir`. The slug-scoped glob matches this repository's run dirs by construction — another repository's same-numbered run dir can never match — and legacy un-scoped run dirs are left to `new-run-dir`'s own 24h age-gated orphan reaper rather than guessed at here.
+- **The run-dir sweep.** Any `/tmp/swe-workbench-run/*-<owner-repo-slug>-<number>-??????` directory allocated by `swe-workbench-new-run-dir` for this PR (e.g. left behind by a flow killed before its own `swe-workbench-reap-run-dir` call) is reaped via `swe-workbench-reap-run-dir`. The slug-scoped glob matches this repository's run dirs by construction — another repository's same-numbered run dir can never match. Exact owned legacy remote-review run dirs and root `/tmp/pr-<number>-*.diff` files are detected but not deleted: PR number alone cannot establish repository ownership, so they are returned in `.data.retained_artifacts` and keep the result non-clean until handled manually.
 - **The session-scratchpad sweep.** The current harness session's scratchpad contents — temporary review or implementation artifacts never committed — are cleared via `swe-workbench-reap-session-scratch`. This is deliberately **not** scoped to `#<number>`: those files never carry a `#<number>` token, so name-based matching can never reach them. A session scratch adapter resolves the session id to an authorized target; the reaper continues only when exactly one adapter is active and reports exactly one safe candidate. An unsupported platform, multiple active adapters, or an invalid descriptor or target produces a silent no-op with `.data.swept_session_files = 0`, leaving the directory intact and the remaining cleanup unaffected.
 
 The checker validates the envelope (schema `swb.sweep-residuals/1` — see
 [`shared/docs/runtime-result-contract.md`](../../shared/docs/runtime-result-contract.md)) and
 re-emits it into `$RESULT`, or `|| exit 1` aborts. `.data` carries `swept_worktrees`,
-`swept_state_files`, `swept_run_dirs`, `swept_session_files` (counts), `retained_worktrees` and
-`failed_removals` (`[{path, reason}]` — which worktree, why, not just a bare count), and
-`residual_none` (`true` iff every count is `0` and both arrays are empty — a retained dirty
-worktree or a failed removal keeps it `false` even when nothing was actually swept).
+`swept_state_files`, `swept_run_dirs`, `swept_session_files` (counts), plus
+`retained_worktrees`, `retained_state_files`, `retained_artifacts`, and `failed_removals`
+(`[{path, reason}]`, not bare counts). `residual_none` is `true` iff every count is `0` and
+all four arrays are empty; any retained item or failed removal keeps it `false`.
 `$RESIDUAL_NONE` is extracted once above; the sweep script always exits 0, so `status` (never
 `"failed"` here, only `"ok"`/`"partial"`) is how a genuine partial failure is expressed instead.
 
@@ -154,21 +154,23 @@ Cleanup complete for PR #<number> (<headRefName>):
   ✓ Worktree removed: <path>        (or: no worktree found — skipped)
   ✓ Residual sweep: <.data.swept_worktrees> worktree(s) + <.data.swept_state_files> state file(s) removed (or: none)
   ✓ Session residuals: <.data.swept_session_files> scratch file(s) + <.data.swept_run_dirs> run dir(s) removed (or: none)
-  ⚠ Retained/failed: <n> worktree(s) retained (dirty) + <n> removal(s) failed (or: none)
-      - retained: <path> (<reason>)     ← one line per .data.retained_worktrees[] entry
-      - failed: <path> (<reason>)       ← one line per .data.failed_removals[] entry
+  ⚠ Retained/failed: <n> worktree(s) + <n> state file(s) + <n> retained artifact(s) + <n> removal(s) failed (or: none)
+      - retained worktree: <path> (<reason>)  ← one line per .data.retained_worktrees[] entry
+      - retained state: <path> (<reason>)     ← one line per .data.retained_state_files[] entry
+      - retained artifact: <path> (<reason>)  ← one line per .data.retained_artifacts[] entry
+      - failed: <path> (<reason>)             ← one line per .data.failed_removals[] entry
   ✓ Branches deleted: local <branch> / remote <branch> (or: already gone — LOCAL_DELETED=0 / REMOTE_DELETED=0)
   ✓ Local main synced to origin/main (or: ⚠ sync skipped — <reason>)
 ```
 
 Every count and record above is read from `$RESULT` with `jq` at this point (report-only —
 `printf '%s' "$RESULT" | jq -r '.data.swept_worktrees'`, etc., never `echo "$RESULT" | jq`). The
-retained/failed line — and its per-item sub-bullets — is only printed when
-`.data.retained_worktrees` or `.data.failed_removals` is non-empty: a dirty worktree was
-deliberately preserved (inspect and commit/discard manually before re-running cleanup), or a
-removal was attempted but the artifact is still on disk. Each sub-bullet's `<path>`/`<reason>`
-comes straight from that array entry, so an operator can tell *which* worktree needs manual
-attention and *why* without re-deriving it from `git worktree list` by hand.
+retained/failed line — and its per-item sub-bullets — is only printed when any retained array
+or `.data.failed_removals` is non-empty. Dirty worktrees, unattributable legacy state, and
+unattributable review artifacts are deliberately preserved; failed removals were attempted but
+survived. Each sub-bullet's `<path>`/`<reason>` comes straight from its array entry so the operator
+knows what needs manual attention and why. Retained legacy artifacts remain visible and keep
+`residual_none: false` on reruns until safely attributed or removed.
 
 ### Step 8 — Deferred-verification follow-up
 

@@ -66,6 +66,10 @@ A consuming skill pipes it through `swe-workbench-result-check <schema>` in plac
 RESULT=$(swe-workbench-sweep-residuals "$PR" | swe-workbench-result-check swb.sweep-residuals/1) || exit 1
 ```
 
+For `swb.sweep-residuals/1`, `data.retained_artifacts` contains `{path, reason}` records
+for detected legacy run directories or root reviewer diffs that cannot safely be attributed
+and deleted. Any such record makes `status` partial and `residual_none` false.
+
 This is **not** a mandate for every script — a producer whose output is a handful of trusted
 scalars (`swe-workbench-preflight-pr`'s 6 `printf %q`-quoted fields, `swe-workbench-new-run-dir`'s
 bare path) has nothing to gain from it and stays exactly as it is. See
