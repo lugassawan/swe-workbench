@@ -165,7 +165,7 @@ When creating a new interactive command that supports interrogation mode (i.e. o
 
 ## Adding a shared agent-body fragment reference
 
-Shared agent-body fragments — the catalog pointer, the language-skill-required list, and the four behavioral-contract fragments (`severity-output-contract.md`, `comment-scan.md`, `external-repo-reading.md`, `lsp.md`) — live under `shared/agents/` and reach a consuming `agents/*.md` file as a sentinel-delimited, byte-identical inline block, never as an `@path` include (see `docs/shared-agent-blocks.md` for why `@path` doesn't work here).
+Shared agent-body fragments — the catalog pointer, the language-skill-required list, and the six behavioral-contract fragments (`severity-output-contract.md`, `comment-scan.md`, `comment-discipline.md`, `docs-discipline.md`, `external-repo-reading.md`, `lsp.md`) — live under `shared/agents/` and reach a consuming `agents/*.md` file as a sentinel-delimited, byte-identical inline block, never as an `@path` include (see `docs/shared-agent-blocks.md` for why `@path` doesn't work here).
 
 1. Add an **empty** sentinel pair by hand, at the point in the agent file where the fragment belongs:
 

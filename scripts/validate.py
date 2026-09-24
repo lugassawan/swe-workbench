@@ -1599,6 +1599,98 @@ def check_language_pointer_matches_disk(cache=None):
              f"stale language skill id(s) with no matching skills/ dir: {', '.join(stale)}")
 
 
+# Output-discipline coverage derives writers from tools: frontmatter (Edit or
+# Write). Explicit exemptions, each with its reason:
+_OUTPUT_DISCIPLINE_EXEMPT = frozenset({
+    "product-manager",  # non-code agent — same rationale as _NON_CODE_AGENTS
+})
+_DOCS_DISCIPLINE_EXEMPT = frozenset({
+    "tech-writer",  # docs are its lane — docs-discipline exempts it by role
+})
+_COMMENT_SCAN_EXEMPT = frozenset({
+    "tech-writer",  # no scan step in its contract; it carries comment-discipline
+})
+# docs-discipline is additionally FORBIDDEN in code-impl: file_set containment
+# binds strictly harder, and carrying that block is itself a failure.
+_DOCS_DISCIPLINE_FORBIDDEN = frozenset({"code-impl"})
+
+
+def check_output_discipline_coverage(cache=None):
+    """Writer agents must carry the output-discipline shared blocks.
+
+    Writers are derived from tools: frontmatter (Edit or Write) minus
+    explicit exemption sets, so a new writer is caught without a tuple
+    edit. code-impl is deliberately excluded from docs-discipline (file_set
+    containment is strictly stronger); carrying it there is itself a
+    failure.
+    """
+    agents_cache = cache[0] if cache is not None else None
+    writers = set()
+    texts = {}
+    for agent_md in sorted((ROOT / "agents").glob("*.md")):
+        if agents_cache is not None and agent_md in agents_cache:
+            text = agents_cache[agent_md]
+            if text is None:
+                fail(agent_md.relative_to(ROOT), "could not read file")
+                continue
+        else:
+            try:
+                text = agent_md.read_text(encoding="utf-8")
+            except OSError as e:
+                fail(agent_md.relative_to(ROOT), f"could not read file: {e}")
+                continue
+        fm = parse_frontmatter(agent_md, text=text)
+        tools = fm.get("tools") if fm else None
+        if tools is None:
+            continue
+        tokens = tools if isinstance(tools, list) else str(tools).split(",")
+        if {"Edit", "Write"} & {t.strip() for t in tokens}:
+            writers.add(agent_md.stem)
+        texts[agent_md.stem] = text
+
+    for name, stems in (
+        ("_OUTPUT_DISCIPLINE_EXEMPT", _OUTPUT_DISCIPLINE_EXEMPT),
+        ("_DOCS_DISCIPLINE_EXEMPT", _DOCS_DISCIPLINE_EXEMPT),
+        ("_COMMENT_SCAN_EXEMPT", _COMMENT_SCAN_EXEMPT),
+    ):
+        unknown = sorted(stems - writers)
+        if unknown:
+            fail(Path("scripts/validate.py"),
+                 f"{name} references non-writer agent(s): {', '.join(unknown)}")
+
+    required = {
+        "comment-discipline.md": writers - _OUTPUT_DISCIPLINE_EXEMPT,
+        "docs-discipline.md": (
+            writers
+            - _OUTPUT_DISCIPLINE_EXEMPT
+            - _DOCS_DISCIPLINE_EXEMPT
+            - _DOCS_DISCIPLINE_FORBIDDEN
+        ),
+        "comment-scan.md": writers - _OUTPUT_DISCIPLINE_EXEMPT - _COMMENT_SCAN_EXEMPT,
+    }
+    forbidden = {"docs-discipline.md": _DOCS_DISCIPLINE_FORBIDDEN}
+
+    for block, stems in required.items():
+        marker = f"<!-- BEGIN shared/agents/{block} -->"
+        for stem in stems:
+            if stem in texts and marker not in texts[stem]:
+                fail(
+                    Path("agents") / f"{stem}.md",
+                    f"missing <!-- BEGIN shared/agents/{block} --> block — "
+                    "add an empty sentinel pair and run "
+                    "scripts/sync-shared-blocks.py --write",
+                )
+    for block, stems in forbidden.items():
+        marker = f"<!-- BEGIN shared/agents/{block} -->"
+        for stem in stems:
+            if stem in texts and marker in texts[stem]:
+                fail(
+                    Path("agents") / f"{stem}.md",
+                    f"carries <!-- BEGIN shared/agents/{block} --> but must not — "
+                    "file_set containment already binds this agent",
+                )
+
+
 def check_examples():
     """Example files in skills/*/examples/**/*.md must not exceed 120 lines."""
     skills_dir = ROOT / "skills"
@@ -2534,6 +2626,7 @@ def main():
     check_dispatch_ledger_in_sync()
     check_no_inert_at_includes(cache=cache)
     check_language_pointer_matches_disk(cache=cache)
+    check_output_discipline_coverage(cache=cache)
     check_adapter_blocks(cache=cache)
     check_template_placeholders(cache=cache)
     check_unwired_principle_skills(cache=cache)
