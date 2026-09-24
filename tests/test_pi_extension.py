@@ -408,6 +408,7 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "model-policy.ts",
         "task-call-line.ts",
         "dispatch-resolver.ts",
+        "subagent-json.ts",
         "subagent.ts",
     ):
         (synthetic_index.parent / helper).write_text(
@@ -1520,6 +1521,7 @@ def test_ask_user_uses_ctx_ui_select_in_rpc_mode(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 SUBAGENT_TS = ROOT / "pi" / "extensions" / "subagent.ts"
+SUBAGENT_JSON_TS = ROOT / "pi" / "extensions" / "subagent-json.ts"
 AGENT_SPEC_TS = ROOT / "pi" / "extensions" / "agent-spec.ts"
 MODEL_POLICY_TS = ROOT / "pi" / "extensions" / "model-policy.ts"
 
@@ -1534,6 +1536,18 @@ const mod = await import(pathToFileURL(modPath).href);
 const execCalls = [];
 const modelRegistryCalls = [];
 const notifyCalls = [];
+const defaultStdout = JSON.stringify({
+  type: "message_end",
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: "agent output" }],
+    usage: {
+      input: 1, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 10,
+      cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
+    },
+    stopReason: "stop",
+  },
+});
 let activeUpdateCalls = [];
 const stubPi = {
   registerTool(tool) { this._registered = tool; },
@@ -1550,7 +1564,7 @@ const stubPi = {
     });
     if (config.execBehavior === "throw") throw new Error("forced exec throw (test)");
     if (config.execBehavior === "failure") return { stdout: "", stderr: "boom", code: 1, killed: false };
-    return { stdout: "agent output", stderr: "", code: 0, killed: false };
+    return { stdout: config.execStdout ?? defaultStdout, stderr: "", code: 0, killed: false };
   },
 };
 
@@ -1948,8 +1962,15 @@ def _write_synthetic_agents_root(tmp_path_factory):
     return root
 
 
-def _subagent_result(root, tmp_path_factory, *, exec_behavior="success", env=None):
-    config = {"root": str(root), "cwd": str(root), "execBehavior": exec_behavior}
+def _subagent_result(
+    root, tmp_path_factory, *, exec_behavior="success", exec_stdout=None, env=None
+):
+    config = {
+        "root": str(root),
+        "cwd": str(root),
+        "execBehavior": exec_behavior,
+        "execStdout": exec_stdout,
+    }
     node = shutil.which("node")
     assert node is not None
     driver = tmp_path_factory.mktemp("pi-subagent-driver") / "driver.mjs"
@@ -1962,6 +1983,44 @@ def _subagent_result(root, tmp_path_factory, *, exec_behavior="success", env=Non
     )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     return json.loads(result.stdout)
+
+
+_SUBAGENT_JSON_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , modPath, stdout] = process.argv;
+const mod = await import(pathToFileURL(modPath).href);
+try {
+  console.log(JSON.stringify({ ok: true, result: mod.parseNestedTaskJson(stdout) }));
+} catch (err) {
+  console.log(JSON.stringify({ ok: false, message: String(err && err.message) }));
+}
+"""
+
+
+def _parse_subagent_json(stdout, tmp_path_factory):
+    return _run_node(
+        _SUBAGENT_JSON_DRIVER,
+        [str(SUBAGENT_JSON_TS), stdout],
+        tmp_path_factory,
+        label="pi-subagent-json-driver",
+    )
+
+
+def _pi_usage():
+    return {
+        "input": 1,
+        "output": 2,
+        "cacheRead": 3,
+        "cacheWrite": 4,
+        "totalTokens": 10,
+        "cost": {
+            "input": 0.1,
+            "output": 0.2,
+            "cacheRead": 0.3,
+            "cacheWrite": 0.4,
+            "total": 1,
+        },
+    }
 
 
 @pytest.fixture(scope="module")
@@ -2246,6 +2305,293 @@ def test_subagent_success_builds_expected_argv_and_cleans_up_temp_file(subagent_
     assert "--thinking" not in args, "no --thinking flag when ctx.model is undefined"
 
     assert result["promptFileGoneAfterSuccess"] is True
+
+
+@requires_node
+def test_subagent_json_mode_returns_final_text_and_aggregated_usage(subagent_root, tmp_path_factory):
+    first_usage = {
+        "input": 10,
+        "output": 2,
+        "cacheRead": 3,
+        "cacheWrite": 4,
+        "cacheWrite1h": 2,
+        "reasoning": 1,
+        "totalTokens": 19,
+        "cost": {
+            "input": 0.25,
+            "output": 0.5,
+            "cacheRead": 0.125,
+            "cacheWrite": 0.0625,
+            "total": 0.9375,
+        },
+    }
+    second_usage = {
+        "input": 20,
+        "output": 5,
+        "cacheRead": 6,
+        "cacheWrite": 7,
+        "reasoning": 3,
+        "totalTokens": 38,
+        "cost": {
+            "input": 0.5,
+            "output": 1,
+            "cacheRead": 0.25,
+            "cacheWrite": 0.125,
+            "total": 1.875,
+        },
+    }
+    first_message = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "intermediate"}],
+        "usage": first_usage,
+        "stopReason": "toolUse",
+    }
+    final_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "hidden"},
+            {"type": "text", "text": "final one"},
+            {"type": "text", "text": "final two"},
+        ],
+        "usage": second_usage,
+        "stopReason": "stop",
+    }
+    ignored_usage = {
+        **second_usage,
+        "input": 999,
+        "totalTokens": 999,
+    }
+    stdout = "\n".join(
+        json.dumps(event)
+        for event in [
+            {"type": "session", "version": 3},
+            {"type": "message_update", "usage": ignored_usage},
+            {"type": "message_end", "message": first_message},
+            {"type": "turn_end", "message": first_message, "toolResults": []},
+            {
+                "type": "message_end",
+                "message": {"role": "toolResult", "usage": ignored_usage},
+            },
+            {"type": "message_end", "message": final_message},
+            {"type": "agent_end", "messages": [first_message, final_message]},
+        ]
+    )
+
+    result = _subagent_result(
+        subagent_root, tmp_path_factory, exec_stdout=stdout
+    )
+
+    run = result["success"]
+    assert run["ok"] is True
+    assert run["result"]["content"] == [
+        {"type": "text", "text": "final one\nfinal two"}
+    ]
+    assert run["result"]["usage"] == {
+        "input": 30,
+        "output": 7,
+        "cacheRead": 9,
+        "cacheWrite": 11,
+        "cacheWrite1h": 2,
+        "reasoning": 4,
+        "totalTokens": 57,
+        "cost": {
+            "input": 0.75,
+            "output": 1.5,
+            "cacheRead": 0.375,
+            "cacheWrite": 0.1875,
+            "total": 2.8125,
+        },
+    }
+    assert "usage" not in run["result"]["details"]
+
+    args = result["successExecCalls"][0]["args"]
+    mode_idx = args.index("--mode")
+    assert args[mode_idx + 1] == "json"
+
+
+@requires_node
+def test_subagent_json_rejects_malformed_ndjson_with_line_number(tmp_path_factory):
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "partial"}],
+                        "usage": _pi_usage(),
+                        "stopReason": "stop",
+                    },
+                }
+            ),
+            "{not-json",
+        ]
+    )
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert "line 2" in result["message"]
+    assert "malformed JSON" in result["message"]
+    assert "{not-json" not in result["message"]
+
+
+@requires_node
+def test_subagent_json_rejects_missing_final_assistant_message(tmp_path_factory):
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "version": 3}),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {"role": "user", "content": "hello"},
+                }
+            ),
+        ]
+    )
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert "protocol error" in result["message"]
+    assert "missing final assistant message_end" in result["message"]
+
+
+@requires_node
+def test_subagent_json_rejects_missing_final_assistant_text(tmp_path_factory):
+    stdout = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "hidden"}],
+                "usage": _pi_usage(),
+                "stopReason": "stop",
+            },
+        }
+    )
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert "protocol error" in result["message"]
+    assert "missing final assistant text output" in result["message"]
+
+
+@pytest.mark.parametrize("stop_reason", ["error", "aborted"])
+@requires_node
+def test_subagent_json_rejects_failed_final_assistant_message(
+    stop_reason, tmp_path_factory
+):
+    stdout = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "partial"}],
+                "usage": _pi_usage(),
+                "stopReason": stop_reason,
+                "errorMessage": "provider failed",
+            },
+        }
+    )
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert stop_reason in result["message"]
+    assert "provider failed" in result["message"]
+
+
+@requires_node
+def test_subagent_json_failure_preserves_warning_and_caps_diagnostic(
+    subagent_root, tmp_path_factory
+):
+    stdout = json.dumps(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "partial"}],
+                "usage": _pi_usage(),
+                "stopReason": "error",
+                "errorMessage": "x" * 50_010,
+            },
+        }
+    )
+
+    result = _subagent_result(
+        subagent_root, tmp_path_factory, exec_stdout=stdout
+    )
+
+    run = result["withModel"]
+    assert run["ok"] is False
+    assert "tier-unknown" in run["message"]
+    assert "[truncated" in run["message"]
+    assert len(run["message"]) < 51_000
+
+
+@pytest.mark.parametrize(
+    ("field_path", "usage"),
+    [
+        ("usage", None),
+        ("usage.input", {k: v for k, v in _pi_usage().items() if k != "input"}),
+        ("usage.output", {**_pi_usage(), "output": "2"}),
+        ("usage.cacheRead", {**_pi_usage(), "cacheRead": -1}),
+        ("usage.cacheWrite", {**_pi_usage(), "cacheWrite": None}),
+        ("usage.totalTokens", {**_pi_usage(), "totalTokens": -1}),
+        ("usage.cost", {k: v for k, v in _pi_usage().items() if k != "cost"}),
+        (
+            "usage.cost.total",
+            {
+                **_pi_usage(),
+                "cost": {
+                    k: v for k, v in _pi_usage()["cost"].items() if k != "total"
+                },
+            },
+        ),
+        ("usage.cacheWrite1h", {**_pi_usage(), "cacheWrite1h": "1"}),
+        ("usage.reasoning", {**_pi_usage(), "reasoning": -1}),
+    ],
+)
+@requires_node
+def test_subagent_json_rejects_invalid_or_missing_usage(
+    field_path, usage, tmp_path_factory
+):
+    message = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "done"}],
+        "stopReason": "stop",
+    }
+    if usage is not None:
+        message["usage"] = usage
+    stdout = json.dumps({"type": "message_end", "message": message})
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert "protocol error" in result["message"]
+    assert field_path in result["message"]
+
+
+@requires_node
+def test_subagent_json_rejects_non_finite_aggregate_usage(tmp_path_factory):
+    usage = {**_pi_usage(), "input": 1e308}
+    message = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "done"}],
+        "usage": usage,
+        "stopReason": "stop",
+    }
+    stdout = "\n".join(
+        json.dumps({"type": "message_end", "message": message}) for _ in range(2)
+    )
+
+    result = _parse_subagent_json(stdout, tmp_path_factory)
+
+    assert result["ok"] is False
+    assert "protocol error" in result["message"]
+    assert "aggregate usage.input" in result["message"]
 
 
 @requires_node
