@@ -28,6 +28,7 @@ import {
   translateToolTokens,
 } from "./agent-spec.ts";
 import { resolveTargetDispatch } from "./dispatch-resolver.ts";
+import { parseNestedTaskJson } from "./subagent-json.ts";
 import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall, taskRenderResult } from "./task-call-line.ts";
 
 // Re-exported so the behavioural pytest driver and index.ts (which import only this
@@ -133,6 +134,8 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
         const args = [
           "-p",
           prompt,
+          "--mode",
+          "json",
           "--append-system-prompt",
           promptFile,
           "--tools",
@@ -168,14 +171,23 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           );
         }
 
+        let parsed: ReturnType<typeof parseNestedTaskJson>;
+        try {
+          parsed = parseNestedTaskJson(result.stdout);
+        } catch (err) {
+          const diagnostic = capOutput(err instanceof Error ? err.message : String(err));
+          const warningSuffix = dispatch.warning ? ` (${dispatch.warning})` : "";
+          throw new Error(`task: dispatched agent "${agent}" failed${warningSuffix} — ${diagnostic}`);
+        }
         const content = [
           ...(dispatch.warning ? [{ type: "text" as const, text: `[swe-workbench] ${dispatch.warning}` }] : []),
-          { type: "text" as const, text: capOutput(result.stdout) },
+          { type: "text" as const, text: capOutput(parsed.text) },
         ];
 
         return {
           content,
           details: { code: result.code, killed: result.killed, ...dispatch.details },
+          usage: parsed.usage,
         };
       } finally {
         // Unlink then rmdir AFTER pi.exec() resolves, never before — a missing file at read
