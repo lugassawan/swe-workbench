@@ -104,10 +104,9 @@ def _assert_contract(
     retained_wt: str = "0",
     failed: str = "0",
     retained_sf: str = "0",
+    retained_artifacts: str = "0",
 ) -> None:
-    """`retained_wt`/`failed`/`retained_sf` are expected *counts* — checked against
-    the length of the `data.retained_worktrees`/`data.failed_removals`/
-    `data.retained_state_files` arrays, not their content."""
+    """Retained/failed arguments are counts checked against their result arrays."""
     assert result.returncode == 0, (
         f"Script must always exit 0 (rc={result.returncode})\n"
         f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
@@ -115,7 +114,10 @@ def _assert_contract(
     payload = json.loads(result.stdout)
     assert payload["schema"] == "swb.sweep-residuals/1"
     assert payload["warnings"] == []
-    expected_status = "partial" if (int(retained_wt) > 0 or int(failed) > 0 or int(retained_sf) > 0) else "ok"
+    expected_status = "partial" if any(
+        int(count) > 0
+        for count in (retained_wt, failed, retained_sf, retained_artifacts)
+    ) else "ok"
     assert payload["status"] == expected_status, (
         f"expected status={expected_status!r}, got {payload['status']!r}\nFull payload: {payload!r}"
     )
@@ -128,6 +130,7 @@ def _assert_contract(
         "retained_worktrees": len(data["retained_worktrees"]),
         "failed_removals": len(data["failed_removals"]),
         "retained_state_files": len(data["retained_state_files"]),
+        "retained_artifacts": len(data["retained_artifacts"]),
         "residual_none": data["residual_none"],
     }
     expected = {
@@ -138,6 +141,7 @@ def _assert_contract(
         "retained_worktrees": int(retained_wt),
         "failed_removals": int(failed),
         "retained_state_files": int(retained_sf),
+        "retained_artifacts": int(retained_artifacts),
         "residual_none": bool(int(residual_none)),
     }
     assert actual == expected, (
@@ -957,13 +961,114 @@ class TestRepoScopedRunDirSweep:
             d.mkdir()
         try:
             result = _run_script(repo, n, _scoped_env(tmp_path))
-            _assert_contract(result, "0", "0", "0", swept_rd="1")
+            _assert_contract(
+                result, "0", "0", "0", swept_rd="1", retained_artifacts="1"
+            )
             assert not own.exists()
             assert foreign.exists(), "foreign repo's run dir must not be reaped by a scoped sweep"
-            assert legacy.exists(), "legacy run dirs belong to the 24h age-gated reaper, not this sweep"
+            assert legacy.exists(), "unattributable legacy run dir must be retained"
+            assert json.loads(result.stdout)["data"]["retained_artifacts"] == [
+                {
+                    "path": str(legacy.resolve()),
+                    "reason": "legacy run dir is not attributable to the scoped repository",
+                }
+            ]
         finally:
             for d in (own, foreign, legacy):
                 shutil.rmtree(d, ignore_errors=True)
+
+    def test_scoped_sweep_reports_legacy_followup_dir_without_deleting(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        legacy = RUN_ROOT / f"pr-followup-{n}-a1b2c3"
+        legacy.mkdir(parents=True)
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_artifacts="1")
+            assert legacy.exists()
+            assert json.loads(result.stdout)["data"]["retained_artifacts"] == [
+                {
+                    "path": str(legacy.resolve()),
+                    "reason": "legacy run dir is not attributable to the scoped repository",
+                }
+            ]
+
+            shutil.rmtree(legacy)
+            rerun = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(rerun, "0", "0", "1")
+        finally:
+            shutil.rmtree(legacy, ignore_errors=True)
+
+    def test_scoped_sweep_ignores_unsafe_or_unrelated_legacy_run_dirs(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        other_n = _unique_n()
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+        target = tmp_path / "target"
+        target.mkdir()
+        symlink = RUN_ROOT / f"pr-followup-{n}-a1b2c3"
+        symlink.symlink_to(target, target_is_directory=True)
+        malformed = RUN_ROOT / f"pr-followup-{n}-abcde!"
+        unrelated = RUN_ROOT / f"pr-followup-{other_n}-b2c3d4"
+        malformed.mkdir()
+        unrelated.mkdir()
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "1")
+            assert symlink.is_symlink()
+            assert malformed.exists()
+            assert unrelated.exists()
+        finally:
+            symlink.unlink(missing_ok=True)
+            shutil.rmtree(malformed, ignore_errors=True)
+            shutil.rmtree(unrelated, ignore_errors=True)
+
+
+class TestRootReviewerDiffRetention:
+    def test_scoped_sweep_reports_owned_root_diff_without_deleting(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        diff_file = TMP / f"pr-{n}-review.diff"
+        diff_file.write_text("diff --git a/a b/a\n")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "0", retained_artifacts="1")
+            assert diff_file.exists()
+            assert json.loads(result.stdout)["data"]["retained_artifacts"] == [
+                {
+                    "path": str(diff_file.resolve()),
+                    "reason": "root reviewer diff is not attributable to the scoped repository",
+                }
+            ]
+        finally:
+            diff_file.unlink(missing_ok=True)
+
+    def test_scoped_sweep_ignores_unsafe_or_unrelated_root_diff_candidates(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        other_n = _unique_n()
+        target = tmp_path / "target.diff"
+        target.write_text("x")
+        symlink = TMP / f"pr-{n}-linked.diff"
+        symlink.symlink_to(target)
+        directory = TMP / f"pr-{n}-directory.diff"
+        directory.mkdir()
+        empty_suffix = TMP / f"pr-{n}-.diff"
+        empty_suffix.write_text("x")
+        unrelated = TMP / f"pr-{other_n}-review.diff"
+        unrelated.write_text("x")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "0", "1")
+            assert symlink.is_symlink()
+            assert directory.is_dir()
+            assert empty_suffix.exists()
+            assert unrelated.exists()
+        finally:
+            symlink.unlink(missing_ok=True)
+            directory.rmdir()
+            empty_suffix.unlink(missing_ok=True)
+            unrelated.unlink(missing_ok=True)
 
 
 class TestRepoScopedFallbackWorktreeSweep:

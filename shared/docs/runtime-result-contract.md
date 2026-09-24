@@ -47,7 +47,10 @@ missing script.
 
 A backward-incompatible change to a producer's `data` shape bumps the major
 (`swb.foo/1` → `swb.foo/2`) and updates every consumer in the same PR. There is no
-dual-emit period — see "No dual-emit" below.
+dual-emit period — see "No dual-emit" below. Adding a field that makes an existing
+claim more accurate is compatible: for example, `swb.sweep-residuals/1` added
+`retained_artifacts` so its existing `status: partial` and `residual_none: false`
+semantics include detected artifacts that cannot safely be deleted.
 
 ## Exit code and `status` are orthogonal
 
@@ -120,7 +123,7 @@ contract does not mean every producer should adopt it:
 |---|---|---|
 | **S — bare scalar** | Output is a single trusted value with no structure to lose. | `swe-workbench-new-run-dir` prints a bare path — `RUN_DIR=$(swe-workbench-new-run-dir ...)`, no `eval`, nothing to validate. |
 | **Q — quoted scalars, kept** | Multiple trusted scalars, already `printf %q`-quoted for safe `eval`, with any free-text channel already routed around `eval` entirely (a side-channel JSON file, read with `jq`). | `swe-workbench-preflight-pr` emits 6 `%q`-quoted fields; `title`/`body` go through `$OUT_JSON`, never through `eval`. Migrating buys nothing a golden-literal ratchet test doesn't already guard. |
-| **J — envelope** | The result has real structure to lose — a list of records, per-item failure detail, or genuine partial-success semantics that a bare exit code can't express. | `swe-workbench-sweep-residuals`'s retained/failed worktrees as `[{path, reason}]`, not a count. |
+| **J — envelope** | The result has real structure to lose — a list of records, per-item failure detail, or genuine partial-success semantics that a bare exit code can't express. | `swe-workbench-sweep-residuals`'s retained worktrees/state files/artifacts and failed removals as `[{path, reason}]`, not counts. |
 
 Ask, in order:
 
