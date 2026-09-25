@@ -102,21 +102,15 @@ def test_pr_review_skill_cleanup_deletes_pr_json():
     preflight state file. The threads-cache file moved to workflow-pr-review-post's
     own reap (#499) — it owns a distinct ${PR}-post-threads.json, not this file's job.
 
-    Since #565 folded the standalone followup skill into this skill as a mode, the state-file
-    path is templated via $STATE_SUFFIX (empty for first-pass, "-followup" for followup)
-    rather than a literal ${PR}.json — first-pass mode's own mode-table row must resolve
-    STATE_SUFFIX to empty."""
+    The preflight path may be repo-scoped, so cleanup must consume the exact `$JSON`
+    value established in Step 1 rather than reconstructing a legacy path."""
     text = SKILL_MD.read_text()
-    assert "swe-workbench-clean-state-files" in text, (
-        "SKILL.md Step 7 must call swe-workbench-clean-state-files to remove its own per-run state file"
+    assert 'swe-workbench-clean-state-files "$JSON"' in text, (
+        "SKILL.md Step 7 must reap the exact repo-scoped preflight path held in $JSON"
     )
-    assert "/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json" in text, (
-        "SKILL.md must pass /tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json to "
-        "swe-workbench-clean-state-files, so first-pass mode reaps ${PR}.json"
-    )
-    assert re.search(r'first-pass\)[^\n]*STATE_SUFFIX=""', text), (
-        'SKILL.md mode table must set STATE_SUFFIX="" for first-pass mode, so '
-        "${PR}${STATE_SUFFIX}.json resolves to ${PR}.json"
+    step7 = text.split("### Step 7 — Cleanup")[1]
+    assert '/tmp/swe-workbench-pr-review/${PR}${STATE_SUFFIX}.json' not in step7, (
+        "Step 7 must not reconstruct the legacy unscoped preflight path"
     )
 
 
@@ -188,13 +182,33 @@ def test_pr_review_skill_followup_gate_precedes_run_dir_allocation():
     rather than allocating and then leaking it."""
     text = SKILL_MD.read_text()
     gate_idx = text.find('[ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]')
-    run_dir_idx = text.find('swe-workbench-new-run-dir "$MODE_TAG" "$PR"')
+    run_dir_idx = text.find(
+        'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO"'
+    )
     assert gate_idx != -1, "SKILL.md Step 1 must contain the followup STATE gate"
     assert run_dir_idx != -1, "SKILL.md Step 1 must contain the swe-workbench-new-run-dir call"
     assert gate_idx < run_dir_idx, (
         "the followup STATE gate must precede swe-workbench-new-run-dir allocation — "
         "otherwise a rejected followup PR leaks $RUN_DIR"
     )
+
+
+def test_pr_review_skill_uses_one_repo_source_for_state_and_run_dir_scope():
+    text = SKILL_MD.read_text()
+    assert 'PR_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)' in text
+    assert 'swe-workbench-repo-scope --repo "$PR_REPO"' in text
+    assert 'swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO"' in text
+
+
+def test_pr_review_skill_passes_run_dir_as_reviewer_scratch_boundary():
+    text = SKILL_MD.read_text()
+    step4 = text.split("### Step 4 — Invoke `swe-workbench:reviewer`")[1].split(
+        "### Step 5 — Parse decision footer"
+    )[0]
+    assert "$RUN_DIR" in step4
+    assert "materialized" in step4.lower()
+    assert "/tmp" in step4
+    assert "scratchpad" in step4.lower()
 
 
 def test_pr_review_skill_followup_reject_reaps_json():

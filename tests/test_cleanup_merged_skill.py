@@ -419,6 +419,30 @@ def test_cleanup_merged_step7_report_includes_retained_and_failed_line():
     )
 
 
+def test_cleanup_merged_reports_retained_legacy_artifacts():
+    """Unattributable review artifacts must be visible in both sweep semantics and report."""
+    body = SKILL.read_text()
+    step5 = body.split("### Step 5 — Residual Sweep")[1].split(
+        "### Step 6 — Delete Branches"
+    )[0]
+    step7 = body.split("### Step 7 — Report")[1].split(
+        "## Worktree Removal Strategies"
+    )[0]
+
+    assert "retained_artifacts" in step5
+    assert "legacy" in step5.lower() and "run dir" in step5.lower()
+    assert "root" in step5.lower() and "diff" in step5.lower()
+    assert "retained_artifacts" in step7
+    assert "retained artifact" in step7.lower()
+    assert "path" in step7.lower() and "reason" in step7.lower()
+
+    failure_table = body.split("## Failure Mode Table")[1].split(
+        "### Recovery Examples"
+    )[0]
+    assert "retained_state_files" in failure_table
+    assert "retained_artifacts" in failure_table
+
+
 def test_cleanup_merged_step5_scratchpad_sweep_is_session_scoped_not_pr_scoped():
     """Step 5's session-scratchpad sweep must be documented as scoped by session id,
     deliberately NOT scoped to #<number> — issue #595 / AC4: scratchpad residuals

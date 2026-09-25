@@ -32,15 +32,19 @@
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import {
-  compareArm,
-  extractDispatchError,
   extractFinalAssistantText,
-  parsePipeDelimitedFindings,
+  formatPiSpawnError,
+  modelIdentityOrDispatchError,
+  parseAblationResponse,
+  planAblationArms,
+  summarizeAblationRecords,
   usageOrDispatchError,
+  validateAblationRecord,
 } from "./preload-probe-lib.mjs";
 
 /** Fixed, deterministic prompt for the `cache` subcommand's two dispatches — trivial on purpose
@@ -53,11 +57,21 @@ const TRIVIAL_PROMPT = "Reply with the single word: ack.";
  *  presence/absence of the omitted skill's body in the system prompt. */
 const ABLATE_REVIEW_PROMPT_PREFIX = "Review this diff:\n\n";
 
+const ABLATE_OUTPUT_CONTRACT = `## Ablation probe output contract
+
+For this probe, replace the agent's normal response shape with exactly one of:
+
+- One finding per line: \`Severity | File:Line | Issue | Why it matters | Suggested fix\`
+- \`No ablation issues found in this diff.\` when there are no findings
+
+Do not emit headings, prose, tables, code fences, summaries, or review decisions. Preserve the
+mandatory \`SWB-CANARIES-APPLIED: ...\` footer when the agent instructions require it.`;
+
 const USAGE =
   "usage:\n" +
   "  node --experimental-strip-types scripts/preload-probe.mjs cache --agent <id> [--dry-run] [--model <provider>/<id>]\n" +
-  "  node --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit <skill-id> [--dry-run] [--model <provider>/<id>]\n" +
-  "  node --experimental-strip-types scripts/preload-probe.mjs ablate --report [--agent <id>]";
+  "  node --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit <skill-id> --sweep <id> --model <provider>/<id> [--dry-run]\n" +
+  "  node --experimental-strip-types scripts/preload-probe.mjs ablate --report --sweep <id> [--agent <id>]";
 
 class UsageError extends Error {}
 
@@ -74,8 +88,8 @@ function pluginRoot() {
  *
  *  Returns one of:
  *    { subcommand: "cache", agent, dryRun, model }
- *    { subcommand: "ablate", mode: "run", agent, corpus, omit, dryRun, model }
- *    { subcommand: "ablate", mode: "report", agent }  // agent optional (undefined = all agents)
+ *    { subcommand: "ablate", mode: "run", agent, corpus, omit, sweep, dryRun, model }
+ *    { subcommand: "ablate", mode: "report", sweep, agent }  // agent optional
  */
 function parseArgs(argv) {
   const [subcommand, ...rest] = argv;
@@ -112,6 +126,7 @@ function parseArgs(argv) {
   let agent;
   let corpus;
   let omit;
+  let sweep;
   let dryRun = false;
   let model;
   let report = false;
@@ -123,6 +138,8 @@ function parseArgs(argv) {
       corpus = rest[++i];
     } else if (token === "--omit") {
       omit = rest[++i];
+    } else if (token === "--sweep") {
+      sweep = rest[++i];
     } else if (token === "--dry-run") {
       dryRun = true;
     } else if (token === "--model") {
@@ -135,7 +152,10 @@ function parseArgs(argv) {
   }
 
   if (report) {
-    return { subcommand, mode: "report", agent };
+    if (!sweep) {
+      throw new UsageError(`--sweep <id> is required in report mode\n${USAGE}`);
+    }
+    return { subcommand, mode: "report", sweep, agent };
   }
 
   if (!agent) {
@@ -147,7 +167,7 @@ function parseArgs(argv) {
   if (!omit) {
     throw new UsageError(`--omit <skill-id> is required\n${USAGE}`);
   }
-  return { subcommand, mode: "run", agent, corpus, omit, dryRun, model };
+  return { subcommand, mode: "run", agent, corpus, omit, sweep, dryRun, model };
 }
 
 /** Loads pi/extensions/agent-spec.ts via the same pathToFileURL(...).href dynamic-import pattern
@@ -212,8 +232,13 @@ function resolveAblateArms(agentSpecModule, root, agent, omitBare) {
     );
   }
   const omitSkillIds = spec.skillIds.filter((id) => bareSkillId(id) !== omitBare);
-  const baselinePrompt = composePromptForSkillIds(agentSpecModule, root, spec, spec.skillIds);
-  const omitPrompt = composePromptForSkillIds(agentSpecModule, root, spec, omitSkillIds);
+  const withOutputContract = (prompt) => `${prompt}\n\n---\n\n${ABLATE_OUTPUT_CONTRACT}`;
+  const baselinePrompt = withOutputContract(
+    composePromptForSkillIds(agentSpecModule, root, spec, spec.skillIds),
+  );
+  const omitPrompt = withOutputContract(
+    composePromptForSkillIds(agentSpecModule, root, spec, omitSkillIds),
+  );
   return { spec, baselinePrompt, omitPrompt };
 }
 
@@ -235,6 +260,41 @@ function listCorpusDiffFiles(corpusDir) {
     throw new Error(`--corpus directory contains no *.diff files: "${corpusDir}"`);
   }
   return files;
+}
+
+function sha256(parts) {
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(part);
+  return `sha256:${hash.digest("hex")}`;
+}
+
+function snapshotCorpus(corpusDir, files) {
+  const parts = [];
+  const contents = new Map();
+  for (const filename of files) {
+    const content = readFileSync(join(corpusDir, filename), "utf8");
+    contents.set(filename, content);
+    parts.push(`${filename}\0`, content, "\0");
+  }
+  return {
+    metadata: { fingerprint: sha256(parts), files },
+    contents,
+  };
+}
+
+function cleanGitCommit(root) {
+  const commit = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" });
+  if (commit.status !== 0) {
+    throw new Error(`cannot resolve git commit: ${(commit.stderr ?? "").trim() || "git failed"}`);
+  }
+  const status = spawnSync("git", ["-C", root, "status", "--porcelain"], { encoding: "utf8" });
+  if (status.status !== 0) {
+    throw new Error(`cannot inspect git status: ${(status.stderr ?? "").trim() || "git failed"}`);
+  }
+  if ((status.stdout ?? "").trim()) {
+    throw new Error("live ablation requires a clean git worktree so its commit is reproducible");
+  }
+  return commit.stdout.trim();
 }
 
 /** Builds the `pi` argv array per the "Argv reproduction" contract: subagent.ts's own shape
@@ -267,25 +327,39 @@ const DISPATCH_TIMEOUT_MS = 15 * 60 * 1000;
  *  truncating at a default. */
 const DISPATCH_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 
-/** Runs `pi` once with the given argv and captures stdout as text. Throws (with captured stderr)
- *  on a missing binary, a timeout, an output-size overrun, or a non-zero exit — never swallows a
- *  dispatch failure. */
-function runPiOnce(args) {
+/** Runs `pi` once with the given argv and captures stdout as text. Spawn failures expose only
+ *  sanitized progress metadata; non-zero exits retain stderr. No dispatch failure is swallowed. */
+function runPiOnce(args, label) {
+  const startedAt = Date.now();
   const result = spawnSync("pi", args, {
-    encoding: "utf8",
     timeout: DISPATCH_TIMEOUT_MS,
     maxBuffer: DISPATCH_MAX_BUFFER_BYTES,
   });
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const stdout = result.stdout?.toString("utf8") ?? "";
+  const stderr = result.stderr?.toString("utf8") ?? "";
   if (result.error) {
-    throw new Error(`failed to spawn "pi": ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    const stderr = (result.stderr ?? "").trim() || "(no stderr)";
     throw new Error(
-      `pi exited ${result.status}${result.signal ? ` (signal ${result.signal})` : ""} — ${stderr}`,
+      formatPiSpawnError({
+        errorCode: result.error.code,
+        errorMessage: result.error.message,
+        label,
+        elapsedMs,
+        timeoutMs: DISPATCH_TIMEOUT_MS,
+        stdout,
+        stderr,
+        stdoutBytes: result.stdout?.length ?? 0,
+        stderrBytes: result.stderr?.length ?? 0,
+      }),
     );
   }
-  return result.stdout ?? "";
+  if (result.status !== 0) {
+    const diagnosticStderr = stderr.trim() || "(no stderr)";
+    throw new Error(
+      `pi exited ${result.status}${result.signal ? ` (signal ${result.signal})` : ""} — ${diagnosticStderr}`,
+    );
+  }
+  return stdout;
 }
 
 /** Writes `systemPrompt` to a fresh temp file, runs `fn(promptFilePath)`, and always cleans up —
@@ -313,8 +387,8 @@ function withTempSystemPromptFile(systemPrompt, fn) {
   }
 }
 
-// extractFinalAssistantText, parsePipeDelimitedFindings, SEVERITY_RANK, extractFinalUsage,
-// extractDispatchError, and usageOrDispatchError live in ./preload-probe-lib.mjs (testability).
+// Pure response parsing, usage/model gates, resume planning, and report aggregation live in
+// ./preload-probe-lib.mjs so paid-dispatch integrity rules are independently testable.
 
 /** Resolves the dispatch-probes cache directory the same way hooks/skill_usage_flush.sh's
  *  `cache_dir` resolves its own cache dir (`${CLAUDE_PROJECT_DIR:-$PWD}/.claude/cache/skill-usage`)
@@ -358,25 +432,48 @@ function appendCacheRunRecord(agent, run, usage) {
   }
 }
 
-/** Appends one JSON record for a single ablate dispatch arm to ablation-runs.jsonl (sibling of
- *  cache-runs.jsonl, same directory-resolution/mkdir -p logic reused via cacheRunsDir() rather
- *  than duplicated). Record shape: `{diff, agent, omitted, findings[]}`, with `omitted: null` for
- *  the baseline arm and `omitted: "<bare-skill-id>"` (the exact string the caller passed to
- *  `--omit`) for the omit arm. Same never-throws-on-append-failure posture as
- *  appendCacheRunRecord. */
-function appendAblationRunRecord(diffFilename, agent, omitted, findings) {
-  const record = { diff: diffFilename, agent, omitted, findings };
+/** Persists one authoritative ablation arm. Unlike cache telemetry, ablation reporting
+ *  depends on durable per-arm evidence, so a write failure aborts the sweep. */
+function appendAblationRunRecord(record) {
+  validateAblationRecord(record);
+  const dir = cacheRunsDir();
   try {
-    const dir = cacheRunsDir();
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "ablation-runs.jsonl"), `${JSON.stringify(record)}\n`);
   } catch (err) {
-    console.error(`preload-probe: warning: failed to append ablation-run record: ${err.message}`);
+    throw new Error(`failed to persist ablation-run record: ${err.message}`);
   }
 }
 
 function ablationRunsFilePath() {
   return join(cacheRunsDir(), "ablation-runs.jsonl");
+}
+
+/** Holds an atomic per-pair directory lock from resume planning through the final append. A
+ *  crash may leave the lock behind deliberately: manual inspection is safer than silently
+ *  dispatching a second paid process against uncertain state. */
+function withAblationPairLock(identity, fn) {
+  const dir = cacheRunsDir();
+  mkdirSync(dir, { recursive: true });
+  const digest = sha256([identity.sweep, "\0", identity.agent, "\0", identity.omitted]).slice(7, 23);
+  const lockPath = join(dir, `ablation-${digest}.lock`);
+  try {
+    mkdirSync(lockPath);
+  } catch (err) {
+    if (err.code === "EEXIST") {
+      throw new Error(
+        `ablation pair is already locked for sweep=${identity.sweep} ` +
+          `agent=${identity.agent} omitted=${identity.omitted}; ` +
+          `if no probe is running, inspect evidence then remove ${lockPath}`,
+      );
+    }
+    throw err;
+  }
+  try {
+    return fn();
+  } finally {
+    rmdirSync(lockPath);
+  }
 }
 
 /** Fraction of input tokens that were served from cache, guarding divide-by-zero. */
@@ -397,33 +494,18 @@ function formatRunSummary(label, usage) {
   return lines.join("\n");
 }
 
-/** Dispatches one ablate arm (a single `pi --mode json` run) and returns its parsed findings.
- *  Reuses withTempSystemPromptFile (temp-file handling), buildDispatchArgv (argv construction),
- *  and runPiOnce (spawn) — the exact same helpers the `cache` subcommand's dispatch uses, just
- *  with an explicit `prompt` (the diff-review prompt) instead of the default TRIVIAL_PROMPT, and
- *  a text extractor instead of a usage extractor. Failure posture deliberately differs from
- *  `cache`'s usage gate: missing findings TEXT degrades to zero findings (with a warning only
- *  when no assistant message_end was found at all — an empty-but-present response degrades
- *  silently), because a review that said nothing is a reportable outcome — but an errored
- *  dispatch that produced no
- *  text at all throws, because recording it as a clean zero-findings arm would corrupt the
- *  ablation comparison. Retry-aware: pi retries retryable provider errors by default, so an
- *  early errored turn followed by a successful one is a RECOVERED dispatch and must not throw. */
-function dispatchArmFindings({ systemPrompt, prompt, model }) {
+/** Dispatches one ablate arm and returns findings plus billed usage. The arm is accepted only
+ *  when the final successful turn matches the requested model and emits either structured
+ *  findings or the explicit no-issues sentence; ambiguous output is never recorded as zero. */
+function dispatchArmMeasurement({ systemPrompt, prompt, model, label }) {
   return withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ prompt, promptFilePath, model });
-    const stdout = runPiOnce(args);
+    const stdout = runPiOnce(args, label);
+    const usage = usageOrDispatchError(stdout, label);
+    modelIdentityOrDispatchError(stdout, model);
     const text = extractFinalAssistantText(stdout);
-    if (text === null || text === "") {
-      const dispatchError = extractDispatchError(stdout);
-      if (dispatchError) {
-        throw new Error(`dispatch failed before producing findings — ${dispatchError}`);
-      }
-    }
-    if (text === null) {
-      console.error("preload-probe: warning: no assistant message_end found in this run's output");
-    }
-    return parsePipeDelimitedFindings(text ?? "");
+    const findings = parseAblationResponse(text ?? "");
+    return { findings, usage };
   });
 }
 
@@ -469,8 +551,11 @@ async function mainCache({ agent, dryRun, model }) {
   const { firstUsage, secondUsage } = withTempSystemPromptFile(systemPrompt, (promptFilePath) => {
     const args = buildDispatchArgv({ promptFilePath, model });
     return {
-      firstUsage: usageOrDispatchError(runPiOnce(args), "run 1 (cold)"),
-      secondUsage: usageOrDispatchError(runPiOnce(args), "run 2 (repeat, same prefix)"),
+      firstUsage: usageOrDispatchError(runPiOnce(args, "run 1 (cold)"), "run 1 (cold)"),
+      secondUsage: usageOrDispatchError(
+        runPiOnce(args, "run 2 (repeat, same prefix)"),
+        "run 2 (repeat, same prefix)",
+      ),
     };
   });
 
@@ -488,135 +573,125 @@ async function mainCache({ agent, dryRun, model }) {
   );
 }
 
-async function mainAblateRun({ agent, corpus, omit, dryRun, model }) {
+async function mainAblateRun({ agent, corpus, omit, sweep, dryRun, model }) {
   const root = pluginRoot();
   const agentSpecModule = await loadAgentSpecModule(root);
   const { baselinePrompt, omitPrompt } = resolveAblateArms(agentSpecModule, root, agent, omit);
-  // Validated even under --dry-run: a bad --corpus is a usage mistake worth catching before the
-  // (expensive, real-money) live pilot, and dry-run's own summary reports the file count.
   const files = listCorpusDiffFiles(corpus);
 
   if (dryRun) {
     printAblateDryRunSummary({ omit, baselinePrompt, omitPrompt, corpusFileCount: files.length });
     return;
   }
-
-  for (const filename of files) {
-    const diffContent = readFileSync(join(corpus, filename), "utf8");
-    const prompt = `${ABLATE_REVIEW_PROMPT_PREFIX}${diffContent}`;
-
-    const baselineFindings = dispatchArmFindings({ systemPrompt: baselinePrompt, prompt, model });
-    appendAblationRunRecord(filename, agent, null, baselineFindings);
-    console.log(`${filename} baseline: ${baselineFindings.length} finding(s)`);
-
-    const omitFindings = dispatchArmFindings({ systemPrompt: omitPrompt, prompt, model });
-    appendAblationRunRecord(filename, agent, omit, omitFindings);
-    console.log(`${filename} omit(${omit}): ${omitFindings.length} finding(s)`);
+  if (!sweep || !model) {
+    throw new UsageError(`live ablate mode requires --sweep <id> and --model <provider>/<id>\n${USAGE}`);
   }
+
+  const corpusSnapshot = snapshotCorpus(corpus, files);
+  const identity = {
+    sweep,
+    agent,
+    omitted: omit,
+    model,
+    commit: cleanGitCommit(root),
+    corpus: corpusSnapshot.metadata,
+    promptFingerprints: {
+      baseline: sha256([baselinePrompt]),
+      omit: sha256([omitPrompt]),
+    },
+  };
+  return withAblationPairLock(identity, () => {
+    const records = readAblationRecords() ?? [];
+    const pending = planAblationArms(records, identity);
+    if (pending.length === 0) {
+      console.log(
+        `sweep=${sweep} agent=${agent} omitted=${omit}: already complete; no dispatches needed`,
+      );
+      return;
+    }
+
+    for (const { diff, arm } of pending) {
+      const diffContent = corpusSnapshot.contents.get(diff);
+      const prompt = `${ABLATE_REVIEW_PROMPT_PREFIX}${diffContent}`;
+      const systemPrompt = arm === "baseline" ? baselinePrompt : omitPrompt;
+      const label = `${diff} ${arm}`;
+      const { findings, usage } = dispatchArmMeasurement({ systemPrompt, prompt, model, label });
+      appendAblationRunRecord({
+        schemaVersion: 2,
+        sweep: identity.sweep,
+        agent: identity.agent,
+        omitted: identity.omitted,
+        model: identity.model,
+        commit: identity.commit,
+        corpus: identity.corpus,
+        diff,
+        arm,
+        promptFingerprint: identity.promptFingerprints[arm],
+        findings,
+        usage,
+        ts: new Date().toISOString(),
+      });
+      console.log(
+        `${diff} ${arm}${arm === "omit" ? `(${omit})` : ""}: ${findings.length} finding(s)`,
+      );
+    }
+  });
 }
 
-/** Reads ablation-runs.jsonl back into an array of records. Returns null (distinct from an empty
- *  array) when the file doesn't exist at all — the "no data yet" case report mode needs to
- *  distinguish from "data exists but nothing matched the --agent filter". Malformed lines are
- *  skipped defensively, same posture as extractFinalUsage. */
+/** Reads the durable evidence file fail-closed. A malformed line invalidates the report
+ *  instead of disappearing and making incomplete coverage look clean. */
 function readAblationRecords() {
   const path = ablationRunsFilePath();
   if (!existsSync(path)) return null;
   const text = readFileSync(path, "utf8");
   const records = [];
-  for (const line of text.split("\n")) {
+  for (const [index, line] of text.split("\n").entries()) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       records.push(JSON.parse(trimmed));
     } catch {
-      continue;
+      throw new Error(`malformed JSON in ablation-runs.jsonl at line ${index + 1}`);
     }
   }
   return records;
 }
 
-/** Groups ablation-runs.jsonl records by agent, splitting each agent's records into its baseline
- *  records (keyed by diff filename — `omitted: null`) and its omit-arm records (kept as a flat
- *  list, each still carrying its own `diff`/`omitted` fields, since one agent can have several
- *  different omitted skills' worth of runs). Records missing required fields, or excluded by
- *  `agentFilter`, are skipped. */
-function groupAblationRecords(records, agentFilter) {
-  const byAgent = new Map();
-  for (const rec of records) {
-    if (!rec || typeof rec !== "object" || !rec.diff || !rec.agent) continue;
-    if (agentFilter && rec.agent !== agentFilter) continue;
-    let bucket = byAgent.get(rec.agent);
-    if (!bucket) {
-      bucket = { baselineByDiff: new Map(), omitRecords: [] };
-      byAgent.set(rec.agent, bucket);
-    }
-    if (rec.omitted === null || rec.omitted === undefined) {
-      bucket.baselineByDiff.set(rec.diff, Array.isArray(rec.findings) ? rec.findings : []);
-    } else {
-      bucket.omitRecords.push(rec);
-    }
-  }
-  return byAgent;
-}
-
-// compareArm (the baseline-vs-omit-arm matching heuristic, documented in detail in
-// ./preload-probe-lib.mjs) is imported above, alongside the other pure ablate-report helpers.
-
-function reportAblation(agentFilter) {
+function reportAblation(sweep, agentFilter) {
   const records = readAblationRecords();
   if (records === null) {
     console.log(
       "no ablation-run data collected yet — run:\n" +
-        "  node --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit <skill-id>\n" +
+        "  node --experimental-strip-types scripts/preload-probe.mjs ablate --agent <id> --corpus <dir> --omit <skill-id> --sweep <id> --model <provider>/<id>\n" +
         "first, then re-run --report.",
     );
     return;
   }
 
-  const byAgent = groupAblationRecords(records, agentFilter);
-  if (byAgent.size === 0) {
+  const summaries = summarizeAblationRecords(records, { sweep, agent: agentFilter });
+  if (summaries.length === 0) {
     console.log(
-      `no ablation-run data collected yet${agentFilter ? ` for agent "${agentFilter}"` : ""} — run ` +
-        "ablate first, then re-run --report.",
+      `no ablation-run data collected yet for sweep "${sweep}"` +
+        `${agentFilter ? ` and agent "${agentFilter}"` : ""} — run ablate first, then re-run --report.`,
     );
     return;
   }
 
-  for (const [agent, bucket] of byAgent) {
-    const omittedSkills = [...new Set(bucket.omitRecords.map((rec) => rec.omitted))];
-    for (const omitted of omittedSkills) {
-      let totalLost = 0;
-      let totalDowngraded = 0;
-      const perDiffLines = [];
-
-      for (const rec of bucket.omitRecords.filter((r) => r.omitted === omitted)) {
-        const baselineFindings = bucket.baselineByDiff.get(rec.diff);
-        if (!baselineFindings) {
-          console.error(
-            `preload-probe: warning: no baseline record found for diff "${rec.diff}" (agent "${agent}") — skipping`,
-          );
-          continue;
-        }
-        const omitFindings = Array.isArray(rec.findings) ? rec.findings : [];
-        const { lost, downgraded } = compareArm(baselineFindings, omitFindings);
-        totalLost += lost.length;
-        totalDowngraded += downgraded.length;
-
-        if (lost.length > 0 || downgraded.length > 0) {
-          perDiffLines.push(`  ${rec.diff}:`);
-          for (const finding of lost) {
-            perDiffLines.push(`    lost: ${finding.fileLine} (${finding.severity})`);
-          }
-          for (const d of downgraded) {
-            perDiffLines.push(`    downgraded: ${d.baseline.fileLine} ${d.baseline.severity} -> ${d.omit.severity}`);
-          }
-        }
+  for (const summary of summaries) {
+    console.log(
+      `agent=${summary.agent} omitted=${summary.omitted}: ` +
+        `lost=${summary.lost} downgraded=${summary.downgraded} model=${summary.model}`,
+    );
+    for (const detail of summary.diffs) {
+      console.log(`  ${detail.diff}:`);
+      for (const finding of detail.lost) {
+        console.log(`    lost: ${finding.fileLine} (${finding.severity})`);
       }
-
-      console.log(`agent=${agent} omitted=${omitted}: lost=${totalLost} downgraded=${totalDowngraded}`);
-      for (const line of perDiffLines) {
-        console.log(line);
+      for (const downgrade of detail.downgraded) {
+        console.log(
+          `    downgraded: ${downgrade.baseline.fileLine} ` +
+            `${downgrade.baseline.severity} -> ${downgrade.omit.severity}`,
+        );
       }
     }
   }
@@ -631,7 +706,7 @@ async function main(argv) {
 
   // subcommand === "ablate"
   if (parsed.mode === "report") {
-    reportAblation(parsed.agent);
+    reportAblation(parsed.sweep, parsed.agent);
     return;
   }
   return mainAblateRun(parsed);

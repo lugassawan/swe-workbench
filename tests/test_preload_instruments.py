@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,134 @@ def test_every_pi_spawn_is_bounded_by_a_timeout_and_a_maxbuffer():
     assert re.search(r"const DISPATCH_MAX_BUFFER_BYTES = 50 \* 1024 \* 1024;", text), (
         "DISPATCH_MAX_BUFFER_BYTES must stay well clear of Node's 1 MiB spawnSync default"
     )
+
+
+@requires_node
+def test_timeout_diagnostic_identifies_arm_without_echoing_partial_content():
+    """A timed-out paid arm must identify where it stalled without leaking captured reasoning.
+
+    Regression target: replacing the structured formatter with the former bare
+    ``spawnSync pi ETIMEDOUT`` message loses the diff/arm and all progress metadata; including
+    raw stdout/stderr instead leaks model reasoning and possibly provider diagnostics.
+    """
+    sensitive = "SENSITIVE MODEL REASONING"
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "message_start", "private": sensitive}),
+            "not-json",
+            json.dumps({"type": "message_update", "delta": sensitive}),
+        ]
+    )
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900123,
+            "timeoutMs": 900000,
+            "stdout": stdout,
+            "stderr": sensitive,
+        },
+    )
+
+    assert "pi dispatch timed out" in outcome
+    assert 'label="01.diff omit(principle-clean-architecture)"' in outcome
+    assert "elapsed=900123ms" in outcome
+    assert "limit=900000ms" in outcome
+    assert re.search(r"stdoutBytes=[1-9][0-9]*", outcome)
+    assert re.search(r"stderrBytes=[1-9][0-9]*", outcome)
+    assert "lastEventType=message_update" in outcome
+    assert "code=ETIMEDOUT" in outcome
+    assert sensitive not in outcome
+
+
+@requires_node
+def test_timeout_diagnostic_rejects_untrusted_event_type_content():
+    sensitive = "sensitive_model_reasoning"
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": json.dumps({"type": sensitive}),
+            "stderr": "",
+        },
+    )
+
+    assert "lastEventType=unknown" in outcome
+    assert sensitive not in outcome
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "session",
+        "agent_start",
+        "agent_end",
+        "agent_settled",
+        "turn_start",
+        "turn_end",
+        "message_start",
+        "message_update",
+        "message_end",
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_end",
+        "queue_update",
+        "compaction_start",
+        "compaction_end",
+        "entry_appended",
+        "session_info_changed",
+        "thinking_level_changed",
+        "auto_retry_start",
+        "auto_retry_end",
+        "summarization_retry_scheduled",
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+        "bash_execution_update",
+    ],
+)
+def test_timeout_diagnostic_recognizes_documented_pi_event_types(event_type: str):
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff baseline",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": json.dumps({"type": event_type}),
+            "stderr": "",
+        },
+    )
+
+    assert f"lastEventType={event_type}" in outcome
+
+
+@requires_node
+def test_timeout_diagnostic_uses_raw_captured_byte_counts():
+    outcome = _call_lib_function(
+        "formatPiSpawnError",
+        {
+            "errorCode": "ETIMEDOUT",
+            "errorMessage": "spawnSync pi ETIMEDOUT",
+            "label": "01.diff omit(principle-clean-architecture)",
+            "elapsedMs": 900000,
+            "timeoutMs": 900000,
+            "stdout": "\ufffd",
+            "stderr": "\ufffd",
+            "stdoutBytes": 1,
+            "stderrBytes": 2,
+        },
+    )
+
+    assert "stdoutBytes=1" in outcome
+    assert "stderrBytes=2" in outcome
 
 
 _PRELOAD_CANARY_BEGIN = "<!-- BEGIN shared/agents/preload-canary-citation.md -->"
@@ -861,7 +990,7 @@ def test_telemetry_unknown_subcommand_exits_nonzero():
 
 
 class TestExtractFinalAssistantText:
-    """Pins the retry-recovery contract dispatchArmFindings depends on: the LAST assistant
+    """Pins the retry-recovery contract dispatchArmMeasurement depends on: the LAST assistant
     message_end wins over an earlier errored empty one. If this regresses (first-wins, or
     empty-content ends mishandled), recovered retries would abort paid-for ablation sweeps."""
 
@@ -1015,6 +1144,44 @@ class TestExtractDispatchError:
         stream = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}'
         result = _call_lib_function("extractDispatchError", stream)
         assert isinstance(result, str) and result
+
+
+class TestModelIdentityOrDispatchError:
+    @requires_node
+    def test_matching_final_provider_and_model_return_canonical_identity(self):
+        stream = (
+            '{"type":"message_end","message":{"role":"assistant","provider":"openai-codex",'
+            '"model":"gpt-5.6-sol","content":[],"stopReason":"stop"}}'
+        )
+        identity = _call_lib_function(
+            "modelIdentityOrDispatchError", stream, "openai-codex/gpt-5.6-sol"
+        )
+        assert identity == "openai-codex/gpt-5.6-sol"
+
+    @requires_node
+    def test_provider_fallback_mismatch_throws(self):
+        stream = (
+            '{"type":"message_end","message":{"role":"assistant","provider":"zai",'
+            '"model":"glm-5.3","content":[],"stopReason":"stop"}}'
+        )
+        outcome = _call_lib_function_outcome(
+            "modelIdentityOrDispatchError", stream, "openai-codex/gpt-5.6-sol"
+        )
+        assert outcome["thrown"] is True
+        assert "requested openai-codex/gpt-5.6-sol" in outcome["message"]
+        assert "received zai/glm-5.3" in outcome["message"]
+
+    @requires_node
+    def test_missing_provider_identity_throws(self):
+        stream = (
+            '{"type":"message_end","message":{"role":"assistant","content":[],'
+            '"stopReason":"stop"}}'
+        )
+        outcome = _call_lib_function_outcome(
+            "modelIdentityOrDispatchError", stream, "openai-codex/gpt-5.6-sol"
+        )
+        assert outcome["thrown"] is True
+        assert "no provider/model identity" in outcome["message"]
 
 
 class TestExtractFinalUsage:
@@ -1178,6 +1345,68 @@ class TestParsePipeDelimitedFindings:
             "suggestedFix": "Narrow the parameter to `string | number` instead of `any`",
         }
 
+    @requires_node
+    def test_ablation_response_rejects_unstructured_prose(self):
+        outcome = _call_lib_function_outcome(
+            "parseAblationResponse", "I reviewed the diff and everything looks fine."
+        )
+        assert outcome["thrown"] is True
+        assert "unexpected output line" in outcome["message"]
+
+    @requires_node
+    def test_ablation_response_accepts_explicit_no_issues_sentence(self):
+        findings = _call_lib_function(
+            "parseAblationResponse", "No architecture issues found in this diff."
+        )
+        assert findings == []
+
+    @requires_node
+    def test_ablation_response_rejects_duplicate_no_issues_sentences(self):
+        outcome = _call_lib_function_outcome(
+            "parseAblationResponse",
+            "No architecture issues found in this diff.\nNo ablation issues found in this diff.",
+        )
+        assert outcome["thrown"] is True
+        assert "duplicate no-issues sentence" in outcome["message"]
+
+    @requires_node
+    def test_ablation_response_rejects_prose_beside_a_valid_finding(self):
+        text = (
+            "Here is my review:\n"
+            "High | a.ts:1 | Broken branch | Crashes callers | Add a guard\n"
+        )
+        outcome = _call_lib_function_outcome("parseAblationResponse", text)
+        assert outcome["thrown"] is True
+        assert "unexpected output line" in outcome["message"]
+
+    @requires_node
+    def test_ablation_response_allows_required_canary_footer(self):
+        text = (
+            "High | a.ts:1 | Broken branch | Crashes callers | Add a guard\n"
+            "SWB-CANARIES-APPLIED: swe-workbench:principle-clean-code\n"
+        )
+        findings = _call_lib_function("parseAblationResponse", text)
+        assert len(findings) == 1
+        assert findings[0]["fileLine"] == "a.ts:1"
+
+    @requires_node
+    def test_ablation_response_rejects_empty_finding_fields(self):
+        outcome = _call_lib_function_outcome(
+            "parseAblationResponse", "High | a.ts:1 | Broken branch |  | Add a guard"
+        )
+        assert outcome["thrown"] is True
+        assert "unexpected output line" in outcome["message"]
+
+    @pytest.mark.parametrize("file_line", ["a.ts", "a.ts:0", ":12", "a.ts:ten"])
+    @requires_node
+    def test_ablation_response_rejects_malformed_file_line(self, file_line: str):
+        outcome = _call_lib_function_outcome(
+            "parseAblationResponse",
+            f"High | {file_line} | Broken branch | Crashes callers | Add a guard",
+        )
+        assert outcome["thrown"] is True
+        assert "unexpected output line" in outcome["message"]
+
 
 @requires_node
 def test_ablate_dry_run_reports_both_arms_prefix_lengths_and_confirms_pure_subset(real_agent_id):
@@ -1281,16 +1510,73 @@ def test_ablate_run_missing_omit_fails_with_usage_error(real_agent_id):
     assert "--omit" in result.stderr
 
 
+@requires_node
+def test_ablate_live_run_requires_explicit_sweep_and_model(real_agent_id):
+    result = _run_probe(
+        [
+            "ablate",
+            "--agent",
+            real_agent_id,
+            "--corpus",
+            str(ABLATION_CORPUS),
+            "--omit",
+            "principle-ddd",
+        ]
+    )
+    assert result.returncode != 0
+    assert "--sweep" in result.stderr
+    assert "--model" in result.stderr
+
+
+@requires_node
+def test_ablate_report_requires_explicit_sweep():
+    result = _run_probe(["ablate", "--report"])
+    assert result.returncode != 0
+    assert "--sweep" in result.stderr
+
+
 class TestAblateReport:
+    SWEEP = "c3-2026-09-20"
+    MODEL = "openai-codex/gpt-5.6-sol"
+
     def _ablation_runs_file(self, project_dir: Path) -> Path:
         path = project_dir / ".claude" / "cache" / "dispatch-probes" / "ablation-runs.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _record(self, *, arm: str, findings: list[dict], **overrides) -> dict:
+        record = {
+            "schemaVersion": 2,
+            "sweep": self.SWEEP,
+            "agent": "reviewer",
+            "omitted": "principle-ddd",
+            "diff": "01.diff",
+            "arm": arm,
+            "model": self.MODEL,
+            "commit": "abc123",
+            "corpus": {"fingerprint": "sha256:corpus", "files": ["01.diff"]},
+            "promptFingerprint": f"sha256:{arm}-prompt",
+            "findings": findings,
+            "usage": {
+                "input": 100,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "cost": {"total": 0.01},
+            },
+            "ts": "2026-09-20T00:00:00.000Z",
+        }
+        record.update(overrides)
+        return record
+
+    def _write_records(self, project_dir: Path, records: list[dict]) -> None:
+        path = self._ablation_runs_file(project_dir)
+        path.write_text("".join(f"{json.dumps(record)}\n" for record in records))
+
     @requires_node
     def test_no_data_file_yet_exits_zero_pointing_at_run_mode(self, tmp_path: Path):
         env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-        result = _run_probe(["ablate", "--report"], env=env)
+        result = _run_probe(["ablate", "--report", "--sweep", self.SWEEP], env=env)
         assert result.returncode == 0, result.stderr
         assert "no ablation-run data collected yet" in result.stdout
         assert "ablate --agent" in result.stdout
@@ -1304,11 +1590,9 @@ class TestAblateReport:
           downgraded
         Hand calc: lost=1, downgraded=1.
         """
-        baseline = {
-            "diff": "01.diff",
-            "agent": "reviewer",
-            "omitted": None,
-            "findings": [
+        baseline = self._record(
+            arm="baseline",
+            findings=[
                 {
                     "severity": "High",
                     "fileLine": "a.ts:10",
@@ -1331,12 +1615,10 @@ class TestAblateReport:
                     "suggestedFix": "z3",
                 },
             ],
-        }
-        omit = {
-            "diff": "01.diff",
-            "agent": "reviewer",
-            "omitted": "principle-ddd",
-            "findings": [
+        )
+        omit = self._record(
+            arm="omit",
+            findings=[
                 {
                     "severity": "Low",
                     "fileLine": "a.ts:10",
@@ -1352,48 +1634,565 @@ class TestAblateReport:
                     "suggestedFix": "z3",
                 },
             ],
-        }
-        path = self._ablation_runs_file(tmp_path)
-        path.write_text(json.dumps(baseline) + "\n" + json.dumps(omit) + "\n")
+        )
+        self._write_records(tmp_path, [baseline, omit])
 
         env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-        result = _run_probe(["ablate", "--report", "--agent", "reviewer"], env=env)
+        result = _run_probe(
+            ["ablate", "--report", "--sweep", self.SWEEP, "--agent", "reviewer"], env=env
+        )
         assert result.returncode == 0, result.stderr
         out = result.stdout
 
-        assert "agent=reviewer omitted=principle-ddd: lost=1 downgraded=1" in out
+        assert (
+            "agent=reviewer omitted=principle-ddd: lost=1 downgraded=1 "
+            f"model={self.MODEL}" in out
+        )
         assert "lost: a.ts:20 (Medium)" in out
         assert "downgraded: a.ts:10 High -> Low" in out
-        # a.ts:30 (unchanged severity) must not appear as either lost or downgraded.
         assert "a.ts:30" not in out
 
     @requires_node
     def test_agent_filter_excludes_other_agents_data(self, tmp_path: Path):
-        other_agent_baseline = {
-            "diff": "x.diff",
-            "agent": "some-other-agent",
-            "omitted": None,
-            "findings": [
-                {
-                    "severity": "High",
-                    "fileLine": "z.ts:1",
-                    "issue": "a",
-                    "whyItMatters": "b",
-                    "suggestedFix": "c",
-                }
-            ],
-        }
-        other_agent_omit = {
-            "diff": "x.diff",
-            "agent": "some-other-agent",
-            "omitted": "some-skill",
-            "findings": [],
-        }
-        path = self._ablation_runs_file(tmp_path)
-        path.write_text(json.dumps(other_agent_baseline) + "\n" + json.dumps(other_agent_omit) + "\n")
+        other_agent_baseline = self._record(
+            arm="baseline", findings=[], agent="some-other-agent", omitted="some-skill"
+        )
+        other_agent_omit = self._record(
+            arm="omit", findings=[], agent="some-other-agent", omitted="some-skill"
+        )
+        self._write_records(tmp_path, [other_agent_baseline, other_agent_omit])
 
         env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-        result = _run_probe(["ablate", "--report", "--agent", "reviewer"], env=env)
+        result = _run_probe(
+            ["ablate", "--report", "--sweep", self.SWEEP, "--agent", "reviewer"], env=env
+        )
         assert result.returncode == 0, result.stderr
         assert "no ablation-run data collected yet" in result.stdout
         assert "some-other-agent" not in result.stdout
+
+    @pytest.mark.parametrize(
+        ("records", "message"),
+        [
+            (lambda self: [self._record(arm="baseline", findings=[])], "incomplete"),
+            (
+                lambda self: [
+                    self._record(arm="baseline", findings=[]),
+                    self._record(arm="baseline", findings=[]),
+                    self._record(arm="omit", findings=[]),
+                ],
+                "duplicate",
+            ),
+            (
+                lambda self: [
+                    self._record(arm="baseline", findings=[]),
+                    self._record(arm="omit", findings=[], model="different/model"),
+                ],
+                "mixed model",
+            ),
+            (
+                lambda self: [
+                    self._record(
+                        arm="baseline",
+                        findings=[],
+                        usage={"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0},
+                    ),
+                    self._record(arm="omit", findings=[]),
+                ],
+                "usage.cost.total",
+            ),
+            (
+                lambda self: [
+                    self._record(arm="baseline", findings=[{}]),
+                    self._record(arm="omit", findings=[]),
+                ],
+                "invalid finding",
+            ),
+            (
+                lambda self: [
+                    self._record(
+                        arm="baseline",
+                        findings=[
+                            {
+                                "severity": "High",
+                                "fileLine": "a.ts:1",
+                                "issue": "   ",
+                                "whyItMatters": "Crashes callers",
+                                "suggestedFix": "Add a guard",
+                            }
+                        ],
+                    ),
+                    self._record(arm="omit", findings=[]),
+                ],
+                "invalid finding",
+            ),
+            (
+                lambda self: [
+                    self._record(
+                        arm="baseline",
+                        findings=[],
+                        usage={
+                            "input": 0,
+                            "output": 0,
+                            "cacheRead": 0,
+                            "cacheWrite": 0,
+                            "cost": {"total": 0},
+                        },
+                    ),
+                    self._record(arm="omit", findings=[]),
+                ],
+                "zero billed",
+            ),
+        ],
+    )
+    @requires_node
+    def test_report_fails_closed_without_emitting_summary(
+        self, tmp_path: Path, records, message: str
+    ):
+        self._write_records(tmp_path, records(self))
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(
+            ["ablate", "--report", "--sweep", self.SWEEP, "--agent", "reviewer"], env=env
+        )
+        assert result.returncode != 0
+        assert message in result.stderr.lower()
+        assert "agent=reviewer omitted=" not in result.stdout
+
+    @requires_node
+    def test_report_fails_closed_on_malformed_jsonl(self, tmp_path: Path):
+        path = self._ablation_runs_file(tmp_path)
+        path.write_text("{not-json}\n")
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(["ablate", "--report", "--sweep", self.SWEEP], env=env)
+        assert result.returncode != 0
+        assert "malformed json" in result.stderr.lower()
+
+    @requires_node
+    def test_report_rejects_model_drift_between_skill_pairs(self, tmp_path: Path):
+        records = [
+            self._record(arm="baseline", findings=[]),
+            self._record(arm="omit", findings=[]),
+            self._record(
+                arm="baseline",
+                findings=[],
+                omitted="principle-clean-architecture",
+                model="different/model",
+            ),
+            self._record(
+                arm="omit",
+                findings=[],
+                omitted="principle-clean-architecture",
+                model="different/model",
+            ),
+        ]
+        self._write_records(tmp_path, records)
+        env = {**_CLEAN_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = _run_probe(["ablate", "--report", "--sweep", self.SWEEP], env=env)
+        assert result.returncode != 0
+        assert "mixed model values in sweep" in result.stderr.lower()
+        assert "agent=reviewer omitted=" not in result.stdout
+
+    @requires_node
+    def test_record_validation_rejects_incomplete_usage_before_persistence(self):
+        record = self._record(
+            arm="baseline",
+            findings=[],
+            usage={"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0},
+        )
+        outcome = _call_lib_function_outcome("validateAblationRecord", record)
+        assert outcome["thrown"] is True
+        assert "usage.cost.total" in outcome["message"]
+
+    @requires_node
+    def test_record_validation_rejects_duplicate_finding_locations(self):
+        finding = {
+            "severity": "High",
+            "fileLine": "a.ts:1",
+            "issue": "Broken branch",
+            "whyItMatters": "Crashes callers",
+            "suggestedFix": "Add a guard",
+        }
+        record = self._record(arm="baseline", findings=[finding, finding])
+        outcome = _call_lib_function_outcome("validateAblationRecord", record)
+        assert outcome["thrown"] is True
+        assert "duplicate finding location" in outcome["message"]
+
+    @requires_node
+    def test_record_validation_rejects_malformed_finding_location(self):
+        finding = {
+            "severity": "High",
+            "fileLine": "a.ts:0",
+            "issue": "Broken branch",
+            "whyItMatters": "Crashes callers",
+            "suggestedFix": "Add a guard",
+        }
+        record = self._record(arm="baseline", findings=[finding])
+        outcome = _call_lib_function_outcome("validateAblationRecord", record)
+        assert outcome["thrown"] is True
+        assert "invalid finding" in outcome["message"]
+
+    @requires_node
+    def test_plan_ablation_arms_resumes_only_missing_arm(self):
+        baseline = self._record(arm="baseline", findings=[])
+        identity = {
+            key: baseline[key]
+            for key in ("sweep", "agent", "omitted", "model", "commit", "corpus")
+        }
+        identity["promptFingerprints"] = {
+            "baseline": "sha256:baseline-prompt",
+            "omit": "sha256:omit-prompt",
+        }
+        pending = _call_lib_function("planAblationArms", [baseline], identity)
+        assert pending == [{"diff": "01.diff", "arm": "omit"}]
+
+    @requires_node
+    def test_live_run_persists_provenance_and_resume_skips_complete_arms(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        calls_file = tmp_path / "pi-calls"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        (corpus_dir / "01.diff").write_text("diff --git a/a.ts b/a.ts\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_pi = bin_dir / "pi"
+        fake_pi.write_text(
+            """#!/bin/sh
+printf '%s\\n' call >> "$FAKE_PI_CALLS"
+printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.6-sol","content":[{"type":"text","text":"No architecture issues found in this diff."}],"usage":{"input":100,"output":10,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}'
+"""
+        )
+        fake_git.chmod(0o755)
+        fake_pi.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{bin_dir}:{_CLEAN_ENV['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+            "FAKE_PI_CALLS": str(calls_file),
+        }
+        args = [
+            "ablate",
+            "--agent",
+            real_agent_id,
+            "--corpus",
+            str(corpus_dir),
+            "--omit",
+            "principle-ddd",
+            "--sweep",
+            self.SWEEP,
+            "--model",
+            self.MODEL,
+        ]
+        first = _run_probe(args, env=env)
+        second = _run_probe(args, env=env)
+
+        assert first.returncode == 0, first.stderr
+        assert second.returncode == 0, second.stderr
+        assert "already complete; no dispatches needed" in second.stdout
+        assert calls_file.read_text().splitlines() == ["call", "call"]
+
+        records = [
+            json.loads(line)
+            for line in self._ablation_runs_file(project_dir).read_text().splitlines()
+        ]
+        assert {record["arm"] for record in records} == {"baseline", "omit"}
+        assert all(record["schemaVersion"] == 2 for record in records)
+        assert all(record["model"] == self.MODEL for record in records)
+        assert all(record["commit"] == "abc123" for record in records)
+        assert all(record["corpus"]["fingerprint"].startswith("sha256:") for record in records)
+        assert all(record["promptFingerprint"].startswith("sha256:") for record in records)
+        assert all(record["usage"]["cost"]["total"] == 0.01 for record in records)
+
+    @requires_node
+    def test_corpus_content_is_snapshotted_once_for_hashing_and_both_arms(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        prompts_dir = tmp_path / "prompts"
+        calls_file = tmp_path / "pi-calls"
+        corpus_file = corpus_dir / "01.diff"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        prompts_dir.mkdir()
+        corpus_file.write_text("ORIGINAL CORPUS CONTENT\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_pi = bin_dir / "pi"
+        fake_pi.write_text(
+            """#!/bin/sh
+prompt=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-p" ]; then shift; prompt=$1; fi
+  shift
+done
+printf '%s\\n' call >> "$FAKE_PI_CALLS"
+count=$(wc -l < "$FAKE_PI_CALLS" | tr -d ' ')
+printf '%s' "$prompt" > "$FAKE_PROMPTS_DIR/$count"
+if [ "$count" -eq 1 ]; then printf '%s\\n' 'CHANGED AFTER FINGERPRINT' > "$FAKE_CORPUS_FILE"; fi
+printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.6-sol","content":[{"type":"text","text":"No ablation issues found in this diff."}],"usage":{"input":100,"output":10,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}'
+"""
+        )
+        fake_git.chmod(0o755)
+        fake_pi.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{bin_dir}:{_CLEAN_ENV['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+            "FAKE_PI_CALLS": str(calls_file),
+            "FAKE_PROMPTS_DIR": str(prompts_dir),
+            "FAKE_CORPUS_FILE": str(corpus_file),
+        }
+        result = _run_probe(
+            [
+                "ablate",
+                "--agent",
+                real_agent_id,
+                "--corpus",
+                str(corpus_dir),
+                "--omit",
+                "principle-ddd",
+                "--sweep",
+                self.SWEEP,
+                "--model",
+                self.MODEL,
+            ],
+            env=env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        baseline_prompt = (prompts_dir / "1").read_text()
+        omit_prompt = (prompts_dir / "2").read_text()
+        assert baseline_prompt == omit_prompt
+        assert "ORIGINAL CORPUS CONTENT" in baseline_prompt
+
+    @requires_node
+    def test_incomplete_provider_usage_stops_before_persistence_or_next_arm(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        calls_file = tmp_path / "pi-calls"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        (corpus_dir / "01.diff").write_text("diff --git a/a.ts b/a.ts\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_pi = bin_dir / "pi"
+        fake_pi.write_text(
+            """#!/bin/sh
+printf '%s\\n' call >> "$FAKE_PI_CALLS"
+printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.6-sol","content":[{"type":"text","text":"No ablation issues found in this diff."}],"usage":{"input":100,"output":10,"cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}'
+"""
+        )
+        fake_git.chmod(0o755)
+        fake_pi.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{bin_dir}:{_CLEAN_ENV['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+            "FAKE_PI_CALLS": str(calls_file),
+        }
+        result = _run_probe(
+            [
+                "ablate",
+                "--agent",
+                real_agent_id,
+                "--corpus",
+                str(corpus_dir),
+                "--omit",
+                "principle-ddd",
+                "--sweep",
+                self.SWEEP,
+                "--model",
+                self.MODEL,
+            ],
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert "usage.cost.total" in result.stderr
+        assert calls_file.read_text().splitlines() == ["call"]
+        assert not self._ablation_runs_file(project_dir).exists()
+
+    @requires_node
+    def test_spawn_failure_names_the_pending_arm_and_persists_no_evidence(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        """Removing label propagation from runPiOnce must lose this operator-safe context."""
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        (corpus_dir / "01.diff").write_text("diff --git a/a.ts b/a.ts\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_git.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": str(bin_dir),
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+        }
+        result = _run_probe(
+            [
+                "ablate",
+                "--agent",
+                real_agent_id,
+                "--corpus",
+                str(corpus_dir),
+                "--omit",
+                "principle-ddd",
+                "--sweep",
+                self.SWEEP,
+                "--model",
+                self.MODEL,
+            ],
+            env=env,
+        )
+
+        assert result.returncode != 0
+        assert 'label="01.diff baseline"' in result.stderr
+        assert "code=ENOENT" in result.stderr
+        assert "stdoutBytes=0" in result.stderr
+        assert "stderrBytes=0" in result.stderr
+        assert "lastEventType=none" in result.stderr
+        assert not self._ablation_runs_file(project_dir).exists()
+
+    @requires_node
+    def test_concurrent_resume_is_rejected_before_duplicate_dispatches(
+        self, tmp_path: Path, real_agent_id: str
+    ):
+        bin_dir = tmp_path / "bin"
+        corpus_dir = tmp_path / "corpus"
+        project_dir = tmp_path / "project"
+        calls_file = tmp_path / "pi-calls"
+        gate_file = tmp_path / "release-pi"
+        bin_dir.mkdir()
+        corpus_dir.mkdir()
+        project_dir.mkdir()
+        (corpus_dir / "01.diff").write_text("diff --git a/a.ts b/a.ts\n")
+
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            """#!/bin/sh
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1 $2" in
+  "rev-parse HEAD") printf '%s\\n' abc123 ;;
+  "status --porcelain") : ;;
+  *) exit 2 ;;
+esac
+"""
+        )
+        fake_pi = bin_dir / "pi"
+        fake_pi.write_text(
+            """#!/bin/sh
+printf '%s\\n' call >> "$FAKE_PI_CALLS"
+while [ ! -e "$FAKE_PI_GATE" ]; do sleep 0.05; done
+printf '%s\\n' '{"type":"message_end","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.6-sol","content":[{"type":"text","text":"No ablation issues found in this diff."}],"usage":{"input":100,"output":10,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}},"stopReason":"stop"}}'
+"""
+        )
+        fake_git.chmod(0o755)
+        fake_pi.chmod(0o755)
+
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{bin_dir}:{_CLEAN_ENV['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(project_dir),
+            "FAKE_PI_CALLS": str(calls_file),
+            "FAKE_PI_GATE": str(gate_file),
+        }
+        node = shutil.which("node")
+        assert node is not None
+        command = [
+            node,
+            "--experimental-strip-types",
+            str(PROBE),
+            "ablate",
+            "--agent",
+            real_agent_id,
+            "--corpus",
+            str(corpus_dir),
+            "--omit",
+            "principle-ddd",
+            "--sweep",
+            self.SWEEP,
+            "--model",
+            self.MODEL,
+        ]
+        first = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        second = None
+        try:
+            deadline = time.monotonic() + 5
+            while not calls_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert calls_file.exists(), "first probe did not reach its dispatch"
+            second = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+            )
+            time.sleep(0.2)
+            gate_file.touch()
+            first_stdout, first_stderr = first.communicate(timeout=15)
+            second_stdout, second_stderr = second.communicate(timeout=15)
+        finally:
+            for process in (first, second):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+
+        assert first.returncode == 0, first_stderr
+        assert second.returncode != 0, second_stdout
+        assert "already locked" in second_stderr
+        assert calls_file.read_text().splitlines() == ["call", "call"]

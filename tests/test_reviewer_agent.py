@@ -103,6 +103,36 @@ def test_paired_guard_step_mentions_grep_and_predicate_comparison():
 # ---------------------------------------------------------------------------
 
 
+def test_process_section_defines_fragment_append_category():
+    """Step 9 must define fragment-append as a fifth `+`-scoped category
+    with a merge-and-rewrite suggested fix."""
+    body = _read()
+    section = _section(body, "Process")
+    idx = section.lower().find("fragment-append")
+    assert idx != -1, "step 9 must define the fragment-append category"
+    step_text = section[idx:].lower()
+    assert "merge-and-rewrite" in step_text, (
+        "fragment-append's suggested fix must be merge-and-rewrite the unit"
+    )
+    assert "five categories" in section.lower(), (
+        "step 9 must count five comment-quality categories"
+    )
+
+
+def test_process_section_mentions_doc_discipline_backstop():
+    """Step 10 must be scoped to docs paths, exempt product-source .md,
+    stay Low/hygiene, and be unconditional."""
+    body = _read()
+    section = _section(body, "Process")
+    idx = section.lower().find("doc-discipline backstop")
+    assert idx != -1, "'## Process' must contain a 'Doc-discipline backstop' step (10)"
+    step_text = section[idx:].lower()
+    for token in ("hygiene", "docs paths", "product-source", "no anchor", "unconditional"):
+        assert token in step_text, (
+            f"the doc-discipline backstop step must mention {token!r}"
+        )
+
+
 def test_process_section_mentions_comment_quality_backstop():
     """The Process section must have a dedicated comment-quality-backstop step,
     scoped as Low/hygiene, in-diff '+' lines only, drop-or-simplify, never an

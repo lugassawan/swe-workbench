@@ -1,8 +1,8 @@
 """Structural tests for /review mode-routing (issue #172)."""
 import re
 from pathlib import Path
-import pytest
 
+import pytest
 
 REVIEW_PATH = Path(__file__).parent.parent / "commands" / "review.md"
 SECURITY_REVIEW_PATH = Path(__file__).parent.parent / "commands" / "security-review.md"
@@ -185,6 +185,26 @@ class TestReviewModeRouting:
         assert "CALLER_TAG" in text[subflow_idx:], (
             "Specialist post sub-flow must pass CALLER_TAG to workflow-pr-review-post"
         )
+
+    def test_specialist_subflow_uses_one_repo_source_for_state_and_run_dir_scope(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        subflow = text.split("\n## Specialist post sub-flow\n", 1)[1]
+        assert 'PR_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)' in subflow
+        assert 'swe-workbench-repo-scope --repo "$PR_REPO"' in subflow
+        assert (
+            'swe-workbench-new-run-dir "review-${MODE}" "$PR" --repo "$PR_REPO"'
+            in subflow
+        )
+
+    def test_specialist_subflow_passes_run_dir_as_auditor_scratch_boundary(self):
+        text = REVIEW_PATH.read_text(encoding="utf-8")
+        step3 = text.split("3. Run the specialist auditor")[1].split(
+            "4. **Prompt:**"
+        )[0]
+        assert "$RUN_DIR" in step3
+        assert "materialized" in step3.lower()
+        assert "/tmp" in step3
+        assert "scratchpad" in step3.lower()
 
     def test_specialist_subflow_reaps_own_state_file(self):
         """The specialist sub-flow's own mode-scoped preflight JSON must be reaped via

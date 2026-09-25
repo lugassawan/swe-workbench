@@ -987,7 +987,7 @@ def model_policy_dump(tmp_path_factory):
 def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_dump):
     """model-policy.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet,
     KNOWN_EFFORTS must equal the full 5-value portable-effort vocabulary, and MODEL_POLICY must
-    cover all 3 providers x 3 tiers x 5 efforts with no gap — an uncovered cell would silently
+    cover all 4 providers x 3 tiers x 5 efforts with no gap — an uncovered cell would silently
     resolve to undefined (parent-model fallback) for that cell only, which is easy to miss
     without an exhaustiveness check."""
     assert set(model_policy_dump["knownTiers"]) == MODEL_TIERS, (
@@ -1017,7 +1017,7 @@ def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_du
             )
 
 
-# The ticket's 3x3 default matrix (docs/cost-tiers.md's "On the Pi Coding Agent" table),
+# The default matrix (docs/cost-tiers.md's "On the Pi Coding Agent" table),
 # reproduced by feeding DEFAULT_TIER_EFFORT[tier] through MODEL_POLICY[provider][tier].thinking —
 # this is the one source of truth the matrix is asserted against, not a second hand-copied table.
 _TICKET_DEFAULT_MATRIX = {
@@ -1035,6 +1035,16 @@ _TICKET_DEFAULT_MATRIX = {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
         "haiku": ("glm-5.2-highspeed", "high"),
+    },
+    "google": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
+    },
+    "antigravity": {
+        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
+        "haiku": ("gemini-3.5-flash-lite", "high"),
     },
 }
 
@@ -1075,12 +1085,30 @@ def test_zai_thinking_tables_are_monotone_and_gapless_across_all_efforts(model_p
     }
 
 
+@requires_node
+def test_google_thinking_tables_are_real_rungs_and_ordered_across_all_efforts(model_policy_dump):
+    """Full-table pin for all three google cells, mirroring the zai verbatim pin: nearest-real-rung
+    passthrough, no depth bias (distinct model per tier). Defaults land at high/high/high."""
+    for provider in ("google", "antigravity"):
+        assert model_policy_dump["policy"][provider]["opus"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
+        assert model_policy_dump["policy"][provider]["sonnet"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
+        assert model_policy_dump["policy"][provider]["haiku"]["thinking"] == {
+            "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high",
+        }
+
+
 # Verbatim filenames from the bundled Pi SDK's own provider-data directory (see
 # _pi_ai_provider_data_dir below) — the file each SUPPORTED_PROVIDERS entry's catalog lives in.
 PROVIDER_DATA_FILES = {
     "anthropic": "anthropic.json",
     "openai-codex": "openai-codex.json",
     "zai": "zai.json",
+    "google": "google.json",
+    "antigravity": "google.json",
 }
 
 
@@ -1132,7 +1160,8 @@ def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
         api = next(iter(data))
         ids_on_catalog = set(data[api].keys())
         for tier, cell in tiers.items():
-            assert cell["model"] in ids_on_catalog, (
+            models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
+            assert any(m in ids_on_catalog for m in models), (
                 f"MODEL_POLICY[{provider!r}][{tier!r}].model {cell['model']!r} not found in the "
                 f"pinned catalog ({data_path.relative_to(ROOT)}) — ids: {sorted(ids_on_catalog)}"
             )
@@ -1197,6 +1226,88 @@ def test_zai_glm_5_3_dispatches_real_max_thinking_in_pinned_catalog():
     )
     assert dumped["clampedMax"] == "max", "zai.opus's nominal max should dispatch as real max now"
     assert dumped["clampedHigh"] == "high"
+
+
+_GOOGLE_CLAMP_DRIVER = """
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [, , modelsJsPath, googleDataPath] = process.argv;
+const mod = await import(pathToFileURL(modelsJsPath).href);
+const googleData = JSON.parse(readFileSync(googleDataPath, "utf8"));
+const api = Object.keys(googleData)[0];
+const dump = {};
+for (const id of ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3.7-flash", "gemini-3.5-flash-lite"]) {
+  const model = googleData[api][id];
+  if (!model) continue;
+  dump[id] = {
+    supported: mod.getSupportedThinkingLevels(model),
+    clamped: {
+      low: mod.clampThinkingLevel(model, "low"),
+      medium: mod.clampThinkingLevel(model, "medium"),
+      high: mod.clampThinkingLevel(model, "high"),
+      xhigh: mod.clampThinkingLevel(model, "xhigh"),
+      max: mod.clampThinkingLevel(model, "max"),
+    },
+  };
+}
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+@requires_pi_ai_catalog
+def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_policy_dump):
+    """Drives the REAL SDK clamp against the REAL pinned catalog (zai-clamp-pin posture) and
+    asserts table ≡ clamp per (tier, effort), plus the stable supported-level intersection
+    across pins. A catalog bump that changes real levels fails loudly — revisit the google
+    tables, not a silent clamp."""
+    node = shutil.which("node")
+    assert node is not None
+    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gated this
+    models_js = _PI_AI_DATA_DIR.parent.parent / "models.js"
+    assert models_js.exists(), f"expected {models_js} alongside the pinned provider data"
+    google_data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES["google"]
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "google-clamp-dump.mjs"
+        driver.write_text(_GOOGLE_CLAMP_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(models_js), str(google_data_path)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    pro = dumped.get("gemini-3.1-pro-preview") or dumped.get("gemini-3.1-pro")
+    if pro:
+        assert {"low", "high"} <= set(pro["supported"]), (
+            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} no longer declares low/high support ({pro['supported']}) in the "
+            "pinned catalog — MODEL_POLICY.google.opus's emitted levels may have become nominal-only; "
+            "revisit the google tables and docs/cost-tiers.md's google note"
+        )
+        assert not {"xhigh", "max"} & set(pro["supported"]), (
+            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} now declares xhigh/max support ({pro['supported']}) — the opus "
+            "table could emit deeper real levels; revisit it"
+        )
+    for flash_id in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"):
+        flash = dumped.get(flash_id)
+        if flash:
+            assert {"low", "medium", "high"} <= set(flash["supported"]), (
+                f"{flash_id} no longer declares low/medium/high support ({flash['supported']}) in the "
+                "pinned catalog — MODEL_POLICY.google's sonnet/haiku tables may have become nominal-only"
+            )
+    for provider in ("google", "antigravity"):
+        for tier, cell in model_policy_dump["policy"][provider].items():
+            models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
+            for model in models:
+                if model in dumped:
+                    for effort, level in cell["thinking"].items():
+                        assert dumped[model]["clamped"][effort] == level, (
+                            f"MODEL_POLICY.{provider}.{tier}.thinking[{effort!r}] = {level!r} diverges from the "
+                            f"SDK clamp's own resolution ({dumped[model]['clamped'][effort]!r}) for "
+                            f"{model} — {provider} tables must emit the nearest real rung, never a bias"
+                        )
+                    break
 
 
 _TASK_SCHEMA_DRIVER = """

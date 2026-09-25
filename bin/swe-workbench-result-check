@@ -42,6 +42,8 @@ REGISTRY: dict[str, dict[str, str]] = {
         "swept_run_dirs": "int",
         "swept_session_files": "int",
         "retained_worktrees": "list[path_reason]",
+        "retained_state_files": "list[path_reason]",
+        "retained_artifacts": "list[path_reason]",
         "failed_removals": "list[path_reason]",
         "residual_none": "bool",
     },

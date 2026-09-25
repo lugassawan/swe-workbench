@@ -2,15 +2,9 @@
  * Registers `ask_user_question`, Pi's counterpart to Claude Code's `AskUserQuestion`. Mirrors
  * guards.ts's `registerGuards(pi, root)` shape so index.ts stays a flat composition root.
  *
- * The schema below is written as a plain JSON-Schema object literal, not built with TypeBox —
- * `wrapToolDefinition` (dist/core/tools/tool-definition-wrapper.js) copies `definition.parameters`
- * through to the runtime verbatim, and nothing on the tool-registration path runs TypeBox's
- * `Value.Check`/`Compile` against it. Importing the typebox package as a value would also break
- * the pytest driver, which runs this file under `node --experimental-strip-types` with no
- * bundler and no node_modules alias resolution for that package's nested install location.
- * `ToolDefinition["parameters"]` (a type-only reference into the SDK's own re-export) gives the
- * exact same `TSchema` type — an empty interface every object literal already satisfies —
- * without that import.
+ * The schema below is written as a plain JSON-Schema object literal, not built with TypeBox,
+ * because value imports of bare specifiers break the pytest harness under `--experimental-strip-types`.
+ * `ToolDefinition["parameters"]` gives the exact same `TSchema` type without an import.
  */
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -30,52 +24,95 @@ interface AskUserQuestionParams {
   questions: AskUserQuestionItem[];
 }
 
+// prettier-ignore
 const QUESTIONS_SCHEMA = {
-  type: "object",
-  properties: {
+  type: "object", properties: {
     questions: {
-      type: "array",
-      minItems: 1,
-      maxItems: 4,
-      items: {
-        type: "object",
-        properties: {
+      type: "array", minItems: 1, maxItems: 4, items: {
+        type: "object", properties: {
           question: { type: "string", description: "The complete question to ask the user." },
           header: { type: "string", description: "Short label (<=12 chars) shown as a chip." },
-          multiSelect: {
-            type: "boolean",
-            description: "Must be false — ask_user_question does not support multi-select.",
-          },
-          options: {
-            type: "array",
-            minItems: 2,
-            maxItems: 4,
-            items: {
-              type: "object",
-              properties: {
-                label: { type: "string" },
-                description: { type: "string" },
-              },
-              required: ["label"],
-              additionalProperties: false,
-            },
-          },
+          multiSelect: { type: "boolean", description: "Must be false — ask_user_question does not support multi-select." },
+          options: { type: "array", minItems: 2, maxItems: 4, items: {
+            type: "object", properties: { label: { type: "string" }, description: { type: "string" } },
+            required: ["label"], additionalProperties: false,
+          } },
         },
-        required: ["question", "header", "options", "multiSelect"],
-        additionalProperties: false,
+        required: ["question", "header", "options", "multiSelect"], additionalProperties: false,
       },
     },
   },
-  required: ["questions"],
-  additionalProperties: false,
+  required: ["questions"], additionalProperties: false,
 } as ToolDefinition["parameters"];
 
 function optionLabel(option: AskUserOption): string {
-  return option.description ? `${option.label} — ${option.description}` : option.label;
+  return option.description
+    ? `${option.label} — ${option.description}`
+    : option.label;
 }
 
 /** Rendered as the last row of every question — choosing it opens a free-text input dialog. */
 const OTHER_CHOICE = "Other — type your own answer";
+
+async function themedSelect(
+  ctx: any,
+  question: string,
+  options: string[],
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const { Container, SelectList, Text } = await import("@earendil-works/pi-tui");
+  const { DynamicBorder } = await import("@earendil-works/pi-coding-agent");
+
+  return ctx.ui.custom((tui: any, theme: any, _kb: any, done: any) => {
+    const container = new Container();
+    let selectList: any;
+
+    const doneWrapper = (val: string | undefined) => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      done(val);
+    };
+
+    const onAbort = () => doneWrapper(undefined);
+    if (signal?.aborted) Promise.resolve().then(onAbort);
+    else if (signal) signal.addEventListener("abort", onAbort);
+
+    const rebuild = () => {
+      container.clear();
+      container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+      container.addChild(new Text(theme.fg("accent", theme.bold(question)), 1, 0));
+      selectList = new SelectList(
+        options.map((opt) => ({ value: opt, label: opt })),
+        Math.min(options.length, 10),
+        {
+          selectedPrefix: (t: string) => theme.fg("accent", t),
+          selectedText: (t: string) => theme.fg("accent", t),
+          description: (t: string) => theme.fg("muted", t),
+          scrollInfo: (t: string) => theme.fg("dim", t),
+          noMatch: (t: string) => theme.fg("warning", t),
+        },
+      );
+      selectList.onSelect = (item: any) => doneWrapper(item.value);
+      selectList.onCancel = () => doneWrapper(undefined);
+      container.addChild(selectList);
+      container.addChild(new Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel"), 1, 0));
+      container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+    };
+
+    rebuild();
+
+    return {
+      render: (w: number) => container.render(w),
+      invalidate: () => {
+        container.invalidate();
+        rebuild();
+      },
+      handleInput: (data: string) => {
+        selectList.handleInput?.(data);
+        tui.requestRender();
+      },
+    };
+  });
+}
 
 export function registerAskUser(pi: ExtensionAPI): void {
   // Read once per process at registration time — an immutable config read, not a module-state
@@ -91,10 +128,10 @@ export function registerAskUser(pi: ExtensionAPI): void {
       "a decision genuinely belongs to the user — never as a substitute for a reasonable default.",
     promptSnippet:
       "ask_user_question(questions): present the user 1-4 fixed-option questions (2-4 options " +
-      "each, plus an automatic free-text \"Other\" row) and get their picks back. Use when " +
+      'each, plus an automatic free-text "Other" row) and get their picks back. Use when ' +
       "blocked on a decision only the user can make.",
     promptGuidelines: [
-      "Never author an \"Other\" option — a free-text \"Other\" row is appended automatically; " +
+      'Never author an "Other" option — a free-text "Other" row is appended automatically; ' +
         "when the user picks it they type an answer that is returned for that question.",
       "Each question is single-select. To collect more than one choice per question, ask " +
         "separate sequential single-select questions instead of setting multiSelect.",
@@ -135,7 +172,9 @@ export function registerAskUser(pi: ExtensionAPI): void {
 
       // An authored option can render identically to OTHER_CHOICE (optionLabel uses the same
       // " — " join), which would show an indistinguishable duplicate row — reject up front.
-      const collision = questions.find((q) => q.options.map(optionLabel).includes(OTHER_CHOICE));
+      const collision = questions.find((q) =>
+        q.options.map(optionLabel).includes(OTHER_CHOICE),
+      );
       if (collision) {
         throw new Error(
           `ask_user_question: an option in "${collision.question}" renders identically to the ` +
@@ -145,11 +184,19 @@ export function registerAskUser(pi: ExtensionAPI): void {
 
       const answers: Record<string, string> = {};
       for (const q of questions) {
-        const choice = await ctx.ui.select(
-          q.question,
-          [...q.options.map(optionLabel), OTHER_CHOICE],
-          { signal },
-        );
+        const choice =
+          ctx.mode === "tui"
+            ? await themedSelect(
+                ctx,
+                q.question,
+                [...q.options.map(optionLabel), OTHER_CHOICE],
+                signal,
+              )
+            : await ctx.ui.select(
+                q.question,
+                [...q.options.map(optionLabel), OTHER_CHOICE],
+                { signal },
+              );
         if (choice === undefined) {
           throw new Error(
             `ask_user_question: the user dismissed "${q.question}" without choosing an option — ` +
@@ -157,7 +204,9 @@ export function registerAskUser(pi: ExtensionAPI): void {
           );
         }
         if (choice === OTHER_CHOICE) {
-          const typed = await ctx.ui.input(q.question, "Type your answer", { signal });
+          const typed = await ctx.ui.input(q.question, "Type your answer", {
+            signal,
+          });
           // The SDK input dialog resolves "" (not undefined) on an empty Enter — treat both
           // as not-answered so one accidental keypress can't masquerade as a deliberate answer.
           if (typed === undefined || typed.trim() === "") {
