@@ -211,9 +211,18 @@ def test_converge_findings_schema_matches_pr_review_submit():
     """converge.md must reuse the existing findings schema validated by _finding_problem(),
     not invent a second one."""
     text = _text()
-    assert "{severity, body, anchor, path, line}" in text
+    assert "{severity, issue, why, fix, anchor, path?, line?, category?}" in text
+    assert "{severity, body," not in text, "the free-form `body` field was removed from the schema"
     assert "_finding_problem()" in text
     assert "bin/swe-workbench-pr-review-submit" in text
+
+
+def test_converge_ledger_matching_names_issue_why_fix():
+    """The ledger Jaccard is prose-only, so pin what it runs over: with `body` gone from the
+    schema, 'body tokens' would silently mean nothing."""
+    text = " ".join(_text().replace("> ", " ").split())  # immune to re-wrapping the paragraph
+    assert "Jaccard ≥ 0.4** over the `issue`+`why`+`fix` tokens" in text
+    assert "over body" not in text
 
 
 def test_converge_never_pushes_on_non_convergence():

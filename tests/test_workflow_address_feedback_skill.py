@@ -698,3 +698,21 @@ def test_address_feedback_skill_early_exits_name_phase7():
     assert "Phase 7" in no_threads_window, (
         "the no-open-threads exit must state that it runs Phase 7 — Cleanup before exiting"
     )
+
+
+def test_auto_apply_detection_recognizes_rendered_suggested_fix_paragraph():
+    """swe-workbench-pr-review-submit renders `**Suggested fix:**` paragraphs; the auto-apply
+    offer must recognize that layout, not only the legacy `### Suggested fix` block."""
+    text = SKILL_MD.read_text()
+    offer = next(line for line in text.splitlines() if "offer to apply it automatically" in line)
+    assert "**Suggested fix:**" in offer
+    assert "### Suggested fix" in offer, "the legacy block form must stay recognized for old threads"
+
+
+def test_triage_severity_parse_recognizes_rendered_headline():
+    """Every comment swe-workbench-pr-review-submit renders opens with `**<Severity>**`; a parse
+    rule that only knows a `Severity:` prefix would label all of them `Unknown`."""
+    rule = next(line for line in SKILL_MD.read_text().splitlines() if line.startswith("Parse severity from"))
+    assert "`**<Severity>**`" in rule
+    assert "`Severity: <level>`" in rule, "the legacy prefix must stay recognized"
+    assert "`Unknown`" in rule

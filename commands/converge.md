@@ -159,7 +159,7 @@ Dispatch `swe-workbench:reviewer` against `git diff origin/$BASE...HEAD` with:
   re-report".
 
 Write the parsed findings to `$RUN_DIR/round-<N>-findings.json` using the **existing sanctioned
-schema** — `{severity, body, anchor, path, line}` (`anchor` = `inline` or `pr-level`), the same one
+schema** — `{severity, issue, why, fix, anchor, path?, line?, category?}` (`anchor` = `inline` or `pr-level`), the same one
 `_finding_problem()` in `bin/swe-workbench-pr-review-submit` validates. Do not invent a second
 findings format — this keeps the file submit-compatible and keeps one schema in the repo.
 
@@ -306,12 +306,12 @@ Brief `swe-workbench:code-impl` with:
    `<fingerprint> | FIXED <what changed> | UNFOUNDED <what is actually there> | REJECTED <reason> | DEFERRED <reason> | UNVERIFIABLE <what was investigated, and the specific question the codebase cannot answer>`.
    **`fingerprint` has no separate static algorithm — it *is* the repo-relative `path` from the
    findings row, used only as a coarse pre-filter.** "Cross-round dedup" below defines a pairwise
-   *match predicate* (same normalized path AND Jaccard ≥ 0.4 over body tokens between a candidate
+   *match predicate* (same normalized path AND Jaccard ≥ 0.4 over the `issue`+`why`+`fix` tokens between a candidate
    finding and a ledger entry), not a value one finding can compute in isolation — Jaccard
    similarity isn't transitive, so there is no well-defined "bucket" to assign ahead of time.
    Concretely: emit `<fingerprint>` as the finding's `path`; every lookup against `retired[]`,
    `rejected[]`, `unfounded[]`, or `adjudicated[]` re-runs the same path+Jaccard≥0.4 comparison
-   against the stored body text, never a fingerprint-equality check alone. This is deliberately
+   against the stored `issue`+`why`+`fix` text, never a fingerprint-equality check alone. This is deliberately
    *not* line-sensitive, for the same reason "Cross-round dedup" gives: a fix shifts line numbers
    within the same round, so any line-anchored identity would break precisely when a lookup needs
    it most.
@@ -351,7 +351,7 @@ question in its returned line rather than asking. This command body — running 
 
 - **One batched `AskUserQuestion` per round, never one per finding.** Up to 4 findings become the
   4 questions of a single call. Each offers *Real — fix it* / *Not real — drop it* / *Real, don't
-  fix now*, with the finding body and the agent's investigation notes as context.
+  fix now*, with the finding's `issue`, `why` and `fix` and the agent's investigation notes as context.
 - **More than 4 `UNVERIFIABLE` findings in one round → stop the loop** and jump to Phase 6
   (too-many-unverifiable). At that density the review needs a human reading, not an
   interrogation.
@@ -424,8 +424,8 @@ rm -f "$STATE_FILE"
 
 ## Cross-round dedup, without GitHub's thread dedup
 
-> A finding matches a ledger entry when **same normalized path** AND **Jaccard ≥ 0.4** over body
-> tokens.
+> A finding matches a ledger entry when **same normalized path** AND **Jaccard ≥ 0.4** over the
+> `issue`+`why`+`fix` tokens.
 
 Reuses the repo's existing dedup semantics (`skills/workflow-pr-review-post/SKILL.md`) minus the
 ±5-line component — local fixes shift line numbers *within* a round, so a line-sensitive
@@ -472,11 +472,11 @@ already catches the terminal case.
 Review loop stopped: <cap exhausted after 4 reviews | oscillation | tests red | no edits produced | too many unverifiable | parse fault>
 Rounds: 4  Fixed: 11  Rejected: 3  Unfounded: 2  Adjudicated by you: 1  Suppressed: 1  Remaining ≥Medium: 2
 Remaining:
-  High   | src/foo.ts:42 | <body>   (first seen round 1; re-reported 2, 3, 4)
+  High   | src/foo.ts:42 | <issue>   (first seen round 1; re-reported 2, 3, 4)
 Rejected by fixer:
-  Medium | src/bar.ts:9  | <body> — reason: <fixer's reason>
+  Medium | src/bar.ts:9  | <issue> — reason: <fixer's reason>
 Unfounded (claim did not hold against the code):
-  High   | src/baz.ts:7  | <body> — actually: <what is at that line>
+  High   | src/baz.ts:7  | <issue> — actually: <what is at that line>
 Out of branch diff (not acted on): 4
 Residual Low (below floor): 5
 Local commits: 3 — NOT pushed.

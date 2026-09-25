@@ -36,7 +36,7 @@ contract callers must satisfy, not a check this skill performs itself.
 | `BYLINE` | `--byline` | non-empty, **identity-only** markdown clause (e.g. `_Reviewed by \`reviewer\`_`) — must NOT embed the swe-workbench remark or `posted`/`deduped` counts; the script appends both (remark only on a confirmed-public repo — fail-safe omits it on private/unknown) |
 | `BLOCKING_SCOPE` | `--blocking-scope` | `NONE` / `OUT-OF-DIFF-ONLY` / `IN-DIFF`, default `IN-DIFF` (fail-safe). Set from the reviewer agent's in-diff/out-of-diff classification; the specialist PR-mode sub-flow omits it, so the diff-scoping flip never fires there — deliberate, not an oversight. |
 | `CURRENT_USER`/`AUTHOR_LOGIN` | `--current-user`/`--author-login` | optional; empty = identity unknown (self-review flip and auto-approve both stay suppressed — never guesses) |
-| `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, body, anchor}`; `anchor=inline` rows also carry `{path, line}`. **Inline comment bodies must NOT contain the byline/remark** in any form — a `comments[]` body is `finding.body` verbatim; the byline/remark is a review-level concern the script builds once. |
+| `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, issue, why, fix, anchor}` plus optional `category`; `anchor=inline` rows also carry `{path, line}`, `anchor=pr-level` rows may carry `path` (and `line`, only with `path`) so the headline can locate them. **The script renders the comment body** from these fields (`**<Sev>**[ · <Category>][ · \`path:line\` (pr-level only)] — <issue>`, then `**Why it matters:** <why>` and `**Suggested fix:** <fix>` as separate paragraphs) — callers never pass `body`; a row that does is rejected. `issue`/`why`/`fix` are required non-empty strings; `issue`, `severity` and `category` are single-line, `why`/`fix` may span lines (a value that opens with a code fence, e.g. a ` ```suggestion ` block, is rendered on its own paragraph so GitHub still treats it as a suggestion); `path` must be single-line with no backticks, and a `pr-level` `line` is valid only alongside a `path` — omit both when unknown rather than passing a range or blank. **Inline comment bodies must NOT contain the byline/remark** in any form, so no field may embed it — it is a review-level concern the script builds once. |
 | `CALLER_TAG` | `--caller-tag` | non-empty — `general`, `followup`, or the specialist mode name; also scopes an optional `--debug-dir` dump (`<tag>-threads.json` / `<tag>-payload.json`) so two callers reviewing the same PR concurrently never collide |
 | `APPROVE_OVER_OPEN_THREADS` | `--approve-over-open-threads` | optional; empty = no override. When non-empty: a single line, ≤200 chars, must not embed the swe-workbench remark — validated by the script, not this skill |
 
@@ -58,8 +58,9 @@ RESULT=$(swe-workbench-pr-review-submit \
 
 This one call replaces the fetch/dedup/pre-validate/assemble/self-review-gate/atomic-submit
 mechanism previously written out as bash+jq prose here: fetches existing review threads
-(paginated), dedups inline findings against them (±5-line fuzzy match + Jaccard ≥ 0.4 body
-overlap, any author, unresolved only) with a 👍 reaction on match, pre-validates surviving inline
+(paginated), dedups inline findings against them (±5-line fuzzy match + Jaccard ≥ 0.4 overlap of
+the comment text with its headline and `Why it matters:`/`Suggested fix:` labels stripped, any
+author, unresolved only) with a 👍 reaction on match, pre-validates surviving inline
 anchors against the PR diff — demoting out-of-diff/ambiguous rows into a single pr-level batch
 comment rather than dropping them — applies the self-review + diff-scoping decision flip, and
 submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
