@@ -108,7 +108,7 @@ Thread #ID — {path}:{line}  by @{author}  [{Severity if parseable}]
 [D]eferred — reply + resolve (acknowledged, not fixed now)
 [Q]uit — save progress and exit
 ```
-Parse severity from `Severity: <level>` prefix in comment body if present; otherwise label `Unknown`.
+Parse severity from the comment's leading `**<Severity>**` headline (the layout `swe-workbench-pr-review-submit` renders) or a legacy `Severity: <level>` prefix in the comment body if present; otherwise label `Unknown`.
 
 Capture: `triage[<thread_id>] = A|C|D`.
 
@@ -129,7 +129,7 @@ If the owner replies `Q` at any point in either loop, save triage state to `$TRI
 For each `ADDRESSED` review thread or PR comment (in order — both sources share this loop, since the commit step is source-agnostic):
 
 1. Show the finding and the relevant file/line context (PR comments have no `path:line`; show the comment body instead).
-2. Ask the owner for the fix approach (free-text). If the comment already contains a `### Suggested fix` block, offer to apply it automatically via the Edit tool.
+2. Ask the owner for the fix approach (free-text). If the comment already carries a suggested fix — a `**Suggested fix:**` paragraph (the layout `swe-workbench-pr-review-submit` renders; the fix is the rest of that paragraph — or, when a fenced block opens the value, the paragraph after the label — code fences included, up to the next label or the end of the comment) or a legacy `### Suggested fix` block — offer to apply it automatically via the Edit tool.
 3. Apply edits using the Edit tool.
 
 After all `ADDRESSED` fixes are applied, invoke `swe-workbench:workflow-commit-and-pr` with the prompt:

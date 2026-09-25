@@ -217,7 +217,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 ### Step 6 — Invoke the posting core
 
-Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `path`, `line`, `body`); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
+Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `issue`, `why`, `fix`, `path`, `line` — the reviewer's `Issue`, `Why it matters` and `Suggested fix` columns verbatim, never a composed `body`; the posting script renders the layout; on a `pr-level` row omit `path`/`line` unless the reviewer gave a single `path:<integer>` — a range or blank rejects the whole batch); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
 
 - `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5 (`$DECISION` may since have been forced to `COMMENT` by Step 5.5's `AskUserQuestion` — pass whatever it currently holds).

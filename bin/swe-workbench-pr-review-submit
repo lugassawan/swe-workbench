@@ -18,6 +18,15 @@ way, since the caller's cleanup chain must never abort on a posting failure. An
 input-contract validation failure (see `validate_payload`) exits 1 with no stdout at
 all — never a partial envelope.
 
+Comment bodies are rendered here, never by the caller: each --findings-json row
+carries structured fields (`severity`, `issue`, `why`, `fix`, `anchor`, and optional
+`path`/`line`/`category`) and render_finding() applies the one template —
+`**<Sev>**[ · <Category>][ · `path:line`] — <issue>` / `**Why it matters:** <why>` /
+`**Suggested fix:** <fix>`, one paragraph each. Rendering happens at post time, after
+validate_lines() has settled each row's final anchor, so a row demoted from inline to
+PR-level gets its `path:line` in the headline. A row carrying the old free-form `body`
+is rejected: the payload is strict rather than silently accepting two shapes.
+
 Atomicity and idempotency rationale (why this isn't a simple per-finding
 loop): the GitHub Reviews API's POST .../pulls/{n}/reviews accepts a
 comments[] array and posts the whole batch as one review in one call. That
@@ -105,14 +114,73 @@ class Thread:
     is_outdated: bool = False
 
 
+def _label_pattern(label: str) -> str:
+    """Bold or plain form of a `label:` — `**Label:**`, `**Label**:`, `Label:`."""
+    return r"\*{0,2}" + label + r"(?:\s*:\s*\*{0,2}|\s*\*{0,2}\s*:)"
+
+
+_WHY_LABEL_RE = re.compile(r"^\s*" + _label_pattern("why it matters") + r"\s*", re.IGNORECASE)
+_FIX_LABEL_RE = re.compile(r"^\s*" + _label_pattern("suggested fix") + r"\s*", re.IGNORECASE)
+_ANY_LABEL_RE = re.compile(_label_pattern("(?:why it matters|suggested fix)"), re.IGNORECASE)
+# Leading `**Severity**[ · Category][ · `path:line`] — ` headline. The dash is optional so a
+# pre-template body like "**High** text" still loses its severity token.
+_HEADLINE_RE = re.compile(r"^\s*\*\*[^*\n]+\*\*(?:\s*·\s*[^·—\n]+)*(?:\s*—\s*)?")
+
+
+def _strip_label(label_re: re.Pattern, text: str) -> str:
+    return label_re.sub("", text, count=1).strip()
+
+
+def render_finding(row: dict, pr_level: bool) -> str:
+    """The one comment template. Callers pass fields, never prose layout.
+
+    A `why`/`fix` that already carries its own label is stripped rather than
+    doubled. `path:line` joins the headline only for pr-level rendering — an
+    inline comment is already anchored to its line."""
+    headline = f"**{_clean_severity(row['severity'])}**"
+    category = (row.get("category") or "").strip()
+    if category:
+        headline += f" · {category}"
+    path = row.get("path")
+    if pr_level and path:
+        line = row.get("line")
+        headline += f" · `{path}:{line}`" if line else f" · `{path}`"
+    headline += f" — {row['issue'].strip()}"
+    why = _labelled("Why it matters", _strip_label(_WHY_LABEL_RE, row["why"]))
+    fix = _labelled("Suggested fix", _strip_label(_FIX_LABEL_RE, row["fix"]))
+    return f"{headline}\n\n{why}\n\n{fix}"
+
+
+def _clean_severity(severity: str) -> str:
+    """A caller-supplied `**High**` must not render as `****High****`."""
+    return severity.strip().strip("*").strip()
+
+
+def _labelled(label: str, text: str) -> str:
+    """`**Label:** text` — but a value opening with a code fence goes on its own paragraph:
+    GitHub only starts a fence at the beginning of a line, so a mid-line ```suggestion
+    would print as literal text and forfeit the one-click suggestion."""
+    sep = "\n\n" if text.startswith(("```", "~~~")) else " "
+    return f"**{label}:**{sep}{text}"
+
+
+def dedup_text(text: str) -> str:
+    """Strip presentation so Jaccard compares content only: the headline
+    severity/category/`path:line` prefix and both label forms. Without this every
+    templated comment shares ~6 label tokens and unrelated findings false-dedup;
+    it also maps pre-template run-on threads into the same token space."""
+    return _ANY_LABEL_RE.sub(" ", _HEADLINE_RE.sub("", text or "", count=1))
+
+
 def thread_matches(finding_path: str, finding_line: int, finding_body: str, thread: Thread) -> bool:
+    """`finding_body` is the rendered comment; both sides go through dedup_text."""
     if thread.is_resolved:
         return False
     if thread.path != finding_path:
         return False
     if thread.line < 0 or abs(thread.line - finding_line) > LINE_FUZZ:
         return False
-    return jaccard(finding_body, thread.head_comment_body) >= JACCARD_THRESHOLD
+    return jaccard(dedup_text(finding_body), dedup_text(thread.head_comment_body)) >= JACCARD_THRESHOLD
 
 
 def blocking_threads(threads: list[Thread]) -> list[Thread]:
@@ -296,8 +364,9 @@ def dedup_and_react(threads: list[Thread], inline_findings: list[dict], current_
     survivors: list[dict] = []
     deduped = 0
     for finding in inline_findings:
+        rendered = render_finding(finding, pr_level=False)
         match = next(
-            (t for t in threads if thread_matches(finding["path"], finding["line"], finding["body"], t)),
+            (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
             None,
         )
         if match is None:
@@ -373,7 +442,7 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
 def post_pr_level(pr: str, findings: list[dict]) -> int:
     if not findings:
         return 0
-    body = "\n\n---\n\n".join(f["body"] for f in findings)
+    body = "\n\n---\n\n".join(render_finding(f, pr_level=True) for f in findings)
     proc = _gh(["pr", "comment", str(pr), "--body", body])
     if proc.returncode == 0:
         return len(findings)
@@ -428,12 +497,23 @@ def _post_review(owner: str, repo: str, pr: str, head_sha: str, event: str, body
     )
 
 
+def _inline_comment(finding: dict) -> dict:
+    return {
+        "path": finding["path"], "line": finding["line"], "side": "RIGHT",
+        "body": render_finding(finding, pr_level=False),
+    }
+
+
 def submit_review(
     *, owner: str, repo: str, pr: str, head_sha: str, event: str,
-    comments: list[dict], summary_fn, current_user: str, posted_pr_level: int,
+    findings: list[dict], summary_fn, current_user: str, posted_pr_level: int,
     pr_diff: str, script_dir: Path,
 ) -> SubmitResult:
-    """summary_fn(n_inline, posted_pr_level) -> review body text."""
+    """summary_fn(n_inline, posted_pr_level) -> review body text.
+
+    Takes structured rows, not rendered comments: a row demoted mid-submit (422 retry,
+    per-comment fallback) must re-render as PR-level with its path:line in the headline."""
+    comments = [_inline_comment(f) for f in findings]
     n = len(comments)
     posted_inline = 0
     submitted = False
@@ -455,14 +535,15 @@ def submit_review(
             head_sha = (new_head_data or {}).get("headRefOid") or head_sha
             pr_diff = _refetch_pr_diff(pr, pr_diff)
             still_in_diff, newly_demoted = [], []
-            for c in comments:
-                if _line_is_in_diff(c["path"], c["line"], head_sha, pr_diff, script_dir):
-                    still_in_diff.append(c)
+            for f in findings:
+                if _line_is_in_diff(f["path"], f["line"], head_sha, pr_diff, script_dir):
+                    still_in_diff.append(f)
                 else:
-                    newly_demoted.append(c)
+                    newly_demoted.append(f)
             if newly_demoted:
                 posted_pr_level += post_pr_level(pr, newly_demoted)
-            comments = still_in_diff
+            findings = still_in_diff
+            comments = [_inline_comment(f) for f in findings]
             n = len(comments)
             if n > 0:
                 proc2 = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
@@ -488,7 +569,8 @@ def submit_review(
         # failed on network/5xx with no confirmed landing — model-A per-comment fallback.
         posted_inline = 0
         demoted: list[dict] = []
-        for c in comments:
+        for f in findings:
+            c = _inline_comment(f)
             proc = _gh([
                 "api", f"repos/{owner}/{repo}/pulls/{pr}/comments",
                 "-f", f"body={c['body']}",
@@ -500,7 +582,7 @@ def submit_review(
             if proc.returncode == 0:
                 posted_inline += 1
             else:
-                demoted.append(c)  # never dropped silently — folds into one follow-up pr-level comment
+                demoted.append(f)  # never dropped silently — folds into one follow-up pr-level comment
         if demoted:
             posted_pr_level += post_pr_level(pr, demoted)
         proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
@@ -536,23 +618,66 @@ def _byline_problem(byline: str) -> str | None:
     return None
 
 
-def _finding_problem(row) -> str | None:
+_HEADLINE_FIELDS = ("severity", "issue")  # single-line: they build the comment headline
+_BODY_FIELDS = ("why", "fix")  # may span lines (code fences)
+_LINE_BREAK_RE = re.compile(r"[\r\n]")
+_PATH_UNSAFE_RE = re.compile(r"[\r\n`]")
+
+
+def _is_positive_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _finding_problem(row) -> tuple[str, str] | None:
+    """Returns (field, problem) — field is "" for a whole-row problem."""
     if not isinstance(row, dict):
-        return "each row must be a JSON object"
-    if not isinstance(row.get("severity"), str) or not row["severity"]:
-        return "severity must be a non-empty string"
-    if not isinstance(row.get("body"), str) or not row["body"]:
-        return "body must be a non-empty string"
-    if REMARK_TEXT in row["body"]:
-        return "body must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
+        return "", "each row must be a JSON object"
+    if "body" in row:
+        return "body", "is no longer accepted — pass issue/why/fix and the script renders the comment body"
+    for name in _HEADLINE_FIELDS + _BODY_FIELDS:
+        value = row.get(name)
+        if not isinstance(value, str):
+            return name, "must be a non-empty string"
+        if name == "severity":
+            value = _clean_severity(value)
+        elif name == "why":
+            value = _strip_label(_WHY_LABEL_RE, value)
+        elif name == "fix":
+            value = _strip_label(_FIX_LABEL_RE, value)
+        if not value.strip():
+            return name, "must be a non-empty string"
+        if name in _HEADLINE_FIELDS and _LINE_BREAK_RE.search(value.strip()):
+            return name, "must be a single line"
+    category = row.get("category")
+    if category is not None:
+        if not isinstance(category, str):
+            return "category", "must be a string"
+        if _LINE_BREAK_RE.search(category.strip()):
+            return "category", "must be a single line"
+    for name in ("severity", "issue", "why", "fix", "category", "path"):
+        if isinstance(row.get(name), str) and REMARK_TEXT in row[name]:
+            return name, "must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
     anchor = row.get("anchor")
     if anchor not in ("inline", "pr-level"):
-        return "anchor must be 'inline' or 'pr-level'"
+        return "anchor", "must be 'inline' or 'pr-level'"
+    path, line = row.get("path"), row.get("line")
     if anchor == "inline":
-        if not isinstance(row.get("path"), str) or not row["path"]:
-            return "inline rows require a non-empty path"
-        if not isinstance(row.get("line"), int) or isinstance(row.get("line"), bool) or row["line"] < 1:
-            return "inline rows require a positive integer line"
+        if not isinstance(path, str) or not path.strip():
+            return "path", "is required (non-empty) for inline rows"
+        if not _is_positive_int(line):
+            return "line", "must be a positive integer for inline rows"
+    elif path is not None and not isinstance(path, str):
+        return "path", "must be a string when given"
+    if isinstance(path, str) and _PATH_UNSAFE_RE.search(path):
+        # An inline row can be demoted to pr-level, where the path lands in a code span.
+        return "path", "must be a single line without backticks"
+    if anchor == "pr-level":
+        if path is not None and not path.strip():
+            return "path", "must be non-empty when given"
+        if line is not None and not _is_positive_int(line):
+            return "line", "must be a positive integer when given"
+        if line is not None and path is None:
+            return "line", "requires path"
     return None
 
 
@@ -601,9 +726,10 @@ def validate_payload(args) -> tuple[list[dict] | None, tuple[str, str] | None]:
     if not isinstance(findings, list):
         return None, ("--findings-json", "must be a JSON array")
     for i, row in enumerate(findings):
-        problem = _finding_problem(row)
-        if problem:
-            return None, (f"--findings-json[{i}]", problem)
+        found = _finding_problem(row)
+        if found:
+            name, problem = found
+            return None, (f"--findings-json[{i}]" + (f".{name}" if name else ""), problem)
 
     return findings, None
 
@@ -670,15 +796,13 @@ def main(argv: list[str] | None = None) -> int:
         override_note = args.approve_over_open_threads if override_used else None
         is_private = _repo_is_private(owner, repo)
 
-        comments = [{"path": f["path"], "line": f["line"], "side": "RIGHT", "body": f["body"]} for f in in_diff]
-
         def summary_fn(n_inline: int, pr_level_count: int) -> str:
             byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
             return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
 
         result = submit_review(
             owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
-            comments=comments, summary_fn=summary_fn, current_user=args.current_user,
+            findings=in_diff, summary_fn=summary_fn, current_user=args.current_user,
             posted_pr_level=posted_pr_level, pr_diff=pr_diff, script_dir=script_dir,
         )
     except PostingError as exc:
@@ -691,7 +815,9 @@ def main(argv: list[str] | None = None) -> int:
         (debug_dir / f"{args.caller_tag}-threads.json").write_text(
             json.dumps([t.__dict__ for t in threads], default=list, indent=2)
         )
-        (debug_dir / f"{args.caller_tag}-payload.json").write_text(json.dumps(comments, indent=2))
+        (debug_dir / f"{args.caller_tag}-payload.json").write_text(
+            json.dumps([_inline_comment(f) for f in in_diff], indent=2)
+        )
 
     envelope = {
         "schema": "swb.pr-review-submit/1",

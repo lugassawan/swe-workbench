@@ -121,6 +121,19 @@ def _run(args: list[str], *, cwd: Path, stub_dir: Path, state_dir: Path, respons
     )
 
 
+def _row(**overrides) -> dict:
+    """A valid structured inline finding row; override any field, or pass None to drop one."""
+    row = {
+        "severity": "High", "issue": "issue on line2", "why": "why", "fix": "fix",
+        "anchor": "inline", "path": "src.py", "line": 2,
+    }
+    row.update(overrides)
+    return {k: v for k, v in row.items() if v is not None}
+
+
+_DEDUP_ROW = _row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=12)
+
+
 def _threads_response(nodes: list[dict], *, has_next_page: bool = False, end_cursor: str | None = None) -> dict:
     body = {
         "data": {
@@ -453,13 +466,13 @@ def test_build_summary_self_review_omits_override_note_even_if_passed():
 
 def test_partition_findings_splits_by_anchor():
     findings = [
-        {"anchor": "inline", "body": "a"},
-        {"anchor": "pr-level", "body": "b"},
-        {"anchor": "inline", "body": "c"},
+        {"anchor": "inline", "issue": "a"},
+        {"anchor": "pr-level", "issue": "b"},
+        {"anchor": "inline", "issue": "c"},
     ]
     inline, pr_level = prs.partition_findings(findings)
-    assert [f["body"] for f in inline] == ["a", "c"]
-    assert [f["body"] for f in pr_level] == ["b"]
+    assert [f["issue"] for f in inline] == ["a", "c"]
+    assert [f["issue"] for f in pr_level] == ["b"]
 
 
 # ── Behavioral: input-contract validation aborts before any network call ──────
@@ -591,7 +604,7 @@ def test_approve_over_open_threads_valid_reason_flows_to_envelope(tmp_path):
 def test_inline_finding_missing_path_aborts(tmp_path):
     stub_dir, state_dir = _write_gh_stub(tmp_path, [])
     responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [{"severity": "High", "body": "x", "anchor": "inline", "line": 3}])
+    findings = _write_findings(tmp_path, [_row(path=None, line=3)])
     result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
     assert result.returncode != 0
     assert "--findings-json[0]" in result.stderr
@@ -601,14 +614,10 @@ def test_inline_finding_missing_path_aborts(tmp_path):
 def test_finding_body_embedding_remark_aborts(tmp_path):
     stub_dir, state_dir = _write_gh_stub(tmp_path, [])
     responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [{
-        "severity": "High",
-        "body": f"nice work {prs.REMARK_TEXT}",
-        "anchor": "pr-level",
-    }])
+    findings = _write_findings(tmp_path, [_row(issue=f"nice work {prs.REMARK_TEXT}", anchor="pr-level")])
     result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
     assert result.returncode != 0
-    assert "--findings-json[0]" in result.stderr
+    assert "--findings-json[0].issue" in result.stderr
     assert _gh_calls(state_dir) == []
 
 
@@ -652,7 +661,7 @@ def test_findings_json_via_stdin(tmp_path):
 
 
 def test_dedup_match_adds_one_reaction_and_posts_nothing(tmp_path):
-    node = _thread_node(id="PRRT_1", path="src.py", line=10, body="alpha bravo charlie", reactor_logins=[])
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, body=prs.render_finding(_DEDUP_ROW, False), reactor_logins=[])
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
         [
@@ -665,7 +674,7 @@ def test_dedup_match_adds_one_reaction_and_posts_nothing(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "alpha bravo charlie", "anchor": "inline", "path": "src.py", "line": 12},
+        _DEDUP_ROW,
     ])
     result = _run(
         _args(findings, **{"--current-user": "alice"}),
@@ -680,7 +689,7 @@ def test_dedup_match_adds_one_reaction_and_posts_nothing(tmp_path):
 
 
 def test_already_reacted_thread_adds_no_reaction(tmp_path):
-    node = _thread_node(id="PRRT_1", path="src.py", line=10, body="alpha bravo charlie", reactor_logins=["alice"])
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, body=prs.render_finding(_DEDUP_ROW, False), reactor_logins=["alice"])
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
         [
@@ -692,7 +701,7 @@ def test_already_reacted_thread_adds_no_reaction(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "alpha bravo charlie", "anchor": "inline", "path": "src.py", "line": 12},
+        _DEDUP_ROW,
     ])
     result = _run(
         _args(findings, **{"--current-user": "alice"}),
@@ -742,7 +751,7 @@ def test_failed_pr_diff_fetch_aborts_loudly_instead_of_silent_demotion(tmp_path)
     ])
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
     assert result.returncode != 0
@@ -775,7 +784,7 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "out of diff finding", "anchor": "inline", "path": "src.py", "line": 999},
+        _row(issue="out of diff finding", line=999),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head}),
@@ -787,6 +796,10 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     calls = _gh_calls(state_dir)
     pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
     assert len(pr_comment_calls) == 1, "demoted findings must batch into exactly one gh pr comment call"
+    body = pr_comment_calls[0]["argv"][pr_comment_calls[0]["argv"].index("--body") + 1]
+    assert body == (
+        "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+    ), "a demoted row must gain its path:line in the headline — inline rendering would lose the location"
 
 
 def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
@@ -802,7 +815,7 @@ def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "Low", "body": "a dependency finding", "anchor": "pr-level"},
+        _row(severity="Low", issue="a dependency finding", anchor="pr-level", path=None, line=None),
     ])
     result = _run(
         _args(findings),
@@ -838,7 +851,7 @@ def test_atomic_post_carries_candidate_count_in_body(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head}),
@@ -850,7 +863,9 @@ def test_atomic_post_carries_candidate_count_in_body(tmp_path):
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
     assert "Posted 1 inline comment(s)" in payload["body"], payload["body"]
-    assert payload["comments"][0]["body"] == "issue on line2"
+    assert payload["comments"][0]["body"] == (
+        "**High** — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+    )
 
 
 def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
@@ -885,7 +900,7 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head}),
@@ -936,7 +951,7 @@ def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head}),
@@ -977,7 +992,7 @@ def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
@@ -1017,7 +1032,7 @@ def test_5xx_issues_zero_retries_and_one_read_your_write_call(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
@@ -1064,7 +1079,7 @@ def test_confirmed_landed_5xx_reports_submitted_without_reposting(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
@@ -1127,7 +1142,7 @@ def test_body_with_quotes_backslash_and_leading_at_survives_byte_identical(tmp_p
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": hazardous_body, "anchor": "inline", "path": "src.py", "line": 2},
+        _row(issue=hazardous_body),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head}),
@@ -1137,7 +1152,7 @@ def test_body_with_quotes_backslash_and_leading_at_survives_byte_identical(tmp_p
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
-    assert payload["comments"][0]["body"] == hazardous_body
+    assert payload["comments"][0]["body"].startswith(f"**High** — {hazardous_body}\n\n")
 
 
 # ── Behavioral: blocking-thread gate ────────────────────────────────────────────
@@ -1438,7 +1453,7 @@ def test_status_is_partial_when_submitted_false(tmp_path):
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
-        {"severity": "High", "body": "issue on line2", "anchor": "inline", "path": "src.py", "line": 2},
+        _row(),
     ])
     result = _run(
         _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
@@ -1486,3 +1501,344 @@ def test_envelope_round_trips_through_result_check(tmp_path):
     )
     assert checked.returncode == 0, checked.stderr
     assert json.loads(checked.stdout) == json.loads(result.stdout)
+
+
+# ── Unit: structured rendering (render_finding / dedup_text) ─────────────────
+
+
+def test_render_inline_golden():
+    row = _row(severity="Medium", issue="Unchecked nil deref", why="panics in prod", fix="guard the call")
+    assert prs.render_finding(row, pr_level=False) == (
+        "**Medium** — Unchecked nil deref\n\n**Why it matters:** panics in prod\n\n**Suggested fix:** guard the call"
+    )
+
+
+def test_render_inline_omits_location_even_when_path_and_line_present():
+    assert "src.py" not in prs.render_finding(_row(), pr_level=False)
+
+
+def test_render_pr_level_with_path_and_line():
+    row = _row(anchor="pr-level", path="a/b.go", line=7)
+    assert prs.render_finding(row, pr_level=True).splitlines()[0] == "**High** · `a/b.go:7` — issue on line2"
+
+
+def test_render_pr_level_with_path_only():
+    row = _row(anchor="pr-level", path="pkg.lock", line=None)
+    assert prs.render_finding(row, pr_level=True).splitlines()[0] == "**High** · `pkg.lock` — issue on line2"
+
+
+def test_render_pr_level_without_location():
+    row = _row(anchor="pr-level", path=None, line=None)
+    assert prs.render_finding(row, pr_level=True).splitlines()[0] == "**High** — issue on line2"
+
+
+def test_render_with_category_precedes_location():
+    row = _row(anchor="pr-level", category="Correctness")
+    assert prs.render_finding(row, pr_level=True).splitlines()[0] == (
+        "**High** · Correctness · `src.py:2` — issue on line2"
+    )
+    assert prs.render_finding(row, pr_level=False).splitlines()[0] == "**High** · Correctness — issue on line2"
+
+
+def test_render_paragraphs_are_blank_line_separated():
+    parts = prs.render_finding(_row(), pr_level=False).split("\n\n")
+    assert [p.split(" ")[0] for p in parts] == ["**High**", "**Why", "**Suggested"]
+
+
+def test_render_keeps_multiline_fix_with_code_fence():
+    fix = "use a guard:\n```go\nif x == nil { return }\n```"
+    assert prs.render_finding(_row(fix=fix), pr_level=False).endswith(f"**Suggested fix:** {fix}")
+
+
+@pytest.mark.parametrize(
+    "why, fix",
+    [
+        ("Why it matters: reason", "Suggested fix: do it"),
+        ("**Why it matters:** reason", "**Suggested fix:** do it"),
+        ("**Why it matters**: reason", "**Suggested fix**: do it"),
+        ("why it matters:reason", "SUGGESTED FIX:do it"),
+    ],
+)
+def test_render_strips_self_labelled_fields_instead_of_doubling(why, fix):
+    out = prs.render_finding(_row(why=why, fix=fix), pr_level=False)
+    assert out.endswith("**Why it matters:** reason\n\n**Suggested fix:** do it")
+    assert out.lower().count("why it matters") == 1
+    assert out.lower().count("suggested fix") == 1
+
+
+def test_dedup_text_strips_headline_and_both_label_forms():
+    templated = prs.render_finding(_row(category="Style", anchor="pr-level"), pr_level=True)
+    tokens = prs.tokenize(prs.dedup_text(templated))
+    assert {"issue", "on", "line2"} <= tokens
+    assert tokens.isdisjoint({"high", "style", "src", "py", "matters", "suggested", "it"})
+    plain = prs.tokenize(prs.dedup_text("Why it matters: a. Suggested fix: b"))
+    assert plain.isdisjoint({"matters", "suggested", "it"})
+
+
+def test_dedup_text_leaves_plain_text_untouched():
+    assert prs.dedup_text("alpha bravo charlie") == "alpha bravo charlie"
+
+
+def test_label_tokens_alone_do_not_false_dedup_unrelated_findings():
+    """Every templated comment shares severity + ~5 label tokens; with one-word fields that overlap
+    alone clears the 0.4 threshold. dedup_text must remove it so unrelated findings survive."""
+    a = _row(issue="alpha", why="bravo", fix="charlie", line=12)
+    b = _row(issue="delta", why="echo", fix="foxtrot", line=10)
+    rendered_a, rendered_b = prs.render_finding(a, False), prs.render_finding(b, False)
+    assert prs.jaccard(rendered_a, rendered_b) == pytest.approx(0.5)  # 6 shared / 12 — over the 0.4 threshold
+    thread = prs.Thread(
+        id="T", path="src.py", line=10, is_resolved=False, head_comment_id="C", head_comment_body=rendered_b
+    )
+    assert prs.thread_matches("src.py", 12, rendered_a, thread) is False
+
+
+def test_templated_finding_dedups_against_its_own_earlier_post():
+    row = _row(issue="alpha", why="bravo", fix="charlie", line=12)
+    rendered = prs.render_finding(row, False)
+    thread = prs.Thread(
+        id="T", path="src.py", line=10, is_resolved=False, head_comment_id="C", head_comment_body=rendered
+    )
+    assert prs.thread_matches("src.py", 12, rendered, thread) is True
+
+
+@pytest.mark.parametrize(
+    "old_body",
+    [
+        "**Medium** — Unchecked nil deref. Why it matters: panics in prod. Suggested fix: guard the call",
+        "Unchecked nil deref. **Why it matters:** panics in prod. **Suggested fix:** guard the call",
+        "**Medium** Unchecked nil deref panics in prod, guard the call",
+    ],
+)
+def test_finding_dedups_against_pre_template_run_on_thread(old_body):
+    row = _row(severity="Medium", issue="Unchecked nil deref", why="panics in prod", fix="guard the call")
+    thread = prs.Thread(
+        id="T", path="src.py", line=10, is_resolved=False, head_comment_id="C", head_comment_body=old_body
+    )
+    assert prs.thread_matches("src.py", 12, prs.render_finding(row, False), thread) is True
+
+
+# ── Unit: structured row validation ──────────────────────────────────────────
+
+
+def test_valid_rows_have_no_problem():
+    assert prs._finding_problem(_row()) is None
+    assert prs._finding_problem(_row(anchor="pr-level", path=None, line=None)) is None
+    assert prs._finding_problem(_row(anchor="pr-level", line=None)) is None
+    assert prs._finding_problem(_row(category="Correctness", fix="a\nb")) is None
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "why", "fix"])
+def test_missing_or_empty_required_field_names_the_field(field):
+    assert prs._finding_problem(_row(**{field: None}))[0] == field
+    assert prs._finding_problem(_row(**{field: "   "}))[0] == field
+
+
+@pytest.mark.parametrize("field, label", [("why", "Why it matters:"), ("fix", "**Suggested fix:**")])
+def test_label_only_field_counts_as_empty(field, label):
+    assert prs._finding_problem(_row(**{field: label}))[0] == field
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category"])
+def test_remark_embedded_in_any_text_field_is_rejected(field):
+    problem = prs._finding_problem(_row(**{field: f"x {prs.REMARK_TEXT}"}))
+    assert problem is not None and problem[0] == field and "remark" in problem[1]
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "category"])
+def test_newline_in_headline_field_is_rejected(field):
+    problem = prs._finding_problem(_row(**{field: "a\nb"}))
+    assert problem is not None and problem[0] == field
+
+
+def test_leftover_body_key_is_rejected():
+    problem = prs._finding_problem(_row(body="legacy prose"))
+    assert problem is not None and problem[0] == "body" and "no longer accepted" in problem[1]
+
+
+def test_pr_level_line_requires_positive_int_and_path():
+    assert prs._finding_problem(_row(anchor="pr-level", line=0))[0] == "line"
+    assert prs._finding_problem(_row(anchor="pr-level", line=True))[0] == "line"
+    assert prs._finding_problem(_row(anchor="pr-level", path=None, line=3))[0] == "line"
+    assert prs._finding_problem(_row(anchor="pr-level", path=""))[0] == "path"
+
+
+def test_leftover_body_aborts_the_whole_batch_naming_the_field(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [_row(), _row(body="free-form prose")])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 1
+    assert "--findings-json[1].body" in result.stderr
+    assert result.stdout == ""
+    assert _gh_calls(state_dir) == []
+
+
+def test_row_demoted_on_422_retry_renders_pr_level_with_location(tmp_path):
+    """The diff moving between pre-validate and submit demotes a row *after* the inline comment
+    payload was built — it must still re-render as PR-level with path:line in its headline."""
+    head = _init_repo(tmp_path)
+    hunk = "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    diff_after = hunk + "@@ -0,0 +1,1 @@\n+line1\n"  # line 2 left the diff
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": diff_before, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
+            {"stdout": "", "exit": 0},  # pr comment carrying the newly demoted row
+            _review_post_response(),  # N=0 -> plain review submit
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [_row(category="Correctness")])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 1
+    assert _data(result)["posted_inline"] == 0
+    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    assert body == (
+        "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+    )
+
+
+def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},  # pr diff
+            {"stdout": "", "exit": 0},  # pr comment
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue="first", anchor="pr-level", path=None, line=None),
+        _row(issue="second", anchor="pr-level", path="pkg.lock", line=None),
+    ])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 2
+    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    first, second = body.split("\n\n---\n\n")
+    assert first.startswith("**High** — first\n\n**Why it matters:**")
+    assert second.startswith("**High** · `pkg.lock` — second\n\n**Why it matters:**")
+
+
+def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_location(tmp_path):
+    """The model-A fallback demotes a row whose individual POST fails — it must land in the
+    pr-level comment as a re-render (path:line in the headline), not as the inline body."""
+    head = _init_repo(tmp_path)
+    pr_diff = (
+        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
+            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
+            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST fails
+            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
+            _review_post_response(),  # final plain review submit
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [_row(category="Correctness")])
+    result = _run(
+        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_inline"] == 0
+    assert _data(result)["posted_pr_level"] == 1
+    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    assert body.startswith("**High** · Correctness · `src.py:2` — issue on line2\n\n")
+
+
+def test_render_puts_fence_led_fix_on_its_own_paragraph():
+    """GitHub only opens a fence at the start of a line, so a ```suggestion block glued to the
+    label would print as literal text and forfeit the one-click suggestion."""
+    fix = "```suggestion\nx = 1\n```"
+    out = prs.render_finding(_row(fix=fix), pr_level=False)
+    assert out.endswith(f"**Suggested fix:**\n\n{fix}")
+    why = "```text\nboom\n```"
+    assert f"**Why it matters:**\n\n{why}\n\n**Suggested fix:**" in prs.render_finding(_row(why=why), pr_level=False)
+
+
+def test_render_keeps_prose_led_fix_on_the_label_line():
+    out = prs.render_finding(_row(fix="do it:\n```go\nx()\n```"), pr_level=False)
+    assert "**Suggested fix:** do it:\n```go" in out
+
+
+@pytest.mark.parametrize("severity", ["**High**", "*High*", " ** High ** "])
+def test_render_normalizes_caller_bolded_severity(severity):
+    assert prs.render_finding(_row(severity=severity), pr_level=False).startswith("**High** — ")
+
+
+def test_bold_only_severity_is_rejected_as_empty():
+    assert prs._finding_problem(_row(severity="****"))[0] == "severity"
+
+
+@pytest.mark.parametrize("bad_path", ["a`b.py", "a\nb.py", "a\rb.py"])
+@pytest.mark.parametrize("anchor", ["inline", "pr-level"])
+def test_path_with_backtick_or_line_break_is_rejected_for_both_anchors(bad_path, anchor):
+    """An inline row can be demoted to pr-level, where the path is rendered inside a code span."""
+    problem = prs._finding_problem(_row(anchor=anchor, path=bad_path))
+    assert problem is not None and problem[0] == "path"
+
+
+def test_whitespace_only_path_is_rejected():
+    assert prs._finding_problem(_row(path="   "))[0] == "path"
+    assert prs._finding_problem(_row(anchor="pr-level", path="   ", line=None))[0] == "path"
+
+
+def test_remark_embedded_in_path_is_rejected():
+    problem = prs._finding_problem(_row(anchor="pr-level", path=f"x {prs.REMARK_TEXT}", line=None))
+    assert problem is not None and problem[0] == "path" and "remark" in problem[1]
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "category"])
+def test_bare_carriage_return_in_headline_field_is_rejected(field):
+    problem = prs._finding_problem(_row(**{field: "a\rb"}))
+    assert problem is not None and problem[0] == field
+
+
+def _rendered_thread_match(row_a: dict, row_b: dict) -> bool:
+    thread = prs.Thread(
+        id="T", path="src.py", line=10, is_resolved=False, head_comment_id="C",
+        head_comment_body=prs.render_finding(row_b, False),
+    )
+    return prs.thread_matches("src.py", 12, prs.render_finding(row_a, False), thread)
+
+
+def test_rendered_findings_match_at_exactly_the_0_4_threshold():
+    # content tokens {alpha bravo charlie} vs {alpha bravo delta echo}: 2/5 = 0.4 — label and
+    # headline tokens must not shift the ratio in either direction.
+    a = _row(issue="alpha", why="bravo", fix="charlie", line=12)
+    b = _row(issue="alpha", why="bravo", fix="delta echo")
+    assert _rendered_thread_match(a, b) is True
+
+
+def test_rendered_findings_do_not_match_just_below_the_0_4_threshold():
+    # 3 shared / 8 total = 0.375
+    a = _row(issue="alpha bravo", why="charlie", fix="delta echo", line=12)
+    b = _row(issue="alpha bravo", why="charlie", fix="foxtrot golf hotel")
+    assert _rendered_thread_match(a, b) is False

@@ -57,6 +57,20 @@ sys.exit(resp.get("exit", 0))
 HAZARDOUS_BODY = '@author said "this" is \\wrong\\'
 
 
+def _row(issue: str) -> dict:
+    return {
+        "severity": "High", "issue": issue, "why": "why", "fix": "fix",
+        "anchor": "inline", "path": "src.py", "line": 2,
+    }
+
+
+def _rendered(issue: str) -> str:
+    """The inline comment body the script renders for `_row(issue)`. A leading '@' can no longer
+    reach the body (the headline always opens with `**Severity**`), but the quote/backslash
+    hazards still must survive byte-identical, and -f (not -F) must still be used."""
+    return f"**High** — {issue}\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+
+
 def _write_gh_stub(tmp_path: Path, responses: list[dict]) -> tuple[Path, Path]:
     stub_dir = tmp_path / "stubs"
     stub_dir.mkdir(exist_ok=True)
@@ -148,14 +162,14 @@ def test_atomic_comments_body_survives_byte_identical_via_json_payload(tmp_path)
     ])
     findings = tmp_path / "findings.json"
     findings.write_text(json.dumps([
-        {"severity": "High", "body": HAZARDOUS_BODY, "anchor": "inline", "path": "src.py", "line": 2},
+        _row(HAZARDOUS_BODY),
     ]))
     result = _run(_base_args(findings) + ["--head-sha", head], cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir)
     assert result.returncode == 0, result.stderr
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "--input" in c["argv"] and "/reviews" in json.dumps(c["argv"]))
     payload = json.loads(post_call["stdin"])
-    assert payload["comments"][0]["body"] == HAZARDOUS_BODY, (
+    assert payload["comments"][0]["body"] == _rendered(HAZARDOUS_BODY), (
         "a body containing '\"'/'\\\\'/a leading '@' must survive byte-identical into the JSON payload"
     )
 
@@ -167,7 +181,7 @@ def test_atomic_reviews_post_uses_input_flag_not_f_F_for_body(tmp_path):
     ])
     findings = tmp_path / "findings.json"
     findings.write_text(json.dumps([
-        {"severity": "High", "body": "a finding", "anchor": "inline", "path": "src.py", "line": 2},
+        _row("a finding"),
     ]))
     result = _run(_base_args(findings) + ["--head-sha", head], cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir)
     assert result.returncode == 0, result.stderr
@@ -196,7 +210,7 @@ def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp
     ])
     findings = tmp_path / "findings.json"
     findings.write_text(json.dumps([
-        {"severity": "High", "body": HAZARDOUS_BODY, "anchor": "inline", "path": "src.py", "line": 2},
+        _row(HAZARDOUS_BODY),
     ]))
     result = _run(
         _base_args(findings) + ["--head-sha", head, "--current-user", "alice"],
@@ -205,10 +219,10 @@ def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp
     assert result.returncode == 0, result.stderr
     calls = _gh_calls(state_dir)
     fallback_call = next(c for c in calls if c["argv"][0] == "api" and "/comments" in json.dumps(c["argv"]))
-    assert f"body={HAZARDOUS_BODY}" in fallback_call["argv"], (
+    assert f"body={_rendered(HAZARDOUS_BODY)}" in fallback_call["argv"], (
         f"expected -f body=<raw> in the fallback per-comment POST argv, got: {fallback_call['argv']}"
     )
-    idx = fallback_call["argv"].index(f"body={HAZARDOUS_BODY}")
+    idx = fallback_call["argv"].index(f"body={_rendered(HAZARDOUS_BODY)}")
     assert fallback_call["argv"][idx - 1] == "-f", (
         "the fallback per-comment POST must use -f (raw string) for body, not -F "
         "(which @-expands a value starting with '@')"
