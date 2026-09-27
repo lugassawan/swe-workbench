@@ -3,6 +3,8 @@ description: Capture an idea, improvement, or bug as a well-framed GitHub issue 
 argument-hint: <one-line thought> [--grill | --standard]
 ---
 
+<!-- swb-phase: plan -->
+
 The user wants to capture: $ARGUMENTS
 
 **Interrogation mode.** Before producing anything, resolve the mode:
