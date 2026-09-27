@@ -501,6 +501,78 @@ def test_extension_ts_files_excluding_index_stay_under_line_cap():
     assert not violations, f"pi/extensions/*.ts files (excluding index.ts) must stay <= {LINE_CAP} lines: {violations}"
 
 
+_DUMP_MEMORY_GUIDANCE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+console.log(JSON.stringify({
+  entryTypes: mod.ENTRY_TYPES,
+  toolName: mod.MEMORY_TOOL_NAME,
+  section: mod.memoryGuidanceSection(),
+}));
+"""
+
+
+def _load_memory_runtime_module():
+    """Loads bin/swe-workbench-memory the same way tests/test_memory_script.py does — a
+    separate load (test files don't import across each other), but reading, never mirroring,
+    the runtime's own ENTRY_TYPES value."""
+    import importlib.machinery
+    import importlib.util
+    import sys
+
+    runtime_path = ROOT / "bin" / "swe-workbench-memory"
+    loader = importlib.machinery.SourceFileLoader(
+        "swe_workbench_memory_runtime_pi_contract", str(runtime_path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    loader.exec_module(module)
+    return module
+
+
+@pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="requires Node (memory-guidance.ts dump)",
+)
+def test_memory_guidance_entry_types_matches_runtime_exactly():
+    """Parity pin — memory-guidance.ts's ENTRY_TYPES must equal bin/swe-workbench-memory's
+    ENTRY_TYPES exactly (order included), so the tool's schema/guidance can never silently
+    drift from what the runtime actually accepts."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "dump-memory-guidance.mjs"
+        driver.write_text(_DUMP_MEMORY_GUIDANCE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(EXTENSIONS_DIR / "memory-guidance.ts")],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+
+    runtime = _load_memory_runtime_module()
+    assert tuple(dumped["entryTypes"]) == tuple(runtime.ENTRY_TYPES)
+    assert dumped["toolName"] == "memory_record"
+    assert dumped["section"]["title"]
+    assert dumped["section"]["body"]
+
+
+def test_memory_guidance_ts_imports_nothing_but_is_pure_text():
+    """memory-guidance.ts must import NOTHING from the Pi SDK, not even as a type — same
+    domain-layer discipline as tool-vocab.ts (this file's own header states the rule; this
+    test enforces it). The generic bare-specifier scan above also covers this file once it
+    exists, but this test pins the STRONGER "zero imports at all" bar this specific file's
+    header commits to, which the generic scan does not (it would accept `import type`)."""
+    text = (EXTENSIONS_DIR / "memory-guidance.ts").read_text(encoding="utf-8")
+    import_lines = [
+        line for line in text.splitlines() if re.match(r"^\s*import\b", line)
+    ]
+    assert import_lines == [], f"memory-guidance.ts must have zero imports: {import_lines}"
+
+
 def _node_major_version():
     node = shutil.which("node")
     if node is None:
