@@ -153,7 +153,7 @@ preload share:
 | refactorer | 73.2 | 6,565 | 5 | 100 |
 | debugger | 69.6 | 6,983 | 5 | 100 |
 | code-impl | 69.3 | 6,724 | 5 | 100 |
-| alignment-assessor | 68.7 | 8,906 | 2 | 40 |
+| alignment-assessor | 68.7 | 2,227 | 2 | 40 |
 | tech-writer | 67.2 | 2,835 | 2 | 40 |
 | product-designer | 65.9 | 5,892 | 3 | 60 |
 | product-manager | 63.9 | 4,443 | 3 | 60 |
@@ -187,7 +187,7 @@ follow-up — and sweeping a pair that condition 2 would clear anyway spends pai
 in the wrong order. Revisit once citation telemetry can name low-citation (agent, skill)
 pairs in these three.
 
-**Skip — the remaining 14 agents.** Either share < 65% (the agent's own body dominates the
+**Skip — the remaining 15 agents.** Either share < 65% (the agent's own body dominates the
 prefix, so demotion moves proportionally little) or absolute preload < ~6k est. tokens (the
 entire demotable surface is worth ~$0.006–0.03 per dispatch on the uncached default
 provider — less than a single sweep dispatch costs), or both.

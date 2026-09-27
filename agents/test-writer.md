@@ -1,6 +1,6 @@
 ---
 name: test-writer
-description: Test author — writes focused, behavioural tests in language-idiomatic style. One behaviour per test, AAA, no mocks at internal boundaries. Invoke when adding tests for a function, module, or change set the user points to.
+description: Test author — writes focused, behavioural tests in language-idiomatic style. One behaviour per test
 model: haiku
 effort: high
 tools: Read, Edit, Grep, Glob, Bash, Skill

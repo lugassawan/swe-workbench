@@ -387,12 +387,28 @@ class TestRedundancyAssessment:
         assert "refs=0" in mistakes or "refs>0" in mistakes
 
 class TestAlignmentAssessment:
+    def test_step6_routes_to_step7_when_check_alignment_is_on(self):
+        body = _body()
+        step6 = body.split("### Step 6")[1].split("### Step 7")[0]
+        assert step6.count("proceed to Step 7 if `CHECK_ALIGNMENT=on`, else Step 8") == 3
+
     def test_step7_is_alignment_assessment_and_flag_gated(self):
         body = _body()
+        assert "CHECK_ALIGNMENT=on|off" in body
+        assert "Step 7 — Alignment Assessment (opt-in, flag-gated)" in body
         assert "### Step 7 — Alignment Assessment" in body
         step7 = body.split("### Step 7")[1].split("### Step 8")[0]
         assert "`CHECK_ALIGNMENT` is `off` → skip" in step7
         assert "CHECK_ALIGNMENT=on" in step7
+        assert "MAIN_HISTORY=\"$(git log -n 100 --no-merges --stat \"$MERGE_BASE..origin/$DEFAULT_BRANCH\")\"" in step7
+        assert "BRANCH_DIFF=\"$(git diff \"$MERGE_BASE..$PRE_SYNC_HEAD\")\"" in step7
+        assert "swe-workbench:alignment-assessor" in step7
+
+    def test_alignment_captures_history_and_dispatches_subagent(self):
+        body = _body()
+        assert "MAIN_HISTORY=\"$(git log -n 100 --no-merges --stat \"$MERGE_BASE..origin/$DEFAULT_BRANCH\")\"" in body
+        assert "BRANCH_DIFF=\"$(git diff \"$MERGE_BASE..$PRE_SYNC_HEAD\")\"" in body
+        assert "swe-workbench:alignment-assessor" in body
 
     def test_step7_unrelated_histories_skip(self):
         body = _body()

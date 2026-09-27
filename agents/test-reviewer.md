@@ -1,6 +1,6 @@
 ---
 name: test-reviewer
-description: Test audit specialist — depth-first review of test suites for flakiness, over-mocking at internal boundaries, behaviour-vs-implementation drift, and coverage gaps. Invoke when you want a focused test audit, not authoring new tests.
+description: Test audit specialist — depth-first review of test suites for flakiness, over-mocking at internal boundaries, behaviour-vs-implementation drift
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill

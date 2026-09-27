@@ -1,6 +1,6 @@
 ---
 name: code-impl
-description: Focused implementer sub-agent — receives a scoped brief (goal, file set, verify command) from the orchestrator, implements only the assigned file group, and returns a structured summary. Invoke when swe-workbench:workflow-delegated-implementation delegates a cohesive change group to reduce orchestrator context. Never invoked directly for full-feature delivery.
+description: Focused implementer sub-agent — receives a scoped brief (goal, file set, verify command) from the orchestrator, and returns a structured summary. Invoke when swe-workbench:workflow-delegated-implementation delegates a cohesive change group to reduce orchestrator context. Never invoked directly for full-feature delivery.
 model: sonnet
 effort: xhigh
 tools: Read, Edit, Write, Grep, Glob, Bash, Skill

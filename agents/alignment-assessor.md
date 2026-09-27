@@ -1,6 +1,6 @@
 ---
 name: alignment-assessor
-description: Architectural alignment advisor — reads the branch's full diff against the default branch's recent commit history to detect architectural drift, conceptual shifts, outdated paradigm, or conflicting directions. Invoke from workflow-branch-sync's `sync --check-alignment` pass.
+description: Architectural alignment advisor — reads the branch's full diff against the default branch's recent commit history to detect architectural drift, conceptual shifts
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
