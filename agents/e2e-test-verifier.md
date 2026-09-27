@@ -1,6 +1,6 @@
 ---
 name: e2e-test-verifier
-description: E2E spec verifier — runs newly-authored specs via the project's detected E2E command, distrusts false-green passes, and confirms each spec actually exercises the stated behaviour. Invoke after e2e-test-writer; pairs with /verify or /run for async handoff.
+description: E2E spec verifier — runs newly-authored specs via the project's detected E2E command; pairs with /verify or /run for async handoff.
 model: haiku
 effort: high
 tools: Read, Grep, Glob, Bash, Skill

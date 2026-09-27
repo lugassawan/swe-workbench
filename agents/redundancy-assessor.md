@@ -1,6 +1,6 @@
 ---
 name: redundancy-assessor
-description: Redundancy-assessment advisor — reads whole-file candidates the branch added against what the default branch grew independently over the same window, and recommends auto-apply/escalate/none per candidate with rationale. Invoke from workflow-branch-sync's `sync --check-redundancy` pass; never removes a file itself.
+description: Redundancy-assessment advisor — reads whole-file candidates the branch added against what the default branch grew independently over the same window; never removes a file itself.
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill

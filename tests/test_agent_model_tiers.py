@@ -17,6 +17,7 @@ VALID_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 # re-tier section. Bumped to opus: architect, migrator, security-auditor, senior-engineer.
 EXPECTED_TIERS = {
     "accessibility-auditor": "sonnet",
+    "alignment-assessor": "sonnet",
     "architect": "opus",
     "auditor": "sonnet",
     "code-impl": "sonnet",

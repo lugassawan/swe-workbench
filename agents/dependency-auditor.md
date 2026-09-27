@@ -1,6 +1,6 @@
 ---
 name: dependency-auditor
-description: Dependency audit specialist — manifest-graph axis covering outdated versions, deprecation, license compatibility, transitive bloat, and lockfile drift across Node, Rust, Go, and Python ecosystems. Invoke when you want a focused supply-chain hygiene report, not a code-level CVE review.
+description: Dependency audit specialist — manifest-graph axis covering outdated versions, transitive bloat, and Python ecosystems. Invoke when you want a focused supply-chain hygiene report
 model: haiku
 effort: high
 tools: Read, Grep, Glob, Bash, Skill
