@@ -264,6 +264,41 @@ def test_dual_slug_claude_read_merges_main_first(worktree_repo):
     assert stores["claude_cwd"] == {"path": str(cwd_memory), "exists": True}
 
 
+def test_claude_cwd_merge_never_collapses_non_generated_filenames_by_prefix(worktree_repo):
+    """Claude Code's own natively-written memory files don't follow entry_file_name()'s
+    {type}_{stem}_{hash8}_{date8}.md shape — _entry_identity must never strip a trailing
+    word from such a filename as if it were a date digest, or two genuinely distinct
+    entries sharing a name prefix silently collapse into one."""
+    main, wt = worktree_repo
+    home = wt / "home"
+    main_memory = home / ".claude" / "projects" / slug_of(main) / "memory"
+    cwd_memory = home / ".claude" / "projects" / slug_of(wt) / "memory"
+    main_memory.mkdir(parents=True)
+    cwd_memory.mkdir(parents=True)
+    (main_memory / "feedback_workflow_bug.md").write_text(
+        "---\nname: workflow-bug\ndescription: \"A workflow bug\"\nmetadata:\n"
+        "  node_type: memory\n  type: feedback\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (main_memory / "MEMORY.md").write_text(
+        "# Memory index\n\n- [workflow-bug](feedback_workflow_bug.md) — A workflow bug\n",
+        encoding="utf-8",
+    )
+    (cwd_memory / "feedback_workflow_fix.md").write_text(
+        "---\nname: workflow-fix\ndescription: \"A workflow fix\"\nmetadata:\n"
+        "  node_type: memory\n  type: feedback\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (cwd_memory / "MEMORY.md").write_text(
+        "# Memory index\n\n- [workflow-fix](feedback_workflow_fix.md) — A workflow fix\n",
+        encoding="utf-8",
+    )
+    out = run_memory(["show", "--as", "pi"], cwd=wt)
+    parsed = envelope(out)
+    claude_names = {e["name"] for e in parsed["data"]["entries"] if e["store"] == "claude"}
+    assert claude_names == {"workflow-bug", "workflow-fix"}
+
+
 def test_pi_legacy_slug_store_merges_new_first_and_dedupes_by_identity(tmp_path):
     """A Pi store written before this fix (legacy_pi_slug: replace('/','-').lstrip('-'))
     is still discovered and merged — new store first, legacy second, deduped by identity

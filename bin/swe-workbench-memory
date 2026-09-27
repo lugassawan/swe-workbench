@@ -584,10 +584,21 @@ def entry_text(
     return "\n".join(lines) + "\n"
 
 
+_DATE_DIGEST = re.compile(r"^[0-9a-f]{8}$")
+
+
 def _entry_identity(file_basename: str) -> str:
-    """Strip the dated digest segment; the remainder (type, stem, raw-name
-    hash) is stable across days and unique per raw name."""
-    return file_basename[: -len(".md")].rsplit("_", 1)[0]
+    """Strip the dated digest segment when the filename actually has entry_file_name()'s
+    own shape ({type}_{stem}_{hash8}_{date8}.md — verified via an exact 8-hex-char
+    trailing segment); otherwise the whole basename IS its identity. Without this guard, an
+    arbitrary filename Claude Code wrote natively (no such suffix) collapses onto any other
+    entry sharing only its last word — e.g. feedback_workflow_bug.md and
+    feedback_workflow_fix.md would otherwise both reduce to "feedback_workflow"."""
+    stem = file_basename[: -len(".md")]
+    prefix, _, trailing = stem.rpartition("_")
+    if prefix and _DATE_DIGEST.match(trailing):
+        return prefix
+    return file_basename
 
 
 def _references_entry(index_line: str, file_name: str) -> bool:
