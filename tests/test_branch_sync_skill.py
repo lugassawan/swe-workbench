@@ -43,8 +43,8 @@ def test_rebase_push_uses_force_with_lease():
     assert "SYNC_STRATEGY` was `rebase`" in body or "sync_strategy was rebase" in body.lower()
 
 
-def test_step7_push_branches_on_sync_strategy_not_operation():
-    """Regression: Step 7 must branch push logic on SYNC_STRATEGY, never OPERATION —
+def test_step8_push_branches_on_sync_strategy_not_operation():
+    """Regression: Step 8 must branch push logic on SYNC_STRATEGY, never OPERATION —
     OPERATION is `none` on a clean sync (the common case), so an OPERATION-keyed
     branch has no push path at all for a clean --rebase sync."""
     body = _body()
@@ -52,7 +52,7 @@ def test_step7_push_branches_on_sync_strategy_not_operation():
     assert "SYNC_STRATEGY" in step3
     assert "merge|rebase" in step3 or "merge | rebase" in step3
 
-    step7 = body.split("### Step 7")[1].split("## ")[0]
+    step7 = body.split("### Step 8")[1].split("## ")[0]
     push_lines = [ln for ln in step7.splitlines() if "git push" in ln]
     assert push_lines, "Step 6 must contain the push branching bullets"
     for ln in push_lines:
@@ -97,13 +97,13 @@ def test_common_mistakes_documents_ours_theirs_inversion():
 
 def test_step1_stash_sets_flag_and_step7_restores_it():
     """Regression: a pre-sync stash must be restorable — Step 1 must set a
-    STASHED flag when it stashes, and Step 7 must pop it before reporting,
+    STASHED flag when it stashes, and Step 8 must pop it before reporting,
     handling a conflicting pop the same way a file conflict is surfaced."""
     body = _body()
     step1 = body.split("### Step 1")[1].split("### Step 2")[0]
     assert "STASHED=1" in step1
 
-    step7 = body.split("### Step 7")[1].split("## ")[0]
+    step7 = body.split("### Step 8")[1].split("## ")[0]
     assert "STASHED=1" in step7
     assert "git stash pop" in step7
     assert "git stash drop" in step7, "a conflicting pop must be followed by an explicit drop after resolution"
@@ -169,10 +169,10 @@ def test_step5_shows_both_sides_before_prompting():
     assert "both sides" in step5.lower()
 
 
-def test_step7_never_auto_pushes():
+def test_step8_never_auto_pushes():
     body = _body()
-    assert "### Step 7" in body
-    step7 = body.split("### Step 7")[1].split("## ")[0]
+    assert "### Step 8" in body
+    step7 = body.split("### Step 8")[1].split("## ")[0]
     assert "Never auto-push" in step7
     assert "Push now?" in step7 or "push now" in step7.lower()
 
@@ -338,7 +338,7 @@ class TestRedundancyAssessment:
 
     def test_step6_escalate_edit_path_commits_and_is_not_silently_dropped(self):
         """Regression: an Edit resolution that only stages (never commits) is
-        invisible to Step 7's push and its commit-listing summary — a user
+        invisible to Step 8's push and its commit-listing summary — a user
         who picks Edit could believe the fix shipped when it's left dangling
         in the index with no record."""
         body = _body()
@@ -346,13 +346,13 @@ class TestRedundancyAssessment:
         edit_clause = step6.split("Edit →")[1].split(".")[0] if "Edit →" in step6 else ""
         assert edit_clause, "Step 6 must have an 'Edit →' clause describing the manual-edit outcome"
         assert "commit" in edit_clause.lower(), (
-            "the Edit branch must commit its result — otherwise it never reaches Step 7's push "
+            "the Edit branch must commit its result — otherwise it never reaches Step 8's push "
             "and is silently absent from the resolution summary"
         )
 
-    def test_step7_summary_lists_auto_applied_redundancy_commits(self):
+    def test_step8_summary_lists_auto_applied_redundancy_commits(self):
         body = _body()
-        step7 = body.split("### Step 7")[1].split("## ")[0]
+        step7 = body.split("### Step 8")[1].split("## ")[0]
         assert "refactor" in step7.lower()
 
     def test_failure_mode_table_documents_redundancy_edge_cases(self):

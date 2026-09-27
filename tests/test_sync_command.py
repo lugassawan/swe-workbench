@@ -51,14 +51,24 @@ def test_parses_check_redundancy_flag():
     assert "on|off" in body or "on | off" in body
 
 
+def test_parses_check_alignment_flag():
+    body = _body()
+    assert "--check-alignment" in body
+    assert "CHECK_ALIGNMENT" in body
+    assert "on|off" in body or "on | off" in body
+
+
 def test_check_redundancy_stripped_from_target_and_threaded_to_skill():
     body = _body()
     strategy = body.split("## Strategy resolution")[1]
     assert "strip" in strategy.lower()
     assert "CHECK_REDUNDANCY" in strategy
+    assert "CHECK_ALIGNMENT" in strategy
 
     assert "swe-workbench:workflow-branch-sync" in strategy
-    assert "CHECK_REDUNDANCY" in strategy.split("swe-workbench:workflow-branch-sync")[0][-400:]
+    call_line = strategy.split("swe-workbench:workflow-branch-sync")[1].split("\n")[0]
+    assert "CHECK_REDUNDANCY" in call_line
+    assert "CHECK_ALIGNMENT" in call_line
 
 
 def test_check_redundancy_default_off():
@@ -68,8 +78,22 @@ def test_check_redundancy_default_off():
     assert "off" in strategy.lower()
 
 
+def test_check_alignment_default_off():
+    body = _body()
+    strategy = body.split("## Strategy resolution")[1]
+    assert "`--check-alignment` absent" in strategy
+    assert "CHECK_ALIGNMENT=off" in strategy
+
+
 def test_output_documents_opt_in_redundancy_assessment():
     body = _body()
     output = body.split("## Output")[1]
     assert "--check-redundancy" in output or "redundancy" in output.lower()
+    assert "opt-in" in output.lower()
+
+
+def test_output_documents_opt_in_alignment_assessment():
+    body = _body()
+    output = body.split("## Output")[1]
+    assert "--check-alignment" in output or "alignment" in output.lower()
     assert "opt-in" in output.lower()

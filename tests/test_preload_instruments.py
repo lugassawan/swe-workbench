@@ -350,7 +350,7 @@ def test_all_agents_carry_the_preload_canary_citation_block():
     the static agent files, so it does not need `requires_node`."""
     agents_dir = ROOT / "agents"
     agent_files = sorted(agents_dir.glob("*.md"))
-    assert len(agent_files) == 22, f"expected 22 agents/*.md files, found {len(agent_files)}"
+    assert len(agent_files) == 23, f"expected 23 agents/*.md files, found {len(agent_files)}"
 
     for path in agent_files:
         text = path.read_text()

@@ -133,7 +133,7 @@ Everything the last three write accumulates under `.claude/cache/` (`skill-usage
 
 ### C3 sweep triage
 
-The remaining acceptance criterion from the C3 re-scope: triage the 19 agents beyond the
+The remaining acceptance criterion from the C3 re-scope: triage the 20 agents beyond the
 three heaviest
 (`senior-engineer`, `architect`, `reviewer`) and sweep only those whose dispatch-ledger <!-- validate: prose-ref -->
 preload share makes them plausible demotion candidates. Condition 1's ≥ 500-token floor
@@ -153,6 +153,7 @@ preload share:
 | refactorer | 73.2 | 6,565 | 5 | 100 |
 | debugger | 69.6 | 6,983 | 5 | 100 |
 | code-impl | 69.3 | 6,724 | 5 | 100 |
+| alignment-assessor | 68.7 | 8,906 | 2 | 40 |
 | tech-writer | 67.2 | 2,835 | 2 | 40 |
 | product-designer | 65.9 | 5,892 | 3 | 60 |
 | product-manager | 63.9 | 4,443 | 3 | 60 |

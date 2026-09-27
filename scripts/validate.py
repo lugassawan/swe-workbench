@@ -46,7 +46,8 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # here, with the reason recorded in that commit — that friction is the point,
 # it is what stands between the catalog and slow, unnoticed session-tax growth.
 SKILL_DESCRIPTION_BUDGET_CHARS = 20436
-AGENT_DESCRIPTION_BUDGET_CHARS = 6087
+# Raised to 6362 to accommodate the alignment-assessor subagent addition.
+AGENT_DESCRIPTION_BUDGET_CHARS = 6362
 
 # Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP
 # so it warns well before a single description could ever trip that hard

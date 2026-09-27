@@ -815,7 +815,7 @@ class TestCheckDescriptionBudget:
         # through unnoticed. See scripts/validate.py's constant comments for
         # where these numbers come from.
         assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20436
-        assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
+        assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6362
         assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900
 
     def test_skills_under_budget_no_failure(self, reset_validate):
@@ -865,7 +865,7 @@ class TestCheckDescriptionBudget:
         agents_dir = root / "agents"
         agents_dir.mkdir(parents=True, exist_ok=True)
         # "word " * 2000 minus the trailing space is 9999 chars, over the
-        # 6087-char AGENT_DESCRIPTION_BUDGET_CHARS total.
+        # 6362-char AGENT_DESCRIPTION_BUDGET_CHARS total.
         long_desc = ("word " * 2000).strip()
         (agents_dir / "my-agent.md").write_text(
             f"---\nname: my-agent\ndescription: {long_desc}\n---\n",
