@@ -455,6 +455,73 @@ def test_neutral_commands_carry_no_phase_marker():
 
 
 # ---------------------------------------------------------------------------
+# phase-policy.ts domain module (docs/decisions-pi-plan-mode.md) — source pins plus a
+# node-driver identity pin; the repo has no TS unit runner, so these carry the module.
+# ---------------------------------------------------------------------------
+
+PHASE_POLICY_TS = EXTENSIONS_DIR / "phase-policy.ts"
+
+
+def test_phase_policy_is_sdk_free():
+    """phase-policy.ts is the domain layer of the plan-phase feature: no Pi SDK import, not
+    even type-only — the adapter that consumes it owns everything touching Pi (same posture
+    as model-policy.ts's own never-references pin below)."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    assert 'from "@earendil-works' not in text and "from '@earendil-works'" not in text, (
+        "phase-policy.ts must not import the Pi SDK, not even as a type — it is pure domain "
+        "data and pure functions only"
+    )
+
+
+def test_phase_marker_literal_single_source():
+    """The marker extractPhase scans for and the marker the armed commands carry must be the
+    same literal — this file's PHASE_MARKER constant is the single source of truth both are
+    pinned against, so the module and the command files can never drift apart."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    declared = re.search(r'export const PHASE_MARKER = "([^"]+)"', text)
+    assert declared is not None, (
+        "phase-policy.ts must declare PHASE_MARKER as an exported double-quoted string literal"
+    )
+    assert declared.group(1) == PHASE_MARKER, (
+        f"phase-policy.ts's PHASE_MARKER ({declared.group(1)!r}) differs from this file's "
+        f"({PHASE_MARKER!r}) — extractPhase would scan for a marker no command carries"
+    )
+
+
+def test_blocked_tools_pinned_to_edit_write():
+    """The plan-phase blocked set is exactly Pi's lowercase edit/write tool names — pinned as
+    a source literal so an addition, a removal, or a casing drift (Edit/Write are the Claude
+    names; Pi's are lowercase) can none of them slip in silently."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    declared = re.search(r"BLOCKED_TOOLS_IN_PLAN[^=]*= new Set\(\[(.*?)\]\)", text, re.DOTALL)
+    assert declared is not None, "phase-policy.ts must declare BLOCKED_TOOLS_IN_PLAN as a Set literal"
+    entries = re.findall(r'"([^"]+)"', declared.group(1))
+    assert entries == ["edit", "write"], (
+        f'BLOCKED_TOOLS_IN_PLAN must be exactly ["edit", "write"], found {entries!r}'
+    )
+
+
+def test_plans_dir_allowlist_pinned():
+    """The plan gate's allowlist is the plans dir: PLANS_RELATIVE_DIR's literal is pinned
+    here, and isMutationBlocked's signature must take the target path and the resolved plans
+    dir as separate parameters — that signature is what lets the adapter enforce containment
+    per call instead of the module guessing at path resolution."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    assert 'PLANS_RELATIVE_DIR = "docs/superpowers/plans"' in text, (
+        'PLANS_RELATIVE_DIR must be the literal "docs/superpowers/plans" — the same dir the '
+        "plan/execute system sections tell the agent to persist plans under"
+    )
+    signature = re.search(r"function isMutationBlocked\(([^)]*)\)", text, re.DOTALL)
+    assert signature is not None, "phase-policy.ts must declare function isMutationBlocked"
+    params = [p.strip().split(":")[0] for p in signature.group(1).split(",")]
+    assert {"targetPath", "plansDir"} <= set(params), (
+        f"isMutationBlocked's parameters must include targetPath and plansDir, found {params!r}"
+    )
+
+
+
+
+# ---------------------------------------------------------------------------
 # Guard/hint event-translation contract. Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
 # docs/decisions-ci-validation.md §1.
@@ -564,6 +631,69 @@ if _NODE_TOO_OLD and os.environ.get("CI"):
 requires_node = pytest.mark.skipif(
     _NODE_TOO_OLD, reason="requires Node >= 22 (--experimental-strip-types) to import cc-payload.ts"
 )
+
+_PHASE_TIER_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , phasePolicyPath, modelPolicyPath] = process.argv;
+const phasePolicy = await import(pathToFileURL(phasePolicyPath).href);
+const modelPolicy = await import(pathToFileURL(modelPolicyPath).href);
+const primary = (row) => (typeof row.model === "string" ? row.model : row.model[0]);
+const dump = {};
+for (const provider of modelPolicy.SUPPORTED_PROVIDERS) {
+  dump[provider] = {
+    plan: phasePolicy.resolvePhaseModelTier(provider, "plan"),
+    execute: phasePolicy.resolvePhaseModelTier(provider, "execute"),
+    opusPrimary: primary(modelPolicy.MODEL_POLICY[provider].opus),
+    sonnetPrimary: primary(modelPolicy.MODEL_POLICY[provider].sonnet),
+  };
+}
+dump["not-a-provider"] = {
+  plan: phasePolicy.resolvePhaseModelTier("not-a-provider", "plan"),
+  execute: phasePolicy.resolvePhaseModelTier("not-a-provider", "execute"),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_tier_resolution_identity():
+    """Single-source-of-truth posture, same as test_default_tier_effort_reproduces_ticket_matrix:
+    resolvePhaseModelTier's result is asserted identical to MODEL_POLICY's own opus (plan) and
+    sonnet (execute) rows — never a second hand-copied id table — including multi-id rows
+    resolving to their preference-ordered first id, and undefined for unsupported providers.
+    Dict equality also pins the result shape to the model id only: a thinking key here would
+    mean a phase flip silently changes session effort, which decision doc §4 defers."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-tier-dump.mjs"
+        driver.write_text(_PHASE_TIER_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_POLICY_TS), str(MODEL_POLICY_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    for provider, row in dumped.items():
+        if provider == "not-a-provider":
+            # JSON.stringify drops undefined values, so "returned undefined" round-trips as
+            # an absent key — .get() is the faithful assertion, not ["plan"].
+            assert row.get("plan") is None and row.get("execute") is None, (
+                "resolvePhaseModelTier must return undefined for unsupported providers — the "
+                "caller notifies and stays on the current model"
+            )
+            continue
+        assert row["plan"] == {"model": row["opusPrimary"]}, (
+            f"plan phase must resolve {provider!r}'s opus row model id "
+            f"({row['opusPrimary']!r}), got {row['plan']!r}"
+        )
+        assert row["execute"] == {"model": row["sonnetPrimary"]}, (
+            f"execute phase must resolve {provider!r}'s sonnet row model id "
+            f"({row['sonnetPrimary']!r}), got {row['execute']!r}"
+        )
+
 
 _DUMP_DISPATCH_DRIVER = """
 import { pathToFileURL } from "node:url";
