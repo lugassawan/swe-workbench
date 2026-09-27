@@ -116,10 +116,9 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
     try {
       const target = (event.input as { path?: unknown }).path;
       if (typeof target !== "string" || target === "") return undefined;
-      // The allowlist is the user-global plans dir under the home dir — the same
-      // PLANS_HOME_RELATIVE_DIR literal the section prose interpolates (the SDK's getAgentDir
-      // helper would need a bare value import, barred in this layer), never the session cwd:
-      // plans stay writable from any repo or worktree.
+      // The allowlist is the user-global plans dir — the same PLANS_HOME_RELATIVE_DIR the
+      // section prose interpolates — never the session cwd or the plugin root. homedir(),
+      // not the SDK's getAgentDir: extension files carry no bare-specifier value imports.
       const plansDir = join(homedir(), ...PLANS_HOME_RELATIVE_DIR.split("/"));
       if (!isMutationBlocked(event.toolName, resolve(ctx.cwd, target), plansDir, phase)) {
         return undefined;

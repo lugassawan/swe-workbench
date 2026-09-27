@@ -24,11 +24,11 @@ export function extractPhase(prompt: string): Phase | undefined {
   return prompt.split(/\r?\n/).includes(PHASE_MARKER) ? "plan" : undefined;
 }
 
-/** Where the agent persists plans, under the user's home: `~/.pi/agent/plans`, inside Pi's
- *  agent dir (which already holds sessions/, skills/, extensions/). The one directory the
- *  plan-phase mutation gate leaves writable, so a lost session never loses a drafted plan.
- *  Kept a pure string — the adapter resolves the real dir against Pi's agent dir so this
- *  module stays SDK-free. */
+/** Where the agent persists plans: `~/.pi/agent/plans`, inside Pi's agent dir (which already
+ *  holds sessions/, skills/, extensions/). The one directory the plan-phase mutation gate
+ *  leaves writable, so a lost session never loses a drafted plan. The adapter resolves the
+ *  real dir via homedir() rather than the SDK's getAgentDir helper — extension files carry no
+ *  bare-specifier value imports — so this module, like its siblings, imports nothing. */
 export const PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans";
 
 /** Pi's file-mutation tool names (lowercase — Edit/Write are the Claude names, not Pi's). */
