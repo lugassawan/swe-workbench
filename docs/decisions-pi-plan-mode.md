@@ -40,12 +40,14 @@ first-class part of the transition.
   **Revise** returns the user's feedback and stays armed on the plan model. `/implement` therefore
   spans both phases: plan on Sol → approval → execution on Terra in the same session.
 - **Read-only steering** — while armed, a `tool_call` handler blocks `edit`/`write` with
-  `terminate: true`, steering the model to `submit_plan`. This is steering, not containment:
-  bash is deliberately ungated (the planner needs reads, diagnostics, test runs) and dispatched
-  subagents are separate `pi` child processes whose tool calls never pass through the parent's
-  `tool_call` handler — so a heredoc-write or an eager `code-impl` dispatch can bypass the gate,
-  which is accepted — the adversary is a cooperative model, not a malicious actor. Never document
-  this feature as "enforced read-only".
+  `terminate: true`, steering the model to `submit_plan`, **except for targets inside
+  `docs/superpowers/plans/`**: the planner persists the plan file during plan phase so a broken
+  session never discards the work (user requirement — durability over gate purity). This is
+  steering, not containment: bash is deliberately ungated (the planner needs reads, diagnostics,
+  test runs) and dispatched subagents are separate `pi` child processes whose tool calls never
+  pass through the parent's `tool_call` handler — so a heredoc-write or an eager `code-impl`
+  dispatch can bypass the gate, which is accepted — the adversary is a cooperative model, not a
+  malicious actor. Never document this feature as "enforced read-only".
 - **User override wins** — a manual model change (`model_select` with source `set` or `cycle`,
   i.e. `/model` or Ctrl+P) disarms the gate. `restore` (session resume) does not.
 
@@ -66,12 +68,12 @@ no-try/catch-around-handler-bodies contract.
   Benign; `pi.appendEntry("swb-phase-state", …)` is the ready-made persistence slot if it bites.
 - **`/skill:workflow-development` typed directly** bypasses command markers — documented gap;
   the marker grammar extends to skill bodies if it matters later.
-- **Plan-file persistence during plan phase**: the plan lives in the `submit_plan` payload (the
-  tool result is the durable artifact); the execution session materializes the approved plan to
-  `docs/superpowers/plans/` immediately after approval, *then* `superpowers:executing-plans`
-  consumes it — the 5-phase workflow (Branch → Implement → Verify → Review → Deliver) is an
-  execution-time lifecycle and begins only post-approval, where edit/write is unblocked by
-  construction. A plans-directory allowlist is deferred until shown insufficient.
+- **Plan-file persistence during plan phase**: the planner writes the plan to
+  `docs/superpowers/plans/` as it drafts (gate allowlist — durability against session loss), and
+  the `submit_plan` payload remains the approval artifact. Post-approval, the execution session
+  executes from the on-disk plan (persisting it first if the planner never did) and then runs the
+  5-phase workflow (Branch → Implement → Verify → Review → Deliver) — an execution-time
+  lifecycle that begins only post-approval, where edit/write is unblocked by construction.
 - **Cache cost of the flip**: one full-context re-bill at the flip (different model = cold
   prefix), then Terra owns the long execution tail. The injected phase section is
   stable-within-state so it invalidates at most twice per run.
