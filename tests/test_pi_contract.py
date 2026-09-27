@@ -885,6 +885,70 @@ def test_phase_policy_behavior():
     assert dumped["disarmedSectionEmpty"] == ""
 
 
+_PHASE_GATE_CWD_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const stubPi = { on(name, fn) { handlers[name] = fn; }, registerTool() {} };
+mod.registerPhase(stubPi, process.argv[3]);
+// Arm plan phase; no current model, so the arming flip degrades to a notify the stub ui eats.
+await handlers.before_agent_start(
+  { prompt: "intro\\n<!-- swb-phase: plan -->\\noutro", systemPrompt: "" },
+  { hasUI: true, ui: { notify() {} }, model: undefined },
+);
+const blocked = (cwd, path) => {
+  const r = handlers.tool_call({ toolName: "edit", input: { path } }, { cwd });
+  return r !== undefined && r.block === true;
+};
+const dump = {
+  plansUnderRepoA: blocked(process.argv[4], `${process.argv[4]}/docs/superpowers/plans/f.md`),
+  plansUnderRepoB: blocked(process.argv[5], `${process.argv[5]}/docs/superpowers/plans/f.md`),
+  relativePlansUnderRepoA: blocked(process.argv[4], "docs/superpowers/plans/f.md"),
+  pluginRootPlansFromRepoA: blocked(process.argv[4], `${process.argv[3]}/docs/superpowers/plans/f.md`),
+  outsideRepoA: blocked(process.argv[4], `${process.argv[4]}/src/main.ts`),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_gate_allowlist_anchored_to_session_cwd():
+    """The gate's allowlist must anchor to the session's cwd — the same base the target path
+    resolves against — never to the plugin install root registerPhase receives: a hoisted
+    resolve(root, PLANS_RELATIVE_DIR) allowlist blocks the working repo's own
+    docs/superpowers/plans writes (the feature's core durability path) in every session whose
+    cwd differs from the installed plugin path, while allowing writes into the plugin's own
+    docs tree. Driven behaviorally through the real tool_call handler with a plugin root
+    distinct from two different working cwds: both repos' plans dirs stay writable, the
+    plugin root's does not, and the gate still blocks everywhere else."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-gate-cwd-dump.mjs"
+        driver.write_text(_PHASE_GATE_CWD_DRIVER, encoding="utf-8")
+        plugin_root = str(Path(tmp) / "plugin-root")
+        repo_a = str(Path(tmp) / "repo-a")
+        repo_b = str(Path(tmp) / "repo-b")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), plugin_root, repo_a, repo_b],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    for key in ("plansUnderRepoA", "plansUnderRepoB", "relativePlansUnderRepoA"):
+        assert dumped[key] is False, (
+            f"{key}: a plans-dir write under the session's own cwd must never be blocked — "
+            "the allowlist must anchor to ctx.cwd, not the plugin install root"
+        )
+    assert dumped["pluginRootPlansFromRepoA"] is True, (
+        "writes into the plugin install root's plans dir must stay blocked — that tree is "
+        "not the working repo the gate governs"
+    )
+    assert dumped["outsideRepoA"] is True, "the gate still blocks edit outside the plans dir"
+
+
 _DUMP_DISPATCH_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);

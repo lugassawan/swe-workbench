@@ -79,6 +79,13 @@ no-try/catch-around-handler-bodies contract.
   stable-within-state so it invalidates at most twice per run.
 - **Thinking-level split** (e.g. Terra at a lower effort) and **`defaultModel` flip to Terra**
   are follow-up tunings, not v1.
+- **Headless sessions** (`-p`/print mode, dispatched children): behavior-identical, not
+  byte-for-byte — no arming, no gate, no flip, no section injection; `submit_plan` remains
+  registered (its name/description/promptSnippet are visible to a headless session's model)
+  but is unreachable-by-dialog — it throws actionable text without a UI.
+- **No execute→plan re-entry**: arming requires `disarmed`, so a second phase-armed command in
+  the same session after approval stays in `execute` — intentional, so a follow-up command
+  cannot silently re-arm plan-phase steering mid-execution.
 
 ## 5. Explicitly rejected
 

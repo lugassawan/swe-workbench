@@ -42,12 +42,11 @@ function stripStaleSections(systemPrompt: string, keep: PhaseState): string {
   return cleaned;
 }
 
-export function registerPhase(pi: ExtensionAPI, root: string): void {
+export function registerPhase(pi: ExtensionAPI, _root: string): void {
   let phase: PhaseState = "disarmed";
   // True only while our own setModel call is firing its model_select event, so that event
   // does not read as a user override and disarm the phase we just armed.
   let ourFlip = false;
-  const plansDir = resolve(root, PLANS_RELATIVE_DIR);
 
   /** Best-effort flip to the phase's governing model: an unusable provider/candidate notifies
    *  and stays on the current model — a failed flip must never un-arm the phase (the gate
@@ -114,6 +113,9 @@ export function registerPhase(pi: ExtensionAPI, root: string): void {
     try {
       const target = (event.input as { path?: unknown }).path;
       if (typeof target !== "string" || target === "") return undefined;
+      // The allowlist anchors to ctx.cwd — the same base the target resolves against — so
+      // the writable plans dir is the working repo's, never the plugin install root's.
+      const plansDir = resolve(ctx.cwd, PLANS_RELATIVE_DIR);
       if (!isMutationBlocked(event.toolName, resolve(ctx.cwd, target), plansDir, phase)) {
         return undefined;
       }
