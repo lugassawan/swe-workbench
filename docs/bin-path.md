@@ -5,7 +5,7 @@ skills, commands, and agents to invoke plugin scripts as bare PATH commands inst
 resolving them through `$CLAUDE_PLUGIN_ROOT`, while collapsing the resulting
 `runtime/`/`bin/` wrapper split back into a single `bin/` directory and retiring the
 `CLAUDE_PLUGIN_ROOT` injector hook. Recorded here so they don't have to be re-litigated.
-Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. `${CLAUDE_PLUGIN_DATA}` — considered, not adopted

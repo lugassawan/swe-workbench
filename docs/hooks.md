@@ -1,7 +1,7 @@
 # Plugin platform decisions — hooks.json wiring
 
 Rulings on `hooks/hooks.json` wiring and what its entries may carry. Recorded here so
-they don't have to be re-litigated. Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+they don't have to be re-litigated. Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. Hook `if` conditions — considered, not adopted

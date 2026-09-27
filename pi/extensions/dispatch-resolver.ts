@@ -4,7 +4,7 @@
  * earlier) — see that file's header for the layering this repo uses.
  *
  * Type-only Pi SDK reference (ExtensionContext), consistent with every other adapter file's
- * stripper-safe posture — see docs/decisions-task-dispatch.md.
+ * stripper-safe posture — see docs/task-dispatch.md.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentSpec } from "./agent-spec.ts";

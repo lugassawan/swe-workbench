@@ -3,7 +3,7 @@
 Rulings on `task`, the first-party subagent dispatcher (`pi/extensions/subagent.ts`):
 why it exists alongside the `pi-subagents` package, its recursion guards, and the
 model-dispatch policy it enforces. Recorded here so they don't have to be re-litigated.
-Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. `task` — a first-party subagent dispatcher, not a fork of `pi-subagents`
@@ -122,7 +122,7 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
 
 `tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
 exhaustiveness check over `MODEL_POLICY`'s 4 providers x 3 tiers x 5 efforts ratchet the tier and
-effort vocabulary against the live `agents/*.md` inventory, the same pattern `docs/decisions-ci-validation.md` §1 already uses for
+effort vocabulary against the live `agents/*.md` inventory, the same pattern `docs/ci-validation.md` §1 already uses for
 tool tokens and skill ids — plus a pinned-catalog test asserting every cell's exact model id
 actually exists in the bundled Pi SDK's provider data.
 
