@@ -299,6 +299,23 @@ def test_claude_cwd_merge_never_collapses_non_generated_filenames_by_prefix(work
     assert claude_names == {"workflow-bug", "workflow-fix"}
 
 
+def test_entry_identity_requires_full_four_segment_shape_before_stripping():
+    """A native filename's own last word can coincidentally look like an 8-hex-char date
+    digest (e.g. ending "..._deadbeef.md") — _entry_identity must also verify the segment
+    before that one is itself an 8-hex-char name-hash before treating the trailing segment
+    as a stripped date digest, or two distinct native entries sharing only a hex-looking
+    last word still falsely collapse (the same failure class the prior fix narrowed, not
+    eliminated)."""
+    module = _runtime()
+    assert module._entry_identity("feedback_deadbeef.md") == "feedback_deadbeef.md"
+    assert module._entry_identity("feedback_cafebabe.md") == "feedback_cafebabe.md"
+    # Still strips a real generated filename's full 4-segment shape correctly.
+    generated = module.entry_file_name("feedback", "prefer-tdd")
+    identity = module._entry_identity(generated)
+    assert identity != generated
+    assert identity == generated.rsplit("_", 1)[0]
+
+
 def test_pi_legacy_slug_store_merges_new_first_and_dedupes_by_identity(tmp_path):
     """A Pi store written before this fix (legacy_pi_slug: replace('/','-').lstrip('-'))
     is still discovered and merged — new store first, legacy second, deduped by identity

@@ -122,7 +122,7 @@ export const spawnRuntime: SpawnRuntime = (options) =>
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk;
     });
-    // Mirrors runGuard's EPIPE tolerance (see below).
+    // Mirrors runGuard's EPIPE tolerance (see above).
     child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code !== "EPIPE" && !settled) finish(null, String(err));
     });

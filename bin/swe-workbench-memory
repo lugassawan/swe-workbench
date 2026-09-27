@@ -584,21 +584,28 @@ def entry_text(
     return "\n".join(lines) + "\n"
 
 
-_DATE_DIGEST = re.compile(r"^[0-9a-f]{8}$")
+_HEX8 = re.compile(r"^[0-9a-f]{8}$")
 
 
 def _entry_identity(file_basename: str) -> str:
-    """Strip the dated digest segment when the filename actually has entry_file_name()'s
-    own shape ({type}_{stem}_{hash8}_{date8}.md — verified via an exact 8-hex-char
-    trailing segment); otherwise the whole basename IS its identity. Without this guard, an
-    arbitrary filename Claude Code wrote natively (no such suffix) collapses onto any other
-    entry sharing only its last word — e.g. feedback_workflow_bug.md and
-    feedback_workflow_fix.md would otherwise both reduce to "feedback_workflow"."""
+    """Strip only the dated digest segment, and only when the filename has entry_file_name()'s
+    full {type}_{stem}_{hash8}_{date8}.md shape — verified via BOTH trailing segments being
+    exact 8-hex-char strings, not just the date digest alone: a native filename's own last
+    word could otherwise coincidentally look like one (e.g. ending "..._deadbeef.md") and
+    still falsely collapse onto another entry sharing just that prefix. The name-hash segment
+    is validated but never stripped — it is what disambiguates two distinct raw names that
+    happen to sanitize to the same stem (see entry_file_name()'s own docstring), so stripping
+    it too would reintroduce exactly that collision. Otherwise the whole basename IS its own
+    identity — e.g. feedback_workflow_bug.md and feedback_workflow_fix.md never collapse
+    onto a shared "feedback_workflow"."""
     stem = file_basename[: -len(".md")]
-    prefix, _, trailing = stem.rpartition("_")
-    if prefix and _DATE_DIGEST.match(trailing):
-        return prefix
-    return file_basename
+    without_date, _, date_digest = stem.rpartition("_")
+    if not (without_date and _HEX8.match(date_digest)):
+        return file_basename
+    stem_prefix, _, name_hash = without_date.rpartition("_")
+    if not (stem_prefix and _HEX8.match(name_hash)):
+        return file_basename
+    return without_date
 
 
 def _references_entry(index_line: str, file_name: str) -> bool:
