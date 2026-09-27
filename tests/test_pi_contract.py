@@ -157,8 +157,8 @@ SKILL_IDS = {
 # Commands that declare plan-phase (docs/pi-plan-mode.md) by carrying PHASE_MARKER
 # right after their frontmatter; this list is the single inventory the two-direction ratchet pins.
 PHASE_ARMED_COMMANDS = [
-    "architect", "capture", "debug", "design", "extend",
-    "hotfix", "implement", "migrate", "refactor",
+    "architect", "audit-codebase", "capture", "debug", "design", "document",
+    "extend", "hotfix", "implement", "migrate", "refactor",
 ]
 PHASE_MARKER = "<!-- swb-phase: plan -->"
 
@@ -837,16 +837,16 @@ def test_phase_tier_resolution_identity():
 _PHASE_BEHAVIOR_DRIVER = """
 import { pathToFileURL } from "node:url";
 const phasePolicy = await import(pathToFileURL(process.argv[2]).href);
-const marker = "<!-- swb-phase: plan -->";
+const planMarker = "<!-- swb-phase: plan -->";
 const dump = {
   evilSiblingBlocked: phasePolicy.isMutationBlocked("edit", "/x/plans-evil/f.md", "/x/plans", "plan"),
   plansDirItselfAllowed: phasePolicy.isMutationBlocked("edit", "/x/plans", "/x/plans", "plan"),
   executeNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "execute"),
   disarmedNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "disarmed"),
   otherToolNeverBlocks: phasePolicy.isMutationBlocked("bash", "/x/elsewhere/f.md", "/x/plans", "plan"),
-  wholeLineMarker: phasePolicy.extractPhase(`intro\\n${marker}\\noutro`),
-  crlfWholeLineMarker: phasePolicy.extractPhase(`intro\\r\\n${marker}\\r\\noutro`),
-  inlineMarkerIgnored: phasePolicy.extractPhase(`intro ${marker} outro`),
+  wholeLinePlanMarker: phasePolicy.extractPhase(`intro\\n${planMarker}\\noutro`),
+  crlfWholeLinePlanMarker: phasePolicy.extractPhase(`intro\\r\\n${planMarker}\\r\\noutro`),
+  inlinePlanMarkerIgnored: phasePolicy.extractPhase(`intro ${planMarker} outro`),
   disarmedSectionEmpty: phasePolicy.phaseSystemSection("disarmed"),
 };
 console.log(JSON.stringify(dump));
@@ -858,7 +858,7 @@ def test_phase_policy_behavior():
     """The gate's edges as behavior, not source shape: a sibling directory whose name merely
     starts with the plans dir stays blocked (separator-suffixed prefix, not startsWith), the
     plans dir itself stays writable, execute/disarmed states and non-mutation tools never
-    block, the phase marker counts only as a whole line (CRLF included, inline occurrences
+    block, the plan marker counts only as a whole line (CRLF included, an inline occurrence
     ignored), and the disarmed state injects no system section."""
     node = shutil.which("node")
     assert node is not None
@@ -877,11 +877,11 @@ def test_phase_policy_behavior():
     assert dumped["plansDirItselfAllowed"] is False
     for key in ("executeNeverBlocks", "disarmedNeverBlocks", "otherToolNeverBlocks"):
         assert dumped[key] is False
-    assert dumped["wholeLineMarker"] == "plan"
-    assert dumped["crlfWholeLineMarker"] == "plan"
-    # extractPhase returns undefined for the inline case — JSON.stringify drops it, so the
-    # faithful assertion is key absence, not a null value.
-    assert "inlineMarkerIgnored" not in dumped
+    assert dumped["wholeLinePlanMarker"] == "plan"
+    assert dumped["crlfWholeLinePlanMarker"] == "plan"
+    # extractPhase returns undefined for the inline case — JSON.stringify drops it, so
+    # the faithful assertion is key absence, not a null value.
+    assert "inlinePlanMarkerIgnored" not in dumped
     assert dumped["disarmedSectionEmpty"] == ""
 
 
@@ -947,6 +947,94 @@ def test_phase_gate_allowlist_anchored_to_session_cwd():
         "not the working repo the gate governs"
     )
     assert dumped["outsideRepoA"] is True, "the gate still blocks edit outside the plans dir"
+
+
+_PHASE_TRANSITION_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+let flipWarnings = 0;
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() { flipWarnings += 1; }, confirm: async () => true },
+  model: undefined,
+};
+const start = (prompt) => handlers.before_agent_start({ prompt, systemPrompt: "" }, ctx);
+const editBlocked = () => {
+  const r = handlers.tool_call(
+    { toolName: "edit", input: { path: "src/main.ts" } },
+    { cwd: "/repo" },
+  );
+  return r !== undefined && r.block === true;
+};
+const disarmedDoesNotBlock = editBlocked();
+await start("go\\n<!-- swb-phase: plan -->\\nnow");
+const planArmsAndBlocks = editBlocked();
+// Non-tui mode routes approval through ctx.ui.confirm, stubbed to Approve.
+await tools.submit_plan.execute("t1", { plan: "the plan" }, undefined, () => {}, ctx);
+const approvalReleasesGate = !editBlocked();
+await start("go\\n<!-- swb-phase: plan -->\\nagain");
+const planAfterApprovalReArms = editBlocked();
+await start("plain follow-up question");
+const plainFollowUpStillBlocks = editBlocked();
+console.log(JSON.stringify({
+  disarmedDoesNotBlock,
+  planArmsAndBlocks,
+  approvalReleasesGate,
+  planAfterApprovalReArms,
+  plainFollowUpStillBlocks,
+  flipWarnings,
+}));
+"""
+
+
+@requires_node
+def test_plan_marker_arms_from_any_state():
+    """A plan-marker invocation arms plan phase from ANY state and the latest explicit plan
+    command wins: the marker arms from disarmed, submit_plan approval releases the gate, and
+    a later plan command re-arms it (v1 required disarmed, so a plan command after approval
+    was ignored — the closed re-entry gap). Every arming/approval turn attempts its model
+    flip exactly once — the driver's undefined model makes each degrade to a warning, so one
+    warning per turn is that attempt — and a plain follow-up never re-triggers anything."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-transition-dump.mjs"
+        driver.write_text(_PHASE_TRANSITION_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["disarmedDoesNotBlock"] is False
+    assert dumped["planArmsAndBlocks"] is True, (
+        "a plan marker must arm the plan gate from disarmed"
+    )
+    assert dumped["approvalReleasesGate"] is True, (
+        "submit_plan approval must release the plan gate — execution never blocks"
+    )
+    assert dumped["planAfterApprovalReArms"] is True, (
+        "a plan marker after approval must re-arm plan phase — latest explicit plan "
+        "command wins"
+    )
+    assert dumped["plainFollowUpStillBlocks"] is True, (
+        "a plain follow-up must neither transition nor disarm — detection is "
+        "invocation-turn only"
+    )
+    assert dumped["flipWarnings"] == 3, (
+        "each of the three arming/approval turns must attempt its model flip exactly "
+        "once, and the plain turn none"
+    )
 
 
 _DUMP_DISPATCH_DRIVER = """

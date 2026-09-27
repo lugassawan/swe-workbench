@@ -10,13 +10,13 @@
 import type { ModelTier } from "./model-policy.ts";
 import { MODEL_POLICY, isSupportedProvider } from "./model-policy.ts";
 
-/** The line an armed commands/*.md body carries to declare plan-phase; extractPhase scans for
- *  it and tests/test_pi_contract.py pins it to the same literal the command files carry. */
+/** The line a plan-group commands/*.md body carries to declare plan phase; extractPhase scans
+ *  for it and tests/test_pi_contract.py pins it to the same literal the command files carry. */
 export const PHASE_MARKER = "<!-- swb-phase: plan -->";
 
 export type Phase = "plan" | "execute";
 
-/** Marker seen -> "plan"; approval flips the session to "execute"; no marker -> "disarmed". */
+/** Marker seen -> "plan"; approval also flips the session to "execute"; no marker -> "disarmed". */
 export type PhaseState = "disarmed" | "plan" | "execute";
 
 /** `"plan"` iff PHASE_MARKER appears as a whole line of `prompt` (the armed command's body). */

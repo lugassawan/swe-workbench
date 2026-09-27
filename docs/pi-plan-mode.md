@@ -19,27 +19,37 @@ Claude Code's plan mode is the reference UX: plan (read-only) → approval dialo
 no plan mode; this feature builds the equivalent as an extension, with the model flip as a
 first-class part of the transition.
 
-## 2. Ruling: marker-declared phase entry, approval-tool transition
+## 2. Ruling: marker-declared plan entry, arming from any state
 
-- **Entry** — each phase-armed `commands/*.md` carries one exact marker line,
+- **Entry** — each plan-armed `commands/*.md` carries one exact marker line,
   `<!-- swb-phase: plan -->`, immediately after its frontmatter. The adapter detects the marker in
   the *expanded* prompt at `before_agent_start` (the event fires after template/skill expansion,
-  so `/swe-workbench:implement …` and every other invocation path of that template is covered) and arms the gate
-  for that run. Detection keys on content, not filenames — renaming a command cannot silently
-  detach it. The marker inventory is ratchet-tested in both directions (armed file missing the
-  marker fails; neutral file carrying it fails).
-- **Phase-armed set (v1)** — `architect`, `capture`, `debug`, `design`, `extend`, `hotfix`, <!-- validate: prose-ref -->
-  `implement`, `migrate`, `refactor`. All other commands are neutral (no marker, no machinery).
-  `converge`, `report-issue`, `security-review` defaulted neutral in v1; reclassification is a
-  one-line marker edit plus ratchet bump.
-- **Transition** — a model-callable `submit_plan` tool is the Claude-Code `ExitPlanMode`
+  so `/swe-workbench:implement …` and every other invocation path of that template is covered) and arms
+  the gate for that run. Detection keys on content, not filenames — renaming a command cannot
+  silently detach it. The marker inventory is ratchet-tested in both directions (armed file
+  missing the marker fails; any other command carrying a `swb-phase` substring fails).
+- **Plan-armed set** — `architect`, `audit-codebase`, `capture`, `debug`, `design`, <!-- validate: prose-ref -->
+  `document`, `extend`, `hotfix`, `implement`, `migrate`, `refactor`.
+- **Neutral by design** — the execution-flavored commands (`address-feedback`, `cleanup-merged`, <!-- validate: prose-ref -->
+  `codebase-knowledge`, `converge`, `doctor`, `handoff`, `memory`, `report-issue`, `review`, <!-- validate: prose-ref -->
+  `security-review`, `sync`, `test`) carry no marker and trigger no machinery: execution work
+  runs on whatever the session's model already is, since model cost there is either delegated
+  (agent tiers) or short-lived. No auto-flip.
+- **Arming — latest explicit plan command wins** — a plan-marker invocation arms plan phase
+  from ANY state (`disarmed`, `plan`, `execute`) and best-effort flips to the plan model
+  (`flipToPhaseModel` — a failed flip warns and keeps the phase armed). Re-invoking a plan
+  command re-arms and refreshes the flip idempotently (`setModel` to the same model is a safe
+  no-op), which also retries a flip that failed earlier; this closes v1's no-execute→plan
+  re-entry gap, where a plan command after approval was ignored. Plain follow-up messages
+  carry no marker and never re-trigger anything — detection is invocation-turn only.
+- **Approval transition (`submit_plan`)** — a model-callable `submit_plan` tool is the Claude-Code `ExitPlanMode`
   transposed: the planner calls it with the finished plan; the handler renders an Approve/Revise
   dialog (`ctx.ui.custom`, `ctx.ui.editor` for revision, `ctx.ui.confirm` fallback in non-TUI
   modes). **Approve** flips the session model to the sonnet-tier execution model
   (`pi.setModel`, session-scoped) and disarms the gate atomically inside the tool handler;
   **Revise** returns the user's feedback and stays armed on the plan model. `/swe-workbench:implement` therefore
   spans both phases: plan on Sol → approval → execution on Terra in the same session.
-- **Read-only steering** — while armed, a `tool_call` handler blocks `edit`/`write` with
+- **Read-only steering** — while plan phase is active, a `tool_call` handler blocks `edit`/`write` with
   `terminate: true`, steering the model to `submit_plan`, **except for targets inside
   `docs/superpowers/plans/`**: the planner persists the plan file during plan phase so a broken
   session never discards the work (user requirement — durability over gate purity). This is
@@ -83,9 +93,6 @@ no-try/catch-around-handler-bodies contract.
   byte-for-byte — no arming, no gate, no flip, no section injection; `submit_plan` remains
   registered (its name/description/promptSnippet are visible to a headless session's model)
   but is unreachable-by-dialog — it throws actionable text without a UI.
-- **No execute→plan re-entry**: arming requires `disarmed`, so a second phase-armed command in
-  the same session after approval stays in `execute` — intentional, so a follow-up command
-  cannot silently re-arm plan-phase steering mid-execution.
 
 ## 5. Explicitly rejected
 

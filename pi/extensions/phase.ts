@@ -1,10 +1,10 @@
 /**
- * Plan-phase adapter (docs/pi-plan-mode.md): arms plan/execute when an armed
- * command's prompt carries PHASE_MARKER, flips the session to the phase's governing model,
- * injects the per-state system section, enforces the plans-dir mutation gate, and registers
- * submit_plan — the approval transition to execute. The Pi-touching half of phase-policy.ts;
- * submit_plan's schema and TUI picker live in phase-dialog.ts. Handlers observe and block,
- * never replace a tool, and self-wrap fallible bodies (the event runner adds no try/catch).
+ * Plan-phase adapter (docs/pi-plan-mode.md): arms plan phase when the invoked command's
+ * prompt carries PHASE_MARKER — from any state, latest explicit plan command wins — flips
+ * the session to the plan model, injects the per-state system section, enforces the
+ * plans-dir mutation gate, and registers submit_plan (the approval transition to execute;
+ * its schema and TUI picker live in phase-dialog.ts). Handlers observe and block, never
+ * replace a tool, and self-wrap fallible bodies (no try/catch there).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
@@ -92,7 +92,9 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
       // Plan phase never arms headless: ctx.ui.notify has no surface there, and a `-p` run
       // must behave as if the feature did not exist.
       if (!ctx.hasUI) return undefined;
-      if (phase === "disarmed" && extractPhase(event.prompt) === "plan") {
+      // Latest explicit plan command wins: the marker arms from ANY state (even execute —
+      // re-invoking a plan command after approval re-arms), refreshing the flip idempotently.
+      if (extractPhase(event.prompt) === "plan") {
         phase = "plan";
         await flipToPhaseModel(ctx, "plan", "plan phase armed", "staying on the current model");
       }
