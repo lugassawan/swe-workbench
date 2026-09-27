@@ -1593,7 +1593,14 @@ const stubPi = {
       updatesBeforeExec: activeUpdateCalls.length,
     });
     if (config.execBehavior === "throw") throw new Error("forced exec throw (test)");
-    if (config.execBehavior === "failure") return { stdout: "", stderr: "boom", code: 1, killed: false };
+    if (config.execBehavior === "failure") {
+      return {
+        stdout: config.execStdout ?? "",
+        stderr: config.execStderr ?? "boom",
+        code: config.execCode ?? 1,
+        killed: config.execKilled ?? false,
+      };
+    }
     return { stdout: config.execStdout ?? defaultStdout, stderr: "", code: 0, killed: false };
   },
 };
@@ -1993,13 +2000,24 @@ def _write_synthetic_agents_root(tmp_path_factory):
 
 
 def _subagent_result(
-    root, tmp_path_factory, *, exec_behavior="success", exec_stdout=None, env=None
+    root,
+    tmp_path_factory,
+    *,
+    exec_behavior="success",
+    exec_stdout=None,
+    exec_stderr=None,
+    exec_code=None,
+    exec_killed=None,
+    env=None,
 ):
     config = {
         "root": str(root),
         "cwd": str(root),
         "execBehavior": exec_behavior,
         "execStdout": exec_stdout,
+        "execStderr": exec_stderr,
+        "execCode": exec_code,
+        "execKilled": exec_killed,
     }
     node = shutil.which("node")
     assert node is not None
@@ -2026,6 +2044,17 @@ try {
 }
 """
 
+_SUBAGENT_EXTRACT_ASSISTANT_TEXT_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , modPath, stdout] = process.argv;
+const mod = await import(pathToFileURL(modPath).href);
+try {
+  console.log(JSON.stringify({ ok: true, result: mod.extractLastAssistantText(stdout) ?? null }));
+} catch (err) {
+  console.log(JSON.stringify({ ok: false, message: String(err && err.message) }));
+}
+"""
+
 
 def _parse_subagent_json(stdout, tmp_path_factory):
     return _run_node(
@@ -2033,6 +2062,15 @@ def _parse_subagent_json(stdout, tmp_path_factory):
         [str(SUBAGENT_JSON_TS), stdout],
         tmp_path_factory,
         label="pi-subagent-json-driver",
+    )
+
+
+def _extract_last_assistant_text(stdout, tmp_path_factory):
+    return _run_node(
+        _SUBAGENT_EXTRACT_ASSISTANT_TEXT_DRIVER,
+        [str(SUBAGENT_JSON_TS), stdout],
+        tmp_path_factory,
+        label="pi-subagent-extract-text-driver",
     )
 
 
@@ -2625,6 +2663,63 @@ def test_subagent_json_rejects_non_finite_aggregate_usage(tmp_path_factory):
 
 
 @requires_node
+def test_extract_last_assistant_text_handles_thoughts_tool_calls_and_partial_stream(
+    tmp_path_factory,
+):
+    # Multiple turns: first turn assistant output, tool result, second turn with thought + tool call,
+    # followed by an abrupt truncation (unclosed JSON).
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "version": 3}),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "Turn 1 text"}],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {"role": "user", "content": "tool result"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "analyzing turn 2"},
+                            {
+                                "type": "toolCall",
+                                "name": "read",
+                                "arguments": {"path": "src/main.ts"},
+                            },
+                        ],
+                    },
+                }
+            ),
+            '{"type":"message_update","as',
+        ]
+    )
+    result = _extract_last_assistant_text(stdout, tmp_path_factory)
+    assert result["ok"] is True
+    assert "analyzing turn 2" in result["result"]
+    assert 'read({"path":"src/main.ts"})' in result["result"]
+    assert "Turn 1 text" not in result["result"]
+
+    # When no assistant message completed, returns None/null
+    empty_result = _extract_last_assistant_text(
+        json.dumps({"type": "session", "version": 3}), tmp_path_factory
+    )
+    assert empty_result["ok"] is True
+    assert empty_result["result"] is None
+
+
+@requires_node
 def test_subagent_composed_prompt_contains_agent_body_and_preloaded_skill_content(subagent_root, tmp_path_factory):
     """The whole point of this feature is that a dispatched agent's body AND its preloaded
     skills actually land in the child's system prompt — not just that some file got written and
@@ -2682,6 +2777,57 @@ def test_subagent_nonzero_exit_surfaces_stderr(subagent_root, tmp_path_factory):
     result = _subagent_result(subagent_root, tmp_path_factory, exec_behavior="failure")
     assert result["execFails"]["ok"] is False
     assert "boom" in result["execFails"]["message"]
+
+
+@requires_node
+def test_subagent_nonzero_exit_appends_last_completed_assistant_message(
+    subagent_root, tmp_path_factory
+):
+    """When a subagent exits with non-zero code (e.g. killed with signal 143 by timeout or parent
+    abort) and empty stderr, any partial stdout must be scanned for the last completed assistant
+    message so the orchestrator knows what the child was doing before it was terminated."""
+    partial_stdout = "\n".join(
+        [
+            json.dumps({"type": "session", "version": 3}),
+            json.dumps(
+                {
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "investigating test failure"},
+                            {"type": "text", "text": "running pytest now"},
+                            {
+                                "type": "toolCall",
+                                "name": "bash",
+                                "arguments": {"command": "pytest -v"},
+                            },
+                        ],
+                    },
+                }
+            ),
+            # Trailing partial/truncated line as commonly occurs when a process is killed mid-write
+            '{"type":"message_update","usage":{"in',
+        ]
+    )
+    result = _subagent_result(
+        subagent_root,
+        tmp_path_factory,
+        exec_behavior="failure",
+        exec_stdout=partial_stdout,
+        exec_stderr="",
+        exec_code=143,
+        exec_killed=True,
+    )
+    run = result["execFails"]
+    assert run["ok"] is False
+    assert "exited 143" in run["message"]
+    assert "(killed)" in run["message"]
+    assert "(no stderr)" in run["message"]
+    assert "Last assistant message:" in run["message"]
+    assert "investigating test failure" in run["message"]
+    assert "running pytest now" in run["message"]
+    assert 'bash({"command":"pytest -v"})' in run["message"]
 
 
 @requires_node

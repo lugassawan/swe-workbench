@@ -187,3 +187,57 @@ export function parseNestedTaskJson(stdout: string): ParsedNestedTask {
   assertFiniteAggregate(usage);
   return { text: textBlocks.map((block) => block.text).join("\n"), usage };
 }
+
+/** Extracts partial text from the last completed assistant message in an NDJSON stream. */
+export function extractLastAssistantText(stdout: string): string | undefined {
+  if (!stdout) return undefined;
+  let lastText: string | undefined;
+
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!isRecord(event) || event.type !== "message_end") continue;
+    const message = event.message;
+    if (!isRecord(message) || message.role !== "assistant") continue;
+
+    const parts: string[] = [];
+    if (typeof message.content === "string" && message.content.trim()) {
+      parts.push(message.content.trim());
+    } else if (Array.isArray(message.content)) {
+      for (const rawBlock of message.content) {
+        if (!isRecord(rawBlock)) continue;
+        if (rawBlock.type === "text" && typeof rawBlock.text === "string" && rawBlock.text.trim()) {
+          parts.push(rawBlock.text.trim());
+        } else if (rawBlock.type === "thinking" && typeof rawBlock.thinking === "string" && rawBlock.thinking.trim()) {
+          parts.push(rawBlock.thinking.trim());
+        } else if (
+          (rawBlock.type === "toolCall" || rawBlock.type === "tool_use") &&
+          typeof rawBlock.name === "string"
+        ) {
+          const rawArgs = rawBlock.arguments ?? rawBlock.input;
+          const args =
+            typeof rawArgs === "string"
+              ? rawArgs
+              : rawArgs !== undefined
+                ? JSON.stringify(rawArgs)
+                : "";
+          parts.push(args ? `${rawBlock.name}(${args})` : `${rawBlock.name}()`);
+        }
+      }
+    }
+    if (parts.length === 0 && typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+      parts.push(message.errorMessage.trim());
+    }
+    if (parts.length > 0) {
+      lastText = parts.join("\n");
+    }
+  }
+
+  return lastText;
+}

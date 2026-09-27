@@ -28,7 +28,7 @@ import {
   translateToolTokens,
 } from "./agent-spec.ts";
 import { resolveTargetDispatch } from "./dispatch-resolver.ts";
-import { parseNestedTaskJson } from "./subagent-json.ts";
+import { extractLastAssistantText, parseNestedTaskJson } from "./subagent-json.ts";
 import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall, taskRenderResult } from "./task-call-line.ts";
 
 // Re-exported so the behavioural pytest driver and index.ts (which import only this
@@ -165,9 +165,11 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           // fallback context — never drop it just because the child errored for an unrelated
           // reason (bad args, timeout, crash).
           const warningSuffix = dispatch.warning ? ` (${dispatch.warning})` : "";
+          const lastMessage = extractLastAssistantText(result.stdout);
+          const partialSuffix = lastMessage ? `\n\nLast assistant message:\n${capOutput(lastMessage)}` : "";
           throw new Error(
             `task: dispatched agent "${agent}" exited ${result.code}` +
-              `${result.killed ? " (killed)" : ""}${warningSuffix} — ${stderr}`,
+              `${result.killed ? " (killed)" : ""}${warningSuffix} — ${stderr}${partialSuffix}`,
           );
         }
 
