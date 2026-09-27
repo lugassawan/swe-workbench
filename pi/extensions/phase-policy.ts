@@ -24,9 +24,12 @@ export function extractPhase(prompt: string): Phase | undefined {
   return prompt.split(/\r?\n/).includes(PHASE_MARKER) ? "plan" : undefined;
 }
 
-/** Where the agent persists plans, relative to the repo root — the one directory the plan-phase
- *  mutation gate leaves writable, so a lost session never loses a drafted plan. */
-export const PLANS_RELATIVE_DIR = "docs/superpowers/plans";
+/** Where the agent persists plans, under the user's home: `~/.pi/agent/plans`, inside Pi's
+ *  agent dir (which already holds sessions/, skills/, extensions/). The one directory the
+ *  plan-phase mutation gate leaves writable, so a lost session never loses a drafted plan.
+ *  Kept a pure string — the adapter resolves the real dir against Pi's agent dir so this
+ *  module stays SDK-free. */
+export const PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans";
 
 /** Pi's file-mutation tool names (lowercase — Edit/Write are the Claude names, not Pi's). */
 export const BLOCKED_TOOLS_IN_PLAN: ReadonlySet<string> = new Set(["edit", "write"]);
@@ -67,7 +70,7 @@ const PLAN_SECTION = `## Plan phase
 
 Plan phase is active: author the implementation plan — do not implement it.
 
-- edit/write is allowed ONLY under ${PLANS_RELATIVE_DIR}/. Persist the plan there in
+- edit/write is allowed ONLY under ~/${PLANS_HOME_RELATIVE_DIR}/. Persist the plan there in
   superpowers:writing-plans format as you draft it, so a lost session never loses the plan.
 - Every other edit/write is blocked.
 - Do not mutate other files via bash to work around the block.
@@ -77,7 +80,7 @@ const EXECUTE_SECTION = `## Execute phase
 
 Execute phase is active: the approved plan governs, and edit/write is allowed.
 
-- If the approved plan is not yet on disk, persist it verbatim under ${PLANS_RELATIVE_DIR}/
+- If the approved plan is not yet on disk, persist it verbatim under ~/${PLANS_HOME_RELATIVE_DIR}/
   first; then execute it task-by-task (superpowers:executing-plans or
   superpowers:subagent-driven-development).
 - The Workflow section's five-phase lifecycle (Branch → Implement → Verify → Review → Deliver)

@@ -51,7 +51,7 @@ first-class part of the transition.
   spans both phases: plan on Sol → approval → execution on Terra in the same session.
 - **Read-only steering** — while plan phase is active, a `tool_call` handler blocks `edit`/`write` with
   `terminate: true`, steering the model to `submit_plan`, **except for targets inside
-  `docs/superpowers/plans/`**: the planner persists the plan file during plan phase so a broken
+  `~/.pi/agent/plans/`**: the planner persists the plan file during plan phase so a broken
   session never discards the work (user requirement — durability over gate purity). This is
   steering, not containment: bash is deliberately ungated (the planner needs reads, diagnostics,
   test runs) and dispatched subagents are separate `pi` child processes whose tool calls never
@@ -79,7 +79,7 @@ no-try/catch-around-handler-bodies contract.
 - **`/skill:workflow-development` typed directly** bypasses command markers — documented gap;
   the marker grammar extends to skill bodies if it matters later.
 - **Plan-file persistence during plan phase**: the planner writes the plan to
-  `docs/superpowers/plans/` as it drafts (gate allowlist — durability against session loss), and
+  `~/.pi/agent/plans/` as it drafts (gate allowlist — durability against session loss), and
   the `submit_plan` payload remains the approval artifact. Post-approval, the execution session
   executes from the on-disk plan (persisting it first if the planner never did) and then runs the
   5-phase workflow (Branch → Implement → Verify → Review → Deliver) — an execution-time

@@ -504,13 +504,16 @@ def test_blocked_tools_pinned_to_edit_write():
 
 
 def test_plans_dir_allowlist_pinned():
-    """The plan gate's allowlist is the plans dir: PLANS_RELATIVE_DIR's literal is pinned
-    here, and isMutationBlocked's signature must take the target path and the resolved plans
-    dir as separate parameters — that signature is what lets the adapter enforce containment
-    per call instead of the module guessing at path resolution."""
+    """The plan gate's allowlist is the user-global plans dir: PLANS_HOME_RELATIVE_DIR's
+    literal is pinned here (the same dir the plan/execute system sections tell the agent to
+    persist plans under), isMutationBlocked's signature must take the target path and the
+    resolved plans dir as separate parameters — that signature is what lets the adapter
+    enforce containment per call instead of the module guessing at path resolution — and
+    phase.ts must derive the dir from the homedir-anchored PLANS_HOME_RELATIVE_DIR literal,
+    never the session cwd."""
     text = PHASE_POLICY_TS.read_text(encoding="utf-8")
-    assert 'PLANS_RELATIVE_DIR = "docs/superpowers/plans"' in text, (
-        'PLANS_RELATIVE_DIR must be the literal "docs/superpowers/plans" — the same dir the '
+    assert 'PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans"' in text, (
+        'PLANS_HOME_RELATIVE_DIR must be the literal ".pi/agent/plans" — the same dir the '
         "plan/execute system sections tell the agent to persist plans under"
     )
     signature = re.search(r"function isMutationBlocked\(([^)]*)\)", text, re.DOTALL)
@@ -518,6 +521,15 @@ def test_plans_dir_allowlist_pinned():
     params = [p.strip().split(":")[0] for p in signature.group(1).split(",")]
     assert {"targetPath", "plansDir"} <= set(params), (
         f"isMutationBlocked's parameters must include targetPath and plansDir, found {params!r}"
+    )
+    adapter_text = PHASE_TS.read_text(encoding="utf-8")
+    assert 'join(homedir(), ...PLANS_HOME_RELATIVE_DIR.split("/"))' in adapter_text, (
+        "phase.ts must anchor the plans dir to the user's home via the PLANS_HOME_RELATIVE_DIR "
+        "literal — never to the session cwd or the plugin install root (and never a bare-specifier "
+        "value import such as the SDK's getAgentDir helper)"
+    )
+    assert "PLANS_RELATIVE_DIR" not in text and "PLANS_RELATIVE_DIR" not in adapter_text, (
+        "the old repo-relative PLANS_RELATIVE_DIR name must not survive the global move"
     )
 
 
@@ -885,7 +897,9 @@ def test_phase_policy_behavior():
     assert dumped["disarmedSectionEmpty"] == ""
 
 
-_PHASE_GATE_CWD_DRIVER = """
+_PHASE_GATE_GLOBAL_DIR_DRIVER = """
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);
 const handlers = {};
@@ -900,53 +914,60 @@ const blocked = (cwd, path) => {
   const r = handlers.tool_call({ toolName: "edit", input: { path } }, { cwd });
   return r !== undefined && r.block === true;
 };
+// The same homedir base the handler resolves (the env strips PI_CODING_AGENT_DIR so a
+// future switch to the SDK's getAgentDir stays deterministic): every global-plans path is
+// built relative to it, nothing is written.
+const globalPlans = join(homedir(), ".pi", "agent", "plans");
 const dump = {
-  plansUnderRepoA: blocked(process.argv[4], `${process.argv[4]}/docs/superpowers/plans/f.md`),
-  plansUnderRepoB: blocked(process.argv[5], `${process.argv[5]}/docs/superpowers/plans/f.md`),
-  relativePlansUnderRepoA: blocked(process.argv[4], "docs/superpowers/plans/f.md"),
-  pluginRootPlansFromRepoA: blocked(process.argv[4], `${process.argv[3]}/docs/superpowers/plans/f.md`),
-  outsideRepoA: blocked(process.argv[4], `${process.argv[4]}/src/main.ts`),
+  globalPlansFromRepoA: blocked(process.argv[4], join(globalPlans, "f.md")),
+  globalPlansFromRepoB: blocked(process.argv[5], join(globalPlans, "f.md")),
+  globalPlansDirItself: blocked(process.argv[4], globalPlans),
+  repoLocalPlansUnderRepoA: blocked(process.argv[4], join(process.argv[4], "docs/superpowers/plans/f.md")),
+  pluginRootPlansFromRepoA: blocked(process.argv[4], join(process.argv[3], "docs/superpowers/plans/f.md")),
+  elsewhereUnderHome: blocked(process.argv[4], join(homedir(), "elsewhere", "f.md")),
+  outsideRepoA: blocked(process.argv[4], join(process.argv[4], "src/main.ts")),
 };
 console.log(JSON.stringify(dump));
 """
 
 
 @requires_node
-def test_phase_gate_allowlist_anchored_to_session_cwd():
-    """The gate's allowlist must anchor to the session's cwd — the same base the target path
-    resolves against — never to the plugin install root registerPhase receives: a hoisted
-    resolve(root, PLANS_RELATIVE_DIR) allowlist blocks the working repo's own
-    docs/superpowers/plans writes (the feature's core durability path) in every session whose
-    cwd differs from the installed plugin path, while allowing writes into the plugin's own
-    docs tree. Driven behaviorally through the real tool_call handler with a plugin root
-    distinct from two different working cwds: both repos' plans dirs stay writable, the
-    plugin root's does not, and the gate still blocks everywhere else."""
+def test_phase_gate_allowlist_anchored_to_global_plans_dir():
+    """The gate's allowlist must anchor to the user-global plans dir under Pi's agent dir —
+    never to the session cwd or the plugin install root: ~/.pi/agent/plans writes stay
+    writable from ANY working repo (Claude Code parity — one canonical plans dir that
+    survives worktree switches), while the repo-local docs/superpowers/plans path the v1
+    gate allowed is now blocked — a re-anchoring regression to resolve(cwd, ...) fails
+    here. Driven behaviorally through the real tool_call handler with a plugin root and
+    two distinct working cwds; paths are only computed against the handler's resolved
+    base, so the real ~/.pi/agent/plans is never written."""
     node = shutil.which("node")
     assert node is not None
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        driver = Path(tmp) / "phase-gate-cwd-dump.mjs"
-        driver.write_text(_PHASE_GATE_CWD_DRIVER, encoding="utf-8")
+        driver = Path(tmp) / "phase-gate-global-dump.mjs"
+        driver.write_text(_PHASE_GATE_GLOBAL_DIR_DRIVER, encoding="utf-8")
         plugin_root = str(Path(tmp) / "plugin-root")
         repo_a = str(Path(tmp) / "repo-a")
         repo_b = str(Path(tmp) / "repo-b")
+        env = {k: v for k, v in _CLEAN_ENV.items() if k != "PI_CODING_AGENT_DIR"}
         result = subprocess.run(
             [node, "--experimental-strip-types", str(driver), str(PHASE_TS), plugin_root, repo_a, repo_b],
-            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+            capture_output=True, text=True, env=env, timeout=30,
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
-    for key in ("plansUnderRepoA", "plansUnderRepoB", "relativePlansUnderRepoA"):
+    for key in ("globalPlansFromRepoA", "globalPlansFromRepoB", "globalPlansDirItself"):
         assert dumped[key] is False, (
-            f"{key}: a plans-dir write under the session's own cwd must never be blocked — "
-            "the allowlist must anchor to ctx.cwd, not the plugin install root"
+            f"{key}: a ~/.pi/agent/plans write must never be blocked — the allowlist anchors "
+            "to the user-global plans dir, not the session cwd or plugin root"
         )
-    assert dumped["pluginRootPlansFromRepoA"] is True, (
-        "writes into the plugin install root's plans dir must stay blocked — that tree is "
-        "not the working repo the gate governs"
-    )
-    assert dumped["outsideRepoA"] is True, "the gate still blocks edit outside the plans dir"
+    for key in ("repoLocalPlansUnderRepoA", "pluginRootPlansFromRepoA", "elsewhereUnderHome", "outsideRepoA"):
+        assert dumped[key] is True, (
+            f"{key}: only the global plans dir is writable in plan phase — repo-local or "
+            "plugin-root plans paths and every other target must stay blocked"
+        )
 
 
 _PHASE_TRANSITION_DRIVER = """

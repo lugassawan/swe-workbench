@@ -7,13 +7,14 @@
  * replace a tool, and self-wrap fallible bodies (no try/catch there).
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { approvalChoice, SUBMIT_PLAN_PARAMS_SCHEMA } from "./phase-dialog.ts";
 import {
   extractPhase,
   isMutationBlocked,
   phaseSystemSection,
-  PLANS_RELATIVE_DIR,
+  PLANS_HOME_RELATIVE_DIR,
   resolvePhaseModels,
   type Phase,
   type PhaseState,
@@ -24,7 +25,7 @@ import {
 const phaseSectionMarker = (state: PhaseState): string => `<!-- swb-phase-section:${state} -->`;
 
 const BLOCK_REASON =
-  "Plan phase is active — edit/write are blocked outside docs/superpowers/plans until the " +
+  "Plan phase is active — edit/write are blocked outside ~/.pi/agent/plans until the " +
   "plan is approved. Writing the plan file itself is allowed. Call submit_plan with the " +
   "complete plan when ready; user approval switches this session to the execution model. " +
   "Do not mutate other files via bash during plan phase.";
@@ -115,9 +116,11 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
     try {
       const target = (event.input as { path?: unknown }).path;
       if (typeof target !== "string" || target === "") return undefined;
-      // The allowlist anchors to ctx.cwd — the same base the target resolves against — so
-      // the writable plans dir is the working repo's, never the plugin install root's.
-      const plansDir = resolve(ctx.cwd, PLANS_RELATIVE_DIR);
+      // The allowlist is the user-global plans dir under the home dir — the same
+      // PLANS_HOME_RELATIVE_DIR literal the section prose interpolates (the SDK's getAgentDir
+      // helper would need a bare value import, barred in this layer), never the session cwd:
+      // plans stay writable from any repo or worktree.
+      const plansDir = join(homedir(), ...PLANS_HOME_RELATIVE_DIR.split("/"));
       if (!isMutationBlocked(event.toolName, resolve(ctx.cwd, target), plansDir, phase)) {
         return undefined;
       }
