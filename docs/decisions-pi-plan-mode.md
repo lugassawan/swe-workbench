@@ -8,7 +8,7 @@ live in the other `docs/decisions-*.md` files (indexed in `docs/README.md`).
 ## 1. The problem: one model for both halves of a run
 
 The user's Pi session defaults to `gpt-5.6-sol` (opus tier) with thinking `high`
-(`~/.pi/agent/settings.json`). A typical `/implement` run spends a handful of high-judgment turns
+(`~/.pi/agent/settings.json`). A typical `/swe-workbench:implement` run spends a handful of high-judgment turns
 planning and *many* turns executing — all billed at Sol rates. Only the planning minority needs
 Sol; execution is sonnet-tier work (`gpt-5.6-terra`). The subagent dispatcher already encodes this
 asymmetry — `agents/*.md` frontmatter tiers dispatch `swe-workbench:senior-engineer`/`swe-workbench:architect` on opus→Sol and
@@ -24,7 +24,7 @@ first-class part of the transition.
 - **Entry** — each phase-armed `commands/*.md` carries one exact marker line,
   `<!-- swb-phase: plan -->`, immediately after its frontmatter. The adapter detects the marker in
   the *expanded* prompt at `before_agent_start` (the event fires after template/skill expansion,
-  so `/implement …` and every other invocation path of that template is covered) and arms the gate
+  so `/swe-workbench:implement …` and every other invocation path of that template is covered) and arms the gate
   for that run. Detection keys on content, not filenames — renaming a command cannot silently
   detach it. The marker inventory is ratchet-tested in both directions (armed file missing the
   marker fails; neutral file carrying it fails).
@@ -37,7 +37,7 @@ first-class part of the transition.
   dialog (`ctx.ui.custom`, `ctx.ui.editor` for revision, `ctx.ui.confirm` fallback in non-TUI
   modes). **Approve** flips the session model to the sonnet-tier execution model
   (`pi.setModel`, session-scoped) and disarms the gate atomically inside the tool handler;
-  **Revise** returns the user's feedback and stays armed on the plan model. `/implement` therefore
+  **Revise** returns the user's feedback and stays armed on the plan model. `/swe-workbench:implement` therefore
   spans both phases: plan on Sol → approval → execution on Terra in the same session.
 - **Read-only steering** — while armed, a `tool_call` handler blocks `edit`/`write` with
   `terminate: true`, steering the model to `submit_plan`, **except for targets inside
