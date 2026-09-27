@@ -21,7 +21,7 @@ export type PhaseState = "disarmed" | "plan" | "execute";
 
 /** `"plan"` iff PHASE_MARKER appears as a whole line of `prompt` (the armed command's body). */
 export function extractPhase(prompt: string): Phase | undefined {
-  return prompt.split("\n").includes(PHASE_MARKER) ? "plan" : undefined;
+  return prompt.split(/\r?\n/).includes(PHASE_MARKER) ? "plan" : undefined;
 }
 
 /** Where the agent persists plans, relative to the repo root — the one directory the plan-phase
@@ -46,20 +46,21 @@ export function isMutationBlocked(
   return targetPath !== plansDir && !targetPath.startsWith(plansDir + "/");
 }
 
-/** Model id for the phase's governing tier — plan drafts on opus, execute runs on sonnet —
- *  resolved from MODEL_POLICY so the tier table has one source of truth (multi-id rows resolve
- *  to their preference-ordered first id). Model id ONLY, never a thinking level: flipping tiers
- *  via setThinkingLevel would silently change session effort (sonnet's default xhigh ≠ the
- *  session's current high), which docs/decisions-pi-plan-mode.md §4 defers. `undefined` means
- *  unsupported provider — the caller notifies and stays on the current model. */
-export function resolvePhaseModelTier(
+/** Preference-ordered model ids for the phase's governing tier — plan drafts on opus, execute
+ *  runs on sonnet — from MODEL_POLICY, the single source of truth. Multi-id rows are fallback
+ *  lists, so the full order is returned and the adapter walks candidates via
+ *  modelRegistry.find; a first-id-only return would strand the phase flip on a dead id. Ids
+ *  ONLY, never a thinking level: setThinkingLevel on flip would silently change session
+ *  effort (§4 of docs/decisions-pi-plan-mode.md defers that). `undefined` = unsupported
+ *  provider — the caller notifies and stays on the current model. */
+export function resolvePhaseModels(
   provider: string,
   phase: Phase,
-): { readonly model: string } | undefined {
+): readonly string[] | undefined {
   if (!isSupportedProvider(provider)) return undefined;
   const tier: ModelTier = phase === "plan" ? "opus" : "sonnet";
-  const row = MODEL_POLICY[provider][tier];
-  return { model: typeof row.model === "string" ? row.model : row.model[0] };
+  const { model } = MODEL_POLICY[provider][tier];
+  return typeof model === "string" ? [model] : model;
 }
 
 const PLAN_SECTION = `## Plan phase

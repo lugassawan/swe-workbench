@@ -463,13 +463,15 @@ PHASE_POLICY_TS = EXTENSIONS_DIR / "phase-policy.ts"
 
 
 def test_phase_policy_is_sdk_free():
-    """phase-policy.ts is the domain layer of the plan-phase feature: no Pi SDK import, not
-    even type-only — the adapter that consumes it owns everything touching Pi (same posture
-    as model-policy.ts's own never-references pin below)."""
+    """phase-policy.ts is the domain layer of the plan-phase feature: no Pi SDK reference at
+    all, not even type-only — the adapter that consumes it owns everything touching Pi (same
+    posture as model-policy.ts's own never-references pin below)."""
     text = PHASE_POLICY_TS.read_text(encoding="utf-8")
-    assert 'from "@earendil-works' not in text and "from '@earendil-works'" not in text, (
-        "phase-policy.ts must not import the Pi SDK, not even as a type — it is pure domain "
-        "data and pure functions only"
+    # Raw substring, not import-form matching: any occurrence — static import, bare
+    # side-effect import, or dynamic import() — means the domain layer reached the SDK.
+    assert "@earendil-works" not in text, (
+        "phase-policy.ts must not reference the Pi SDK in any form, not even as a type — it "
+        "is pure domain data and pure functions only"
     )
 
 
@@ -637,19 +639,19 @@ import { pathToFileURL } from "node:url";
 const [, , phasePolicyPath, modelPolicyPath] = process.argv;
 const phasePolicy = await import(pathToFileURL(phasePolicyPath).href);
 const modelPolicy = await import(pathToFileURL(modelPolicyPath).href);
-const primary = (row) => (typeof row.model === "string" ? row.model : row.model[0]);
+const models = (row) => (typeof row.model === "string" ? [row.model] : row.model);
 const dump = {};
 for (const provider of modelPolicy.SUPPORTED_PROVIDERS) {
   dump[provider] = {
-    plan: phasePolicy.resolvePhaseModelTier(provider, "plan"),
-    execute: phasePolicy.resolvePhaseModelTier(provider, "execute"),
-    opusPrimary: primary(modelPolicy.MODEL_POLICY[provider].opus),
-    sonnetPrimary: primary(modelPolicy.MODEL_POLICY[provider].sonnet),
+    plan: phasePolicy.resolvePhaseModels(provider, "plan"),
+    execute: phasePolicy.resolvePhaseModels(provider, "execute"),
+    opusModels: models(modelPolicy.MODEL_POLICY[provider].opus),
+    sonnetModels: models(modelPolicy.MODEL_POLICY[provider].sonnet),
   };
 }
 dump["not-a-provider"] = {
-  plan: phasePolicy.resolvePhaseModelTier("not-a-provider", "plan"),
-  execute: phasePolicy.resolvePhaseModelTier("not-a-provider", "execute"),
+  plan: phasePolicy.resolvePhaseModels("not-a-provider", "plan"),
+  execute: phasePolicy.resolvePhaseModels("not-a-provider", "execute"),
 };
 console.log(JSON.stringify(dump));
 """
@@ -658,11 +660,11 @@ console.log(JSON.stringify(dump));
 @requires_node
 def test_phase_tier_resolution_identity():
     """Single-source-of-truth posture, same as test_default_tier_effort_reproduces_ticket_matrix:
-    resolvePhaseModelTier's result is asserted identical to MODEL_POLICY's own opus (plan) and
-    sonnet (execute) rows — never a second hand-copied id table — including multi-id rows
-    resolving to their preference-ordered first id, and undefined for unsupported providers.
-    Dict equality also pins the result shape to the model id only: a thinking key here would
-    mean a phase flip silently changes session effort, which decision doc §4 defers."""
+    resolvePhaseModels' result is asserted identical — as a full, order-preserving list — to
+    MODEL_POLICY's own opus (plan) and sonnet (execute) rows, never a second hand-copied id
+    table, and undefined for unsupported providers. List equality also pins the result shape
+    to model ids only: a thinking entry here would mean a phase flip silently changes session
+    effort, which decision doc §4 defers."""
     node = shutil.which("node")
     assert node is not None
     import tempfile
@@ -678,21 +680,72 @@ def test_phase_tier_resolution_identity():
     dumped = json.loads(result.stdout)
     for provider, row in dumped.items():
         if provider == "not-a-provider":
-            # JSON.stringify drops undefined values, so "returned undefined" round-trips as
-            # an absent key — .get() is the faithful assertion, not ["plan"].
-            assert row.get("plan") is None and row.get("execute") is None, (
-                "resolvePhaseModelTier must return undefined for unsupported providers — the "
+            # JSON.stringify drops undefined values, so "returned undefined" round-trips
+            # as an absent key — membership is the faithful assertion, not .get().
+            assert "plan" not in row and "execute" not in row, (
+                "resolvePhaseModels must return undefined for unsupported providers — the "
                 "caller notifies and stays on the current model"
             )
             continue
-        assert row["plan"] == {"model": row["opusPrimary"]}, (
-            f"plan phase must resolve {provider!r}'s opus row model id "
-            f"({row['opusPrimary']!r}), got {row['plan']!r}"
+        assert row["plan"] == row["opusModels"], (
+            f"plan phase must resolve {provider!r}'s full opus model list in preference "
+            f"order ({row['opusModels']!r}), got {row['plan']!r}"
         )
-        assert row["execute"] == {"model": row["sonnetPrimary"]}, (
-            f"execute phase must resolve {provider!r}'s sonnet row model id "
-            f"({row['sonnetPrimary']!r}), got {row['execute']!r}"
+        assert row["execute"] == row["sonnetModels"], (
+            f"execute phase must resolve {provider!r}'s full sonnet model list in "
+            f"preference order ({row['sonnetModels']!r}), got {row['execute']!r}"
         )
+
+
+_PHASE_BEHAVIOR_DRIVER = """
+import { pathToFileURL } from "node:url";
+const phasePolicy = await import(pathToFileURL(process.argv[2]).href);
+const marker = "<!-- swb-phase: plan -->";
+const dump = {
+  evilSiblingBlocked: phasePolicy.isMutationBlocked("edit", "/x/plans-evil/f.md", "/x/plans", "plan"),
+  plansDirItselfAllowed: phasePolicy.isMutationBlocked("edit", "/x/plans", "/x/plans", "plan"),
+  executeNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "execute"),
+  disarmedNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "disarmed"),
+  otherToolNeverBlocks: phasePolicy.isMutationBlocked("bash", "/x/elsewhere/f.md", "/x/plans", "plan"),
+  wholeLineMarker: phasePolicy.extractPhase(`intro\\n${marker}\\noutro`),
+  crlfWholeLineMarker: phasePolicy.extractPhase(`intro\\r\\n${marker}\\r\\noutro`),
+  inlineMarkerIgnored: phasePolicy.extractPhase(`intro ${marker} outro`),
+  disarmedSectionEmpty: phasePolicy.phaseSystemSection("disarmed"),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_policy_behavior():
+    """The gate's edges as behavior, not source shape: a sibling directory whose name merely
+    starts with the plans dir stays blocked (separator-suffixed prefix, not startsWith), the
+    plans dir itself stays writable, execute/disarmed states and non-mutation tools never
+    block, the phase marker counts only as a whole line (CRLF included, inline occurrences
+    ignored), and the disarmed state injects no system section."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-behavior-dump.mjs"
+        driver.write_text(_PHASE_BEHAVIOR_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_POLICY_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["evilSiblingBlocked"] is True
+    assert dumped["plansDirItselfAllowed"] is False
+    for key in ("executeNeverBlocks", "disarmedNeverBlocks", "otherToolNeverBlocks"):
+        assert dumped[key] is False
+    assert dumped["wholeLineMarker"] == "plan"
+    assert dumped["crlfWholeLineMarker"] == "plan"
+    # extractPhase returns undefined for the inline case — JSON.stringify drops it, so the
+    # faithful assertion is key absence, not a null value.
+    assert "inlineMarkerIgnored" not in dumped
+    assert dumped["disarmedSectionEmpty"] == ""
 
 
 _DUMP_DISPATCH_DRIVER = """
