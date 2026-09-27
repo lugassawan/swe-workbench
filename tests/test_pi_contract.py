@@ -524,6 +524,58 @@ def test_plans_dir_allowlist_pinned():
 
 
 # ---------------------------------------------------------------------------
+# phase.ts adapter (docs/decisions-pi-plan-mode.md) — source pins for the arming/gate
+# wiring; Task 4's submit_plan tool extends the same registerPhase function.
+# ---------------------------------------------------------------------------
+
+PHASE_TS = EXTENSIONS_DIR / "phase.ts"
+
+
+def test_index_registers_phase_after_guards():
+    """registerPhase must be called after registerGuards in index.ts, and the
+    registration-order comment block above registerHandoff must mention the phase gate —
+    emitToolCall (runner.js:701) runs tool_call handlers in registration order and
+    short-circuits only on `block: true`, so a phase gate registered before the security
+    guards would let plan-phase steering preempt a security verdict, and a future reorder
+    of the call lines must not silently change which block reason wins."""
+    text = PI_EXTENSIONS_INDEX.read_text(encoding="utf-8")
+    guards_pos = text.find("registerGuards(pi, root);")
+    phase_pos = text.find("registerPhase(pi, root);")
+    assert guards_pos != -1, "index.ts must call registerGuards(pi, root)"
+    assert phase_pos != -1, "index.ts must call registerPhase(pi, root)"
+    assert phase_pos > guards_pos, (
+        "registerPhase(pi, root) must be called after registerGuards(pi, root) — the phase "
+        "gate observes calls the security guards already vetted, never the other way round"
+    )
+    handoff_pos = text.find("registerHandoff(pi, root);")
+    assert handoff_pos != -1, "index.ts must call registerHandoff(pi, root)"
+    lines_above = text[:handoff_pos].rstrip().splitlines()
+    comment_block = []
+    for line in reversed(lines_above):
+        if line.strip().startswith("//"):
+            comment_block.append(line)
+        else:
+            break
+    assert any("phase gate" in line for line in comment_block), (
+        "the registration-order comment block above registerHandoff(pi, root) must mention "
+        "the phase gate — the comment is the pinned record of why handler order matters, so "
+        "it must stay in sync with the registerPhase call"
+    )
+
+
+def test_phase_gate_hasui_guard_present():
+    """phase.ts's before_agent_start must early-return when there is no dialog-capable UI —
+    plan phase never arms headless (a `-p`/print run must behave as if the feature did not
+    exist), and ctx.ui.notify has no surface to warn on there."""
+    text = PHASE_TS.read_text(encoding="utf-8")
+    assert "if (!ctx.hasUI) return undefined;" in text, (
+        "phase.ts's before_agent_start must carry the `if (!ctx.hasUI) return undefined;` "
+        "early-return — arming a headless session would gate edit/write with no way to tell "
+        "the user why"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Guard/hint event-translation contract. Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
 # docs/decisions-ci-validation.md §1.

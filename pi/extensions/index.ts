@@ -28,7 +28,8 @@
  *     tool's own guidelines tell the model to read. Do not copy that pattern verbatim.
  *
  * Scope note: tool_call handlers ARE registered by this adapter (handoff.ts — ownership,
- * guards.ts — security); they observe and block, never replace the tool.
+ * guards.ts — security, phase.ts — plan-phase steering); they observe and block, never
+ * replace the tool.
  */
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
@@ -38,6 +39,7 @@ import { registerAskUser } from "./ask-user.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerHandoff } from "./handoff.ts";
+import { registerPhase } from "./phase.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
 
@@ -124,18 +126,23 @@ export default function (pi: ExtensionAPI): void {
     return { systemPrompt: event.systemPrompt + getPreamble() };
   });
 
-  // registerGuards must register first among the *security* guards: emitToolCall (runner.js:701)
-  // runs tool_call handlers in registration order and short-circuits only on `block: true`, so
-  // a later-registered guard would be a silent security regression. registerAskUser adds no
-  // tool_call handler today, but a future one must be added after this line too — and
-  // emitToolCall has no try/catch around a handler's body (unlike emitUserBash), so any future
-  // tool_call handler must wrap its own body and return undefined on throw.
+  // Registration order is load-bearing: emitToolCall (runner.js:701) runs tool_call handlers
+  // in registration order and short-circuits only on `block: true`, and it has no try/catch
+  // around a handler's body (unlike emitUserBash), so every tool_call handler must wrap its
+  // own body and return undefined on throw.
   //
   // registerHandoff is deliberately ABOVE registerGuards: an ownership denial must win the
   // block reason (it carries the receiver resume instruction), and an allow is `undefined`,
   // which never short-circuits — every security guard below still runs on each allowed call.
+  //
+  // registerGuards must register first among the *security* guards: a later-registered guard
+  // would be a silent security regression. registerPhase's phase gate stays AFTER it — the
+  // gate blocks (never replaces) edit/write outside the plans dir and must not preempt a
+  // security verdict. registerAskUser adds no tool_call handler today, but a future one must
+  // go after registerGuards too.
   registerHandoff(pi, root);
   registerGuards(pi, root);
+  registerPhase(pi, root);
   registerAskUser(pi);
   registerSubagent(pi, root);
 }
