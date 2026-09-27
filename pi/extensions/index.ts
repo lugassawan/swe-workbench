@@ -31,10 +31,10 @@
  * guards.ts — security, phase.ts — plan-phase steering); they observe and block, never
  * replace the tool.
  */
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask-user.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";

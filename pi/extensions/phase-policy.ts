@@ -7,8 +7,8 @@
  * reading the armed command's prompt, resolving paths, and acting on isMutationBlocked's verdict.
  */
 
-import { MODEL_POLICY, isSupportedProvider } from "./model-policy.ts";
 import type { ModelTier } from "./model-policy.ts";
+import { MODEL_POLICY, isSupportedProvider } from "./model-policy.ts";
 
 /** The line an armed commands/*.md body carries to declare plan-phase; extractPhase scans for
  *  it and tests/test_pi_contract.py pins it to the same literal the command files carry. */
