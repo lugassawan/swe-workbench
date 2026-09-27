@@ -29,8 +29,10 @@ Each harness owns exactly one store; the other's is read-only by construction.
 
 - `--name` — short identity for the entry (no square brackets; ≤ 200 bytes).
 - `--description` — one-line summary of the lesson or fact (≤ 1000 bytes).
-- `--type` — `feedback` (correction, gotcha, "don't do this again") or `project`
-  (project history, decision, outcome). Pick the closer fit.
+- `--type` — one of `user` (the user's own role/preferences), `feedback`
+  (correction, gotcha, "don't do this again"), `project` (project history,
+  decision, outcome), or `reference` (a pointer into an external system —
+  tracker, dashboard, channel). Pick the closer fit.
 - body — the full context: what happened, why it matters, the rule going
   forward. ≤ 12 000 bytes; oversized input is refused, never silently truncated.
 
