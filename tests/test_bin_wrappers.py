@@ -9,31 +9,53 @@ tmp dirs, XDG_STATE_HOME unset — no real ~/.claude tree is ever touched.
 
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SHIM = ROOT / "hooks" / "memory_hint.sh"
+RUNTIME = ROOT / "bin" / "swe-workbench-memory"
+
+_runtime_module = None
+
+
+def _runtime():
+    """Load bin/swe-workbench-memory once and reuse it — claude_slug()/entry_file_name()
+    are pure (no I/O), so sharing one loaded module across helper calls is safe. Duplicated
+    from tests/test_memory_script.py (test files don't import across each other)."""
+    global _runtime_module
+    if _runtime_module is None:
+        loader = importlib.machinery.SourceFileLoader(
+            "swe_workbench_memory_runtime_bin_wrappers", str(RUNTIME)
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        loader.exec_module(module)
+        _runtime_module = module
+    return _runtime_module
 
 
 def slug_of(path) -> str:
-    return str(Path(path).resolve()).replace("/", "-").lstrip("-")
+    """Delegates to the runtime's OWN claude_slug() — never an independently mirrored
+    recipe (see tests/test_memory_script.py for the dedicated recipe-parity fixtures)."""
+    return _runtime().claude_slug(Path(path).resolve())
 
 
 def write_store(store_dir: Path, entries) -> None:
-    """Fabricate a Claude-format memory store.
-
-    Duplicated from tests/test_memory_script.py (test files don't import
-    across each other); entries: [(name, description, type)] newest-first.
-    """
+    """Fabricate a Claude-format memory store using the runtime's own on-disk naming
+    convention (entry_file_name). entries: [(name, description, type)] newest-first."""
     store_dir.mkdir(parents=True, exist_ok=True)
     lines = ["# Memory index", ""]
     for name, description, entry_type in entries:
-        file_name = f"{entry_type}_{name}.md"
+        file_name = _runtime().entry_file_name(entry_type, name)
         (store_dir / file_name).write_text(
             "---\n"
             f"name: {name}\n"
@@ -101,6 +123,43 @@ def test_valid_payload_injects_memory_as_additional_context(tmp_path):
     )
     assert "## Pi memory (read-only)" in context
     assert "hint-entry" in context
+
+
+def test_default_harness_omits_own_claude_section_via_other_only(tmp_path):
+    """The shim is Claude Code's OWN SessionStart hook — Claude Code's native per-project
+    memory already covers this exact cwd-slug store, so re-injecting it here would
+    duplicate it in Claude's own context. --other-only must drop it; Pi's is unaffected."""
+    write_store(
+        tmp_path / "home" / ".claude" / "projects" / slug_of(tmp_path) / "memory",
+        [("claude-note", "Claude remembers this natively already", "feedback")],
+    )
+    write_store(
+        tmp_path / "state" / slug_of(tmp_path),
+        [("pi-note", "Pi remembers this", "feedback")],
+    )
+    result = run_shim(SHIM, payload_with_cwd(tmp_path), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Pi memory (read-only)" in context
+    assert "pi-note" in context
+    assert "## Claude Code memory (own)" not in context
+    assert "claude-note" not in context
+
+
+def test_pi_harness_still_renders_both_sections_unaffected_by_other_only(tmp_path):
+    write_store(
+        tmp_path / "home" / ".claude" / "projects" / slug_of(tmp_path) / "memory",
+        [("claude-note", "Claude wrote this", "feedback")],
+    )
+    write_store(
+        tmp_path / "state" / slug_of(tmp_path),
+        [("pi-note", "Pi remembers this", "feedback")],
+    )
+    result = run_shim(SHIM, payload_with_cwd_and_harness(tmp_path, "pi"), cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "## Pi memory (own)" in context and "pi-note" in context
+    assert "## Claude Code memory (read-only)" in context and "claude-note" in context
 
 
 def test_empty_stores_emit_no_stdout(tmp_path):
