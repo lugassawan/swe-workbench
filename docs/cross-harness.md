@@ -3,7 +3,7 @@
 Rulings on the features Claude Code and Pi share: cross-harness handoff ownership
 (`hooks/handoff_guard.py` vs `pi/extensions/handoff.ts`) and the per-repo memory stores
 (`bin/swe-workbench-memory`). Recorded here so they don't have to be re-litigated.
-Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. `handoff_guard.py` — native mirror, never spawned on Pi

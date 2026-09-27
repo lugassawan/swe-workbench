@@ -1,7 +1,7 @@
 # Pi plan mode — plan on Sol, execute on Terra
 
 Rulings on the plan/execute phase split for the Pi adapter (`pi/extensions/phase-policy.ts`,
-`pi/extensions/phase.ts`). Sibling rulings live in the `docs/decisions-*.md` files.
+`pi/extensions/phase.ts`). Sibling rulings live in the docs index (`docs/README.md`).
 
 ## 1. The problem
 
@@ -56,4 +56,4 @@ its handler bodies self-wrap per the runner's no-try/catch contract.
 - Input-event string matching on `/<command>` — duplicates filename knowledge, misses expansion
   paths, false-positives on prose quoting command names.
 - Interactive relay subagents — a ~400–700-line subsystem duplicating one `setModel()` call
-  (`docs/decisions-task-dispatch.md`).
+  (`docs/task-dispatch.md`).

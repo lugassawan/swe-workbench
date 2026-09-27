@@ -13,7 +13,7 @@ future frontmatter edit can break Pi, not after.
 Ratchet shape follows tests/test_agent_model_tiers.py: module-level dict/set literals record
 what this repo's frontmatter currently uses. A new key/tool/skill only trips a test once
 *this repo* writes it into a file — keeping the gate open-world per
-docs/decisions-ci-validation.md §1, rather than a closed-form schema.
+docs/ci-validation.md §1, rather than a closed-form schema.
 """
 
 import json
@@ -633,7 +633,7 @@ def test_submit_plan_own_flip_flag_pinned():
 # ---------------------------------------------------------------------------
 # Guard/hint event-translation contract. Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
-# docs/decisions-ci-validation.md §1.
+# docs/ci-validation.md §1.
 # ---------------------------------------------------------------------------
 
 _EXTENSION_TS_FILES = sorted(EXTENSIONS_DIR.glob("*.ts"))
@@ -1180,8 +1180,8 @@ def test_referenced_fields_actually_appear_in_hook_source():
 
 # hooks/*.sh|py -> Pi wiring status. "wired": translated by guards.ts this phase. "n/a": the
 # concept the hook manipulates either does not exist on Pi (documented in
-# docs/decisions-pi-port.md §1) or is implemented natively by a Pi extension module
-# instead of spawning the Claude hook script (documented in docs/decisions-cross-harness.md §1 for handoff_guard.py).
+# docs/pi-port.md §1) or is implemented natively by a Pi extension module
+# instead of spawning the Claude hook script (documented in docs/cross-harness.md §1 for handoff_guard.py).
 # "deferred": not wired, but the missing Pi capability is expected to arrive and unblock wiring
 # — currently no rows sit in this bucket.
 HOOK_PI_STATUS = {
@@ -1230,7 +1230,7 @@ def test_skill_usage_hooks_are_explicitly_not_applicable(hook):
         "Pi structurally lacks: no Skill tool exists in any Pi process, dispatched children get "
         "skill bodies preloaded into their system prompt (pi/extensions/agent-spec.ts), and "
         "child pi.exec processes expose no events to the parent. This must stay an explicit "
-        "N/A row (docs/decisions-pi-port.md §1, §4), not silently re-deferred on a "
+        "N/A row (docs/pi-port.md §1, §4), not silently re-deferred on a "
         "capability-arrival rationale"
     )
 

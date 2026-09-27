@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI): void {
   // is not enough: a dispatched child re-runs this same index.ts with the kill switch still
   // unset, but its own argv carries `--exclude-tools task,subagent` — the real tool registry
   // has already filtered `task` out by the time extensions finish registering (see
-  // docs/decisions-task-dispatch.md). Only pi.getActiveTools() reflects that; the env var
+  // docs/task-dispatch.md). Only pi.getActiveTools() reflects that; the env var
   // alone would tell a dispatched agent to use a tool deliberately removed from its surface.
   function getPreamble(): string {
     if (cachedPreamble === undefined) {

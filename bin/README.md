@@ -95,7 +95,7 @@ swe-workbench-<name> [args...]
 `<plugin>/bin` is appended to the Bash tool's `PATH` while the plugin is enabled, so
 `swe-workbench-<name>` resolves without any path construction. The `command -v` preflight converts
 "command not found → exit 127, possibly rationalized away as unavailable" into a loud, actionable
-abort ("reinstall or update the swe-workbench plugin") — see [docs/decisions-bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/decisions-bin-path.md) for
+abort ("reinstall or update the swe-workbench plugin") — see [docs/bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/bin-path.md) for
 why this replaced the old `$CLAUDE_PLUGIN_ROOT`-existence guard rather than simply dropping it. A
 script that calls a sibling script (e.g. `swe-workbench-preflight-pr` calling
 `swe-workbench-fetch-pr`) resolves it via `dirname "$0"`/`dirname "${BASH_SOURCE[0]}"`, never a bare
@@ -105,7 +105,7 @@ exact form.
 A skill with its own `scripts/` helpers (e.g. `swe-workbench:workflow-cleanup-merged`, `swe-workbench:workflow-branch-sync`)
 never constructs a path to them either. It invokes `swe-workbench-skill-script <skill> <script>
 [args...]`, which resolves the plugin root itself and execs the target — see
-[docs/decisions-bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/decisions-bin-path.md) for why this replaced the doctor-anchor `_RT=` derivation that
+[docs/bin-path.md](https://github.com/lugassawan/swe-workbench/blob/main/docs/bin-path.md) for why this replaced the doctor-anchor `_RT=` derivation that
 briefly stood in for it. The dispatcher always execs the target via `bash` (mirroring
 `swe-workbench-fetch-pr`'s sibling-call form) rather than relying on the target's own shebang, so
 every skill-local `scripts/*.sh` helper is assumed to be bash. A `bin/` script itself reaches a

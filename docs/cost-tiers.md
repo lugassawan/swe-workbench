@@ -144,7 +144,7 @@ per tier → no depth bias: each cell emits the nearest *real* rung, exactly the
 resolution — zero nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider
 provenance (no `google-antigravity` on supported pins), `google-vertex` scope, the id-selection
 rule, and the load-bearing `>=0.86.1` peer floor are recorded once in
-`docs/decisions-task-dispatch.md`'s google ruling.
+`docs/task-dispatch.md`'s google ruling.
 
 **Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
@@ -160,7 +160,7 @@ reason and no warning, since there is no model to have fallen back from.)
 
 There is no runtime, user-global, or project-local override surface for any of this — `MODEL_POLICY`
 is a fixed table in this plugin's own reviewed source, not a config file. See
-`docs/decisions-task-dispatch.md` for the full trust-boundary rationale (hardcoded in reviewed
+`docs/task-dispatch.md` for the full trust-boundary rationale (hardcoded in reviewed
 source, not a runtime-editable settings file, specifically to avoid becoming an exfiltration
 primitive) and why exact ids strengthen that boundary rather than weaken it.
 
