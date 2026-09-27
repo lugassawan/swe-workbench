@@ -11,8 +11,8 @@ The user's Pi session defaults to `gpt-5.6-sol` (opus tier) with thinking `high`
 (`~/.pi/agent/settings.json`). A typical `/implement` run spends a handful of high-judgment turns
 planning and *many* turns executing — all billed at Sol rates. Only the planning minority needs
 Sol; execution is sonnet-tier work (`gpt-5.6-terra`). The subagent dispatcher already encodes this
-asymmetry — `agents/*.md` frontmatter tiers dispatch `senior-engineer`/`architect` on opus→Sol and
-`code-impl` on sonnet→Terra via `MODEL_POLICY` — but the **main thread** had no phase notion: it
+asymmetry — `agents/*.md` frontmatter tiers dispatch `swe-workbench:senior-engineer`/`swe-workbench:architect` on opus→Sol and
+`swe-workbench:code-impl` on sonnet→Terra via `MODEL_POLICY` — but the **main thread** had no phase notion: it
 runs one model for everything, which is why the usage dashboard shows Sol dominating.
 
 Claude Code's plan mode is the reference UX: plan (read-only) → approval dialog → execute. Pi has
@@ -28,7 +28,7 @@ first-class part of the transition.
   for that run. Detection keys on content, not filenames — renaming a command cannot silently
   detach it. The marker inventory is ratchet-tested in both directions (armed file missing the
   marker fails; neutral file carrying it fails).
-- **Phase-armed set (v1)** — `architect`, `capture`, `debug`, `design`, `extend`, `hotfix`,
+- **Phase-armed set (v1)** — `architect`, `capture`, `debug`, `design`, `extend`, `hotfix`, <!-- validate: prose-ref -->
   `implement`, `migrate`, `refactor`. All other commands are neutral (no marker, no machinery).
   `converge`, `report-issue`, `security-review` defaulted neutral in v1; reclassification is a
   one-line marker edit plus ratchet bump.
@@ -45,7 +45,7 @@ first-class part of the transition.
   session never discards the work (user requirement — durability over gate purity). This is
   steering, not containment: bash is deliberately ungated (the planner needs reads, diagnostics,
   test runs) and dispatched subagents are separate `pi` child processes whose tool calls never
-  pass through the parent's `tool_call` handler — so a heredoc-write or an eager `code-impl`
+  pass through the parent's `tool_call` handler — so a heredoc-write or an eager `swe-workbench:code-impl`
   dispatch can bypass the gate, which is accepted — the adversary is a cooperative model, not a
   malicious actor. Never document this feature as "enforced read-only".
 - **User override wins** — a manual model change (`model_select` with source `set` or `cycle`,
