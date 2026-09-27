@@ -3,6 +3,8 @@ description: Author an ADR, RFC, or cross-service contract via the architect sub
 argument-hint: <decision question> [--grill | --standard]
 ---
 
+<!-- swb-phase: plan -->
+
 Decision: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)

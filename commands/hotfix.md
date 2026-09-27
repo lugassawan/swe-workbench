@@ -3,6 +3,8 @@ description: Ship a fast branch-based P0 hotfix — diagnose, implement, open a 
 argument-hint: <ticket ref, GitHub issue URL, or symptom> [--grill | --standard]
 ---
 
+<!-- swb-phase: plan -->
+
 Hotfix request: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)

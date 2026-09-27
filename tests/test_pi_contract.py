@@ -154,6 +154,14 @@ SKILL_IDS = {
     "swe-workbench:principle-version-control",
 }
 
+# Commands that declare plan-phase (docs/decisions-pi-plan-mode.md) by carrying PHASE_MARKER
+# right after their frontmatter; this list is the single inventory the two-direction ratchet pins.
+PHASE_ARMED_COMMANDS = [
+    "architect", "capture", "debug", "design", "extend",
+    "hotfix", "implement", "migrate", "refactor",
+]
+PHASE_MARKER = "<!-- swb-phase: plan -->"
+
 
 def _frontmatter_files():
     """Every file in the plan's Pi-relevant scope that may carry a --- frontmatter block."""
@@ -409,6 +417,40 @@ def test_efforts_are_inventoried():
         f"only in EFFORTS: {sorted(EFFORTS - efforts)}. A new effort value must also be "
         "added to model-policy.ts's KNOWN_EFFORTS, or it silently resolves to nothing for "
         "every provider."
+    )
+
+
+def test_phase_armed_commands_carry_exact_marker():
+    for name in PHASE_ARMED_COMMANDS:
+        path = COMMANDS_DIR / f"{name}.md"
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        assert lines[0] == "---", f"{path} does not open with a frontmatter block"
+        closing = next(
+            (i for i in range(1, len(lines)) if lines[i] == "---"), None
+        )
+        assert closing is not None, f"{path} frontmatter never closes"
+        assert text.count(PHASE_MARKER) == 1, (
+            f"{path} must carry the marker exactly once, "
+            f"found {text.count(PHASE_MARKER)}"
+        )
+        assert lines[closing + 1] == "" and lines[closing + 2] == PHASE_MARKER, (
+            f"{path} must carry {PHASE_MARKER!r} on its own line, one blank line after "
+            "the closing frontmatter `---`"
+        )
+
+
+def test_neutral_commands_carry_no_phase_marker():
+    armed = set(PHASE_ARMED_COMMANDS)
+    offenders = [
+        path.name
+        for path in sorted(COMMANDS_DIR.glob("*.md"))
+        if path.stem not in armed and "swb-phase" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], (
+        "commands/*.md outside PHASE_ARMED_COMMANDS must contain no 'swb-phase' substring — "
+        f"offenders: {offenders}. Arm a command by adding it to PHASE_ARMED_COMMANDS, not "
+        "just by writing the marker."
     )
 
 
