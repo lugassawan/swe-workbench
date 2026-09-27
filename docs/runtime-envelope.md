@@ -2,7 +2,7 @@
 
 Rejected alternatives behind the standard runtime result envelope
 (`shared/docs/runtime-result-contract.md`) that structured `bin/` producers emit.
-Recorded here so they don't have to be re-litigated. Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+Recorded here so they don't have to be re-litigated. Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. Runtime result envelope — rejected alternatives

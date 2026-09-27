@@ -3,7 +3,7 @@
 Rulings on what `scripts/validate.py` (and CI generally) may assert about plugin
 metadata: positive, closed-form invariants this repo owns and controls — never an
 external schema or allowlist. Recorded here so they don't have to be re-litigated.
-Sibling rulings live in the other `docs/decisions-*.md` files (indexed in
+Sibling rulings live in the other topic docs (indexed in
 `docs/README.md`).
 
 ## 1. No `claude plugin validate` in CI, and no frontmatter allowlist validator

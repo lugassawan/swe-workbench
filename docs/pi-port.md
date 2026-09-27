@@ -5,7 +5,7 @@ Rulings from porting the plugin to the Pi Coding Agent — a runtime adapter
 `agents/` trees unchanged. §1–§3 record what has no Pi equivalent and why; §4 records
 the framing decisions and rejected alternatives behind the whole port. Recorded here so
 they don't have to be re-litigated. The `task` dispatcher's rulings live next door in
-`docs/decisions-task-dispatch.md`; sibling rulings are indexed in `docs/README.md`.
+`docs/task-dispatch.md`; sibling rulings are indexed in `docs/README.md`.
 
 ## 1. `worktree_permission_grant.sh` has no Pi equivalent — documented N/A, not deferred
 
@@ -81,7 +81,7 @@ the record. `"n/a"` never graduates to `"wired"`.
 
 ## 4. Framing decisions and rejected alternatives for the whole Pi port
 
-§1–§3 above and `docs/decisions-task-dispatch.md` record decisions made as each phase of the Pi port needed them. This section records
+§1–§3 above and `docs/task-dispatch.md` record decisions made as each phase of the Pi port needed them. This section records
 the two decisions that framed the whole effort before any phase started, and the alternatives
 considered and rejected before choosing them.
 
@@ -98,7 +98,7 @@ a second implementation of the same logic that could drift from Claude Code's.
 tree from those sources at build/release time. There is nothing to keep in sync, nothing to
 regenerate, and no generator to maintain — the tradeoff is `tests/test_pi_contract.py`'s
 golden-inventory ratchet standing in for the type safety a generation step would otherwise buy
-(see `docs/decisions-ci-validation.md` §1).
+(see `docs/ci-validation.md` §1).
 
 **Rejected alternatives:**
 
@@ -118,11 +118,11 @@ golden-inventory ratchet standing in for the type safety a generation step would
 **Where this has drifted from what shipped:**
 
 - **Model-tier settings design reversed.** An earlier iteration planned a project-committed
-  `.pi/settings.json` `modelTiers` block; `docs/decisions-task-dispatch.md` records why that was reversed in favor of a
+  `.pi/settings.json` `modelTiers` block; `docs/task-dispatch.md` records why that was reversed in favor of a
   hardcoded `MODEL_POLICY` table in reviewed source (`pi/extensions/model-policy.ts`) — a real
   exfiltration primitive avoided, not the design that originally shipped. That table itself later
   moved from substring/shortest-match resolution to exact-id resolution, and gained a portable
-  `effort:` -> effective-thinking-level axis — `docs/decisions-task-dispatch.md` has the current design.
+  `effort:` -> effective-thinking-level axis — `docs/task-dispatch.md` has the current design.
 - **Tier-2 tool set landed as 2 of 5 originally promised.** Only `ask_user_question`
   (`ask-user.ts`) and `task` (`subagent.ts`) are registered Pi tools today. A Pi-registered `LSP`
   tool was one of the tools scoped and then dropped — §3 above records why (the capability moved

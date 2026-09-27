@@ -1,6 +1,6 @@
 """Guard tests for the plugin-platform-decisions docs split.
 
-The former monolith is now split into topic-scoped docs/decisions-*.md files so a
+The former monolith is now split into topic-scoped docs in FAMILY so a
 new ruling lands in the doc that owns its topic instead of growing one file
 without bound. These tests pin the split: the family exists, the monolith is
 gone, docs/README.md indexes every member, and no stale reference (filename or
@@ -17,13 +17,13 @@ from validate import ROOT
 MONOLITH_STEM = "plugin-platform-decisions"
 
 FAMILY = {
-    "decisions-bin-path.md",
-    "decisions-ci-validation.md",
-    "decisions-hooks.md",
-    "decisions-pi-port.md",
-    "decisions-task-dispatch.md",
-    "decisions-runtime-envelope.md",
-    "decisions-cross-harness.md",
+    "bin-path.md",
+    "ci-validation.md",
+    "hooks.md",
+    "pi-port.md",
+    "task-dispatch.md",
+    "runtime-envelope.md",
+    "cross-harness.md",
 }
 
 
@@ -34,9 +34,14 @@ def test_family_docs_exist():
 
 def test_monolith_is_gone():
     assert not (ROOT / "docs" / f"{MONOLITH_STEM}.md").exists(), (
-        f"docs/{MONOLITH_STEM}.md must not coexist with the docs/decisions-*.md family — "
+        f"docs/{MONOLITH_STEM}.md must not coexist with the docs in FAMILY — "
         "new rulings go into the topic doc that owns them, not back into a monolith"
     )
+
+
+def test_retired_decisions_prefix_docs_are_gone():
+    existing = list((ROOT / "docs").glob("decisions-*.md"))
+    assert not existing, f"retired decisions-*.md files still exist: {existing}"
 
 
 def test_docs_readme_indexes_family():
@@ -78,13 +83,16 @@ def test_no_stale_monolith_references():
         if MONOLITH_STEM in text:
             offenders.append(rel)
     assert not offenders, (
-        f"stale '{MONOLITH_STEM}' references — point them at docs/decisions-*.md: {offenders}"
+        f"stale '{MONOLITH_STEM}' references — point them at docs in FAMILY: {offenders}"
     )
 
 
-# A decisions-*.md mention qualified by a section number, allowing for wrapped
+# A <topic>.md mention qualified by a section number, allowing for wrapped
 # prose between the filename and the §N (e.g. validate.py's error strings).
-_SECTION_REF_RE = re.compile(r"decisions-([a-z-]+)\.md[^§]{0,80}§(\d+)", re.DOTALL)
+stems = "|".join(re.escape(Path(f).stem) for f in sorted(FAMILY))
+_SECTION_REF_RE = re.compile(
+    rf"\b({stems})\.md(?:(?!\.md)[^§]){{0,80}}§(\d+)", re.DOTALL
+)
 
 
 def _section_count(name):
@@ -93,7 +101,7 @@ def _section_count(name):
 
 
 def test_section_number_references_are_in_range():
-    """Every `decisions-<topic>.md §N` reference must name a section that exists.
+    """Every `<topic>.md §N` reference must name a section that exists.
 
     The split renumbered sections per-doc; an inbound §-qualified reference that
     drifts past a future section insert or reorder would point at the wrong
@@ -107,10 +115,9 @@ def test_section_number_references_are_in_range():
         except (UnicodeDecodeError, OSError):
             continue
         for match in _SECTION_REF_RE.finditer(text):
-            target = f"decisions-{match.group(1)}.md"
+            target = f"{match.group(1)}.md"
             num = int(match.group(2))
             if target not in FAMILY:
-                offenders.append(f"{rel}: unknown decisions doc {target!r}")
                 continue
             count = _section_count(target)
             if not 1 <= num <= count:
