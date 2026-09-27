@@ -126,20 +126,19 @@ export default function (pi: ExtensionAPI): void {
     return { systemPrompt: event.systemPrompt + getPreamble() };
   });
 
-  // Registration order is load-bearing: emitToolCall (runner.js:701) runs tool_call handlers
-  // in registration order and short-circuits only on `block: true`, and it has no try/catch
-  // around a handler's body (unlike emitUserBash), so every tool_call handler must wrap its
-  // own body and return undefined on throw.
+  // Registration order is load-bearing. emitToolCall runs tool_call handlers in registration
+  // order, short-circuits only on `block: true` (an `undefined` allow never stops later
+  // handlers), and — unlike emitUserBash — wraps no handler body in try/catch, so every
+  // tool_call handler must self-wrap and return `undefined` on throw. The order below:
   //
-  // registerHandoff is deliberately ABOVE registerGuards: an ownership denial must win the
-  // block reason (it carries the receiver resume instruction), and an allow is `undefined`,
-  // which never short-circuits — every security guard below still runs on each allowed call.
-  //
-  // registerGuards must register first among the *security* guards: a later-registered guard
-  // would be a silent security regression. registerPhase's phase gate stays AFTER it — the
-  // gate blocks (never replaces) edit/write outside the plans dir and must not preempt a
-  // security verdict. registerAskUser adds no tool_call handler today, but a future one must
-  // go after registerGuards too.
+  //   1. registerHandoff — an ownership denial must win the block reason: it carries the
+  //      receiver resume instruction. Its allow is `undefined`, so everything below still
+  //      runs on each allowed call.
+  //   2. registerGuards — security verdicts come first; a security guard registered after a
+  //      non-security handler would be a silent regression.
+  //   3. registerPhase — the plan-phase gate BLOCKS (never replaces) edit/write outside
+  //      ~/.pi/agent/plans, and must never preempt a security verdict.
+  //   4. registerAskUser — no tool_call handler today; a future one belongs after (2).
   registerHandoff(pi, root);
   registerGuards(pi, root);
   registerPhase(pi, root);
