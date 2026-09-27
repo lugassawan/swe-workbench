@@ -1058,6 +1058,112 @@ def test_plan_marker_arms_from_any_state():
     )
 
 
+_PHASE_FLIP_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const flips = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  async setModel(m) { flips.push(m.provider + "/" + m.id); return true; },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+// google is the multi-id provider: both tier rows are ordered fallback lists, and find()
+// deliberately misses each row's preferred id so the adapter must walk to the fallback.
+const registry = {
+  find(provider, id) {
+    if (id === "gemini-3.1-pro-preview" || id === "gemini-3.8-flash") return undefined;
+    return { provider, id };
+  },
+};
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: { provider: "google", id: "gemini-3.8-flash" },
+  modelRegistry: registry,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+const editBlocked = () => {
+  const r = handlers.tool_call(
+    { toolName: "edit", input: { path: "src/main.ts" } },
+    { cwd: "/repo" },
+  );
+  return r !== undefined && r.block === true;
+};
+start("x\\n<!-- swb-phase: plan -->\\ny");
+const armFlipsToPlanFallback = flips[flips.length - 1];
+const armed = editBlocked();
+handlers.model_select({ source: "restore" });
+const restorePreservesArming = editBlocked();
+handlers.model_select({ source: "set" });
+const setDisarms = !editBlocked();
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+const approvalFlipsToExecuteFallback = flips[flips.length - 1];
+const executeReleasesGate = !editBlocked();
+console.log(JSON.stringify({
+  armFlipsToPlanFallback, armed, restorePreservesArming, setDisarms,
+  approvalFlipsToExecuteFallback, executeReleasesGate, flips,
+}));
+"""
+
+
+@requires_node
+def test_phase_flip_and_model_select_runtime():
+    """Drive the real flip path end-to-end (ctx.model + modelRegistry.find + pi.setModel
+    stubbed so candidates actually resolve) and pin the model_select disarm/preserve
+    invariant at runtime: arming flips to the tier row's FALLBACK id (preferred id missed),
+    "restore" preserves the armed gate, "set" disarms it, and approval flips to the
+    execute tier's fallback — a regression in candidate order, an inverted source check,
+    or a dropped flip attempt all fail here."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-flip-dump.mjs"
+        driver.write_text(_PHASE_FLIP_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["armFlipsToPlanFallback"] == "google/gemini-3.1-pro", (
+        "arming must walk the opus row's candidate order to the fallback id, not stop "
+        "at the preferred id find() missed"
+    )
+    assert dumped["armed"] is True
+    assert dumped["restorePreservesArming"] is True, (
+        'model_select source "restore" (session resume) must not disarm the gate'
+    )
+    assert dumped["setDisarms"] is True, (
+        'model_select source "set" (user override) must disarm the gate'
+    )
+    assert dumped["approvalFlipsToExecuteFallback"] == "google/gemini-3.7-flash", (
+        "approval must walk the sonnet row's candidate order to its fallback id"
+    )
+    assert dumped["executeReleasesGate"] is True
+    assert dumped["flips"] == [
+        "google/gemini-3.1-pro",
+        "google/gemini-3.1-pro",
+        "google/gemini-3.7-flash",
+    ], "exactly one flip per arming/approval turn, none for model_select events"
+
+
+def test_containment_uses_path_sep():
+    """isMutationBlocked's containment must use path.sep, not a hardcoded forward slash —
+    on Windows join()/resolve() emit backslash paths, so a "/" prefix test would
+    over-block the very plans dir the gate exists to keep writable."""
+    src = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    assert 'import { sep } from "node:path"' in src
+    assert "plansDir + sep" in src
+    assert 'plansDir + "/"' not in src
+
+
 _DUMP_DISPATCH_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);

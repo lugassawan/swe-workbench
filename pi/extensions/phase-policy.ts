@@ -7,6 +7,8 @@
  * reading the armed command's prompt, resolving paths, and acting on isMutationBlocked's verdict.
  */
 
+import { sep } from "node:path";
+
 import type { ModelTier } from "./model-policy.ts";
 import { MODEL_POLICY, isSupportedProvider } from "./model-policy.ts";
 
@@ -35,9 +37,10 @@ export const PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans";
 export const BLOCKED_TOOLS_IN_PLAN: ReadonlySet<string> = new Set(["edit", "write"]);
 
 /** True iff the plan-phase gate blocks this call: plan phase + a blocked tool + a target outside
- *  `plansDir`. Containment is lexical — equality or a separator-suffixed prefix — and stays
- *  correct without normalization because both arguments are absolute paths the adapter has
- *  already resolved. */
+ *  `plansDir`. Containment is lexical — equality or an OS-separator-suffixed prefix (`sep`,
+ *  never a hardcoded "/": join()/resolve() emit backslashes on Windows) — and stays correct
+ *  without normalization because both arguments are absolute paths the adapter has already
+ *  resolved. */
 export function isMutationBlocked(
   toolName: string,
   targetPath: string,
@@ -46,7 +49,7 @@ export function isMutationBlocked(
 ): boolean {
   if (state !== "plan") return false;
   if (!BLOCKED_TOOLS_IN_PLAN.has(toolName)) return false;
-  return targetPath !== plansDir && !targetPath.startsWith(plansDir + "/");
+  return targetPath !== plansDir && !targetPath.startsWith(plansDir + sep);
 }
 
 /** Preference-ordered model ids for the phase's governing tier — plan drafts on opus, execute
