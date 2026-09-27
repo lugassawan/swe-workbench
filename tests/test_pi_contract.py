@@ -154,6 +154,14 @@ SKILL_IDS = {
     "swe-workbench:principle-version-control",
 }
 
+# Commands that declare plan-phase (docs/pi-plan-mode.md) by carrying PHASE_MARKER
+# right after their frontmatter; this list is the single inventory the two-direction ratchet pins.
+PHASE_ARMED_COMMANDS = [
+    "architect", "audit-codebase", "capture", "debug", "design", "document",
+    "extend", "hotfix", "implement", "migrate", "refactor",
+]
+PHASE_MARKER = "<!-- swb-phase: plan -->"
+
 
 def _frontmatter_files():
     """Every file in the plan's Pi-relevant scope that may carry a --- frontmatter block."""
@@ -412,6 +420,216 @@ def test_efforts_are_inventoried():
     )
 
 
+def test_phase_armed_commands_carry_exact_marker():
+    for name in PHASE_ARMED_COMMANDS:
+        path = COMMANDS_DIR / f"{name}.md"
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        assert lines[0] == "---", f"{path} does not open with a frontmatter block"
+        closing = next(
+            (i for i in range(1, len(lines)) if lines[i] == "---"), None
+        )
+        assert closing is not None, f"{path} frontmatter never closes"
+        assert text.count(PHASE_MARKER) == 1, (
+            f"{path} must carry the marker exactly once, "
+            f"found {text.count(PHASE_MARKER)}"
+        )
+        assert lines[closing + 1] == "" and lines[closing + 2] == PHASE_MARKER, (
+            f"{path} must carry {PHASE_MARKER!r} on its own line, one blank line after "
+            "the closing frontmatter `---`"
+        )
+
+
+def test_neutral_commands_carry_no_phase_marker():
+    armed = set(PHASE_ARMED_COMMANDS)
+    offenders = [
+        path.name
+        for path in sorted(COMMANDS_DIR.glob("*.md"))
+        if path.stem not in armed and "swb-phase" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], (
+        "commands/*.md outside PHASE_ARMED_COMMANDS must contain no 'swb-phase' substring — "
+        f"offenders: {offenders}. Arm a command by adding it to PHASE_ARMED_COMMANDS, not "
+        "just by writing the marker."
+    )
+
+
+# ---------------------------------------------------------------------------
+# phase-policy.ts domain module (docs/pi-plan-mode.md) — source pins plus a
+# node-driver identity pin; the repo has no TS unit runner, so these carry the module.
+# ---------------------------------------------------------------------------
+
+PHASE_POLICY_TS = EXTENSIONS_DIR / "phase-policy.ts"
+
+
+def test_phase_policy_is_sdk_free():
+    """phase-policy.ts is the domain layer of the plan-phase feature: no Pi SDK reference at
+    all, not even type-only — the adapter that consumes it owns everything touching Pi (same
+    posture as model-policy.ts's own never-references pin below)."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    # Raw substring, not import-form matching: any occurrence — static import, bare
+    # side-effect import, or dynamic import() — means the domain layer reached the SDK.
+    assert "@earendil-works" not in text, (
+        "phase-policy.ts must not reference the Pi SDK in any form, not even as a type — it "
+        "is pure domain data and pure functions only"
+    )
+
+
+def test_phase_marker_literal_single_source():
+    """The marker extractPhase scans for and the marker the armed commands carry must be the
+    same literal — this file's PHASE_MARKER constant is the single source of truth both are
+    pinned against, so the module and the command files can never drift apart."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    declared = re.search(r'export const PHASE_MARKER = "([^"]+)"', text)
+    assert declared is not None, (
+        "phase-policy.ts must declare PHASE_MARKER as an exported double-quoted string literal"
+    )
+    assert declared.group(1) == PHASE_MARKER, (
+        f"phase-policy.ts's PHASE_MARKER ({declared.group(1)!r}) differs from this file's "
+        f"({PHASE_MARKER!r}) — extractPhase would scan for a marker no command carries"
+    )
+
+
+def test_blocked_tools_pinned_to_edit_write():
+    """The plan-phase blocked set is exactly Pi's lowercase edit/write tool names — pinned as
+    a source literal so an addition, a removal, or a casing drift (Edit/Write are the Claude
+    names; Pi's are lowercase) can none of them slip in silently."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    declared = re.search(r"BLOCKED_TOOLS_IN_PLAN[^=]*= new Set\(\[(.*?)\]\)", text, re.DOTALL)
+    assert declared is not None, "phase-policy.ts must declare BLOCKED_TOOLS_IN_PLAN as a Set literal"
+    entries = re.findall(r'"([^"]+)"', declared.group(1))
+    assert entries == ["edit", "write"], (
+        f'BLOCKED_TOOLS_IN_PLAN must be exactly ["edit", "write"], found {entries!r}'
+    )
+
+
+def test_plans_dir_allowlist_pinned():
+    """The plan gate's allowlist is the user-global plans dir: PLANS_HOME_RELATIVE_DIR's
+    literal is pinned here (the same dir the plan/execute system sections tell the agent to
+    persist plans under), isMutationBlocked's signature must take the target path and the
+    resolved plans dir as separate parameters — that signature is what lets the adapter
+    enforce containment per call instead of the module guessing at path resolution — and
+    phase.ts must derive the dir from the homedir-anchored PLANS_HOME_RELATIVE_DIR literal,
+    never the session cwd."""
+    text = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    assert 'PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans"' in text, (
+        'PLANS_HOME_RELATIVE_DIR must be the literal ".pi/agent/plans" — the same dir the '
+        "plan/execute system sections tell the agent to persist plans under"
+    )
+    signature = re.search(r"function isMutationBlocked\(([^)]*)\)", text, re.DOTALL)
+    assert signature is not None, "phase-policy.ts must declare function isMutationBlocked"
+    params = [p.strip().split(":")[0] for p in signature.group(1).split(",")]
+    assert {"targetPath", "plansDir"} <= set(params), (
+        f"isMutationBlocked's parameters must include targetPath and plansDir, found {params!r}"
+    )
+    adapter_text = PHASE_TS.read_text(encoding="utf-8")
+    assert 'join(homedir(), ...PLANS_HOME_RELATIVE_DIR.split("/"))' in adapter_text, (
+        "phase.ts must anchor the plans dir to the user's home via the PLANS_HOME_RELATIVE_DIR "
+        "literal — never to the session cwd or the plugin install root (and never a bare-specifier "
+        "value import such as the SDK's getAgentDir helper)"
+    )
+    assert "PLANS_RELATIVE_DIR" not in text and "PLANS_RELATIVE_DIR" not in adapter_text, (
+        "the old repo-relative PLANS_RELATIVE_DIR name must not survive the global move"
+    )
+
+
+
+
+# ---------------------------------------------------------------------------
+# phase.ts adapter (docs/pi-plan-mode.md) — source pins for the arming/gate
+# wiring; Task 4's submit_plan tool extends the same registerPhase function.
+# ---------------------------------------------------------------------------
+
+PHASE_TS = EXTENSIONS_DIR / "phase.ts"
+
+
+def test_index_registers_phase_after_guards():
+    """registerPhase must be called after registerGuards in index.ts, and the
+    registration-order comment block above registerHandoff must mention the phase gate —
+    emitToolCall (runner.js:701) runs tool_call handlers in registration order and
+    short-circuits only on `block: true`, so a phase gate registered before the security
+    guards would let plan-phase steering preempt a security verdict, and a future reorder
+    of the call lines must not silently change which block reason wins."""
+    text = PI_EXTENSIONS_INDEX.read_text(encoding="utf-8")
+    guards_pos = text.find("registerGuards(pi, root);")
+    phase_pos = text.find("registerPhase(pi, root);")
+    assert guards_pos != -1, "index.ts must call registerGuards(pi, root)"
+    assert phase_pos != -1, "index.ts must call registerPhase(pi, root)"
+    assert phase_pos > guards_pos, (
+        "registerPhase(pi, root) must be called after registerGuards(pi, root) — the phase "
+        "gate observes calls the security guards already vetted, never the other way round"
+    )
+    handoff_pos = text.find("registerHandoff(pi, root);")
+    assert handoff_pos != -1, "index.ts must call registerHandoff(pi, root)"
+    lines_above = text[:handoff_pos].rstrip().splitlines()
+    comment_block = []
+    for line in reversed(lines_above):
+        if line.strip().startswith("//"):
+            comment_block.append(line)
+        else:
+            break
+    assert any("phase gate" in line for line in comment_block), (
+        "the registration-order comment block above registerHandoff(pi, root) must mention "
+        "the phase gate — the comment is the pinned record of why handler order matters, so "
+        "it must stay in sync with the registerPhase call"
+    )
+
+
+def _phase_handler_block(event_name: str) -> str:
+    """phase.ts source from `pi.on("<event>")` to that registration's closing `});` — the
+    two-space indentation anchor keeps a source pin scoped to one handler's body instead of
+    the whole file, so a same-shaped guard elsewhere (e.g. submit_plan's own hasUI check)
+    can never satisfy a pin meant for this handler."""
+    text = PHASE_TS.read_text(encoding="utf-8")
+    start = text.find(f'pi.on("{event_name}"')
+    assert start != -1, f"phase.ts must register a {event_name} handler"
+    return text[start : text.index("\n  });", start)]
+
+
+def test_phase_gate_hasui_guard_present():
+    """phase.ts's before_agent_start must early-return when there is no dialog-capable UI —
+    plan phase never arms headless (a `-p`/print run must behave as if the feature did not
+    exist), and ctx.ui.notify has no surface to warn on there. Scoped to the handler's own
+    block: submit_plan (Task 4) adds its own !ctx.hasUI branch that throws instead of
+    returning, and that must never satisfy this pin."""
+    block = _phase_handler_block("before_agent_start")
+    assert "if (!ctx.hasUI) return undefined;" in block, (
+        "phase.ts's before_agent_start must carry the `if (!ctx.hasUI) return undefined;` "
+        "early-return — arming a headless session would gate edit/write with no way to tell "
+        "the user why"
+    )
+
+
+def test_submit_plan_hasui_throw_pinned():
+    """submit_plan's execute must throw actionable guidance when !ctx.hasUI instead of
+    rendering a dialog into the void: a headless run (print/json mode, or a dispatched child)
+    can never reach a user, so the call must fail loudly with the pinned route out — the
+    session is not left half-approved."""
+    text = PHASE_TS.read_text(encoding="utf-8")
+    start = text.find('name: "submit_plan"')
+    assert start != -1, "phase.ts must register the submit_plan tool inside registerPhase"
+    block = text[start:]
+    assert "if (!ctx.hasUI)" in block, (
+        "submit_plan's execute must guard on !ctx.hasUI before any dialog tier"
+    )
+    assert (
+        "submit_plan needs an interactive session — run the phase-armed command in the TUI, "
+        "or proceed without the plan gate." in block
+    ), "the !ctx.hasUI branch must throw the pinned guidance text"
+
+
+def test_submit_plan_own_flip_flag_pinned():
+    """Approval's own setModel call fires a model_select event with source "set" — without
+    the ourFlip guard in that handler, the approval flip would read as a user override and
+    instantly disarm the execute phase it just armed. Regression pin on the guard (Task 3
+    landed it; this keeps any model_select rewrite honest)."""
+    block = _phase_handler_block("model_select")
+    assert "ourFlip" in block, (
+        "the model_select handler must consult ourFlip before disarming — approve-flip's own "
+        "setModel must not self-disarm the phase it just transitioned"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Guard/hint event-translation contract. Golden-inventory ratchets over
 # pi/extensions/*.ts — module-level literals asserted equal to what's on disk, per
@@ -594,6 +812,429 @@ if _NODE_TOO_OLD and os.environ.get("CI"):
 requires_node = pytest.mark.skipif(
     _NODE_TOO_OLD, reason="requires Node >= 22 (--experimental-strip-types) to import cc-payload.ts"
 )
+
+_SUBMIT_PLAN_SCHEMA_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+let registered;
+const stubPi = { on() {}, registerTool(tool) { registered = tool; } };
+mod.registerPhase(stubPi, process.argv[3]);
+if (registered === undefined) throw new Error("registerPhase registered no tool — is SWE_WORKBENCH_PI_TOOLS=0 leaking in?");
+console.log(JSON.stringify({ name: registered.name, parameters: registered.parameters }));
+"""
+
+
+@requires_node
+def test_submit_plan_schema_pinned():
+    """submit_plan's parameters as data, via the same node-driver shape as the ask-user and
+    task schema ratchets: a plain JSON-Schema object literal (ask-user.ts's module docstring
+    records why TypeBox value imports are forbidden here), one required string property
+    `plan`, and nothing else — the plan payload is the approval artifact, so a looser schema
+    would let a call arrive without it."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "submit-plan-schema-dump.mjs"
+        driver.write_text(_SUBMIT_PLAN_SCHEMA_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), tmp],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["name"] == "submit_plan"
+    parameters = dumped["parameters"]
+    assert isinstance(parameters, dict), "parameters must serialize as a plain JSON object"
+    assert parameters.get("type") == "object"
+    assert set(parameters.get("properties", {})) == {"plan"}, (
+        "submit_plan takes exactly one property — the plan text"
+    )
+    assert parameters["properties"]["plan"].get("type") == "string"
+    assert set(parameters.get("required", [])) == {"plan"}
+
+
+_PHASE_TIER_DRIVER = """
+import { pathToFileURL } from "node:url";
+const [, , phasePolicyPath, modelPolicyPath] = process.argv;
+const phasePolicy = await import(pathToFileURL(phasePolicyPath).href);
+const modelPolicy = await import(pathToFileURL(modelPolicyPath).href);
+const models = (row) => (typeof row.model === "string" ? [row.model] : row.model);
+const dump = {};
+for (const provider of modelPolicy.SUPPORTED_PROVIDERS) {
+  dump[provider] = {
+    plan: phasePolicy.resolvePhaseModels(provider, "plan"),
+    execute: phasePolicy.resolvePhaseModels(provider, "execute"),
+    opusModels: models(modelPolicy.MODEL_POLICY[provider].opus),
+    sonnetModels: models(modelPolicy.MODEL_POLICY[provider].sonnet),
+  };
+}
+dump["not-a-provider"] = {
+  plan: phasePolicy.resolvePhaseModels("not-a-provider", "plan"),
+  execute: phasePolicy.resolvePhaseModels("not-a-provider", "execute"),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_tier_resolution_identity():
+    """Single-source-of-truth posture, same as test_default_tier_effort_reproduces_ticket_matrix:
+    resolvePhaseModels' result is asserted identical — as a full, order-preserving list — to
+    MODEL_POLICY's own opus (plan) and sonnet (execute) rows, never a second hand-copied id
+    table, and undefined for unsupported providers. List equality also pins the result shape
+    to model ids only: a thinking entry here would mean a phase flip silently changes session
+    effort, which decision doc §4 defers."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-tier-dump.mjs"
+        driver.write_text(_PHASE_TIER_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_POLICY_TS), str(MODEL_POLICY_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    for provider, row in dumped.items():
+        if provider == "not-a-provider":
+            # JSON.stringify drops undefined values, so "returned undefined" round-trips
+            # as an absent key — membership is the faithful assertion, not .get().
+            assert "plan" not in row and "execute" not in row, (
+                "resolvePhaseModels must return undefined for unsupported providers — the "
+                "caller notifies and stays on the current model"
+            )
+            continue
+        assert row["plan"] == row["opusModels"], (
+            f"plan phase must resolve {provider!r}'s full opus model list in preference "
+            f"order ({row['opusModels']!r}), got {row['plan']!r}"
+        )
+        assert row["execute"] == row["sonnetModels"], (
+            f"execute phase must resolve {provider!r}'s full sonnet model list in "
+            f"preference order ({row['sonnetModels']!r}), got {row['execute']!r}"
+        )
+
+
+_PHASE_BEHAVIOR_DRIVER = """
+import { pathToFileURL } from "node:url";
+const phasePolicy = await import(pathToFileURL(process.argv[2]).href);
+const planMarker = "<!-- swb-phase: plan -->";
+const dump = {
+  evilSiblingBlocked: phasePolicy.isMutationBlocked("edit", "/x/plans-evil/f.md", "/x/plans", "plan"),
+  plansDirItselfAllowed: phasePolicy.isMutationBlocked("edit", "/x/plans", "/x/plans", "plan"),
+  executeNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "execute"),
+  disarmedNeverBlocks: phasePolicy.isMutationBlocked("edit", "/x/elsewhere/f.md", "/x/plans", "disarmed"),
+  otherToolNeverBlocks: phasePolicy.isMutationBlocked("bash", "/x/elsewhere/f.md", "/x/plans", "plan"),
+  wholeLinePlanMarker: phasePolicy.extractPhase(`intro\\n${planMarker}\\noutro`),
+  crlfWholeLinePlanMarker: phasePolicy.extractPhase(`intro\\r\\n${planMarker}\\r\\noutro`),
+  inlinePlanMarkerIgnored: phasePolicy.extractPhase(`intro ${planMarker} outro`),
+  disarmedSectionEmpty: phasePolicy.phaseSystemSection("disarmed"),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_policy_behavior():
+    """The gate's edges as behavior, not source shape: a sibling directory whose name merely
+    starts with the plans dir stays blocked (separator-suffixed prefix, not startsWith), the
+    plans dir itself stays writable, execute/disarmed states and non-mutation tools never
+    block, the plan marker counts only as a whole line (CRLF included, an inline occurrence
+    ignored), and the disarmed state injects no system section."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-behavior-dump.mjs"
+        driver.write_text(_PHASE_BEHAVIOR_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_POLICY_TS)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["evilSiblingBlocked"] is True
+    assert dumped["plansDirItselfAllowed"] is False
+    for key in ("executeNeverBlocks", "disarmedNeverBlocks", "otherToolNeverBlocks"):
+        assert dumped[key] is False
+    assert dumped["wholeLinePlanMarker"] == "plan"
+    assert dumped["crlfWholeLinePlanMarker"] == "plan"
+    # extractPhase returns undefined for the inline case — JSON.stringify drops it, so
+    # the faithful assertion is key absence, not a null value.
+    assert "inlinePlanMarkerIgnored" not in dumped
+    assert dumped["disarmedSectionEmpty"] == ""
+
+
+_PHASE_GATE_GLOBAL_DIR_DRIVER = """
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const stubPi = { on(name, fn) { handlers[name] = fn; }, registerTool() {} };
+mod.registerPhase(stubPi, process.argv[3]);
+// Arm plan phase; no current model, so the arming flip degrades to a notify the stub ui eats.
+await handlers.before_agent_start(
+  { prompt: "intro\\n<!-- swb-phase: plan -->\\noutro", systemPrompt: "" },
+  { hasUI: true, ui: { notify() {} }, model: undefined },
+);
+const blocked = (cwd, path) => {
+  const r = handlers.tool_call({ toolName: "edit", input: { path } }, { cwd });
+  return r !== undefined && r.block === true;
+};
+// The same homedir base the handler resolves (the env strips PI_CODING_AGENT_DIR so a
+// future switch to the SDK's getAgentDir stays deterministic): every global-plans path is
+// built relative to it, nothing is written.
+const globalPlans = join(homedir(), ".pi", "agent", "plans");
+const dump = {
+  globalPlansFromRepoA: blocked(process.argv[4], join(globalPlans, "f.md")),
+  globalPlansFromRepoB: blocked(process.argv[5], join(globalPlans, "f.md")),
+  globalPlansDirItself: blocked(process.argv[4], globalPlans),
+  repoLocalPlansUnderRepoA: blocked(process.argv[4], join(process.argv[4], "docs/superpowers/plans/f.md")),
+  pluginRootPlansFromRepoA: blocked(process.argv[4], join(process.argv[3], "docs/superpowers/plans/f.md")),
+  elsewhereUnderHome: blocked(process.argv[4], join(homedir(), "elsewhere", "f.md")),
+  outsideRepoA: blocked(process.argv[4], join(process.argv[4], "src/main.ts")),
+};
+console.log(JSON.stringify(dump));
+"""
+
+
+@requires_node
+def test_phase_gate_allowlist_anchored_to_global_plans_dir():
+    """The gate's allowlist must anchor to the user-global plans dir under Pi's agent dir —
+    never to the session cwd or the plugin install root: ~/.pi/agent/plans writes stay
+    writable from ANY working repo (Claude Code parity — one canonical plans dir that
+    survives worktree switches), while the repo-local docs/superpowers/plans path the v1
+    gate allowed is now blocked — a re-anchoring regression to resolve(cwd, ...) fails
+    here. Driven behaviorally through the real tool_call handler with a plugin root and
+    two distinct working cwds; paths are only computed against the handler's resolved
+    base, so the real ~/.pi/agent/plans is never written."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-gate-global-dump.mjs"
+        driver.write_text(_PHASE_GATE_GLOBAL_DIR_DRIVER, encoding="utf-8")
+        plugin_root = str(Path(tmp) / "plugin-root")
+        repo_a = str(Path(tmp) / "repo-a")
+        repo_b = str(Path(tmp) / "repo-b")
+        env = {k: v for k, v in _CLEAN_ENV.items() if k != "PI_CODING_AGENT_DIR"}
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), plugin_root, repo_a, repo_b],
+            capture_output=True, text=True, env=env, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    for key in ("globalPlansFromRepoA", "globalPlansFromRepoB", "globalPlansDirItself"):
+        assert dumped[key] is False, (
+            f"{key}: a ~/.pi/agent/plans write must never be blocked — the allowlist anchors "
+            "to the user-global plans dir, not the session cwd or plugin root"
+        )
+    for key in ("repoLocalPlansUnderRepoA", "pluginRootPlansFromRepoA", "elsewhereUnderHome", "outsideRepoA"):
+        assert dumped[key] is True, (
+            f"{key}: only the global plans dir is writable in plan phase — repo-local or "
+            "plugin-root plans paths and every other target must stay blocked"
+        )
+
+
+_PHASE_TRANSITION_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+let flipWarnings = 0;
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() { flipWarnings += 1; }, confirm: async () => true },
+  model: undefined,
+};
+const start = (prompt) => handlers.before_agent_start({ prompt, systemPrompt: "" }, ctx);
+const editBlocked = () => {
+  const r = handlers.tool_call(
+    { toolName: "edit", input: { path: "src/main.ts" } },
+    { cwd: "/repo" },
+  );
+  return r !== undefined && r.block === true;
+};
+const disarmedDoesNotBlock = editBlocked();
+await start("go\\n<!-- swb-phase: plan -->\\nnow");
+const planArmsAndBlocks = editBlocked();
+// Non-tui mode routes approval through ctx.ui.confirm, stubbed to Approve.
+await tools.submit_plan.execute("t1", { plan: "the plan" }, undefined, () => {}, ctx);
+const approvalReleasesGate = !editBlocked();
+await start("go\\n<!-- swb-phase: plan -->\\nagain");
+const planAfterApprovalReArms = editBlocked();
+await start("plain follow-up question");
+const plainFollowUpStillBlocks = editBlocked();
+console.log(JSON.stringify({
+  disarmedDoesNotBlock,
+  planArmsAndBlocks,
+  approvalReleasesGate,
+  planAfterApprovalReArms,
+  plainFollowUpStillBlocks,
+  flipWarnings,
+}));
+"""
+
+
+@requires_node
+def test_plan_marker_arms_from_any_state():
+    """A plan-marker invocation arms plan phase from ANY state and the latest explicit plan
+    command wins: the marker arms from disarmed, submit_plan approval releases the gate, and
+    a later plan command re-arms it (v1 required disarmed, so a plan command after approval
+    was ignored — the closed re-entry gap). Every arming/approval turn attempts its model
+    flip exactly once — the driver's undefined model makes each degrade to a warning, so one
+    warning per turn is that attempt — and a plain follow-up never re-triggers anything."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-transition-dump.mjs"
+        driver.write_text(_PHASE_TRANSITION_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["disarmedDoesNotBlock"] is False
+    assert dumped["planArmsAndBlocks"] is True, (
+        "a plan marker must arm the plan gate from disarmed"
+    )
+    assert dumped["approvalReleasesGate"] is True, (
+        "submit_plan approval must release the plan gate — execution never blocks"
+    )
+    assert dumped["planAfterApprovalReArms"] is True, (
+        "a plan marker after approval must re-arm plan phase — latest explicit plan "
+        "command wins"
+    )
+    assert dumped["plainFollowUpStillBlocks"] is True, (
+        "a plain follow-up must neither transition nor disarm — detection is "
+        "invocation-turn only"
+    )
+    assert dumped["flipWarnings"] == 3, (
+        "each of the three arming/approval turns must attempt its model flip exactly "
+        "once, and the plain turn none"
+    )
+
+
+_PHASE_FLIP_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const flips = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  async setModel(m) { flips.push(m.provider + "/" + m.id); return true; },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+// google is the multi-id provider: both tier rows are ordered fallback lists, and find()
+// deliberately misses each row's preferred id so the adapter must walk to the fallback.
+const registry = {
+  find(provider, id) {
+    if (id === "gemini-3.1-pro-preview" || id === "gemini-3.8-flash") return undefined;
+    return { provider, id };
+  },
+};
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: { provider: "google", id: "gemini-3.8-flash" },
+  modelRegistry: registry,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+const editBlocked = () => {
+  const r = handlers.tool_call(
+    { toolName: "edit", input: { path: "src/main.ts" } },
+    { cwd: "/repo" },
+  );
+  return r !== undefined && r.block === true;
+};
+start("x\\n<!-- swb-phase: plan -->\\ny");
+const armFlipsToPlanFallback = flips[flips.length - 1];
+const armed = editBlocked();
+handlers.model_select({ source: "restore" });
+const restorePreservesArming = editBlocked();
+handlers.model_select({ source: "set" });
+const setDisarms = !editBlocked();
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+const approvalFlipsToExecuteFallback = flips[flips.length - 1];
+const executeReleasesGate = !editBlocked();
+console.log(JSON.stringify({
+  armFlipsToPlanFallback, armed, restorePreservesArming, setDisarms,
+  approvalFlipsToExecuteFallback, executeReleasesGate, flips,
+}));
+"""
+
+
+@requires_node
+def test_phase_flip_and_model_select_runtime():
+    """Drive the real flip path end-to-end (ctx.model + modelRegistry.find + pi.setModel
+    stubbed so candidates actually resolve) and pin the model_select disarm/preserve
+    invariant at runtime: arming flips to the tier row's FALLBACK id (preferred id missed),
+    "restore" preserves the armed gate, "set" disarms it, and approval flips to the
+    execute tier's fallback — a regression in candidate order, an inverted source check,
+    or a dropped flip attempt all fail here."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-flip-dump.mjs"
+        driver.write_text(_PHASE_FLIP_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["armFlipsToPlanFallback"] == "google/gemini-3.1-pro", (
+        "arming must walk the opus row's candidate order to the fallback id, not stop "
+        "at the preferred id find() missed"
+    )
+    assert dumped["armed"] is True
+    assert dumped["restorePreservesArming"] is True, (
+        'model_select source "restore" (session resume) must not disarm the gate'
+    )
+    assert dumped["setDisarms"] is True, (
+        'model_select source "set" (user override) must disarm the gate'
+    )
+    assert dumped["approvalFlipsToExecuteFallback"] == "google/gemini-3.7-flash", (
+        "approval must walk the sonnet row's candidate order to its fallback id"
+    )
+    assert dumped["executeReleasesGate"] is True
+    assert dumped["flips"] == [
+        "google/gemini-3.1-pro",
+        "google/gemini-3.1-pro",
+        "google/gemini-3.7-flash",
+    ], "exactly one flip per arming/approval turn, none for model_select events"
+
+
+def test_containment_uses_path_sep():
+    """isMutationBlocked's containment must use path.sep, not a hardcoded forward slash —
+    on Windows join()/resolve() emit backslash paths, so a "/" prefix test would
+    over-block the very plans dir the gate exists to keep writable."""
+    src = PHASE_POLICY_TS.read_text(encoding="utf-8")
+    assert 'import { sep } from "node:path"' in src
+    assert "plansDir + sep" in src
+    assert 'plansDir + "/"' not in src
+
 
 _DUMP_DISPATCH_DRIVER = """
 import { pathToFileURL } from "node:url";

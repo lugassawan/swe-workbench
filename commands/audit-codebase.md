@@ -3,6 +3,8 @@ description: Cold-start, time-boxed, multi-domain audit sweep — surfaces ranke
 argument-hint: "[--time-box <duration>] [--scope <list>] [--depth <quick|standard|deep>] [--top-n <int>] [optional ticket ref]"
 ---
 
+<!-- swb-phase: plan -->
+
 Cold-start audit of this codebase across multiple domains.
 
 ## Step 1 — Parse arguments

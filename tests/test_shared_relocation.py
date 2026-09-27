@@ -55,7 +55,7 @@ def test_agents_dir_walk_finds_only_top_level_agent_files():
     all_md = list((ROOT / "agents").rglob("*.md"))
     top_level_md = list((ROOT / "agents").glob("*.md"))
     assert all_md == top_level_md
-    assert len(top_level_md) == 22
+    assert len(top_level_md) == 23
 
 
 def test_commands_dir_walk_finds_only_top_level_command_files():

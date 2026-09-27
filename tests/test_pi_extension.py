@@ -68,11 +68,14 @@ const excludedTools = new Set(config.excludedTools || []);
 const mod = await import(pathToFileURL(indexPath).href);
 const factory = mod.default;
 
-const handlers = {};
+const handlerLists = {};
 const registeredToolNames = [];
 const stubPi = {
+  // The real SDK appends per-event handlers (loader.js's `on`) and its runner runs them all
+  // in registration order — a last-wins map here silently dropped index.ts's preamble
+  // injector once phase.ts registered a second before_agent_start handler.
   on(event, handler) {
-    handlers[event] = handler;
+    (handlerLists[event] ??= []).push(handler);
   },
   registerTool(tool) {
     registeredToolNames.push(tool.name);
@@ -89,23 +92,47 @@ const stubCtx = { hasUI: true, ui: { notify() {} } };
 await factory(stubPi);
 await factory(stubPi); // second invocation: defends against this file loading as two Extension instances
 
-const discoverResult = await handlers["resources_discover"](
-  { type: "resources_discover", cwd: process.cwd(), reason: "startup" },
-  stubCtx,
-);
+const discoverResult = { skillPaths: [], promptPaths: [] };
+for (const handler of handlerLists["resources_discover"] ?? []) {
+  const result = await handler(
+    { type: "resources_discover", cwd: process.cwd(), reason: "startup" },
+    stubCtx,
+  );
+  if (result) {
+    discoverResult.skillPaths.push(...(result.skillPaths ?? []));
+    discoverResult.promptPaths.push(...(result.promptPaths ?? []));
+  }
+}
+// The factory runs twice above, so append semantics register these handlers twice; the
+// effective discovered sets are what consumers see after path-level dedupe.
+discoverResult.skillPaths = [...new Set(discoverResult.skillPaths)];
+discoverResult.promptPaths = [...new Set(discoverResult.promptPaths)];
 
-const firstInjection = await handlers["before_agent_start"](
-  { type: "before_agent_start", prompt: "hi", systemPrompt: "BASE-PROMPT", systemPromptOptions: {} },
-  stubCtx,
-);
-const promptAfterFirst = firstInjection && firstInjection.systemPrompt
-  ? firstInjection.systemPrompt
-  : "BASE-PROMPT";
+// Mirrors runner.js's emitBeforeAgentStart: handlers run in registration order, each sees
+// the prompt composed so far, and a {systemPrompt} return feeds the next handler.
+async function runBeforeAgentStart(prompt, initialPrompt) {
+  let composed = initialPrompt;
+  for (const handler of handlerLists["before_agent_start"] ?? []) {
+    const event = {
+      type: "before_agent_start",
+      prompt,
+      get systemPrompt() {
+        return composed;
+      },
+      systemPromptOptions: {},
+    };
+    const result = await handler(event, stubCtx);
+    if (result && result.systemPrompt !== undefined) {
+      composed = result.systemPrompt;
+    }
+  }
+  return composed === initialPrompt ? undefined : { systemPrompt: composed };
+}
 
-const secondInjection = await handlers["before_agent_start"](
-  { type: "before_agent_start", prompt: "hi again", systemPrompt: promptAfterFirst, systemPromptOptions: {} },
-  stubCtx,
-);
+const firstInjection = await runBeforeAgentStart("hi", "BASE-PROMPT");
+const promptAfterFirst = firstInjection ? firstInjection.systemPrompt : "BASE-PROMPT";
+
+const secondInjection = await runBeforeAgentStart("hi again", promptAfterFirst);
 
 console.log(JSON.stringify({
   discoverResult,
@@ -439,6 +466,9 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "subagent.ts",
         "memory-guidance.ts",
         "memory-record.ts",
+        "phase.ts",
+        "phase-dialog.ts",
+        "phase-policy.ts",
     ):
         (synthetic_index.parent / helper).write_text(
             (ROOT / "pi" / "extensions" / helper).read_text(encoding="utf-8"), encoding="utf-8"

@@ -3,6 +3,8 @@ description: Invoke the migrator subagent to plan and execute a multi-deployment
 argument-hint: <migration description>
 ---
 
+<!-- swb-phase: plan -->
+
 Migration: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)

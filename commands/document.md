@@ -3,6 +3,8 @@ description: Generate or update documentation (README, ADR, ARCHITECTURE, inline
 argument-hint: <artifact, file, or topic>
 ---
 
+<!-- swb-phase: plan -->
+
 Target: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)

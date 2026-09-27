@@ -1,6 +1,6 @@
 ---
 name: senior-engineer
-description: Architectural advisor — thinks in boundaries, contracts, and change vectors. Invoke when choosing between approaches, scoping a new service, or evaluating an architecture.
+description: Architectural advisor — thinks in boundaries, contracts, and change vectors. Invoke when choosing between approaches
 model: opus
 effort: high
 tools: Read, Grep, Glob, WebFetch, Skill

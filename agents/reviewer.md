@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Senior code reviewer — audits diffs for correctness, security, design, missing tests, and comment quality. Invoke when reviewing a PR, a diff, or a completed feature.
+description: Senior code reviewer — audits diffs for correctness, design, and comment quality. Invoke when reviewing a PR
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill

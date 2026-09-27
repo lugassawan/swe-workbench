@@ -3,6 +3,8 @@ description: Drive a feature implementation end-to-end from a ticket or spec —
 argument-hint: <ticket ref, GitHub issue URL, or feature description> [--grill | --standard]
 ---
 
+<!-- swb-phase: plan -->
+
 Feature request: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)

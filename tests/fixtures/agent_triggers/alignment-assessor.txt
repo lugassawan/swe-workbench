@@ -1,0 +1,4 @@
+# Representative dispatch prompts for alignment-assessor
+detect architectural drift against main's commit history
+evaluate conceptual shift and outdated paradigm compared to default branch trajectory
+assess architectural alignment and detect conceptual drift against commit history
