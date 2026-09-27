@@ -154,7 +154,7 @@ SKILL_IDS = {
     "swe-workbench:principle-version-control",
 }
 
-# Commands that declare plan-phase (docs/decisions-pi-plan-mode.md) by carrying PHASE_MARKER
+# Commands that declare plan-phase (docs/pi-plan-mode.md) by carrying PHASE_MARKER
 # right after their frontmatter; this list is the single inventory the two-direction ratchet pins.
 PHASE_ARMED_COMMANDS = [
     "architect", "capture", "debug", "design", "extend",
@@ -455,7 +455,7 @@ def test_neutral_commands_carry_no_phase_marker():
 
 
 # ---------------------------------------------------------------------------
-# phase-policy.ts domain module (docs/decisions-pi-plan-mode.md) — source pins plus a
+# phase-policy.ts domain module (docs/pi-plan-mode.md) — source pins plus a
 # node-driver identity pin; the repo has no TS unit runner, so these carry the module.
 # ---------------------------------------------------------------------------
 
@@ -524,7 +524,7 @@ def test_plans_dir_allowlist_pinned():
 
 
 # ---------------------------------------------------------------------------
-# phase.ts adapter (docs/decisions-pi-plan-mode.md) — source pins for the arming/gate
+# phase.ts adapter (docs/pi-plan-mode.md) — source pins for the arming/gate
 # wiring; Task 4's submit_plan tool extends the same registerPhase function.
 # ---------------------------------------------------------------------------
 

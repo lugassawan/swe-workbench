@@ -1,5 +1,5 @@
 /**
- * Plan-phase adapter (docs/decisions-pi-plan-mode.md): arms plan/execute when an armed
+ * Plan-phase adapter (docs/pi-plan-mode.md): arms plan/execute when an armed
  * command's prompt carries PHASE_MARKER, flips the session to the phase's governing model,
  * injects the per-state system section, enforces the plans-dir mutation gate, and registers
  * submit_plan — the approval transition to execute. The Pi-touching half of phase-policy.ts;

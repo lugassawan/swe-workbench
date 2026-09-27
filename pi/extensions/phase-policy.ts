@@ -1,5 +1,5 @@
 /**
- * Phase policy: swe-workbench's two-mode plan/execute contract (docs/decisions-pi-plan-mode.md)
+ * Phase policy: swe-workbench's two-mode plan/execute contract (docs/pi-plan-mode.md)
  * as plain data and pure functions.
  *
  * Layer: domain, same SDK-free posture as model-policy.ts and agent-spec.ts — no Pi SDK import,
@@ -51,7 +51,7 @@ export function isMutationBlocked(
  *  lists, so the full order is returned and the adapter walks candidates via
  *  modelRegistry.find; a first-id-only return would strand the phase flip on a dead id. Ids
  *  ONLY, never a thinking level: setThinkingLevel on flip would silently change session
- *  effort (§4 of docs/decisions-pi-plan-mode.md defers that). `undefined` = unsupported
+ *  effort (§4 of docs/pi-plan-mode.md defers that). `undefined` = unsupported
  *  provider — the caller notifies and stays on the current model. */
 export function resolvePhaseModels(
   provider: string,
