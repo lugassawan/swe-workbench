@@ -88,15 +88,17 @@ export interface RuntimeSpawnOptions {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly timeoutMs: number;
+  /** Piped to the child's stdin when set (written then ended); omitted keeps stdin "ignore". */
+  readonly input?: string;
 }
 
 export type SpawnRuntime = (options: RuntimeSpawnOptions) => Promise<GuardRunResult>;
 
 /**
- * Argv-based spawn for the bin/ runtime scripts (no stdin payload). Unlike runGuard this
- * NEVER rejects: callers enforce their own failure posture from {code, stdout, stderr}, with
- * a spawn error or timeout kill surfacing as code === null. Env passes through verbatim so
- * SWE_WORKBENCH_HANDOFF_STATE_DIR and PI_* variables reach the runtime unchanged.
+ * Argv-based spawn for the bin/ runtime scripts. Unlike runGuard this NEVER rejects: callers
+ * enforce their own failure posture from {code, stdout, stderr}, with a spawn error or timeout
+ * kill surfacing as code === null. Env passes through verbatim so SWE_WORKBENCH_HANDOFF_STATE_DIR
+ * and PI_* variables reach the runtime unchanged.
  */
 export const spawnRuntime: SpawnRuntime = (options) =>
   new Promise((resolve) => {
@@ -104,7 +106,7 @@ export const spawnRuntime: SpawnRuntime = (options) =>
       cwd: options.cwd,
       env: process.env,
       signal: AbortSignal.timeout(options.timeoutMs),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -120,6 +122,14 @@ export const spawnRuntime: SpawnRuntime = (options) =>
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk;
     });
+    // Mirrors runGuard's EPIPE tolerance (see below).
+    child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE" && !settled) finish(null, String(err));
+    });
     child.on("error", (err) => finish(null, String(err)));
     child.on("close", (code) => finish(code));
+    if (options.input !== undefined) {
+      child.stdin?.write(options.input);
+      child.stdin?.end();
+    }
   });

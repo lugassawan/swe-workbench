@@ -28,6 +28,7 @@ import {
   translateToolTokens,
 } from "./agent-spec.ts";
 import { resolveTargetDispatch } from "./dispatch-resolver.ts";
+import { MEMORY_TOOL_NAME } from "./memory-guidance.ts";
 import { extractLastAssistantText, parseNestedTaskJson } from "./subagent-json.ts";
 import { sanitizeAgentId, TASK_TOOL_NAME, taskRenderCall, taskRenderResult } from "./task-call-line.ts";
 
@@ -141,7 +142,7 @@ export function registerSubagent(pi: ExtensionAPI, root: string): void {
           "--tools",
           toolNames.join(","),
           "--exclude-tools",
-          `${TASK_TOOL_NAME},${PI_SUBAGENTS_TOOL_NAME}`,
+          `${TASK_TOOL_NAME},${PI_SUBAGENTS_TOOL_NAME},${MEMORY_TOOL_NAME}`,
           "--no-session",
         ];
         const dispatch = resolveTargetDispatch(ctx, agent, spec);

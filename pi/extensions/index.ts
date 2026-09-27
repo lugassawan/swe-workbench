@@ -38,6 +38,8 @@ import { registerAskUser } from "./ask-user.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerHandoff } from "./handoff.ts";
+import { memoryGuidanceSection, MEMORY_TOOL_NAME } from "./memory-guidance.ts";
+import { registerMemoryRecord } from "./memory-record.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
 
@@ -98,7 +100,10 @@ export default function (pi: ExtensionAPI): void {
   function getPreamble(): string {
     if (cachedPreamble === undefined) {
       const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);
-      cachedPreamble = composePreamble([...generatedSection, toolVocabSection(root, taskToolRegistered)]);
+      const memoryToolActive = pi.getActiveTools().includes(MEMORY_TOOL_NAME);
+      const sections = [...generatedSection, toolVocabSection(root, taskToolRegistered)];
+      if (memoryToolActive) sections.push(memoryGuidanceSection());
+      cachedPreamble = composePreamble(sections);
     }
     return cachedPreamble;
   }
@@ -136,6 +141,7 @@ export default function (pi: ExtensionAPI): void {
   // which never short-circuits — every security guard below still runs on each allowed call.
   registerHandoff(pi, root);
   registerGuards(pi, root);
+  registerMemoryRecord(pi, root);
   registerAskUser(pi);
   registerSubagent(pi, root);
 }
