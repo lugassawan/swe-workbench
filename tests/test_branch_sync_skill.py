@@ -385,3 +385,32 @@ class TestRedundancyAssessment:
         assert "check-redundancy" in mistakes.lower() or "check_redundancy" in mistakes.lower()
         assert "opt-in" in mistakes.lower()
         assert "refs=0" in mistakes or "refs>0" in mistakes
+
+class TestAlignmentAssessment:
+    def test_step7_is_alignment_assessment_and_flag_gated(self):
+        body = _body()
+        assert "### Step 7 — Alignment Assessment" in body
+        step7 = body.split("### Step 7")[1].split("### Step 8")[0]
+        assert "`CHECK_ALIGNMENT` is `off` → skip" in step7
+        assert "CHECK_ALIGNMENT=on" in step7
+
+    def test_step7_unrelated_histories_skip(self):
+        body = _body()
+        step7 = body.split("### Step 7")[1].split("### Step 8")[0]
+        assert "MERGE_BASE` came back empty" in step7
+        assert "alignment check skipped: unrelated histories" in step7
+
+    def test_step7_none_and_escalate_gate_paths(self):
+        body = _body()
+        step7 = body.split("### Step 7")[1].split("### Step 8")[0]
+        assert "`**Drift: NONE**` → proceed to Step 8" in step7
+        assert "`**Drift: ESCALATE**` → present the subagent's rationale" in step7
+        assert "Acknowledge (no-op)" in step7
+        assert "Edit manually" in step7
+
+    def test_step7_unrecognized_sentinel_fallback(self):
+        body = _body()
+        step7 = body.split("### Step 7")[1].split("### Step 8")[0]
+        assert "No recognized sentinel" in step7
+        assert "treat as unresolved" in step7
+        assert "Never act silently" in step7

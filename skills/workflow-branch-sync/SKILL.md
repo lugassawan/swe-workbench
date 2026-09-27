@@ -135,14 +135,14 @@ After every file in `UNMERGED` has been resolved and staged:
 Surfaces *functional* duplication a textual diff structurally cannot see — the branch adding a function or file that the default branch independently grew elsewhere (renamed or relocated), which git reports as no conflict at all.
 
 1. **Skip conditions** — check in order:
-   - `CHECK_REDUNDANCY` is `off` → skip this step entirely, proceed straight to Step 8. This is the default; plain `sync` never reaches here.
-   - `CHECK_REDUNDANCY=on` but `MERGE_BASE` came back empty from Step 3 (unrelated histories) → report "redundancy check skipped: unrelated histories" and proceed to Step 8.
+   - `CHECK_REDUNDANCY` is `off` → skip this step entirely, proceed to Step 7 if `CHECK_ALIGNMENT=on`, else Step 8. This is the default; plain `sync` never reaches here.
+   - `CHECK_REDUNDANCY=on` but `MERGE_BASE` came back empty from Step 3 (unrelated histories) → report "redundancy check skipped: unrelated histories" and proceed to Step 7 if `CHECK_ALIGNMENT=on`, else Step 8.
 2. **Gather** (deterministic):
    ```bash
    _REDUND_OUT="$(swe-workbench-skill-script workflow-branch-sync redundancy-scope.sh "$MERGE_BASE" "$PRE_SYNC_HEAD" "origin/$DEFAULT_BRANCH")"
    eval "$(grep -E '^(MERGE_BASE|CANDIDATES)=' <<<"$_REDUND_OUT")"
    ```
-   Only the plain `MERGE_BASE=`/`CANDIDATES=` scalar lines are eval-safe and get eval'd here — the `CANDIDATE`/`MAIN_ADD` records are structured, not simple `KEY=VALUE`, and are parsed as data below, never eval'd. If `CANDIDATES=0`, report "no redundancy candidates found" and proceed to Step 8 — never dispatch the subagent for zero candidates.
+   Only the plain `MERGE_BASE=`/`CANDIDATES=` scalar lines are eval-safe and get eval'd here — the `CANDIDATE`/`MAIN_ADD` records are structured, not simple `KEY=VALUE`, and are parsed as data below, never eval'd. If `CANDIDATES=0`, report "no redundancy candidates found" and proceed to Step 7 if `CHECK_ALIGNMENT=on`, else Step 8 — never dispatch the subagent for zero candidates.
 3. **Reason** (advisory, never mutates): dispatch the `swe-workbench:redundancy-assessor` subagent with the full `_REDUND_OUT` (every `CANDIDATE`/`MAIN_ADD` record) and the `MERGE_BASE..PRE_SYNC_HEAD` branch diff.
 4. **Validate before acting** — this is the load-bearing invariant of this step: the skill never trusts the subagent's free-text for an actionable path **or for the tier label itself**. Parse each `**Redundancy: AUTO-APPLY|ESCALATE|NONE** id=<n>` sentinel it emits, cross-check every `id` against the enumerated `CANDIDATE id=<n>` lines `redundancy-scope.sh` produced, and **reject any id the script did not enumerate** — never act on an agent-invented id. The actionable file path always comes from the script's own `CANDIDATE path=<p>` record for that id, never from the subagent's prose. **For every `AUTO-APPLY` sentinel specifically**, also re-derive that same id's `refs=<count>` from its `CANDIDATE` line and **downgrade the finding to `ESCALATE` if `refs` is nonzero** — the `AUTO-APPLY` label is still the subagent's free text; only the script's own `refs` count is authoritative for the auto-apply precondition, and a subagent that mislabels a referenced or symbol-level candidate as `AUTO-APPLY` must never bypass the human because of it.
 5. **Tiered gate** — per validated (and, for `AUTO-APPLY`, refs-downgrade-checked) finding:
@@ -168,7 +168,8 @@ Evaluates architectural and conceptual drift between the branch's additions and 
 4. **Gate**:
    - `**Drift: NONE**` → proceed to Step 8.
    - `**Drift: ESCALATE**` → present the subagent's rationale and prompt the user for one of **Acknowledge (no-op)** or **Edit manually**.
-     - If **Edit manually**: open the file(s) for the user, wait for confirmation, then stage whatever they leave behind and commit with `git commit -m "[refactor] resolve architectural drift from main"`. List this commit in the Step 8 summary.
+     - If **Edit manually**: pause the sync, instruct the user to make their changes in the editor, wait for confirmation, then stage whatever they leave behind and commit with `git commit -m "[refactor] resolve architectural drift from main"`. List this commit in the Step 8 summary.
+   - **No recognized sentinel** → treat as unresolved, report to the user, and proceed to Step 8. Never act silently on a malformed or missing sentinel.
 
 ### Step 8 — Leave Local & Prompt Before Push
 
@@ -207,6 +208,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | `swe-workbench:redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
 | `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. <!-- validate: prose-ref --> |
 | `redundancy-scope.sh` enumerated a candidate but `swe-workbench:redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
+| `swe-workbench:alignment-assessor` omits a sentinel or emits an unrecognized one | No `**Drift: NONE**` or `**Drift: ESCALATE**` sentinel found | Treat as unresolved, report to the user alongside any output, and proceed to Step 8. Never assume `NONE`. |
 | A branch and main both add the identical path (add/add conflict) | The path already appeared in Step 5's resolved `UNMERGED` list, yet also surfaces as a Step 6 `CANDIDATE` | Narrow overlap: the two steps can disagree since Step 6 reasons independently. Prefer the Step 5 resolution — Step 5's keep-mine/keep-main choice for a path already-resolved there takes precedence over a same-path Step 6 finding. |
 
 ## Common Mistakes
