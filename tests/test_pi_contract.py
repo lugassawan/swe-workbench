@@ -563,15 +563,58 @@ def test_index_registers_phase_after_guards():
     )
 
 
+def _phase_handler_block(event_name: str) -> str:
+    """phase.ts source from `pi.on("<event>")` to that registration's closing `});` — the
+    two-space indentation anchor keeps a source pin scoped to one handler's body instead of
+    the whole file, so a same-shaped guard elsewhere (e.g. submit_plan's own hasUI check)
+    can never satisfy a pin meant for this handler."""
+    text = PHASE_TS.read_text(encoding="utf-8")
+    start = text.find(f'pi.on("{event_name}"')
+    assert start != -1, f"phase.ts must register a {event_name} handler"
+    return text[start : text.index("\n  });", start)]
+
+
 def test_phase_gate_hasui_guard_present():
     """phase.ts's before_agent_start must early-return when there is no dialog-capable UI —
     plan phase never arms headless (a `-p`/print run must behave as if the feature did not
-    exist), and ctx.ui.notify has no surface to warn on there."""
-    text = PHASE_TS.read_text(encoding="utf-8")
-    assert "if (!ctx.hasUI) return undefined;" in text, (
+    exist), and ctx.ui.notify has no surface to warn on there. Scoped to the handler's own
+    block: submit_plan (Task 4) adds its own !ctx.hasUI branch that throws instead of
+    returning, and that must never satisfy this pin."""
+    block = _phase_handler_block("before_agent_start")
+    assert "if (!ctx.hasUI) return undefined;" in block, (
         "phase.ts's before_agent_start must carry the `if (!ctx.hasUI) return undefined;` "
         "early-return — arming a headless session would gate edit/write with no way to tell "
         "the user why"
+    )
+
+
+def test_submit_plan_hasui_throw_pinned():
+    """submit_plan's execute must throw actionable guidance when !ctx.hasUI instead of
+    rendering a dialog into the void: a headless run (print/json mode, or a dispatched child)
+    can never reach a user, so the call must fail loudly with the pinned route out — the
+    session is not left half-approved."""
+    text = PHASE_TS.read_text(encoding="utf-8")
+    start = text.find('name: "submit_plan"')
+    assert start != -1, "phase.ts must register the submit_plan tool inside registerPhase"
+    block = text[start:]
+    assert "if (!ctx.hasUI)" in block, (
+        "submit_plan's execute must guard on !ctx.hasUI before any dialog tier"
+    )
+    assert (
+        "submit_plan needs an interactive session — run the phase-armed command in the TUI, "
+        "or proceed without the plan gate." in block
+    ), "the !ctx.hasUI branch must throw the pinned guidance text"
+
+
+def test_submit_plan_own_flip_flag_pinned():
+    """Approval's own setModel call fires a model_select event with source "set" — without
+    the ourFlip guard in that handler, the approval flip would read as a user override and
+    instantly disarm the execute phase it just armed. Regression pin on the guard (Task 3
+    landed it; this keeps any model_select rewrite honest)."""
+    block = _phase_handler_block("model_select")
+    assert "ourFlip" in block, (
+        "the model_select handler must consult ourFlip before disarming — approve-flip's own "
+        "setModel must not self-disarm the phase it just transitioned"
     )
 
 
@@ -685,6 +728,48 @@ if _NODE_TOO_OLD and os.environ.get("CI"):
 requires_node = pytest.mark.skipif(
     _NODE_TOO_OLD, reason="requires Node >= 22 (--experimental-strip-types) to import cc-payload.ts"
 )
+
+_SUBMIT_PLAN_SCHEMA_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+let registered;
+const stubPi = { on() {}, registerTool(tool) { registered = tool; } };
+mod.registerPhase(stubPi, process.argv[3]);
+if (registered === undefined) throw new Error("registerPhase registered no tool — is SWE_WORKBENCH_PI_TOOLS=0 leaking in?");
+console.log(JSON.stringify({ name: registered.name, parameters: registered.parameters }));
+"""
+
+
+@requires_node
+def test_submit_plan_schema_pinned():
+    """submit_plan's parameters as data, via the same node-driver shape as the ask-user and
+    task schema ratchets: a plain JSON-Schema object literal (ask-user.ts's module docstring
+    records why TypeBox value imports are forbidden here), one required string property
+    `plan`, and nothing else — the plan payload is the approval artifact, so a looser schema
+    would let a call arrive without it."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "submit-plan-schema-dump.mjs"
+        driver.write_text(_SUBMIT_PLAN_SCHEMA_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), tmp],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["name"] == "submit_plan"
+    parameters = dumped["parameters"]
+    assert isinstance(parameters, dict), "parameters must serialize as a plain JSON object"
+    assert parameters.get("type") == "object"
+    assert set(parameters.get("properties", {})) == {"plan"}, (
+        "submit_plan takes exactly one property — the plan text"
+    )
+    assert parameters["properties"]["plan"].get("type") == "string"
+    assert set(parameters.get("required", [])) == {"plan"}
+
 
 _PHASE_TIER_DRIVER = """
 import { pathToFileURL } from "node:url";
