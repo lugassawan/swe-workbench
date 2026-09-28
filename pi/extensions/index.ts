@@ -39,6 +39,8 @@ import { registerAskUser } from "./ask-user.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerHandoff } from "./handoff.ts";
+import { memoryGuidanceSection, MEMORY_TOOL_NAME } from "./memory-guidance.ts";
+import { registerMemoryRecord } from "./memory-record.ts";
 import { registerPhase } from "./phase.ts";
 import { registerSubagent, TASK_TOOL_NAME } from "./subagent.ts";
 import { toolVocabSection } from "./tool-vocab.ts";
@@ -100,7 +102,10 @@ export default function (pi: ExtensionAPI): void {
   function getPreamble(): string {
     if (cachedPreamble === undefined) {
       const taskToolRegistered = pi.getActiveTools().includes(TASK_TOOL_NAME);
-      cachedPreamble = composePreamble([...generatedSection, toolVocabSection(root, taskToolRegistered)]);
+      const memoryToolActive = pi.getActiveTools().includes(MEMORY_TOOL_NAME);
+      const sections = [...generatedSection, toolVocabSection(root, taskToolRegistered)];
+      if (memoryToolActive) sections.push(memoryGuidanceSection());
+      cachedPreamble = composePreamble(sections);
     }
     return cachedPreamble;
   }
@@ -138,10 +143,13 @@ export default function (pi: ExtensionAPI): void {
   //      non-security handler would be a silent regression.
   //   3. registerPhase — the plan-phase gate BLOCKS (never replaces) edit/write outside
   //      ~/.pi/agent/plans, and must never preempt a security verdict.
-  //   4. registerAskUser — no tool_call handler today; a future one belongs after (2).
+  //   4. registerMemoryRecord — no tool_call handler, so it is not order-sensitive; placed
+  //      after the tool_call handlers above for readability.
+  //   5. registerAskUser — no tool_call handler today; a future one belongs after (2).
   registerHandoff(pi, root);
   registerGuards(pi, root);
   registerPhase(pi, root);
+  registerMemoryRecord(pi, root);
   registerAskUser(pi);
   registerSubagent(pi, root);
 }

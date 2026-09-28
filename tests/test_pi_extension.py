@@ -29,6 +29,7 @@ TOOL_VOCAB_TS = ROOT / "pi" / "extensions" / "tool-vocab.ts"
 BIN_SCRIPTS_TS = ROOT / "pi" / "extensions" / "bin-scripts.ts"
 BIN_DIR = ROOT / "bin"
 ASK_USER_TS = ROOT / "pi" / "extensions" / "ask-user.ts"
+MEMORY_RECORD_TS = ROOT / "pi" / "extensions" / "memory-record.ts"
 SKILLS_DIR = ROOT / "skills"
 
 # Preamble-section char ratchets (issue #700): the two always-on sections
@@ -372,6 +373,32 @@ def test_before_agent_start_falls_back_when_task_registered_but_excluded(tmp_pat
 
 
 @requires_node
+def test_before_agent_start_includes_memory_guidance_when_tool_active(extension_result):
+    """memory_record is registered unconditionally (kill switch unset, the default) and no
+    --exclude-tools is in play here, so it's actually active — the guidance section must
+    appear, same active-tools-gated pattern as the task-tool preamble above."""
+    injected = extension_result["firstInjection"]["systemPrompt"]
+    assert "When to call `memory_record`" in injected
+
+
+@requires_node
+def test_before_agent_start_omits_memory_guidance_when_tool_excluded(tmp_path_factory):
+    """Mirrors test_before_agent_start_falls_back_when_task_registered_but_excluded: a
+    dispatched child's argv excludes memory_record (subagent.ts's own --exclude-tools), so
+    its actual active-tool set never includes it — the guidance section must not appear
+    either, even though registerMemoryRecord() still calls pi.registerTool() unconditionally."""
+    result = _run_node(
+        _DRIVER,
+        [str(INDEX_TS), json.dumps({"excludedTools": ["memory_record"]})],
+        tmp_path_factory,
+        label="pi-extension-driver-memory-record-excluded",
+    )
+    injected = result["firstInjection"]["systemPrompt"]
+    assert "When to call `memory_record`" not in injected
+    assert "Claude Code -> Pi tool vocabulary" in injected
+
+
+@requires_node
 def test_tool_vocab_preamble_survives_the_kill_switch(tmp_path_factory):
     """SWE_WORKBENCH_PI_TOOLS=0 gates Tier-2 tool registration only — the Tier-1 vocabulary
     prose must stay unconditional, since disabling it makes the session worse, not safer. With
@@ -437,6 +464,8 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "dispatch-resolver.ts",
         "subagent-json.ts",
         "subagent.ts",
+        "memory-guidance.ts",
+        "memory-record.ts",
         "phase.ts",
         "phase-dialog.ts",
         "phase-policy.ts",
@@ -997,6 +1026,56 @@ def test_guard_runner_real_spawn_rejects_on_nonexistent_interpreter(tmp_path_fac
         label="pi-guard-runner-real-spawn-fail",
     )
     assert result["threw"] is True
+
+
+_SPAWN_RUNTIME_STDIN_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardRunnerPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { spawnRuntime } = await import(pathToFileURL(guardRunnerPath).href);
+
+const result = await spawnRuntime({
+  command: config.command,
+  args: config.args,
+  cwd: config.cwd,
+  timeoutMs: 5000,
+  ...(config.input !== undefined ? { input: config.input } : {}),
+});
+console.log(JSON.stringify(result));
+"""
+
+
+@requires_node
+def test_spawn_runtime_pipes_input_over_stdin_when_set(tmp_path_factory):
+    """`cat` echoes stdin verbatim — a real (not mocked) child_process.spawn proving
+    RuntimeSpawnOptions.input actually reaches the child over a piped stdin, exactly the
+    same transport bin/swe-workbench-memory record's --as pi expects for the entry body."""
+    config = {"command": "cat", "args": [], "cwd": str(ROOT), "input": "hello world\n"}
+    result = _run_node(
+        _SPAWN_RUNTIME_STDIN_DRIVER,
+        [str(GUARD_RUNNER_TS), json.dumps(config)],
+        tmp_path_factory,
+        label="pi-spawn-runtime-stdin",
+    )
+    assert result["code"] == 0
+    assert result["stdout"] == "hello world\n"
+
+
+@requires_node
+def test_spawn_runtime_keeps_stdin_ignored_when_input_absent(tmp_path_factory):
+    """No `input` field at all (RuntimeSpawnOptions.input omitted, not empty-string) must
+    keep the original `stdio: ["ignore", ...]` behavior — `cat` reading from an ignored
+    (/dev/null-equivalent) stdin hits EOF immediately and echoes nothing."""
+    config = {"command": "cat", "args": [], "cwd": str(ROOT)}
+    result = _run_node(
+        _SPAWN_RUNTIME_STDIN_DRIVER,
+        [str(GUARD_RUNNER_TS), json.dumps(config)],
+        tmp_path_factory,
+        label="pi-spawn-runtime-no-stdin",
+    )
+    assert result["code"] == 0
+    assert result["stdout"] == ""
 
 
 @requires_node
@@ -2367,7 +2446,7 @@ def test_subagent_success_builds_expected_argv_and_cleans_up_temp_file(subagent_
     tool_names = set(args[tools_idx + 1].split(","))
     assert tool_names == {"read", "bash", "ask_user_question"}
     exclude_idx = args.index("--exclude-tools")
-    assert args[exclude_idx + 1] == "task,subagent"
+    assert args[exclude_idx + 1] == "task,subagent,memory_record"
     assert "--no-session" in args
     assert "--model" not in args, "no --model flag when ctx.model is undefined"
     assert "--thinking" not in args, "no --thinking flag when ctx.model is undefined"
@@ -3914,3 +3993,220 @@ def test_handoff_quota_recovery_on_http_429_only(tmp_path_factory):
     assert len(out["after429Again"]["notifications"]) == 1
 
     assert out["after429NoUI"] == {"statuses": [], "notifications": []}
+
+
+# ---------------------------------------------------------------------------
+# memory-record.ts — the memory_record tool
+# ---------------------------------------------------------------------------
+
+_MEMORY_RECORD_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const mod = await import(pathToFileURL(modPath).href);
+
+let registered;
+let activeTools = [];
+const handlers = {};
+const stubPi = {
+  on(event, handler) { handlers[event] = handler; },
+  registerTool(tool) { registered = tool; activeTools.push(tool.name); },
+  getActiveTools() { return activeTools; },
+  setActiveTools(names) { activeTools = names; },
+};
+
+mod.registerMemoryRecord(stubPi, config.root);
+
+const out = { registered: registered !== undefined };
+if (registered) {
+  const notifications = [];
+  const stubCtx = {
+    cwd: config.cwd,
+    hasUI: config.hasUI !== false,
+    isProjectTrusted: () => config.trusted !== false,
+    ui: { notify: (msg, type) => notifications.push({ msg, type }) },
+  };
+
+  if (handlers["session_start"]) {
+    await handlers["session_start"]({ type: "session_start" }, stubCtx);
+  }
+  out.activeToolsAfterSessionStart = [...activeTools];
+
+  if (config.callExecute) {
+    try {
+      const result = await registered.execute("tc1", config.params, undefined, undefined, stubCtx);
+      out.executeOk = true;
+      out.executeResult = result;
+    } catch (err) {
+      out.executeOk = false;
+      out.executeMessage = String(err && err.message);
+    }
+    out.notifications = notifications;
+  }
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def _memory_record_result(config, tmp_path_factory, *, env=None, label="pi-memory-record"):
+    driver = tmp_path_factory.mktemp(label) / "driver.mjs"
+    driver.write_text(_MEMORY_RECORD_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    run_env = dict(_CLEAN_ENV)
+    if env:
+        run_env.update(env)
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(driver), str(MEMORY_RECORD_TS), json.dumps(config)],
+        capture_output=True, text=True, env=run_env, timeout=30,
+    )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+_FAKE_MEMORY_RUNTIME_SUCCESS = """#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+argv = sys.argv[1:]
+body = sys.stdin.read()
+pathlib.Path(__file__).with_name("received.json").write_text(
+    json.dumps({"argv": argv, "body": body}), encoding="utf-8"
+)
+print(json.dumps({
+    "schema": "swb.memory/1",
+    "status": "ok",
+    "data": {"store": "pi", "entry_path": "/fake/entry/feedback_x.md", "index_path": "/fake/entry/MEMORY.md"},
+    "warnings": [],
+}))
+"""
+
+_FAKE_MEMORY_RUNTIME_FAILURE = """#!/usr/bin/env python3
+import sys
+sys.stdin.read()
+print("swe-workbench-memory: secret-shaped body is not allowed in memory", file=sys.stderr)
+sys.exit(1)
+"""
+
+
+def _fake_memory_runtime_root(tmp_path_factory, script_text, *, label):
+    root = tmp_path_factory.mktemp(label)
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    runtime = bin_dir / "swe-workbench-memory"
+    runtime.write_text(script_text, encoding="utf-8")
+    runtime.chmod(0o755)
+    return root
+
+
+_MEMORY_RECORD_PARAMS = {
+    "name": "prefer-tdd",
+    "description": "Write the failing test first",
+    "type": "feedback",
+    "body": "Red green refactor",
+}
+
+
+@requires_node
+def test_memory_record_registers_by_default(tmp_path_factory):
+    result = _memory_record_result(
+        {"root": str(ROOT), "cwd": str(ROOT), "trusted": True, "callExecute": False},
+        tmp_path_factory,
+        label="pi-memory-record-register",
+    )
+    assert result["registered"] is True
+    assert "memory_record" in result["activeToolsAfterSessionStart"]
+
+
+@requires_node
+def test_memory_record_kill_switch_skips_registration(tmp_path_factory):
+    result = _memory_record_result(
+        {"root": str(ROOT), "cwd": str(ROOT), "trusted": True, "callExecute": False},
+        tmp_path_factory,
+        env={"SWE_WORKBENCH_PI_TOOLS": "0"},
+        label="pi-memory-record-kill-switch",
+    )
+    assert result["registered"] is False
+
+
+@requires_node
+def test_memory_record_session_start_hides_tool_when_untrusted(tmp_path_factory):
+    result = _memory_record_result(
+        {"root": str(ROOT), "cwd": str(ROOT), "trusted": False, "callExecute": False},
+        tmp_path_factory,
+        label="pi-memory-record-untrusted-hide",
+    )
+    assert result["registered"] is True  # registerTool() itself is unconditional
+    assert "memory_record" not in result["activeToolsAfterSessionStart"]
+
+
+@requires_node
+def test_memory_record_execute_throws_when_untrusted(tmp_path_factory):
+    """The execute()-time re-check (the "suspenders" half of the trust gate) — covers a
+    session whose trust status changed after session_start already ran."""
+    result = _memory_record_result(
+        {
+            "root": str(ROOT),
+            "cwd": str(ROOT),
+            "trusted": False,
+            "callExecute": True,
+            "params": _MEMORY_RECORD_PARAMS,
+        },
+        tmp_path_factory,
+        label="pi-memory-record-execute-untrusted",
+    )
+    assert result["executeOk"] is False
+    assert "trusted" in result["executeMessage"]
+
+
+@requires_node
+def test_memory_record_execute_builds_expected_argv_and_pipes_body_via_stdin(tmp_path_factory):
+    fake_root = _fake_memory_runtime_root(
+        tmp_path_factory, _FAKE_MEMORY_RUNTIME_SUCCESS, label="pi-memory-record-fake-runtime"
+    )
+    result = _memory_record_result(
+        {
+            "root": str(fake_root),
+            "cwd": str(ROOT),
+            "trusted": True,
+            "callExecute": True,
+            "params": _MEMORY_RECORD_PARAMS,
+        },
+        tmp_path_factory,
+        label="pi-memory-record-execute-success",
+    )
+    assert result["executeOk"] is True
+    assert result["executeResult"]["content"] == [{"type": "text", "text": "/fake/entry/feedback_x.md"}]
+    assert result["executeResult"]["details"] == {"entryPath": "/fake/entry/feedback_x.md"}
+
+    received = json.loads((fake_root / "bin" / "received.json").read_text(encoding="utf-8"))
+    assert received["argv"] == [
+        "record", "--as", "pi", "--store", "pi",
+        "--name", "prefer-tdd", "--description", "Write the failing test first", "--type", "feedback",
+    ]
+    assert received["body"] == "Red green refactor"
+
+    assert result["notifications"] == [{"msg": "Memory saved: prefer-tdd"}]
+
+
+@requires_node
+def test_memory_record_surfaces_runtime_stderr_verbatim_on_failure(tmp_path_factory):
+    fake_root = _fake_memory_runtime_root(
+        tmp_path_factory, _FAKE_MEMORY_RUNTIME_FAILURE, label="pi-memory-record-fake-runtime-fail"
+    )
+    result = _memory_record_result(
+        {
+            "root": str(fake_root),
+            "cwd": str(ROOT),
+            "trusted": True,
+            "callExecute": True,
+            "params": _MEMORY_RECORD_PARAMS,
+        },
+        tmp_path_factory,
+        label="pi-memory-record-execute-failure",
+    )
+    assert result["executeOk"] is False
+    assert result["executeMessage"] == "swe-workbench-memory: secret-shaped body is not allowed in memory"
+    assert result["notifications"] == []

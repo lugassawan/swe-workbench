@@ -59,16 +59,40 @@ def envelope(result):
     return parsed
 
 
+_runtime_module = None
+
+
+def _runtime():
+    """Load bin/swe-workbench-memory once and reuse it — claude_slug() is pure (no I/O),
+    so sharing one loaded module across slug_of() calls is safe."""
+    global _runtime_module
+    if _runtime_module is None:
+        _runtime_module = load_runtime_module()
+    return _runtime_module
+
+
 def slug_of(path) -> str:
+    """Delegates to the runtime's OWN claude_slug() — never an independently mirrored
+    recipe. Behavioral tests below only need "the same string the runtime computes for
+    this path", not a from-scratch reimplementation; recipe correctness itself is pinned
+    by test_claude_slug_matches_pinned_fixtures below against literal, hardcoded output
+    from the real Claude Code JS recipe (never derived from this runtime)."""
+    return _runtime().claude_slug(Path(path).resolve())
+
+
+def legacy_slug_of(path) -> str:
     return str(Path(path).resolve()).replace("/", "-").lstrip("-")
 
 
 def write_store(store_dir: Path, entries) -> None:
-    """Fabricate a Claude-format memory store. entries: [(name, description, type)] newest-first."""
+    """Fabricate a Claude-format memory store using the runtime's OWN on-disk naming
+    convention (entry_file_name), so identity-dedup (type + stem + raw-name hash) behaves
+    the same for fabricated fixtures as it does for real record()-written entries.
+    entries: [(name, description, type)] newest-first."""
     store_dir.mkdir(parents=True, exist_ok=True)
     lines = ["# Memory index", ""]
     for name, description, entry_type in entries:
-        file_name = f"{entry_type}_{name}.md"
+        file_name = _runtime().entry_file_name(entry_type, name)
         (store_dir / file_name).write_text(
             "---\n"
             f"name: {name}\n"
@@ -132,6 +156,57 @@ def test_non_git_cwd_falls_back_to_cwd_slug(tmp_path):
     assert data["anchor"]["main_checkout"] is None
 
 
+# Literal fixtures pinned against the real Claude Code JS recipe via `node -e` — never
+# derived from this runtime, so a regression in claude_slug() cannot silently self-validate.
+CLAUDE_SLUG_FIXTURES = [
+    (
+        "/Users/dev/code/example-repo",
+        "-Users-dev-code-example-repo",
+    ),
+    (
+        "/Users/dev/My Projects/foo_bar.baz qux",
+        "-Users-dev-My-Projects-foo-bar-baz-qux",
+    ),
+    (
+        "/Users/dev/code/" + "a" * 200 + "/tail",
+        "-Users-dev-code-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-yy9ryl",
+    ),
+    (
+        "/Users/dev/code/example-\U0001f600-repo",
+        "-Users-dev-code-example----repo",
+    ),
+]
+
+
+def test_claude_slug_matches_pinned_real_recipe_fixtures():
+    module = _runtime()
+    for path, expected_slug in CLAUDE_SLUG_FIXTURES:
+        assert module.claude_slug(Path(path)) == expected_slug, path
+
+
+def test_claude_slug_keeps_leading_dash_unlike_legacy_recipe(tmp_path):
+    module = _runtime()
+    path = Path("/a/b")
+    assert module.claude_slug(path) == "-a-b"
+    assert module.legacy_pi_slug(path) == "a-b"
+
+
+def test_claude_slug_handles_lone_surrogate_from_non_utf8_path_component():
+    """A directory name holding non-UTF-8 bytes decodes (PEP 383, os.fsdecode) to a lone
+    surrogate codepoint — a real POSIX path this runtime must not crash on merely resolving
+    an anchor for. str.encode("utf-16-le") without errors="surrogatepass" raises
+    UnicodeEncodeError (a ValueError, not a MemoryError — main()'s `except MemoryError` would
+    never catch it), turning every subcommand into a raw traceback for this one input class."""
+    import os
+
+    module = _runtime()
+    path = Path(os.fsdecode(b"/tmp/foo-\xff-bar"))
+    slug = module.claude_slug(path)
+    assert "�" not in slug  # never silently mangled into a replacement character either
+    assert slug.startswith("-tmp-foo-")
+    assert slug.endswith("-bar")
+
+
 def test_git_worktree_anchors_to_main_checkout(tmp_path, worktree_repo):
     main, wt = worktree_repo
     out = run_memory(["show", "--as", "pi"], cwd=wt)
@@ -174,9 +249,8 @@ def test_dual_slug_claude_read_merges_main_first(worktree_repo):
         "worktree-only",
     ]
     assert [e["order"] for e in claude_entries] == [0, 1, 0]
-    assert [e["file"] for e in claude_entries].count(
-        "feedback_keep-builds-green.md"
-    ) == 1
+    expected_file = _runtime().entry_file_name("feedback", "keep-builds-green")
+    assert [e["file"] for e in claude_entries].count(expected_file) == 1
     # Entries carry an absolute per-entry path to the store they actually live in —
     # store-path + basename composition would resolve worktree-slug entries wrongly.
     by_name = {e["name"]: e for e in claude_entries}
@@ -188,6 +262,149 @@ def test_dual_slug_claude_read_merges_main_first(worktree_repo):
     assert Path(by_name["keep-builds-green"]["path"]).is_relative_to(main_memory)
     stores = parsed["data"]["stores"]
     assert stores["claude_cwd"] == {"path": str(cwd_memory), "exists": True}
+
+
+def test_claude_cwd_merge_never_collapses_non_generated_filenames_by_prefix(worktree_repo):
+    """Claude Code's own natively-written memory files don't follow entry_file_name()'s
+    {type}_{stem}_{hash8}_{date8}.md shape — _entry_identity must never strip a trailing
+    word from such a filename as if it were a date digest, or two genuinely distinct
+    entries sharing a name prefix silently collapse into one."""
+    main, wt = worktree_repo
+    home = wt / "home"
+    main_memory = home / ".claude" / "projects" / slug_of(main) / "memory"
+    cwd_memory = home / ".claude" / "projects" / slug_of(wt) / "memory"
+    main_memory.mkdir(parents=True)
+    cwd_memory.mkdir(parents=True)
+    (main_memory / "feedback_workflow_bug.md").write_text(
+        "---\nname: workflow-bug\ndescription: \"A workflow bug\"\nmetadata:\n"
+        "  node_type: memory\n  type: feedback\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (main_memory / "MEMORY.md").write_text(
+        "# Memory index\n\n- [workflow-bug](feedback_workflow_bug.md) — A workflow bug\n",
+        encoding="utf-8",
+    )
+    (cwd_memory / "feedback_workflow_fix.md").write_text(
+        "---\nname: workflow-fix\ndescription: \"A workflow fix\"\nmetadata:\n"
+        "  node_type: memory\n  type: feedback\n---\nbody\n",
+        encoding="utf-8",
+    )
+    (cwd_memory / "MEMORY.md").write_text(
+        "# Memory index\n\n- [workflow-fix](feedback_workflow_fix.md) — A workflow fix\n",
+        encoding="utf-8",
+    )
+    out = run_memory(["show", "--as", "pi"], cwd=wt)
+    parsed = envelope(out)
+    claude_names = {e["name"] for e in parsed["data"]["entries"] if e["store"] == "claude"}
+    assert claude_names == {"workflow-bug", "workflow-fix"}
+
+
+def test_entry_identity_requires_full_four_segment_shape_before_stripping():
+    """A native filename's own last word can coincidentally look like an 8-hex-char date
+    digest (e.g. ending "..._deadbeef.md") — _entry_identity must also verify the segment
+    before that one is itself an 8-hex-char name-hash before treating the trailing segment
+    as a stripped date digest, or two distinct native entries sharing only a hex-looking
+    last word still falsely collapse (the same failure class the prior fix narrowed, not
+    eliminated)."""
+    module = _runtime()
+    assert module._entry_identity("feedback_deadbeef.md") == "feedback_deadbeef.md"
+    assert module._entry_identity("feedback_cafebabe.md") == "feedback_cafebabe.md"
+    # Still strips a real generated filename's full 4-segment shape correctly.
+    generated = module.entry_file_name("feedback", "prefer-tdd")
+    identity = module._entry_identity(generated)
+    assert identity != generated
+    assert identity == generated.rsplit("_", 1)[0]
+
+
+def test_pi_legacy_slug_store_merges_new_first_and_dedupes_by_identity(tmp_path):
+    """A Pi store written before this fix (legacy_pi_slug: replace('/','-').lstrip('-'))
+    is still discovered and merged — new store first, legacy second, deduped by identity
+    so a re-record under the new slug wins over its legacy-store predecessor."""
+    new_store = tmp_path / "state" / slug_of(tmp_path)
+    legacy_store = tmp_path / "state" / legacy_slug_of(tmp_path)
+    assert new_store != legacy_store
+    write_store(
+        new_store,
+        [("new-only", "Written after the fix", "feedback")],
+    )
+    write_store(
+        legacy_store,
+        [
+            ("legacy-only", "Written before the fix", "feedback"),
+            ("new-only", "Stale legacy copy", "feedback"),
+        ],
+    )
+    out = run_memory(["show", "--as", "pi"], cwd=tmp_path)
+    parsed = envelope(out)
+    pi_entries = [e for e in parsed["data"]["entries"] if e["store"] == "pi"]
+    assert [e["name"] for e in pi_entries] == ["new-only", "legacy-only"]
+    assert [e["description"] for e in pi_entries] == [
+        "Written after the fix",
+        "Written before the fix",
+    ]
+    stores = parsed["data"]["stores"]
+    assert stores["pi_legacy"] == {"path": str(legacy_store), "exists": True}
+
+
+def test_pi_record_never_writes_to_legacy_slug_store(tmp_path):
+    legacy_store = tmp_path / "state" / legacy_slug_of(tmp_path)
+    write_store(legacy_store, [("old", "d", "feedback")])
+    before = tree_hash(legacy_store)
+    out = run_memory(
+        ["record", "--as", "pi", "--name", "fresh", "--description", "d"],
+        cwd=tmp_path,
+        input_text="b",
+    )
+    envelope(out)
+    assert tree_hash(legacy_store) == before
+    assert pi_store_dir(tmp_path) != legacy_store
+    assert (pi_store_dir(tmp_path) / "MEMORY.md").is_file()
+
+
+# ── render --other-only ──────────────────────────────────────────────────
+
+
+def test_render_other_only_drops_own_section_in_plain_repo(tmp_path, both_stores):
+    """In a plain repo (no worktree), Claude Code's own native memory feature already
+    covers the ENTIRE own store (cwd_slug == slug) — --other-only must drop it in full."""
+    plain = run_memory(["render", "--as", "claude"], cwd=tmp_path)
+    both = envelope(plain)["data"]["markdown"]
+    assert "## Claude Code memory" in both
+
+    other_only = run_memory(["render", "--as", "claude", "--other-only"], cwd=tmp_path)
+    markdown = envelope(other_only)["data"]["markdown"]
+    assert "## Claude Code memory" not in markdown
+    assert "## Pi memory" in markdown
+    assert "pi-entry" in markdown
+
+
+def test_render_other_only_keeps_main_slug_entries_in_worktree(worktree_repo):
+    """In a worktree, Claude Code's native feature only covers the cwd-slug store — the
+    main-checkout store is invisible to it natively, so --other-only must still render it."""
+    main, wt = worktree_repo
+    home = wt / "home"
+    write_store(
+        home / ".claude" / "projects" / slug_of(main) / "memory",
+        [("main-only", "Lives at the main checkout slug", "feedback")],
+    )
+    write_store(
+        home / ".claude" / "projects" / slug_of(wt) / "memory",
+        [("cwd-only", "Lives at the worktree cwd slug", "feedback")],
+    )
+    out = run_memory(["render", "--as", "claude", "--other-only"], cwd=wt)
+    markdown = envelope(out)["data"]["markdown"]
+    assert "main-only" in markdown
+    assert "cwd-only" not in markdown
+
+
+def test_render_other_only_is_a_noop_for_pi(tmp_path, both_stores):
+    """Pi has no native memory feature to duplicate against — Pi always renders both,
+    even if --other-only is passed."""
+    without_flag = envelope(run_memory(["render", "--as", "pi"], cwd=tmp_path))["data"]
+    with_flag = envelope(run_memory(["render", "--as", "pi", "--other-only"], cwd=tmp_path))[
+        "data"
+    ]
+    assert with_flag["markdown"] == without_flag["markdown"]
 
 
 # ── render (plan Step 5) ─────────────────────────────────────────────────────
@@ -271,12 +488,13 @@ def test_render_unreadable_entry_file_warns_and_continues(tmp_path):
             ("sealed", "Cannot read", "project"),
         ],
     )
-    (store / "project_sealed.md").chmod(0o000)
+    sealed_file = _runtime().entry_file_name("project", "sealed")
+    (store / sealed_file).chmod(0o000)
     out = run_memory(["render", "--as", "pi"], cwd=tmp_path)
     parsed = envelope(out)
     assert parsed["status"] == "partial"
     unreadable = [w for w in parsed["warnings"] if w["code"] == "entry_unreadable"]
-    assert unreadable and unreadable[0]["subject"].endswith("project_sealed.md")
+    assert unreadable and unreadable[0]["subject"].endswith(sealed_file)
     assert "readable" in parsed["data"]["markdown"]
 
 
@@ -520,6 +738,8 @@ def test_record_refuses_empty_name_or_description(tmp_path):
 
 
 def test_record_refuses_invalid_type(tmp_path):
+    # argparse's own choices= rejects this before cmd_record ever runs — exit code 2
+    # (argparse's usage-error convention), not the InputError family's exit code 1.
     out = run_memory(
         [
             "record",
@@ -535,9 +755,32 @@ def test_record_refuses_invalid_type(tmp_path):
         cwd=tmp_path,
         input_text="",
     )
-    assert out.returncode == 1
+    assert out.returncode == 2
     assert out.stdout == ""
     assert not pi_store_dir(tmp_path).exists()
+
+
+def test_record_accepts_all_four_entry_types(tmp_path):
+    for entry_type in ("user", "feedback", "project", "reference"):
+        out = run_memory(
+            [
+                "record",
+                "--as",
+                "pi",
+                "--name",
+                f"entry-{entry_type}",
+                "--description",
+                "d",
+                "--type",
+                entry_type,
+            ],
+            cwd=tmp_path,
+            input_text="b",
+        )
+        data = envelope(out)["data"]
+        assert data["store"] == "pi"
+        entry_text = Path(data["entry_path"]).read_text(encoding="utf-8")
+        assert f"  type: {entry_type}\n" in entry_text
 
 
 def test_record_parallel_appends_serialize_under_flock(tmp_path):

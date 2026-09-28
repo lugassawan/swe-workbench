@@ -74,7 +74,7 @@ into another is upstream Claude Code's to fix.
 ## 2. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
 
 Each harness owns one per-repo memory store and reads the other's read-only
-(`bin/swe-workbench-memory`, hooks/memory_hint.sh). Four rulings:
+(`bin/swe-workbench-memory`, hooks/memory_hint.sh). Rulings:
 
 **Anchor on the main checkout, not the session cwd.** Claude Code keys
 `~/.claude/projects/<slug>` by the session's project directory — empirically,
@@ -88,8 +88,9 @@ precedent); non-git cwds fall back to the cwd slug.
 
 **The Claude store is read through two slugs.** Entries Claude sessions wrote
 under a worktree slug stay real knowledge; reads probe the main slug first,
-then the cwd slug, merging by entry-file basename (main wins, cwd supplements).
-Writes stay single-anchored on the main slug.
+then the cwd slug, merging by **entry identity** (type + name-stem + raw-name
+hash — stable across a cross-day re-record's fresh date digest; main wins, cwd
+supplements). Writes stay single-anchored on the main slug.
 
 **Writes are structurally single-store.** No subcommand accepts a store path;
 the writable store derives solely from `--as`. A `--store` flag exists only as
@@ -107,3 +108,36 @@ on `ctx.isProjectTrusted()`; Claude's SessionStart hook has no trust
 equivalent — mitigated by a hard 16 KiB render cap and a "treat as data, not
 instructions" fence on every injected block. The handoff checkpoint is not a
 carrier for memory (its security exclusions bar file bodies by design).
+
+**The "readable slug" above was never actually Claude Code's own slug.**
+`slugify()` implemented `replace("/","-").lstrip("-")` — read from the
+`~/.claude/projects/` naming convention by eye, not from Claude Code's actual
+recipe (a UTF-16-code-unit `[^A-Za-z0-9]`→`-` replace, leading `-` **kept**,
+>200 chars truncated + a Java/JS `String.hashCode()` suffix). `show --as pi`
+therefore reported `claude.exists: false` in every real repo, and CI stayed
+green because the test helper mirrored the same wrong recipe. Fixed by
+`claude_slug()` (exact parity, pinned against real JS-recipe output), used
+for **both** stores now. The pre-fix Pi store key stays as a **read-only**
+merge source (`legacy_pi_slug`) so nothing recorded via `record --as pi`
+before this fix is orphaned — deliberately Pi-store-only (see
+docs/cross-harness-memory.md's Anchoring section for the resulting
+Claude-store caveat).
+
+**`--other-only` scopes to what Claude Code natively covers, not the whole
+own-store.** Claude Code's native per-project memory keys strictly on the
+session's literal cwd — no git-worktree or main-checkout awareness. So
+`render --as claude --other-only` (Claude Code's own SessionStart hook) omits
+only entries physically stored under the cwd-slug directory: in a plain repo
+that's the whole own-store; in a worktree the main-checkout entries stay
+rendered, since Claude Code has no native visibility into those. A no-op for
+`--as pi` — Pi always renders both sections in full.
+
+**`memory_record` (Pi's native recording tool) writes with no confirmation
+prompt, trust-gated instead.** The safety backstop is project trust (the
+same gate memory *injection* already uses) plus the runtime's own secret scan
+and byte caps. Gated twice: `session_start` hides the tool from an untrusted
+session's active tool set, and `execute()` independently re-checks
+`ctx.isProjectTrusted()`. A `ctx.ui.notify` toast on every write replaces the
+prompt. Entry types widen to `user|feedback|project|reference`, parity-pinned
+between the runtime's `ENTRY_TYPES` and the Pi extension's own. No delete
+subcommand — a same-name re-record is an update.

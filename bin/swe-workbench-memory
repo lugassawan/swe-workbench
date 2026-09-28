@@ -21,7 +21,7 @@ from pathlib import Path
 SCHEMA = "swb.memory/1"
 STATE_DIRECTORY_NAME = Path("swe-workbench") / "memory" / "v1"
 HARNESSES = ("claude", "pi")
-ENTRY_TYPES = ("feedback", "project")
+ENTRY_TYPES = ("user", "feedback", "project", "reference")
 MAX_RENDER_BYTES = 16384
 MAX_NAME_BYTES = 200
 MAX_DESCRIPTION_BYTES = 1000
@@ -78,6 +78,7 @@ class Anchor:
     main_checkout: Path | None
     slug: str
     cwd_slug: str
+    cwd: Path
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class StorePaths:
     claude: Path
     pi: Path
     claude_cwd: Path | None
+    pi_legacy: Path | None
 
     def own(self, as_harness: str) -> Path:
         return self.pi if as_harness == "pi" else self.claude
@@ -102,7 +104,51 @@ class MemoryEntry:
     order: int
 
 
-def slugify(path: Path) -> str:
+def _utf16_units(text: str) -> list[int]:
+    """Re-encode to UTF-16 code units (surrogatepass: a non-UTF-8 path component can decode
+    to a lone surrogate, which strict encoding would refuse)."""
+    raw = text.encode("utf-16-le", errors="surrogatepass")
+    return [raw[i] | (raw[i + 1] << 8) for i in range(0, len(raw), 2)]
+
+
+def _is_ascii_alnum_unit(unit: int) -> bool:
+    return (65 <= unit <= 90) or (97 <= unit <= 122) or (48 <= unit <= 57)
+
+
+def _java_string_hash_code(units: list[int]) -> int:
+    """Java/JS String.hashCode(): h = 31*h + c per UTF-16 unit, signed 32-bit."""
+    h = 0
+    for unit in units:
+        h = (31 * h + unit) & 0xFFFFFFFF
+    return h - 0x100000000 if h >= 0x80000000 else h
+
+
+def _base36(value: int) -> str:
+    value = abs(value)
+    if value == 0:
+        return "0"
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out: list[str] = []
+    while value:
+        value, remainder = divmod(value, 36)
+        out.append(digits[remainder])
+    return "".join(reversed(out))
+
+
+def claude_slug(path: Path) -> str:
+    """Parity with Claude Code's ~/.claude/projects/ slug: every UTF-16 code unit outside
+    [A-Za-z0-9] becomes '-' (leading '-' kept); over 200 units, truncate to 200 and suffix
+    with '-' + base36(abs(String.hashCode())) of the original path. Used for both stores."""
+    text = str(path)
+    units = _utf16_units(text)
+    slug_units = [chr(unit) if _is_ascii_alnum_unit(unit) else "-" for unit in units]
+    if len(slug_units) > 200:
+        return f"{''.join(slug_units[:200])}-{_base36(_java_string_hash_code(units))}"
+    return "".join(slug_units)
+
+
+def legacy_pi_slug(path: Path) -> str:
+    """The Pi store's old recipe, kept read-only so old entries still merge in."""
     return str(path).replace("/", "-").lstrip("-")
 
 
@@ -124,12 +170,12 @@ def resolve_anchor() -> Anchor:
             check=True,
         )
     except (subprocess.CalledProcessError, OSError):
-        return Anchor(None, slugify(cwd), slugify(cwd))
+        return Anchor(None, claude_slug(cwd), claude_slug(cwd), cwd)
     common_directory = Path(completed.stdout.strip())
     if not common_directory.is_absolute():
         common_directory = cwd / common_directory
     main_checkout = common_directory.resolve().parent
-    return Anchor(main_checkout, slugify(main_checkout), slugify(cwd))
+    return Anchor(main_checkout, claude_slug(main_checkout), claude_slug(cwd), cwd)
 
 
 def state_root() -> Path:
@@ -165,7 +211,11 @@ def resolve_stores(anchor: Anchor) -> StorePaths:
         if anchor.cwd_slug != anchor.slug
         else None
     )
-    return StorePaths(claude, pi_root / anchor.slug, claude_cwd)
+    # Legacy Pi slug uses the same anchor basis as anchor.slug (main checkout, else cwd).
+    legacy_basis = anchor.main_checkout if anchor.main_checkout is not None else anchor.cwd
+    legacy_slug = legacy_pi_slug(legacy_basis)
+    pi_legacy = pi_root / legacy_slug if legacy_slug != anchor.slug else None
+    return StorePaths(claude, pi_root / anchor.slug, claude_cwd, pi_legacy)
 
 
 def write_envelope(envelope: Envelope) -> None:
@@ -340,8 +390,26 @@ def load_claude_entries(
     if stores.claude_cwd is not None:
         supplementary, more_warnings = load_store_entries(stores.claude_cwd, "claude")
         warnings.extend(more_warnings)
-        seen = {entry.file for entry in entries}
-        entries.extend(entry for entry in supplementary if entry.file not in seen)
+        # Identity (not basename): a cross-day re-record gets a fresh date digest.
+        seen = {_entry_identity(entry.file) for entry in entries}
+        entries.extend(
+            entry for entry in supplementary if _entry_identity(entry.file) not in seen
+        )
+    return entries, warnings
+
+
+def load_pi_entries(
+    stores: StorePaths,
+) -> tuple[list[MemoryEntry], list[dict[str, str]]]:
+    """Merges the current Pi store with the legacy-slug Pi store (read-only), identity-deduped."""
+    entries, warnings = load_store_entries(stores.pi, "pi")
+    if stores.pi_legacy is not None:
+        legacy_entries, legacy_warnings = load_store_entries(stores.pi_legacy, "pi")
+        warnings.extend(legacy_warnings)
+        seen = {_entry_identity(entry.file) for entry in entries}
+        entries.extend(
+            entry for entry in legacy_entries if _entry_identity(entry.file) not in seen
+        )
     return entries, warnings
 
 
@@ -360,6 +428,8 @@ def stores_data(stores: StorePaths) -> tuple[dict[str, object], list[dict[str, s
     probes: list[tuple[str, Path]] = [("claude", stores.claude), ("pi", stores.pi)]
     if stores.claude_cwd is not None:
         probes.append(("claude_cwd", stores.claude_cwd))
+    if stores.pi_legacy is not None:
+        probes.append(("pi_legacy", stores.pi_legacy))
     for label, store_dir in probes:
         entry: dict[str, object] = {"path": str(store_dir)}
         try:
@@ -383,11 +453,11 @@ def cmd_show(as_harness: str) -> Envelope:
     anchor = resolve_anchor()
     stores = resolve_stores(anchor)
     if as_harness == "pi":
-        own_entries, warnings = load_store_entries(stores.pi, "pi")
+        own_entries, warnings = load_pi_entries(stores)
         other_entries, other_warnings = load_claude_entries(stores)
     else:
         own_entries, warnings = load_claude_entries(stores)
-        other_entries, other_warnings = load_store_entries(stores.pi, "pi")
+        other_entries, other_warnings = load_pi_entries(stores)
     warnings.extend(other_warnings)
     store_info, store_warnings = stores_data(stores)
     warnings.extend(store_warnings)
@@ -434,15 +504,27 @@ def compose_markdown(
         dropped += 1
 
 
-def cmd_render(as_harness: str) -> Envelope:
+def cmd_render(as_harness: str, other_only: bool = False) -> Envelope:
     anchor = resolve_anchor()
     stores = resolve_stores(anchor)
     if as_harness == "pi":
-        own_entries, warnings = load_store_entries(stores.pi, "pi")
+        # Pi has no native memory of its own to duplicate against; --other-only is a no-op.
+        own_entries, warnings = load_pi_entries(stores)
         other_entries, other_warnings = load_claude_entries(stores)
     else:
         own_entries, warnings = load_claude_entries(stores)
-        other_entries, other_warnings = load_store_entries(stores.pi, "pi")
+        other_entries, other_warnings = load_pi_entries(stores)
+        if other_only:
+            # Omit whatever Claude Code's own native memory already covers (the cwd-slug
+            # store) — see docs/cross-harness-memory.md (Anchoring).
+            if stores.claude_cwd is not None:
+                own_entries = [
+                    entry
+                    for entry in own_entries
+                    if not Path(entry.path).is_relative_to(stores.claude_cwd)
+                ]
+            else:
+                own_entries = []
     warnings.extend(other_warnings)
     sections = [
         (SECTION_TITLES[(as_harness, True)], own_entries),
@@ -502,10 +584,28 @@ def entry_text(
     return "\n".join(lines) + "\n"
 
 
+_HEX8 = re.compile(r"^[0-9a-f]{8}$")
+
+
 def _entry_identity(file_basename: str) -> str:
-    """Strip the dated digest segment; the remainder (type, stem, raw-name
-    hash) is stable across days and unique per raw name."""
-    return file_basename[: -len(".md")].rsplit("_", 1)[0]
+    """Strip only the dated digest segment, and only when the filename has entry_file_name()'s
+    full {type}_{stem}_{hash8}_{date8}.md shape — verified via BOTH trailing segments being
+    exact 8-hex-char strings, not just the date digest alone: a native filename's own last
+    word could otherwise coincidentally look like one (e.g. ending "..._deadbeef.md") and
+    still falsely collapse onto another entry sharing just that prefix. The name-hash segment
+    is validated but never stripped — it is what disambiguates two distinct raw names that
+    happen to sanitize to the same stem (see entry_file_name()'s own docstring), so stripping
+    it too would reintroduce exactly that collision. Otherwise the whole basename IS its own
+    identity — e.g. feedback_workflow_bug.md and feedback_workflow_fix.md never collapse
+    onto a shared "feedback_workflow"."""
+    stem = file_basename[: -len(".md")]
+    without_date, _, date_digest = stem.rpartition("_")
+    if not (without_date and _HEX8.match(date_digest)):
+        return file_basename
+    stem_prefix, _, name_hash = without_date.rpartition("_")
+    if not (stem_prefix and _HEX8.match(name_hash)):
+        return file_basename
+    return without_date
 
 
 def _references_entry(index_line: str, file_name: str) -> bool:
@@ -668,6 +768,11 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument(
         "--as", dest="as_harness", required=True, choices=list(HARNESSES)
     )
+    render_parser.add_argument(
+        "--other-only",
+        action="store_true",
+        help="omit the caller's own section (Claude Code only — Pi always renders both)",
+    )
     show_parser = subcommands.add_parser(
         "show", help="list both stores' memory entries"
     )
@@ -683,7 +788,10 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--name", required=True)
     record_parser.add_argument("--description", required=True)
     record_parser.add_argument(
-        "--type", default="feedback", help="entry type: feedback or project"
+        "--type",
+        default="feedback",
+        choices=list(ENTRY_TYPES),
+        help="entry type: " + ", ".join(ENTRY_TYPES),
     )
     record_parser.add_argument("--body-file")
     record_parser.add_argument("--store", choices=list(HARNESSES))
@@ -694,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "render":
-            write_envelope(cmd_render(args.as_harness))
+            write_envelope(cmd_render(args.as_harness, args.other_only))
         elif args.command == "show":
             write_envelope(cmd_show(args.as_harness))
         else:
