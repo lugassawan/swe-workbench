@@ -59,6 +59,9 @@ function escapeRegExp(value: string): string {
  * recover may pass through a released/foreign lease; close authenticates through the normal
  * owner/session check, so it is deliberately absent (mirrors the Claude-side decision).
  */
+const ABANDON_COMMAND = new RegExp(
+  `^swe-workbench-handoff abandon "?${UUID_PATTERN.source}"? --source-stopped ${CHECKED_PIPE}$`,
+);
 const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
@@ -75,11 +78,13 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff recover --from "?claude"? --source-stopped ${CHECKED_PIPE}$`,
   ),
+  new RegExp(`^swe-workbench-handoff list ${CHECKED_PIPE}$`),
+  ABANDON_COMMAND,
 ];
 
-function isControlCommand(command: string): boolean {
+function controlCommand(command: string): RegExp | undefined {
   const normalized = command.replace(/\\\n/g, " ").split(/\s+/).filter(Boolean).join(" ");
-  return CONTROL_COMMANDS.some((pattern) => pattern.test(normalized));
+  return CONTROL_COMMANDS.find((pattern) => pattern.test(normalized));
 }
 
 interface RuntimeResult {
@@ -102,6 +107,7 @@ interface GuardData {
   reason?: unknown;
   instruction?: unknown;
   worktree_root?: unknown;
+  receiver_command?: unknown;
 }
 
 function parseGuardDecision(stdout: string): GuardData | undefined {
@@ -134,13 +140,29 @@ function safeWorktreeRoot(value: unknown): string | undefined {
   return undefined;
 }
 
+function safeReceiverCommand(value: unknown): string | undefined {
+  if (
+    typeof value === "string" &&
+    Array.from(value).length <= 4096 &&
+    Array.from(value).every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function blockReason(data: GuardData | undefined, fallback: string): string {
   if (data === undefined) return fallback;
   const reason = typeof data.reason === "string" ? data.reason : "";
   const instruction = typeof data.instruction === "string" ? data.instruction : "";
   const worktreeRoot = safeWorktreeRoot(data.worktree_root);
+  const receiverCommand = safeReceiverCommand(data.receiver_command);
   const base = reason && instruction ? `${reason} — ${instruction}` : instruction || reason || fallback;
-  return worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base;
+  const receiver = receiverCommand ? ` Start the receiver with: ${receiverCommand}` : "";
+  return `${worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base}${receiver}`;
 }
 
 export function registerHandoff(pi: ExtensionAPI, root: string): void {
@@ -153,9 +175,12 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
     const toolName = (event as { toolName?: unknown }).toolName;
     if (toolName !== "bash" && toolName !== "write" && toolName !== "edit") return undefined;
 
+    let abandonControl = false;
     if (toolName === "bash") {
       const command = (event.input as { command?: unknown } | undefined)?.command;
-      if (typeof command === "string" && isControlCommand(command)) return undefined;
+      const control = typeof command === "string" ? controlCommand(command) : undefined;
+      abandonControl = control === ABANDON_COMMAND;
+      if (control !== undefined && !abandonControl) return undefined;
     }
 
     // emitToolCall has no try/catch around handler bodies, and this is the first-registered
@@ -179,8 +204,16 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
       const result = await runHandoffRuntime(runtimePath, args, ctx.cwd);
       const data = parseGuardDecision(result.stdout);
 
-      if (result.code === 0 && data !== undefined && data.decision === "allow") return undefined;
+      if (result.code === 0 && data !== undefined && data.decision === "allow") {
+        if (abandonControl) {
+          return { block: true, reason: "handoff abandon requires a released lease" };
+        }
+        return undefined;
+      }
       if (data !== undefined && data.decision === "deny") {
+        if (abandonControl && typeof data.reason === "string" && data.reason.includes("released")) {
+          return undefined;
+        }
         return { block: true, reason: blockReason(data, "handoff lease denies mutation from this Pi session") };
       }
       // Startup failure = python3 missing (spawn ENOENT) or a startup crash (non-zero exit,

@@ -26,6 +26,9 @@ _CLAUDE_SESSION_ARGUMENT = re.escape(
     '"${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}"'
 )
 _CLAUDE_SESSION_ENV_ARGUMENT = re.escape("CLAUDE_CODE_SESSION_ID")
+_ABANDON_COMMAND = re.compile(
+    rf'^swe-workbench-handoff abandon "?{_UUID}"? --source-stopped {_CHECKED_PIPE}$'
+)
 _CONTROL_COMMANDS = (
     re.compile(
         rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
@@ -42,6 +45,8 @@ _CONTROL_COMMANDS = (
     re.compile(
         rf'^swe-workbench-handoff recover --from "?pi"? --source-stopped {_CHECKED_PIPE}$'
     ),
+    re.compile(rf"^swe-workbench-handoff list {_CHECKED_PIPE}$"),
+    _ABANDON_COMMAND,
 )
 
 
@@ -78,16 +83,11 @@ def _working_directory(payload: dict[str, object]) -> Path:
     return Path.cwd()
 
 
-def _safe_worktree_root(value: object) -> str | None:
-    """Validate an untrusted worktree_root before it reaches stderr.
-
-    The path is decoded with ``surrogateescape`` upstream, so treat it as untrusted text:
-    require a bounded string free of control characters. Validation failure omits the
-    clause; it never raises.
-    """
+def _safe_terminal_text(value: object, *, absolute_path: bool = False) -> str | None:
+    """Validate untrusted runtime text before it reaches stderr."""
     if (
         isinstance(value, str)
-        and value.startswith("/")
+        and (not absolute_path or value.startswith("/"))
         and len(value) <= 4096
         and all(ord(character) >= 32 and ord(character) != 127 for character in value)
     ):
@@ -95,17 +95,25 @@ def _safe_worktree_root(value: object) -> str | None:
     return None
 
 
-def _is_control_command(payload: dict[str, object]) -> bool:
+def _safe_worktree_root(value: object) -> str | None:
+    return _safe_terminal_text(value, absolute_path=True)
+
+
+def _safe_receiver_command(value: object) -> str | None:
+    return _safe_terminal_text(value)
+
+
+def _control_command(payload: dict[str, object]) -> re.Pattern[str] | None:
     if payload.get("tool_name") != "Bash":
-        return False
+        return None
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
-        return False
+        return None
     command = tool_input.get("command")
     if not isinstance(command, str):
-        return False
+        return None
     normalized = " ".join(command.replace("\\\n", " ").split())
-    return any(pattern.fullmatch(normalized) for pattern in _CONTROL_COMMANDS)
+    return next((pattern for pattern in _CONTROL_COMMANDS if pattern.fullmatch(normalized)), None)
 
 
 def _block(message: str) -> None:
@@ -117,7 +125,7 @@ def _with_worktree_clause(message: str, worktree_root: str | None) -> str:
     return f"{message} (worktree: {worktree_root})" if worktree_root else message
 
 
-def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None] | None:
+def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None, str | None] | None:
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError:
@@ -144,14 +152,17 @@ def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None
         else None
     )
     safe_worktree_root = _safe_worktree_root(data.get("worktree_root"))
-    return decision, reason, safe_checkpoint_id, safe_target_harness, safe_worktree_root
+    safe_receiver_command = _safe_receiver_command(data.get("receiver_command"))
+    return decision, reason, safe_checkpoint_id, safe_target_harness, safe_worktree_root, safe_receiver_command
 
 
 def main() -> None:
     payload = _load_payload()
     if payload is None or payload.get("tool_name") not in _MUTATING_TOOLS:
         return
-    if _is_control_command(payload):
+    control_command = _control_command(payload)
+    abandon_command = control_command is _ABANDON_COMMAND
+    if control_command is not None and not abandon_command:
         return
 
     runtime = _runtime_path()
@@ -178,18 +189,35 @@ def main() -> None:
 
     parsed = _decision(result.stdout)
     if result.returncode == 0 and parsed is not None and parsed[0] == "allow":
+        if abandon_command:
+            _block("handoff abandon requires a released lease")
         return
 
     if parsed is not None and parsed[0] == "deny":
-        reason, checkpoint_id, target_harness, worktree_root = parsed[1:]
+        reason, checkpoint_id, target_harness, worktree_root, receiver_command = parsed[1:]
+        if abandon_command and "released" in reason:
+            return
         if "released" in reason:
             if checkpoint_id is None or target_harness is None:
+                if "swept" in reason and checkpoint_id is not None:
+                    _block(
+                        "handoff ownership is released; clear the stale lease with "
+                        f"`swe-workbench-handoff abandon {checkpoint_id} --source-stopped "
+                        "| swe-workbench-result-check swb.handoff/1`"
+                    )
                 _block("handoff ownership is released but its receiver state is invalid")
-            command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
+            instruction = (
+                f"/{'handoff' if target_harness == 'pi' else 'swe-workbench:handoff'} "
+                f"resume {checkpoint_id}"
+            )
+            receiver = (
+                f"start the receiver with `{receiver_command}`"
+                if receiver_command is not None
+                else f"start a {target_harness} receiver in this worktree, then run `{instruction}`"
+            )
             _block(
                 _with_worktree_clause(
-                    f"handoff ownership is released to {target_harness}; "
-                    f"run `{command_name} resume {checkpoint_id}` in the receiver",
+                    f"handoff ownership is released to {target_harness}; {receiver}",
                     worktree_root,
                 )
             )

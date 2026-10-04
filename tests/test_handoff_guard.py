@@ -1,6 +1,7 @@
 """Behavior tests for the Claude PreToolUse handoff guard (hooks/handoff_guard.py)."""
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -111,8 +112,8 @@ def test_blocks_mutating_tools_under_a_released_lease(tmp_path):
         result = _run_hook(_payload(repo, tool_name), state_dir=state_dir)
         assert result.returncode == 2, f"{tool_name}: {result.stderr}"
         assert "BLOCKED:" in result.stderr
-        assert f"/handoff resume {checkpoint_id}" in result.stderr
-        assert str(repo.resolve()) in result.stderr
+        assert shlex.join(["cd", "--", str(repo.resolve())]) in result.stderr
+        assert shlex.join(["pi", f"/handoff resume {checkpoint_id}"]) in result.stderr
 
 
 def test_released_lease_names_the_claude_receiver_command(tmp_path):
@@ -261,6 +262,60 @@ def test_allows_exact_pi_source_recovery_pipeline_through_ownership_gate(tmp_pat
     }
 
     assert _run_hook(payload, state_dir=state_dir).returncode == 0
+
+
+def test_allows_exact_list_and_abandon_pipelines_through_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+
+    payload["tool_input"] = {"command": "swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1"}
+    assert _run_hook(payload, state_dir=state_dir).returncode == 0
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff abandon "{checkpoint_id}" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+    assert _run_hook(payload, state_dir=state_dir).returncode == 0
+
+
+def test_swept_released_lease_names_the_abandon_remedy(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {"command": "touch blocked"}
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "clear the stale lease" in result.stderr
+    assert f"abandon {checkpoint_id}" in result.stderr
+
+
+def test_blocks_exact_abandon_pipeline_under_an_active_receiver_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    resumed = _runtime(
+        "resume", checkpoint_id, "--as", "claude", "--receiver-session", "sess-1", cwd=repo, state_dir=state_dir
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    payload = _payload(repo, "Bash", session_id="different-session")
+    payload["tool_input"] = {
+        "command": f'swe-workbench-handoff abandon "{checkpoint_id}" --source-stopped | swe-workbench-result-check swb.handoff/1'
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
 
 
 def test_blocks_close_pipeline_under_a_released_lease(tmp_path):

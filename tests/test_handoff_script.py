@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import stat
 import subprocess
 import threading
@@ -70,7 +71,7 @@ def test_help_documents_every_subcommand():
 
     assert result.returncode == 0
     assert "swe-workbench-handoff" in result.stdout
-    for subcommand in ("create", "show", "status-segment", "resume", "recover", "close", "guard"):
+    for subcommand in ("create", "show", "list", "status-segment", "resume", "recover", "close", "abandon", "guard"):
         assert subcommand in result.stdout
 
 
@@ -176,6 +177,344 @@ def test_create_uses_canonical_repository_and_worktree_keys(tmp_path):
     assert checkpoint["repo_key"] == expected_repo_key
     assert checkpoint["worktree_key"] == expected_worktree_key
     assert checkpoint["worktree_root"] == str(repo.resolve())
+
+
+def test_create_in_linked_worktree_uses_linked_root_and_distinct_worktree_key(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked tree's"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+
+    main = _create_checkpoint(repo, state_dir, _create_input("linked-main"))
+    linked_result = _create_checkpoint(linked, state_dir, _create_input("linked-worktree"))
+    main_checkpoint = _checkpoint(state_dir, main["data"]["checkpoint_id"])
+    linked_checkpoint = _checkpoint(state_dir, linked_result["data"]["checkpoint_id"])
+
+    assert linked_result["data"]["worktree_root"] == str(linked.resolve())
+    assert linked_checkpoint["worktree_root"] == str(linked.resolve())
+    assert linked_checkpoint["worktree_key"] != main_checkpoint["worktree_key"]
+    assert linked_checkpoint["repo_key"] == main_checkpoint["repo_key"]
+
+
+def test_released_guard_returns_copyable_receiver_command_for_quoted_linked_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked tree's"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(linked, state_dir, "linked-receiver")
+
+    result = _run_handoff("guard", "--as", "claude", cwd=linked, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["data"]["receiver_command"] == (
+        shlex.join(["cd", "--", str(linked.resolve())])
+        + " && "
+        + shlex.join(["pi", f"/handoff resume {checkpoint_id}"])
+    )
+
+
+def test_released_guard_omits_unsafe_receiver_command_for_control_character_root(tmp_path):
+    repo = tmp_path / "repo\nweird"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "unsafe-receiver")
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    assert "receiver_command" not in json.loads(result.stdout)["data"]
+
+
+def test_list_reports_leases_for_main_and_all_live_linked_worktrees(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked_one = tmp_path / "linked one"
+    linked_two = tmp_path / "linked two"
+    for linked in (linked_one, linked_two):
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+            check=True,
+            env=dict(_CLEAN_ENV),
+        )
+    state_dir = tmp_path / "state"
+
+    main_id = _planned_checkpoint(repo, state_dir, "list-main")
+    assert _resume(repo, state_dir, main_id, "--as", "pi", "--receiver-session", "main-session").returncode == 0
+    linked_one_id = _planned_checkpoint(linked_one, state_dir, "list-linked-one")
+    linked_two_id = _planned_checkpoint(linked_two, state_dir, "list-linked-two")
+    assert _resume(
+        linked_two, state_dir, linked_two_id, "--as", "pi", "--receiver-session", "linked-session"
+    ).returncode == 0
+
+    main_result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+    linked_result = _run_handoff("list", cwd=linked_one, env=_env_for(state_dir))
+
+    assert main_result.returncode == 0, main_result.stderr
+    assert linked_result.returncode == 0, linked_result.stderr
+    rows = json.loads(main_result.stdout)["data"]["leases"]
+    assert json.loads(linked_result.stdout)["data"]["leases"] == rows
+    assert [row["worktree_root"] for row in rows] == sorted(row["worktree_root"] for row in rows)
+    assert {frozenset(row) for row in rows} == {
+        frozenset({"worktree_root", "checkpoint_id", "checkpoint_status", "owner_harness", "receiver_session_ref"})
+    }
+    assert {row["checkpoint_id"] for row in rows} == {main_id, linked_one_id, linked_two_id}
+    assert {row["worktree_root"] for row in rows} == {
+        str(repo.resolve()), str(linked_one.resolve()), str(linked_two.resolve())
+    }
+
+
+def test_list_excludes_foreign_repository_state(tmp_path):
+    repo = tmp_path / "repo"
+    other_repo = tmp_path / "other-repo"
+    repo.mkdir()
+    other_repo.mkdir()
+    _initialize_repo(repo)
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    own_id = _planned_checkpoint(repo, state_dir, "list-own")
+    _planned_checkpoint(other_repo, state_dir, "list-foreign")
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    rows = json.loads(result.stdout)["data"]["leases"]
+    assert [row["checkpoint_id"] for row in rows] == [own_id]
+    assert rows[0]["worktree_root"] == str(repo.resolve())
+
+
+def test_list_does_not_trust_stale_checkpoint_worktree_path(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(linked, state_dir, "list-stale")
+    _rewrite_checkpoint_with_valid_hash(
+        state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(worktree_root=str(tmp_path / "invented"))
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "remove", "--force", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"]["leases"] == []
+
+
+def test_list_reports_missing_checkpoint_and_abandon_releases_its_matching_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "swept-checkpoint-lease")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+
+    listed = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+    abandoned = _run_handoff(
+        "abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
+    retried = _run_handoff(
+        "abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
+
+    assert listed.returncode == 0, listed.stderr
+    assert json.loads(listed.stdout)["data"]["leases"] == [{
+        "worktree_root": str(repo.resolve()),
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_status": "missing",
+        "owner_harness": "released",
+        "receiver_session_ref": None,
+    }]
+    assert abandoned.returncode == 0, abandoned.stderr
+    assert json.loads(abandoned.stdout)["data"]["status"] == "abandoned"
+    assert retried.returncode == 0, retried.stderr
+    assert json.loads(retried.stdout)["data"]["already_abandoned"] is True
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_list_fails_closed_on_corrupt_matching_lease_or_checkpoint(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "list-corrupt")
+    next(state_dir.glob("workspaces/*/*/lease.json")).write_text("not-json{")
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "lease" in result.stderr.lower()
+
+
+def test_abandon_requires_source_stopped_without_mutating_state(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-acknowledgement")
+
+    result = _run_handoff("abandon", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert _lease_for_checkpoint(state_dir, checkpoint_id)["checkpoint_id"] == checkpoint_id
+    assert _checkpoint(state_dir, checkpoint_id)["status"] == "open"
+
+
+def test_abandon_released_lease_records_terminal_state_before_release(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-released")
+
+    result = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"] == {
+        "checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": False
+    }
+    checkpoint = _checkpoint(state_dir, checkpoint_id)
+    assert checkpoint["status"] == "abandoned"
+    assert checkpoint["abandoned_at"]
+    assert checkpoint["abandon_reason"] == "source_stopped"
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_abandon_active_receiver_lease_is_break_glass_and_keeps_close_strict(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-active")
+    assert _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "owner").returncode == 0
+
+    abandoned = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    closed = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "owner", cwd=repo, env=_env_for(state_dir)
+    )
+
+    assert abandoned.returncode == 0, abandoned.stderr
+    assert closed.returncode != 0
+    assert "lease" in closed.stderr
+
+
+def test_abandon_rejects_stale_checkpoint_without_releasing_newer_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    stale_id = _planned_checkpoint(repo, state_dir, "abandon-stale")
+    current_id = _planned_checkpoint(repo, state_dir, "abandon-current")
+
+    result = _run_handoff("abandon", stale_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert _lease_for_checkpoint(state_dir, current_id)["checkpoint_id"] == current_id
+    assert _checkpoint(state_dir, stale_id)["status"] == "open"
+
+
+def test_abandon_is_idempotent_after_release_and_after_record_before_unlink(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-idempotent")
+
+    first = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    retry = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert first.returncode == 0, first.stderr
+    assert json.loads(retry.stdout)["data"]["already_abandoned"] is True
+
+    pending_id = _planned_checkpoint(repo, state_dir, "abandon-recorded")
+    _rewrite_checkpoint_with_valid_hash(
+        state_dir,
+        pending_id,
+        lambda checkpoint: checkpoint.update(
+            status="abandoned", abandoned_at="2026-01-01T00:00:00Z", abandon_reason="source_stopped"
+        ),
+    )
+    recorded_retry = _run_handoff("abandon", pending_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert recorded_retry.returncode == 0, recorded_retry.stderr
+    assert json.loads(recorded_retry.stdout)["data"]["already_abandoned"] is True
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_abandoned_checkpoint_cannot_resume_seed_recovery_or_satisfy_create_idempotency(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-terminal")
+    assert _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)).returncode == 0
+
+    resumed = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "receiver")
+    recovered = _run_handoff("recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    recreated = _create_checkpoint(repo, state_dir, _create_input("abandon-terminal"))
+
+    assert resumed.returncode != 0
+    assert recreated["data"]["checkpoint_id"] != checkpoint_id
+    salvage = _checkpoint(state_dir, json.loads(recovered.stdout)["data"]["checkpoint_id"])
+    assert salvage["previous_checkpoint_id"] is None
+    assert salvage["goal"] == ""
+
+
+def test_load_checkpoint_rejects_unknown_status_or_missing_terminal_metadata(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-validation")
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(status="mystery"))
+    unknown = _run_handoff("show", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(status="abandoned"))
+    missing_metadata = _run_handoff("show", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+
+    assert unknown.returncode != 0
+    assert missing_metadata.returncode != 0
+
+
+def test_cleanup_reclaims_abandoned_checkpoint_after_24_hours(tmp_path):
+    repo = tmp_path / "repo"
+    other_repo = tmp_path / "other-repo"
+    repo.mkdir()
+    other_repo.mkdir()
+    _initialize_repo(repo)
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-cleanup")
+    assert _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)).returncode == 0
+    _backdate(state_dir, checkpoint_id, "abandoned_at", hours=25)
+
+    _create_checkpoint(other_repo, state_dir, _create_input("abandon-cleanup-trigger"))
+
+    assert not list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
 
 
 def test_create_persists_only_changed_path_metadata_and_fingerprint_changes_with_content(tmp_path):
@@ -872,6 +1211,23 @@ def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
         assert envelope["data"]["target_harness"] == "pi"
         assert envelope["data"]["instruction"] == f"/handoff resume {checkpoint_id}"
         assert envelope["data"]["worktree_root"] == str(repo.resolve())
+
+
+def test_guard_returns_a_released_deny_when_the_lease_checkpoint_was_swept(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "swept-guard-lease")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    data = json.loads(result.stdout)["data"]
+    assert data["decision"] == "deny"
+    assert "released" in data["reason"]
+    assert data["checkpoint_id"] == checkpoint_id
 
 
 def test_guard_allows_only_the_bound_owner_session(tmp_path):

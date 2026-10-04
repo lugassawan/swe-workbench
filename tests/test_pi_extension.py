@@ -3607,6 +3607,8 @@ out.resumeDegradedPipeline = await toolCall(config.repos.released, "bash", { com
 out.resumeEnvPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeEnvPipeline });
 out.resumeNearMissEnvPipeline = await toolCall(config.repos.released, "bash", { command: config.resumeNearMissEnvPipeline });
 out.recoverPipeline = await toolCall(config.repos.released, "bash", { command: config.recoverPipeline });
+out.listPipeline = await toolCall(config.repos.released, "bash", { command: config.listPipeline });
+out.abandonPipeline = await toolCall(config.repos.released, "bash", { command: config.abandonPipeline });
 out.injectedPipeline = await toolCall(config.repos.released, "bash", { command: config.injectedPipeline });
 out.closePipeline = await toolCall(config.repos.released, "bash", { command: config.closePipeline });
 
@@ -3615,6 +3617,7 @@ out.ownedOtherSession = await toolCall(
   config.repos.owned, "bash", { command: "ls -la" },
   { sessionManager: { getSessionId: () => "pi-other-session" } },
 );
+out.ownedAbandon = await toolCall(config.repos.owned, "bash", { command: config.ownedAbandonPipeline });
 out.foreignOwner = await toolCall(config.repos.foreign, "bash", { command: "ls -la" });
 
 fs.writeFileSync(config.leasePath, "not-json{");
@@ -3793,6 +3796,15 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
             'swe-workbench-handoff recover --from "claude" --source-stopped '
             "| swe-workbench-result-check swb.handoff/1"
         ),
+        "listPipeline": "swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1",
+        "abandonPipeline": (
+            f'swe-workbench-handoff abandon "{released_id}" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        ),
+        "ownedAbandonPipeline": (
+            f'swe-workbench-handoff abandon "{owned_id}" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        ),
         "injectedPipeline": (
             f'swe-workbench-handoff resume "{released_id}" --as pi '
             f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1; touch /tmp/nope'
@@ -3853,7 +3865,9 @@ def test_handoff_blocks_mutating_tools_under_a_released_lease(tmp_path_factory):
         assert out[key]["block"] is True, f"{key}: {out[key]}"
     assert "/handoff resume" in out["releasedBash"]["reason"]
     assert result["repos"]["released"] in out["releasedBash"]["reason"]
+    assert "Start the receiver with: cd --" in out["releasedBash"]["reason"]
     assert out.get("releasedRead") is None
+    assert out["ownedAbandon"]["block"] is True
 
 
 @requires_node
@@ -3862,6 +3876,8 @@ def test_handoff_permits_only_the_exact_lifecycle_pipelines(tmp_path_factory):
     assert out.get("resumePipeline") is None
     assert out.get("resumeDegradedPipeline") is None, "degraded recovery is the only resume path for salvage checkpoints"
     assert out.get("recoverPipeline") is None
+    assert out.get("listPipeline") is None
+    assert out.get("abandonPipeline") is None
     assert out["injectedPipeline"]["block"] is True
     assert out["closePipeline"]["block"] is True
 

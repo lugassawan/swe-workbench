@@ -68,9 +68,9 @@ const EXIT_PLAN_MODE_SECTION =
   "is unchanged.";
 
 const WORKTREE_SECTION =
-  "Pi has no session-anchoring tool (no `EnterWorktree`/`ExitWorktree` equivalent). Where " +
-  "prose offers `EnterWorktree` with a `cd <absolute-path>` fallback, on Pi the `cd` branch " +
-  "is *the* mechanism, not a last resort — always use it.";
+  "Pi has no session-anchoring tool (no `EnterWorktree`/`ExitWorktree` equivalent). Launch Pi " +
+  "from the target worktree; a `cd` inside one Bash subprocess does not re-anchor an existing " +
+  "session or its handoff lease.";
 
 // The task-list paragraph is verbatim from superpowers:using-superpowers' Pi reference
 // (references/pi-tools.md), so a Pi session never invents a capability Pi core does not ship.
