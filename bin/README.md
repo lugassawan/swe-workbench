@@ -19,7 +19,8 @@ The scripts in this directory that carry a `#!/usr/bin/env python3` shebang inst
 `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
 `swe-workbench-handoff`, `swe-workbench-lsp`, `swe-workbench-memory`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
-`swe-workbench-preflight-commit`, and `swe-workbench-result-check`. `comment-scan` is a pure
+`swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, and
+`swe-workbench-result-check`. `comment-scan` is a pure
 diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md` for the
 canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON and
 multi-call state-machine handling (422 retry, read-your-write confirmation) more than bash's
