@@ -810,6 +810,10 @@ def abandon_checkpoint(checkpoint_id: str, source_stopped: bool) -> Envelope:
             lease = load_lease(lease_path.parent)
             if lease is not None and lease["checkpoint_id"] == checkpoint_id:
                 matches.append(lease_path.parent)
+        if not matches:
+            return Envelope(
+                "ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": True}, []
+            )
         if len(matches) != 1:
             raise
         workspace_directory = matches[0]
@@ -1295,6 +1299,7 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
                     {
                         "decision": "deny",
                         "reason": "handoff lease released; its checkpoint has been swept",
+                        "instruction": "clear the stale lease with the documented abandon pipeline",
                         "checkpoint_id": checkpoint_id,
                         "worktree_root": worktree_root,
                     },

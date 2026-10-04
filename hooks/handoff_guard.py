@@ -199,6 +199,12 @@ def main() -> None:
             return
         if "released" in reason:
             if checkpoint_id is None or target_harness is None:
+                if "swept" in reason:
+                    _block(
+                        "handoff ownership is released; clear the stale lease with "
+                        "`swe-workbench-handoff abandon <checkpoint-id> --source-stopped "
+                        "| swe-workbench-result-check swb.handoff/1`"
+                    )
                 _block("handoff ownership is released but its receiver state is invalid")
             instruction = (
                 f"/{'handoff' if target_harness == 'pi' else 'swe-workbench:handoff'} "

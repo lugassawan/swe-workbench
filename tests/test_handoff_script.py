@@ -335,6 +335,9 @@ def test_list_reports_missing_checkpoint_and_abandon_releases_its_matching_lease
     abandoned = _run_handoff(
         "abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)
     )
+    retried = _run_handoff(
+        "abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
 
     assert listed.returncode == 0, listed.stderr
     assert json.loads(listed.stdout)["data"]["leases"] == [{
@@ -346,6 +349,8 @@ def test_list_reports_missing_checkpoint_and_abandon_releases_its_matching_lease
     }]
     assert abandoned.returncode == 0, abandoned.stderr
     assert json.loads(abandoned.stdout)["data"]["status"] == "abandoned"
+    assert retried.returncode == 0, retried.stderr
+    assert json.loads(retried.stdout)["data"]["already_abandoned"] is True
     assert not list(state_dir.glob("workspaces/*/*/lease.json"))
 
 

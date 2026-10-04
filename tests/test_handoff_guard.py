@@ -282,6 +282,22 @@ def test_allows_exact_list_and_abandon_pipelines_through_a_released_lease(tmp_pa
     assert _run_hook(payload, state_dir=state_dir).returncode == 0
 
 
+def test_swept_released_lease_names_the_abandon_remedy(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+    payload = _payload(repo, "Bash")
+    payload["tool_input"] = {"command": "touch blocked"}
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "clear the stale lease" in result.stderr
+    assert "abandon <checkpoint-id>" in result.stderr
+
+
 def test_blocks_exact_abandon_pipeline_under_an_active_receiver_lease(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)
