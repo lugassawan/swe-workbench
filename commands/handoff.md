@@ -70,7 +70,7 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
    printf '%s\n' "$HANDOFF_RESULT"
    ```
 
-3. Read `data.receiver_command` from the validated envelope and print it verbatim. It launches a new receiver session in the recorded worktree; it does not re-anchor the already-running source session.
+3. Read `data.receiver_command` from the validated envelope and print it verbatim. It launches a new receiver session in the recorded worktree; it does not re-anchor the already-running source session. If it is absent, present the validated `data.worktree_root`, `data.target_harness`, and checkpoint id as separate manual launch instructions: start a new receiver from that root, then use the documented harness-specific `resume` pipeline. Never interpolate an unsafe root into a Bash command.
 
 4. Print: **`STOP: the source harness must not mutate this worktree after checkpoint creation; continue only in the receiver.`** Then stop. Do not run another mutating tool. The ownership hook enforces this invariant.
 

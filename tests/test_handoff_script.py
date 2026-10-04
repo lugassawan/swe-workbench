@@ -323,6 +323,32 @@ def test_list_does_not_trust_stale_checkpoint_worktree_path(tmp_path):
     assert json.loads(result.stdout)["data"]["leases"] == []
 
 
+def test_list_reports_missing_checkpoint_and_abandon_releases_its_matching_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "swept-checkpoint-lease")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+
+    listed = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+    abandoned = _run_handoff(
+        "abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)
+    )
+
+    assert listed.returncode == 0, listed.stderr
+    assert json.loads(listed.stdout)["data"]["leases"] == [{
+        "worktree_root": str(repo.resolve()),
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_status": "missing",
+        "owner_harness": "released",
+        "receiver_session_ref": None,
+    }]
+    assert abandoned.returncode == 0, abandoned.stderr
+    assert json.loads(abandoned.stdout)["data"]["status"] == "abandoned"
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
 def test_list_fails_closed_on_corrupt_matching_lease_or_checkpoint(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

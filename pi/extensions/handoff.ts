@@ -81,9 +81,9 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
   ),
 ];
 
-function isControlCommand(command: string): boolean {
+function controlCommand(command: string): RegExp | undefined {
   const normalized = command.replace(/\\\n/g, " ").split(/\s+/).filter(Boolean).join(" ");
-  return CONTROL_COMMANDS.some((pattern) => pattern.test(normalized));
+  return CONTROL_COMMANDS.find((pattern) => pattern.test(normalized));
 }
 
 interface RuntimeResult {
@@ -174,9 +174,12 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
     const toolName = (event as { toolName?: unknown }).toolName;
     if (toolName !== "bash" && toolName !== "write" && toolName !== "edit") return undefined;
 
+    let abandonControl = false;
     if (toolName === "bash") {
       const command = (event.input as { command?: unknown } | undefined)?.command;
-      if (typeof command === "string" && isControlCommand(command)) return undefined;
+      const control = typeof command === "string" ? controlCommand(command) : undefined;
+      abandonControl = control === CONTROL_COMMANDS.at(-1);
+      if (control !== undefined && !abandonControl) return undefined;
     }
 
     // emitToolCall has no try/catch around handler bodies, and this is the first-registered
@@ -202,6 +205,9 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
 
       if (result.code === 0 && data !== undefined && data.decision === "allow") return undefined;
       if (data !== undefined && data.decision === "deny") {
+        if (abandonControl && typeof data.reason === "string" && data.reason.includes("released")) {
+          return undefined;
+        }
         return { block: true, reason: blockReason(data, "handoff lease denies mutation from this Pi session") };
       }
       // Startup failure = python3 missing (spawn ENOENT) or a startup crash (non-zero exit,

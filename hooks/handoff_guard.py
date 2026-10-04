@@ -100,17 +100,17 @@ def _safe_receiver_command(value: object) -> str | None:
     return _safe_terminal_text(value)
 
 
-def _is_control_command(payload: dict[str, object]) -> bool:
+def _control_command(payload: dict[str, object]) -> re.Pattern[str] | None:
     if payload.get("tool_name") != "Bash":
-        return False
+        return None
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
-        return False
+        return None
     command = tool_input.get("command")
     if not isinstance(command, str):
-        return False
+        return None
     normalized = " ".join(command.replace("\\\n", " ").split())
-    return any(pattern.fullmatch(normalized) for pattern in _CONTROL_COMMANDS)
+    return next((pattern for pattern in _CONTROL_COMMANDS if pattern.fullmatch(normalized)), None)
 
 
 def _block(message: str) -> None:
@@ -157,7 +157,9 @@ def main() -> None:
     payload = _load_payload()
     if payload is None or payload.get("tool_name") not in _MUTATING_TOOLS:
         return
-    if _is_control_command(payload):
+    control_command = _control_command(payload)
+    abandon_command = control_command is _CONTROL_COMMANDS[-1]
+    if control_command is not None and not abandon_command:
         return
 
     runtime = _runtime_path()
@@ -188,6 +190,8 @@ def main() -> None:
 
     if parsed is not None and parsed[0] == "deny":
         reason, checkpoint_id, target_harness, worktree_root, receiver_command = parsed[1:]
+        if abandon_command and "released" in reason:
+            return
         if "released" in reason:
             if checkpoint_id is None or target_harness is None or receiver_command is None:
                 _block("handoff ownership is released but its receiver state is invalid")

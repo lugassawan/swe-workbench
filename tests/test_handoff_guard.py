@@ -282,6 +282,26 @@ def test_allows_exact_list_and_abandon_pipelines_through_a_released_lease(tmp_pa
     assert _run_hook(payload, state_dir=state_dir).returncode == 0
 
 
+def test_blocks_exact_abandon_pipeline_under_an_active_receiver_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    resumed = _runtime(
+        "resume", checkpoint_id, "--as", "claude", "--receiver-session", "sess-1", cwd=repo, state_dir=state_dir
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    payload = _payload(repo, "Bash", session_id="different-session")
+    payload["tool_input"] = {
+        "command": f'swe-workbench-handoff abandon "{checkpoint_id}" --source-stopped | swe-workbench-result-check swb.handoff/1'
+    }
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
+
+
 def test_blocks_close_pipeline_under_a_released_lease(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

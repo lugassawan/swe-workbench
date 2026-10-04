@@ -800,10 +800,28 @@ def abandon_checkpoint(checkpoint_id: str, source_stopped: bool) -> Envelope:
         raise InputError("abandon requires --source-stopped confirming the capable session stopped")
     workspace = resolve_workspace()
     paths = StatePaths.from_environment()
-    workspace_directory, checkpoint_path, checkpoint = find_repository_checkpoint(
-        paths, workspace.repo_key, checkpoint_id
-    )
-    with workspace_flock(workspace_directory, "lease.lock"):
+    try:
+        workspace_directory, checkpoint_path, checkpoint = find_repository_checkpoint(
+            paths, workspace.repo_key, checkpoint_id
+        )
+    except StorageError:
+        matches = []
+        for lease_path in sorted((paths.root / "workspaces" / workspace.repo_key).glob("*/lease.json")):
+            lease = load_lease(lease_path.parent)
+            if lease is not None and lease["checkpoint_id"] == checkpoint_id:
+                matches.append(lease_path.parent)
+        if len(matches) != 1:
+            raise
+        workspace_directory = matches[0]
+        with workspace_flock(workspace_directory, "lease.lock"):
+            lease = load_lease(workspace_directory)
+            if lease is None or lease["checkpoint_id"] != checkpoint_id:
+                raise InputError(f"cannot abandon stale checkpoint {checkpoint_id}")
+            (workspace_directory / "lease.json").unlink(missing_ok=True)
+            fsync_directory(workspace_directory)
+        run_cleanup(paths)
+        return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": False}, [])
+    with workspace_flock(workspace_directory, "lease.lock"): 
         checkpoint = load_checkpoint(checkpoint_path)
         lease = load_lease(workspace_directory)
         if checkpoint["status"] == "abandoned":
@@ -876,14 +894,12 @@ def list_handoffs() -> Envelope:
             continue
         checkpoint_id = str(lease["checkpoint_id"])
         checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
-        if not checkpoint_path.is_file():
-            raise StorageError(f"handoff checkpoint {checkpoint_id} was not found for {root}")
-        checkpoint = load_checkpoint(checkpoint_path)
+        checkpoint_status = "missing" if not checkpoint_path.is_file() else load_checkpoint(checkpoint_path)["status"]
         rows.append(
             {
                 "worktree_root": str(root),
                 "checkpoint_id": checkpoint_id,
-                "checkpoint_status": checkpoint["status"],
+                "checkpoint_status": checkpoint_status,
                 "owner_harness": lease["owner_harness"],
                 "receiver_session_ref": lease["receiver_session_ref"],
             }

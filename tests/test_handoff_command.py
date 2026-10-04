@@ -43,6 +43,7 @@ def test_planned_handoff_prints_the_stop_invariant_and_runtime_receiver_command(
     assert "STOP:" in text
     assert "data.receiver_command" in text
     assert "does not re-anchor" in text
+    assert "Never interpolate an unsafe root into a Bash command" in text
 
 
 def test_resume_binds_a_receiver_session_from_the_harness_environment():
