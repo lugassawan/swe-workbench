@@ -1056,7 +1056,9 @@ let flipWarnings = 0;
 const ctx = {
   hasUI: true,
   mode: "non-tui",
-  ui: { notify() { flipWarnings += 1; }, confirm: async () => true },
+  // Count only the flip-degradation warns (each ends "…current model.") — the approval
+  // path now also notifies (execution-starting), which is not a flip attempt.
+  ui: { notify(msg) { if (/current model\\.$/.test(msg)) flipWarnings += 1; }, confirm: async () => true },
   model: undefined,
 };
 const start = (prompt) => handlers.before_agent_start({ prompt, systemPrompt: "" }, ctx);
@@ -1127,6 +1129,322 @@ def test_plan_marker_arms_from_any_state():
     assert dumped["flipWarnings"] == 3, (
         "each of the three arming/approval turns must attempt its model flip exactly "
         "once, and the plain turn none"
+    )
+
+
+_PHASE_KICKOFF_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const notifies = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+// model: undefined -> both flips degrade to warns; the kickoff must still fire (degraded start).
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify(msg) { notifies.push(msg); }, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+const deferredUntilSettle = sent.length;
+const notifyOnApproval = notifies.some((m) => /execution starting automatically/i.test(m));
+await handlers.agent_settled?.(undefined, ctx);
+const kickoffCount = sent.length;
+const kickoffText = sent[0] ?? "";
+const section = await start("continue");
+const execSectionGoverns = (section?.systemPrompt ?? "").includes("Execute phase");
+await handlers.agent_settled?.(undefined, ctx);
+const exactlyOnceAfterDischarge = sent.length;
+handlers.session_before_switch(undefined, ctx);
+await handlers.agent_settled?.(undefined, ctx);
+const switchResetsPending = sent.length;
+console.log(JSON.stringify({
+  deferredUntilSettle, notifyOnApproval, kickoffCount, kickoffText,
+  execSectionGoverns, exactlyOnceAfterDischarge, switchResetsPending,
+}));
+"""
+
+
+@requires_node
+def test_submit_plan_approval_kicks_off_execution_once():
+    """Approve a plan and execution starts exactly once via a settled follow-up turn."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["deferredUntilSettle"] == 0, (
+        "the kickoff must defer until the approval run settles — firing inside the "
+        "tool call would land the turn under the stale plan-governed prompt"
+    )
+    assert dumped["notifyOnApproval"] is True, (
+        "approval must notify the user that execution is starting automatically"
+    )
+    assert dumped["kickoffCount"] == 1, (
+        "plan approval must start execution exactly once via sendUserMessage"
+    )
+    assert dumped["kickoffText"].startswith("Plan approved by the user"), (
+        "the kickoff must address the model as an execution instruction"
+    )
+    assert dumped["execSectionGoverns"] is True, (
+        "the post-approval turn must be governed by the execute-phase section"
+    )
+    assert dumped["exactlyOnceAfterDischarge"] == 1, (
+        "an execute-governed turn must discharge the pending kickoff — no duplicate send"
+    )
+    assert dumped["switchResetsPending"] == 1, (
+        "a session switch must reset the pending kickoff — no stale send in the "
+        "switched-to session"
+    )
+
+
+_PHASE_KICKOFF_RETRY_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+let sendAttempts = 0;
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  // Throws exactly once: models the swallowed-send failure (SDK extension wrapper),
+  // then succeeds — the pending flag must survive the failure and retry on next settle.
+  sendUserMessage(text) {
+    sendAttempts += 1;
+    if (sendAttempts === 1) throw new Error("simulated send failure");
+    sent.push(text);
+  },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+// First settle: the send throws — the handler's catch must contain it (an escaping
+// throw rejects this await) and the flag must survive the swallowed failure.
+let handlerSurvivedThrow = false;
+try {
+  await handlers.agent_settled?.(undefined, ctx);
+  handlerSurvivedThrow = true;
+} catch {
+  handlerSurvivedThrow = false;
+}
+const nothingSentAfterFailure = sent.length;
+// Second settle: the retry succeeds only if the flag was never cleared in the handler.
+await handlers.agent_settled?.(undefined, ctx);
+const retriedOnNextSettle = sent.length;
+// An execute-governed turn discharges the flag; further settles never re-send.
+await start("continue");
+await handlers.agent_settled?.(undefined, ctx);
+const staysExactlyOnceAfterDischarge = sent.length;
+console.log(JSON.stringify({
+  handlerSurvivedThrow, nothingSentAfterFailure, retriedOnNextSettle,
+  staysExactlyOnceAfterDischarge,
+}));
+"""
+
+
+@requires_node
+def test_kickoff_send_failure_is_swallowed_and_retried():
+    """A failed kickoff send is swallowed, retried next settle, discharged exactly once."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-retry-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_RETRY_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["handlerSurvivedThrow"] is True, (
+        "the handler's catch must contain a throwing send — an escaping throw reaches "
+        "the extension runner uncaught"
+    )
+    assert dumped["nothingSentAfterFailure"] == 0, (
+        "a failed send must record nothing"
+    )
+    assert dumped["retriedOnNextSettle"] == 1, (
+        "the pending flag must survive a swallowed send — the kickoff retries on the "
+        "next settle rather than being lost"
+    )
+    assert dumped["staysExactlyOnceAfterDischarge"] == 1, (
+        "after an execute-governed discharge, no further settle may re-send"
+    )
+
+
+_PHASE_DUPLICATE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const confirms = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: {
+    notify() {},
+    confirm: async () => { confirms.push(1); return true; },
+  },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+await handlers.agent_settled?.(undefined, ctx);
+await start("continue");
+const dup = await tools.submit_plan.execute("t2", { plan: "p2" }, undefined, () => {}, ctx);
+const confirmsAfterDuplicate = confirms.length;
+const sentAfterDuplicate = sent.length;
+const dupText = dup?.content?.[0]?.text ?? "";
+handlers.model_select({ source: "set" });
+await tools.submit_plan.execute("t3", { plan: "p3" }, undefined, () => {}, ctx);
+const confirmsAfterDisarmed = confirms.length;
+await handlers.agent_settled?.(undefined, ctx);
+const sentAfterDisarmed = sent.length;
+console.log(JSON.stringify({
+  confirmsAfterDuplicate, sentAfterDuplicate, dupText,
+  confirmsAfterDisarmed, sentAfterDisarmed,
+}));
+"""
+
+
+@requires_node
+def test_submit_plan_duplicate_approval_is_idempotent():
+    """A second submit_plan while in execute is a no-op; disarmed keeps the full flow."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-duplicate-dump.mjs"
+        driver.write_text(_PHASE_DUPLICATE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["confirmsAfterDuplicate"] == 1, (
+        "a duplicate submit_plan while in execute must return before the approval dialog"
+    )
+    assert dumped["sentAfterDuplicate"] == 1, (
+        "a duplicate approval must not launch a second execution kickoff"
+    )
+    assert "already approved" in dumped["dupText"], (
+        "the duplicate guard must return idempotent guidance text"
+    )
+    assert dumped["confirmsAfterDisarmed"] == 2, (
+        "a disarmed (resume-mid-plan) submit_plan must keep the full approval flow"
+    )
+    assert dumped["sentAfterDisarmed"] == 2, (
+        "an approval from disarmed must still kick off execution"
+    )
+
+
+_PHASE_KICKOFF_CANCEL_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+const planPrompt = "x\\n<!-- swb-phase: plan -->\\ny";
+// A user override abandons the phase mid-wrap-up: the armed kickoff must cancel, else
+// every settle re-sends it and each send starts a turn — a loop no user turn can break.
+start(planPrompt);
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+handlers.model_select({ source: "set" });
+await handlers.agent_settled?.(undefined, ctx);
+const overrideCancelsKickoff = sent.length;
+await handlers.agent_settled?.(undefined, ctx);
+const noLoopAfterOverride = sent.length;
+// Re-arming plan while a kickoff is pending must cancel it: the user chose more planning.
+start(planPrompt);
+await tools.submit_plan.execute("t2", { plan: "p2" }, undefined, () => {}, ctx);
+start(planPrompt);
+await handlers.agent_settled?.(undefined, ctx);
+const rearmCancelsKickoff = sent.length;
+await handlers.agent_settled?.(undefined, ctx);
+const noLoopAfterRearm = sent.length;
+console.log(JSON.stringify({
+  overrideCancelsKickoff, noLoopAfterOverride, rearmCancelsKickoff, noLoopAfterRearm,
+}));
+"""
+
+
+@requires_node
+def test_kickoff_pending_cancels_when_phase_leaves_execute():
+    """A pending kickoff cancels when a user override or plan re-arm leaves execute."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-cancel-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_CANCEL_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["overrideCancelsKickoff"] == 0, (
+        "a user model override abandons the phase — its pending kickoff must cancel"
+    )
+    assert dumped["noLoopAfterOverride"] == 0, (
+        "a stranded kickoff flag re-sends on every settle — unbounded turn loop"
+    )
+    assert dumped["rearmCancelsKickoff"] == 0, (
+        "re-arming plan phase must void the pending kickoff — the user chose more planning"
+    )
+    assert dumped["noLoopAfterRearm"] == 0, (
+        "a stranded kickoff flag re-sends on every settle — unbounded turn loop"
     )
 
 

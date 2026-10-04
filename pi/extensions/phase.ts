@@ -13,41 +13,25 @@ import { approvalChoice, SUBMIT_PLAN_PARAMS_SCHEMA } from "./phase-dialog.ts";
 import {
   extractPhase,
   isMutationBlocked,
+  phaseSectionMarker,
   phaseSystemSection,
   PLANS_HOME_RELATIVE_DIR,
   resolvePhaseModels,
+  stripStaleSections,
+  BLOCK_REASON,
+  KICKOFF_TEXT,
   type Phase,
   type PhaseState,
 } from "./phase-policy.ts";
-
-/** Per-state dedup marker (index.ts's PREAMBLE_MARKER pattern): the suffix is the phase, so a
- *  state transition appends the new section while re-runs in the same state never duplicate. */
-const phaseSectionMarker = (state: PhaseState): string => `<!-- swb-phase-section:${state} -->`;
-
-const BLOCK_REASON =
-  "Plan phase is active — edit/write are blocked outside ~/.pi/agent/plans until the " +
-  "plan is approved. Writing the plan file itself is allowed. Call submit_plan with the " +
-  "complete plan when ready; user approval switches this session to the execution model. " +
-  "Do not mutate other files via bash during plan phase.";
-
-/** Drops every phase-section block whose state is not `keep`: a state change between turns
- *  (approval, user-override disarm) leaves the previous state's marker+section riding the
- *  carried systemPrompt, and its prose ("edit/write is blocked…") must not govern a state it
- *  no longer describes. Matches the exact literals this module appends, so adjacent content
- *  from other handlers is never touched. */
-function stripStaleSections(systemPrompt: string, keep: PhaseState): string {
-  let cleaned = systemPrompt;
-  for (const state of ["plan", "execute"] as const) {
-    if (state !== keep) cleaned = cleaned.split(`\n\n${phaseSectionMarker(state)}\n\n${phaseSystemSection(state)}`).join("");
-  }
-  return cleaned;
-}
 
 export function registerPhase(pi: ExtensionAPI, _root: string): void {
   let phase: PhaseState = "disarmed";
   // True only while our own setModel call is firing its model_select event, so that event
   // does not read as a user override and disarm the phase we just armed.
   let ourFlip = false;
+  // True from plan approval until the next execute-governed before_agent_start discharges
+  // it (any execute turn satisfies the kickoff contract); drives agent_settled below.
+  let kickoffPending = false;
 
   /** Best-effort flip to the phase's governing model: an unusable provider/candidate notifies
    *  and stays on the current model — a failed flip must never un-arm the phase (the gate
@@ -97,8 +81,13 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
       // re-invoking a plan command after approval re-arms), refreshing the flip idempotently.
       if (extractPhase(event.prompt) === "plan") {
         phase = "plan";
+        // Re-arming plan voids a pending kickoff: the user chose more planning over executing.
+        kickoffPending = false;
         await flipToPhaseModel(ctx, "plan", "plan phase armed", "staying on the current model");
       }
+      // Any execute-governed turn satisfies the pending kickoff contract: a user-typed
+      // turn needs no second kickoff, and a swallowed send retries rather than duplicates.
+      if (phase === "execute") kickoffPending = false;
       const base = stripStaleSections(event.systemPrompt, phase);
       const section = phaseSystemSection(phase);
       if (section === "" || base.includes(phaseSectionMarker(phase))) {
@@ -134,6 +123,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
   pi.on("model_select", (event) => {
     if (!ourFlip && (event.source === "set" || event.source === "cycle")) {
       phase = "disarmed";
+      // Abandoning the phase voids its pending kickoff — a stranded flag re-sends every settle.
+      kickoffPending = false;
     }
     ourFlip = false;
   });
@@ -143,11 +134,30 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
   pi.on("session_start", () => {
     phase = "disarmed";
     ourFlip = false;
+    kickoffPending = false;
   });
 
   pi.on("session_before_switch", () => {
     phase = "disarmed";
     ourFlip = false;
+    kickoffPending = false;
+  });
+
+  /** Fires the approved plan's execution kickoff once the approval run has fully settled:
+   *  only the public prompt path re-runs before_agent_start — the composition point that
+   *  swaps the system section to execute — and prompt() invoked during this emit defers
+   *  onto the SDK's settled-actions queue, so the kickoff turn is execute-governed by
+   *  construction (a mid-run sendMessage continuation would inherit the approval turn's
+   *  plan-governed forced prompt instead). The flag is NOT cleared here: a send the SDK's
+   *  extension wrapper swallows retries on the next settle, and before_agent_start
+   *  discharges it once any execute-governed turn starts. */
+  pi.on("agent_settled", () => {
+    try {
+      if (!kickoffPending) return;
+      pi.sendUserMessage(KICKOFF_TEXT);
+    } catch {
+      // Void SDK surface; a sync throw must not escape the handler.
+    }
   });
 
   // Same Tier-2 kill switch as ask-user.ts/subagent.ts — gates tool registration only; the
@@ -171,6 +181,15 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
         throw new Error(
           "submit_plan needs an interactive session — run the phase-armed command in the TUI, or proceed without the plan gate.",
         );
+      }
+      // Idempotence: in execute the kickoff already fired (or will next settle); disarmed
+      // falls through — resume-mid-plan resets the gate, its approval must still work (§4).
+      if (phase === "execute") {
+        const text =
+          "Plan already approved — execution phase is active and execution has already been " +
+          "kicked off; no second approval is needed. Send a message to continue if execution " +
+          "appears stalled.";
+        return { content: [{ type: "text" as const, text }], details: undefined };
       }
       const { plan } = params as unknown as { plan: string };
       let approved = false;
@@ -208,14 +227,21 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
             : "Plan rejected by user — plan phase stays active. Ask the user what to change, revise the plan, and call submit_plan again.";
         return { content: [{ type: "text" as const, text }], details: undefined };
       }
-      // Approval disarms the gate before the flip so no setModel failure path can leave an
-      // approved plan still mutation-blocked; the flip itself is best-effort.
+      // Disarm before the flip so no setModel failure leaves an approved plan blocked; the
+      // flip is best-effort. The kickoff flag arms after it: the settled turn then runs flipped.
       phase = "execute";
       const switchedTo = await flipToPhaseModel(ctx, "execute", "plan approved", "continuing on the current model");
+      kickoffPending = true;
+      ctx.ui.notify(
+        "swe-workbench: plan approved — execution starting automatically " +
+          "(if it does not start, send any message)",
+      );
+      const transitionTail =
+        " Wrap up this turn without implementing anything — execution starts automatically in the next turn.";
       const transition =
-        switchedTo !== undefined
+        (switchedTo !== undefined
           ? `Plan approved by user. Execution phase active — session model switched to ${switchedTo}.`
-          : "Plan approved by user. Execution phase active — model switch failed — continuing on the current model.";
+          : "Plan approved by user. Execution phase active — model switch failed — continuing on the current model.") + transitionTail;
       return { content: [{ type: "text" as const, text: `${plan}\n\n${transition}` }], details: undefined };
     },
   });

@@ -36,6 +36,22 @@ export const PLANS_HOME_RELATIVE_DIR = ".pi/agent/plans";
 /** Pi's file-mutation tool names (lowercase — Edit/Write are the Claude names, not Pi's). */
 export const BLOCKED_TOOLS_IN_PLAN: ReadonlySet<string> = new Set(["edit", "write"]);
 
+/** The tool-result reason the plan-phase mutation gate returns on a blocked call. */
+export const BLOCK_REASON =
+  "Plan phase is active — edit/write are blocked outside ~/.pi/agent/plans until the " +
+  "plan is approved. Writing the plan file itself is allowed. Call submit_plan with the " +
+  "complete plan when ready; user approval switches this session to the execution model. " +
+  "Do not mutate other files via bash during plan phase.";
+
+/** The follow-up turn that starts execution once an approved plan's run settles — sent via
+ *  sendUserMessage so it re-enters the public prompt path and before_agent_start composes
+ *  the execute section before the turn runs. Idempotent-friendly wording: a post-race
+ *  arrival reads as reaffirmation, not confusion. */
+export const KICKOFF_TEXT =
+  "Plan approved by the user — the execute phase is active. Begin executing the approved " +
+  "plan now: persist it verbatim under ~/.pi/agent/plans/ first if it is not yet on disk, " +
+  "then execute it task-by-task per the execute-phase instructions.";
+
 /** True iff the plan-phase gate blocks this call: plan phase + a blocked tool + a target outside
  *  `plansDir`. Containment is lexical — equality or an OS-separator-suffixed prefix (`sep`,
  *  never a hardcoded "/": join()/resolve() emit backslashes on Windows) — and stays correct
@@ -100,4 +116,27 @@ export function phaseSystemSection(state: PhaseState): string {
     case "disarmed":
       return "";
   }
+}
+
+/** Per-state dedup marker (index.ts's PREAMBLE_MARKER pattern): the suffix is the phase, so a
+ *  state transition appends the new section while re-runs in the same state never duplicate. */
+export function phaseSectionMarker(state: PhaseState): string {
+  return `<!-- swb-phase-section:${state} -->`;
+}
+
+/** Drops every phase-section block whose state is not `keep`: a state change between turns
+ *  (approval, user-override disarm) leaves the previous state's marker+section riding the
+ *  carried systemPrompt, and its prose ("edit/write is blocked…") must not govern a state it
+ *  no longer describes. Matches the exact literals phaseSystemSection emits, so adjacent
+ *  content from other handlers is never touched. */
+export function stripStaleSections(systemPrompt: string, keep: PhaseState): string {
+  let cleaned = systemPrompt;
+  for (const state of ["plan", "execute"] as const) {
+    if (state !== keep) {
+      cleaned = cleaned
+        .split(`\n\n${phaseSectionMarker(state)}\n\n${phaseSystemSection(state)}`)
+        .join("");
+    }
+  }
+  return cleaned;
 }
