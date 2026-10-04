@@ -7,7 +7,18 @@ Skip this phase entirely if `$FIX_SHA` is unset (no fixes were committed in Phas
 
 Fetch: `gh pr view "$PR" --json title,body`; commit subjects via `git -C "$WT" log "$BASE"..HEAD --format='%s'`; diff stat via `git -C "$WT" diff "$BASE"..HEAD --stat`. No new state file — the reap already ran in Phase 5 (covers `${PR}-pr-comments.json` too).
 
-**Judge drift** by comparing the live title and `## Summary` section of the PR body against the commit subjects and diff stat. If aligned, emit "PR metadata is up to date — no changes needed." and fall through to Phase 7 — Cleanup.
+**Mechanical scope check first.** Run the title-drift detector from the worktree; its envelope is the title side of the drift judgment:
+
+```bash
+DRIFT="$( (cd "$WT" && swe-workbench-pr-title-drift --pr "$PR" 2>/dev/null) )"
+printf '%s' "$DRIFT" | swe-workbench-result-check swb.pr-title-drift/1 >/dev/null \
+  && VERDICT="$(printf '%s' "$DRIFT" | jq -r .data.verdict)" \
+  || VERDICT="unavailable"
+```
+
+A `pure_extra`/`missing`/`mixed` verdict is confirmed title drift: seed the revised `$NEW_TITLE` from the detector's `suggested_title` (`.data.suggested_title`), improving wording only where it reads mechanical, and note the tag mismatch in the preview. `clean`/`no_scope_tags`/`no_diff`/`unavailable` contribute nothing — continue to the judgment below, which stays authoritative for everything the envelope cannot see.
+
+**Judge drift** by comparing the live title and `## Summary` section of the PR body against the commit subjects and diff stat (plus `$VERDICT` above, when it reported drift). If aligned, emit "PR metadata is up to date — no changes needed." and fall through to Phase 7 — Cleanup.
 
 **If drift is detected,** draft a revised `$NEW_TITLE` and `$NEW_SUMMARY`. Rewrite only the `## Summary` section of the body; preserve `## Test Plan`, the `Closes #`/`Fixes #`/`Issue: N/A` trailer, and all other collaborator sections. Preview old→new for title and summary, then:
 
