@@ -14,9 +14,10 @@ shared/docs/runtime-result-contract.md):
 "verdict": "clean|pure_extra|missing|mixed|no_scope_tags|no_diff",
 "suggested_title": str}, "warnings": []}``.
 
-Classification: a LEADING bracket token from the type vocabulary (a superset of
-the conventional type set — over-classifying as type preserves the tag, the safe
-direction) is a type tag; every other bracket token is a scope tag. Titles with
+Classification: tokens in the contiguous LEADING bracket prefix from the type
+vocabulary (a superset of the conventional type set — over-classifying as type
+preserves the tag, the safe direction) are type tags; the other prefix tokens
+are scope tags. Brackets in the free-text subject stay free text. Titles with
 zero scope tags make the check a no-op, so Conventional-Commits and Jira-prefix
 repos never see false drift.
 
@@ -79,23 +80,26 @@ def is_docs_ci(path: str) -> bool:
 def parse_title(title: str) -> tuple[list[str], list[str], str]:
     """Split a title into (type_tags, scope_tags, remainder).
 
-    The leading run of vocabulary tokens are types; the first non-vocabulary
-    token ends that run, and every later bracket token is a scope tag even if
-    its text is vocabulary (position, not spelling, decides). The remainder is
-    the title minus all bracket tokens, whitespace-collapsed.
+    Only a contiguous leading bracket prefix is metadata. Vocabulary tokens in
+    its initial run are types; the first non-vocabulary token ends that run,
+    and later prefix tokens are scopes even if their text is vocabulary.
+    Brackets in the free-text remainder (for example `[v2]`) are preserved.
     """
+    prefix = re.match(r"^(?:\[[^\[\]]+\])+", title)
+    if prefix is None:
+        return [], [], title
+
     type_tags: list[str] = []
     scope_tags: list[str] = []
     leading = True
-    for match in BRACKET_TOKEN_RE.finditer(title):
+    for match in BRACKET_TOKEN_RE.finditer(prefix.group(0)):
         token = match.group(1)
         if leading and token.lower() in TYPE_VOCAB:
             type_tags.append(token)
         else:
             leading = False
             scope_tags.append(token)
-    remainder = re.sub(r"\s+", " ", BRACKET_TOKEN_RE.sub(" ", title)).strip()
-    return type_tags, scope_tags, remainder
+    return type_tags, scope_tags, title[prefix.end():].strip()
 
 
 def rebuild_title(type_tags: list[str], scope_tags: list[str], remainder: str) -> str:
@@ -141,8 +145,10 @@ def changed_paths(base_ref: str) -> Optional[list[str]]:
     non-ASCII bytes under core.quotePath and mints phantom components.
     """
     mb = _run_cmd(["git", "merge-base", "HEAD", base_ref])
+    if mb.returncode == 1:
+        return None  # git's documented "no common ancestor" result
     if mb.returncode != 0 or not mb.stdout.strip():
-        return None
+        raise RuntimeError(mb.stderr.strip() or "git merge-base failed")
     diff = _run_cmd(["git", "diff", "--name-only", "-z", mb.stdout.strip(), "HEAD"])
     if diff.returncode != 0:
         raise RuntimeError(diff.stderr.strip() or "git diff --name-only -z failed")

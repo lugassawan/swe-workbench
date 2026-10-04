@@ -201,6 +201,15 @@ def test_kebab_normalization(tmp_path):
     assert data["scope_tags"] == ["Service_X"]  # original casing preserved in output
 
 
+def test_subject_brackets_are_not_scope_tags(tmp_path):
+    repo = _feature_repo(tmp_path, {"core/src/a.py": "x"})
+    title = "[feat][core] Support [v2] endpoint"
+    data = _drift(repo, title)
+    assert data["scope_tags"] == ["core"]
+    assert data["verdict"] == "clean"
+    assert data["suggested_title"] == title
+
+
 def test_type_vocabulary_case_insensitive(tmp_path):
     repo = _feature_repo(tmp_path, {"service-x/src/a.py": "x"})
     data = _drift(repo, "[Feat][service-x] Add X")
@@ -229,6 +238,32 @@ def test_fail_closed_empty_stdout(tmp_path):
     os.symlink(git_real, bin_only_git / "git")
     result = _run(["--title", "[feat][service-x] t"], cwd=repo,
                   env={**_CLEAN_ENV, "PATH": str(bin_only_git)})
+    assert result.returncode != 0
+    assert result.stdout == ""
+
+
+def test_merge_base_operational_failure_fails_closed(tmp_path):
+    repo = _feature_repo(tmp_path, {"service-x/src/a.py": "x"})
+    wrapper_dir = tmp_path / "git-wrapper"
+    wrapper_dir.mkdir()
+    real_git = shutil.which("git")
+    assert real_git, "git must be on PATH for the fixture"
+    wrapper = wrapper_dir / "git"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = merge-base ]; then\n"
+        "  echo 'simulated git failure' >&2\n"
+        "  exit 128\n"
+        "fi\n"
+        f"exec {real_git} \"$@\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    result = _run(
+        ["--title", "[feat][service-x] Add X", "--base", "main"],
+        cwd=repo,
+        env={**_CLEAN_ENV, "PATH": f"{wrapper_dir}{os.pathsep}{_CLEAN_ENV['PATH']}"},
+    )
     assert result.returncode != 0
     assert result.stdout == ""
 
