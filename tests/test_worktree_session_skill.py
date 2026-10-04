@@ -130,6 +130,13 @@ class TestSwitchBetweenWorktreesRemedy:
         assert "different worktree" in _text().lower()
 
 
+def test_cd_prefix_does_not_reanchor_handoff_guard():
+    text = _text()
+    forbidden = text[text.find("## Forbidden pattern"):]
+    assert "handoff" in forbidden.lower()
+    assert "subprocess" in forbidden.lower()
+
+
 # ---------------------------------------------------------------------------
 # No-op ambiguity diagnostic (#497)
 # ---------------------------------------------------------------------------
