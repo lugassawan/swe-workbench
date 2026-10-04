@@ -75,6 +75,7 @@ SEMANTIC_OMISSION_LABELS = (
     "exact_next_action",
 )
 GUARD_DENY_EXIT_CODE = 3
+CHECKPOINT_STATUSES = frozenset({"open", "consumed", "closed", "abandoned"})
 REQUIRED_CHECKPOINT_FIELDS = frozenset(
     {"checkpoint_id", "created_at", "expires_at", "mode", "operation_id", "status"}
 )
@@ -626,6 +627,19 @@ def load_checkpoint(path: Path) -> dict[str, object]:
     for field in REQUIRED_CHECKPOINT_FIELDS:
         if not isinstance(stored.get(field), str) or not stored[field]:
             raise StorageError(f"checkpoint {path.name} is missing required field {field!r}")
+    status = stored["status"]
+    if status not in CHECKPOINT_STATUSES:
+        raise StorageError(f"checkpoint {path.name} has unsupported status {status!r}")
+    required_terminal_fields = {
+        "consumed": ("consumed_at",),
+        "closed": ("closed_at",),
+        "abandoned": ("abandoned_at", "abandon_reason"),
+    }.get(status, ())
+    for field in required_terminal_fields:
+        if not isinstance(stored.get(field), str) or not stored[field]:
+            raise StorageError(f"checkpoint {path.name} is missing required {status} field {field!r}")
+    if status == "abandoned" and stored["abandon_reason"] != "source_stopped":
+        raise StorageError(f"checkpoint {path.name} has an invalid abandon reason")
     content_hash = stored.get("content_sha256")
     content = {key: value for key, value in stored.items() if key != "content_sha256"}
     if not isinstance(content_hash, str) or content_hash != sha256_text(canonical_json(content)):
@@ -638,7 +652,7 @@ def find_operation_checkpoint(checkpoints_directory: Path, operation_id: str) ->
         return None
     for path in checkpoints_directory.glob("*.json"):
         checkpoint = load_checkpoint(path)
-        if checkpoint.get("operation_id") == operation_id:
+        if checkpoint.get("operation_id") == operation_id and checkpoint["status"] == "open":
             return checkpoint
     return None
 
@@ -766,6 +780,64 @@ def show_checkpoint(checkpoint_id: str) -> Envelope:
     if not checkpoint_path.is_file():
         raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
     return Envelope("ok", {"checkpoint": load_checkpoint(checkpoint_path)}, [])
+
+
+def find_repository_checkpoint(
+    paths: StatePaths, repo_key: str, checkpoint_id: str
+) -> tuple[Path, Path, dict[str, object]]:
+    repository_directory = paths.root / "workspaces" / repo_key
+    matches = sorted(repository_directory.glob(f"*/checkpoints/{checkpoint_id}.json"))
+    if not matches:
+        raise StorageError(f"checkpoint {checkpoint_id} was not found for this repository")
+    if len(matches) != 1:
+        raise StorageError(f"checkpoint {checkpoint_id} is ambiguous within this repository")
+    checkpoint_path = matches[0]
+    return checkpoint_path.parent.parent, checkpoint_path, load_checkpoint(checkpoint_path)
+
+
+def abandon_checkpoint(checkpoint_id: str, source_stopped: bool) -> Envelope:
+    if not source_stopped:
+        raise InputError("abandon requires --source-stopped confirming the capable session stopped")
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    workspace_directory, checkpoint_path, checkpoint = find_repository_checkpoint(
+        paths, workspace.repo_key, checkpoint_id
+    )
+    with workspace_flock(workspace_directory, "lease.lock"):
+        checkpoint = load_checkpoint(checkpoint_path)
+        lease = load_lease(workspace_directory)
+        if checkpoint["status"] == "abandoned":
+            if lease is not None:
+                if lease["checkpoint_id"] != checkpoint_id:
+                    raise InputError(
+                        f"cannot abandon stale checkpoint {checkpoint_id}; "
+                        f"the active lease references {lease['checkpoint_id']}"
+                    )
+                (workspace_directory / "lease.json").unlink(missing_ok=True)
+                fsync_directory(workspace_directory)
+            run_cleanup(paths)
+            return Envelope(
+                "ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": True}, []
+            )
+        if checkpoint["status"] == "closed":
+            raise InputError(f"cannot abandon closed checkpoint {checkpoint_id}")
+        if lease is None:
+            raise InputError("cannot abandon a checkpoint without an active handoff lease")
+        if lease["checkpoint_id"] != checkpoint_id:
+            raise InputError(
+                f"cannot abandon stale checkpoint {checkpoint_id}; "
+                f"the active lease references {lease['checkpoint_id']}"
+            )
+        rewrite_checkpoint_fields(
+            checkpoint_path,
+            status="abandoned",
+            abandoned_at=iso_now(),
+            abandon_reason="source_stopped",
+        )
+        (workspace_directory / "lease.json").unlink(missing_ok=True)
+        fsync_directory(workspace_directory)
+    run_cleanup(paths)
+    return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": False}, [])
 
 
 def repository_worktree_roots(workspace: Workspace) -> list[Path]:
@@ -917,6 +989,8 @@ def resume_checkpoint(
     if not checkpoint_path.is_file():
         raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
     checkpoint = load_checkpoint(checkpoint_path)
+    if checkpoint["status"] in {"closed", "abandoned"}:
+        raise InputError(f"cannot resume {checkpoint['status']} checkpoint {checkpoint_id}")
     if checkpoint["target_harness"] != as_harness:
         raise InputError(
             f"checkpoint targets {checkpoint['target_harness']}; this receiver is {as_harness}"
@@ -939,6 +1013,8 @@ def resume_checkpoint(
             and lease["owner_harness"] == as_harness
             and lease.get("receiver_session_ref") == receiver_session
         )
+        if checkpoint["status"] == "consumed" and not idempotent:
+            raise InputError(f"cannot resume consumed checkpoint {checkpoint_id} without its active receiver lease")
         if not idempotent:
             if degraded and not acknowledge_degraded:
                 raise InputError(
@@ -1005,6 +1081,8 @@ def load_prior_checkpoint(workspace_directory: Path) -> dict[str, object] | None
     if not prior_path.is_file():
         return None
     prior = load_checkpoint(prior_path)
+    if prior["status"] in {"closed", "abandoned"}:
+        return None
     forbidden = sorted(
         key for key in prior if isinstance(key, str) and key.casefold() in FORBIDDEN_INPUT_FIELDS
     )
@@ -1322,8 +1400,13 @@ def run_cleanup(paths: StatePaths) -> None:
                     if guarded_id is not None and checkpoint["checkpoint_id"] == guarded_id:
                         continue
                     try:
-                        if checkpoint["status"] in {"consumed", "closed"}:
-                            marker = checkpoint.get("closed_at") or checkpoint.get("consumed_at") or checkpoint["created_at"]
+                        if checkpoint["status"] in {"consumed", "closed", "abandoned"}:
+                            marker = (
+                                checkpoint.get("abandoned_at")
+                                or checkpoint.get("closed_at")
+                                or checkpoint.get("consumed_at")
+                                or checkpoint["created_at"]
+                            )
                             expired = parse_iso(str(marker)) < now - timedelta(hours=24)
                         else:
                             expired = parse_iso(str(checkpoint["created_at"])) < now - timedelta(days=7)
@@ -1363,6 +1446,9 @@ def build_parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("--from", dest="from_harness", required=True, choices=list(HARNESSES))
     recover_parser.add_argument("--source-stopped", action="store_true")
     recover_parser.add_argument("--source-session-ref")
+    abandon_parser = subcommands.add_parser("abandon", help="break-glass release of a stale handoff lease")
+    abandon_parser.add_argument("checkpoint_id")
+    abandon_parser.add_argument("--source-stopped", action="store_true")
     close_parser = subcommands.add_parser("close", help="close a handoff checkpoint and release the worktree")
     close_parser.add_argument("checkpoint_id")
     close_parser.add_argument("--as", dest="as_harness", required=True, choices=list(HARNESSES))
@@ -1399,6 +1485,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "recover":
             write_envelope(recover_checkpoint(args.from_harness, args.source_stopped, args.source_session_ref))
+        elif args.command == "abandon":
+            write_envelope(abandon_checkpoint(args.checkpoint_id, args.source_stopped))
         elif args.command == "close":
             session_ref = resolve_session_ref(args.session_ref, args.session_ref_env, args.as_harness)
             write_envelope(close_checkpoint(args.checkpoint_id, args.as_harness, session_ref))

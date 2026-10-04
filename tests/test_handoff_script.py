@@ -71,7 +71,7 @@ def test_help_documents_every_subcommand():
 
     assert result.returncode == 0
     assert "swe-workbench-handoff" in result.stdout
-    for subcommand in ("create", "show", "list", "status-segment", "resume", "recover", "close", "guard"):
+    for subcommand in ("create", "show", "list", "status-segment", "resume", "recover", "close", "abandon", "guard"):
         assert subcommand in result.stdout
 
 
@@ -336,6 +336,154 @@ def test_list_fails_closed_on_corrupt_matching_lease_or_checkpoint(tmp_path):
     assert result.returncode != 0
     assert result.stdout == ""
     assert "lease" in result.stderr.lower()
+
+
+def test_abandon_requires_source_stopped_without_mutating_state(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-acknowledgement")
+
+    result = _run_handoff("abandon", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert _lease_for_checkpoint(state_dir, checkpoint_id)["checkpoint_id"] == checkpoint_id
+    assert _checkpoint(state_dir, checkpoint_id)["status"] == "open"
+
+
+def test_abandon_released_lease_records_terminal_state_before_release(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-released")
+
+    result = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"] == {
+        "checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": False
+    }
+    checkpoint = _checkpoint(state_dir, checkpoint_id)
+    assert checkpoint["status"] == "abandoned"
+    assert checkpoint["abandoned_at"]
+    assert checkpoint["abandon_reason"] == "source_stopped"
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_abandon_active_receiver_lease_is_break_glass_and_keeps_close_strict(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-active")
+    assert _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "owner").returncode == 0
+
+    abandoned = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    closed = _run_handoff(
+        "close", checkpoint_id, "--as", "pi", "--session-ref", "owner", cwd=repo, env=_env_for(state_dir)
+    )
+
+    assert abandoned.returncode == 0, abandoned.stderr
+    assert closed.returncode != 0
+    assert "lease" in closed.stderr
+
+
+def test_abandon_rejects_stale_checkpoint_without_releasing_newer_lease(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    stale_id = _planned_checkpoint(repo, state_dir, "abandon-stale")
+    current_id = _planned_checkpoint(repo, state_dir, "abandon-current")
+
+    result = _run_handoff("abandon", stale_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert _lease_for_checkpoint(state_dir, current_id)["checkpoint_id"] == current_id
+    assert _checkpoint(state_dir, stale_id)["status"] == "open"
+
+
+def test_abandon_is_idempotent_after_release_and_after_record_before_unlink(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-idempotent")
+
+    first = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    retry = _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert first.returncode == 0, first.stderr
+    assert json.loads(retry.stdout)["data"]["already_abandoned"] is True
+
+    pending_id = _planned_checkpoint(repo, state_dir, "abandon-recorded")
+    _rewrite_checkpoint_with_valid_hash(
+        state_dir,
+        pending_id,
+        lambda checkpoint: checkpoint.update(
+            status="abandoned", abandoned_at="2026-01-01T00:00:00Z", abandon_reason="source_stopped"
+        ),
+    )
+    recorded_retry = _run_handoff("abandon", pending_id, "--source-stopped", cwd=repo, env=_env_for(state_dir))
+
+    assert recorded_retry.returncode == 0, recorded_retry.stderr
+    assert json.loads(recorded_retry.stdout)["data"]["already_abandoned"] is True
+    assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_abandoned_checkpoint_cannot_resume_seed_recovery_or_satisfy_create_idempotency(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-terminal")
+    assert _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)).returncode == 0
+
+    resumed = _resume(repo, state_dir, checkpoint_id, "--as", "pi", "--receiver-session", "receiver")
+    recovered = _run_handoff("recover", "--from", "claude", "--source-stopped", cwd=repo, env=_env_for(state_dir))
+    recreated = _create_checkpoint(repo, state_dir, _create_input("abandon-terminal"))
+
+    assert resumed.returncode != 0
+    assert recreated["data"]["checkpoint_id"] != checkpoint_id
+    salvage = _checkpoint(state_dir, json.loads(recovered.stdout)["data"]["checkpoint_id"])
+    assert salvage["previous_checkpoint_id"] is None
+    assert salvage["goal"] == ""
+
+
+def test_load_checkpoint_rejects_unknown_status_or_missing_terminal_metadata(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-validation")
+
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(status="mystery"))
+    unknown = _run_handoff("show", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+    _rewrite_checkpoint_with_valid_hash(state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(status="abandoned"))
+    missing_metadata = _run_handoff("show", checkpoint_id, cwd=repo, env=_env_for(state_dir))
+
+    assert unknown.returncode != 0
+    assert missing_metadata.returncode != 0
+
+
+def test_cleanup_reclaims_abandoned_checkpoint_after_24_hours(tmp_path):
+    repo = tmp_path / "repo"
+    other_repo = tmp_path / "other-repo"
+    repo.mkdir()
+    other_repo.mkdir()
+    _initialize_repo(repo)
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "abandon-cleanup")
+    assert _run_handoff("abandon", checkpoint_id, "--source-stopped", cwd=repo, env=_env_for(state_dir)).returncode == 0
+    _backdate(state_dir, checkpoint_id, "abandoned_at", hours=25)
+
+    _create_checkpoint(other_repo, state_dir, _create_input("abandon-cleanup-trigger"))
+
+    assert not list(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json"))
 
 
 def test_create_persists_only_changed_path_metadata_and_fingerprint_changes_with_content(tmp_path):
