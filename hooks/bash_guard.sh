@@ -135,55 +135,55 @@ if echo "$norm" | grep -Eq \
   exit 2
 fi
 
-if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))' \
-   && echo "$norm" | grep -Eq '(^|[[:space:]]|:)(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
-  echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
-  exit 2
-fi
+# Classify each force-push segment independently so later `-f` values do
+# not affect earlier non-force pushes; inspect every segment.
+while IFS= read -r push_cmd; do
+  push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr -d "'\"[]{}\\\\")
+  if ! echo "$push_norm" | grep -Eq \
+    '(^|[[:space:]])git[[:space:]]+push([[:space:]]|$)'; then
+    continue
+  fi
 
-# Block 2: implicit-branch force-push from a protected branch — additive to the
-# explicit-refspec block above. Force detection reuses the SAME anchored pattern,
-# so --force-with-lease stays unblocked (settled: #163). Fires ONLY when no
-# explicit refspec is present (push relies on push.default/upstream); an explicit
-# non-protected refspec (`origin feat`) must stay allowed even from a protected
-# branch — Block 1 already owns explicit protected refspecs.
-if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))'; then
-  # Isolate the FORCE-flagged push invocation from the comment-stripped,
-  # backslash-joined command ($_bj keeps real separators). Fold the SAME
-  # separator alphabet as $_norm (;|&\n\t, not just ;|&) so a tab/newline-
-  # prefixed command doesn't leak extra tokens onto the push line, and filter
-  # to lines that actually match the force pattern — a chained non-force
-  # `git push` (e.g. `git push origin x && git push --force`) must not be the
-  # one inspected for a refspec, or the real force-push line is skipped
-  # entirely (#501 review).
-  push_cmd=$(printf '%s' "$_bj" | tr ';|&\n\t' '\n\n\n\n\n' \
-    | grep -E 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))' \
-    | tr -d "'\"" | head -n1)
-  has_refspec=0; seen_positional=0; consume_next=0
-  read -ra _toks <<<"$push_cmd"
+  has_force=0; has_refspec=0; seen_positional=0; consume_next=0; seen_push=0; previous=
+  read -ra _toks <<<"$push_norm"
   if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
     for _t in "${_toks[@]}"; do
+      if (( seen_push == 0 )); then
+        if [[ "$previous" == git && "$_t" == push ]]; then
+          seen_push=1
+        fi
+        previous=$_t
+        continue
+      fi
       if (( consume_next )); then             # swallow an unrecognized flag's separate-word value
         consume_next=0
         continue
       fi
       case "$_t" in
-        git|push) ;;                          # command words
+        --force|-f) has_force=1 ;;
         # Known BOOLEAN-only push flags — safe to skip outright. An
-        # unrecognized `-*` flag (senior-engineer consult, #501: `-o <val>`
-        # miscounted as a positional and silently allowed the push through)
-        # is assumed to take a separate-word value and that value is
-        # consumed too, so it can never be mistaken for the remote/refspec.
-        --force|-f|--force-with-lease*|--force-if-includes|--all|--tags|--follow-tags|\
+        # unrecognized `-*` flag is assumed to take a separate-word value and
+        # that value is consumed too, so it cannot be a remote or refspec.
+        --force-with-lease*|--force-if-includes|--all|--tags|--follow-tags|\
         --prune|--thin|--atomic|--no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|\
         --progress|--no-progress|-u|--set-upstream|-d|--delete|--signed|--no-signed|\
         --mirror|-n) ;;
         -*) consume_next=1 ;;                 # unrecognized flag — assume it takes a value
-        *:*) has_refspec=1; break ;;          # src:dst refspec
-        *) if (( seen_positional )); then has_refspec=1; break; fi; seen_positional=1 ;;  # 1st bareword = remote
+        *:*) has_refspec=1 ;;                 # src:dst refspec
+        *) if (( seen_positional )); then has_refspec=1; else seen_positional=1; fi ;;  # 1st bareword = remote
       esac
     done
   fi
+  if (( has_force == 0 )); then
+    continue
+  fi
+
+  if echo "$push_norm" | grep -Eq \
+    '(^|[[:space:]]|:)(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
+    echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
+    exit 2
+  fi
+
   if (( has_refspec == 0 )); then             # relies on push.default / upstream
     branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     case "$branch" in
@@ -193,7 +193,7 @@ if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:s
         ;;
     esac
   fi
-fi
+done < <(printf '%s\n' "$_bj" | tr ';|&\n' '\n\n\n\n')
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)

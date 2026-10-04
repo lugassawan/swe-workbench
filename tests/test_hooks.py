@@ -202,6 +202,22 @@ class TestForcePushBlocker:
             f"stderr: {result.stderr!r}"
         )
 
+    @pytest.mark.parametrize("cmd", [
+        r"\git push --force origin main",
+        r"g\it push --force origin main",
+        '"git" push --force origin main',
+        "git\tpush --force origin main",
+        "(git push --force origin main)",
+        "$(git push --force origin main)",
+    ])
+    def test_wrapped_force_push_to_protected_ref_is_blocked(self, guard_script, cmd):
+        result = run_guard(guard_script, cmd)
+        assert result.returncode == 2, (
+            f"Expected exit 2 (BLOCKED) for {cmd!r}, got {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
 
 # ──────────────────────────────────────────────
 # implicit-branch force-push — branch-aware (requires temp git repo)
@@ -357,6 +373,63 @@ class TestImplicitForcePushBlocker:
             f"Expected ALLOWED for flag {flag!r}, got exit {result.returncode}\n"
             f"stderr: {result.stderr!r}"
         )
+
+    @pytest.mark.parametrize("prefix", ["git", "rtk git"])
+    def test_nonforce_push_with_later_cleanup_flag_is_allowed(
+        self, guard_script, repo_on, prefix
+    ):
+        repo = repo_on("main")
+        command = (
+            f"{prefix} push -u origin feature/x && TMP=$(mktemp) "
+            "&& trap 'rm -f \"$TMP\"' EXIT"
+        )
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    def test_every_force_push_segment_is_checked(self, guard_script, repo_on):
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "git push --force origin feature/x && git push --force",
+            cwd=str(repo),
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("command", [
+        "rtk git push --force",
+        "rtk git push -f",
+        "rtk git push --force origin",
+        "rtk git push -f origin",
+    ])
+    def test_rtk_implicit_force_push_still_blocked(self, guard_script, repo_on, command):
+        repo = repo_on("main")
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_inline_cd_before_implicit_force_push_remains_blocked(self, guard_script, repo_on):
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "cd /tmp/feature-worktree && rtk git push --force",
+            cwd=str(repo),
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
 
 
 # ──────────────────────────────────────────────

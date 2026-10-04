@@ -80,4 +80,9 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("pi --version", False),
     ("pi list", False),
     ("git log -p && pi list", False),
+    (
+        "rtk git push -u origin feature/x && TMP=$(mktemp) "
+        "&& trap 'rm -f \"$TMP\"' EXIT",
+        False,
+    ),
 ]
