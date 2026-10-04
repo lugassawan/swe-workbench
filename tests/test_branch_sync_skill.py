@@ -169,6 +169,25 @@ def test_step5_shows_both_sides_before_prompting():
     assert "both sides" in step5.lower()
 
 
+def test_step75_gates_open_pr_before_title_drift_detector():
+    """A no-PR branch must skip silently; only a detector run after a successful
+    PR lookup may turn a non-zero result into an advisory warning."""
+    body = _body()
+    step75 = body.split("### Step 7.5")[1].split("### Step 8")[0]
+    assert "gh pr view --json number" in step75
+    assert "skip this step silently" in step75.lower()
+    assert "swe-workbench-pr-title-drift" in step75
+    assert step75.index("gh pr view --json number") < step75.index("swe-workbench-pr-title-drift")
+
+
+def test_step75_auto_trim_requires_a_scope_tag_survivor():
+    """Type tags do not satisfy the survivor gate: only a scope tag not listed
+    among trimmable extras permits the automatic title edit."""
+    body = _body()
+    step75 = body.split("### Step 7.5")[1].split("### Step 8")[0]
+    assert "len(scope_tags) > len(extra_tags)" in step75
+
+
 def test_step8_never_auto_pushes():
     body = _body()
     assert "### Step 8" in body

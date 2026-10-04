@@ -42,6 +42,7 @@ SCRIPTS = {
     "swe-workbench-pr-review-submit": "python3",
     "swe-workbench-pr-review-threads": "python3",
     "swe-workbench-pr-review-worktree": "bash",
+    "swe-workbench-pr-title-drift": "python3",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
     "swe-workbench-reply-and-resolve": "bash",

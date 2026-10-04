@@ -52,8 +52,8 @@ export function binScriptsSection(root: string): { title: string; body: string }
   const idList = ids.map((id) => `\`${id}\``).join(", ");
   const capabilityLines = CAPABILITY_ROWS.map((row) => `- ${row.body}`).join("\n");
   const pointer =
-    "Each bare command supports its own `--help` — e.g. `swe-workbench-lsp --help` — for " +
-    "usage and argument shape; check before reimplementing a script's behavior inline.";
+    "Each bare command supports `--help` for usage and arguments; check it before " +
+    "reimplementing a script.";
 
   const body = [
     `Bare commands on PATH (see "Reference pattern" in bin/README.md for the calling ` +
