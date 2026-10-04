@@ -3860,6 +3860,7 @@ def test_handoff_blocks_mutating_tools_under_a_released_lease(tmp_path_factory):
         assert out[key]["block"] is True, f"{key}: {out[key]}"
     assert "/handoff resume" in out["releasedBash"]["reason"]
     assert result["repos"]["released"] in out["releasedBash"]["reason"]
+    assert "Start the receiver with: cd --" in out["releasedBash"]["reason"]
     assert out.get("releasedRead") is None
 
 

@@ -106,6 +106,7 @@ interface GuardData {
   reason?: unknown;
   instruction?: unknown;
   worktree_root?: unknown;
+  receiver_command?: unknown;
 }
 
 function parseGuardDecision(stdout: string): GuardData | undefined {
@@ -138,13 +139,29 @@ function safeWorktreeRoot(value: unknown): string | undefined {
   return undefined;
 }
 
+function safeReceiverCommand(value: unknown): string | undefined {
+  if (
+    typeof value === "string" &&
+    Array.from(value).length <= 4096 &&
+    Array.from(value).every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 32 && code !== 127;
+    })
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 function blockReason(data: GuardData | undefined, fallback: string): string {
   if (data === undefined) return fallback;
   const reason = typeof data.reason === "string" ? data.reason : "";
   const instruction = typeof data.instruction === "string" ? data.instruction : "";
   const worktreeRoot = safeWorktreeRoot(data.worktree_root);
+  const receiverCommand = safeReceiverCommand(data.receiver_command);
   const base = reason && instruction ? `${reason} — ${instruction}` : instruction || reason || fallback;
-  return worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base;
+  const receiver = receiverCommand ? ` Start the receiver with: ${receiverCommand}` : "";
+  return `${worktreeRoot ? `${base} (worktree: ${worktreeRoot})` : base}${receiver}`;
 }
 
 export function registerHandoff(pi: ExtensionAPI, root: string): void {
