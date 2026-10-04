@@ -1208,6 +1208,23 @@ def test_guard_denies_a_released_lease_for_both_harnesses(tmp_path):
         assert envelope["data"]["worktree_root"] == str(repo.resolve())
 
 
+def test_guard_returns_a_released_deny_when_the_lease_checkpoint_was_swept(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(repo, state_dir, "swept-guard-lease")
+    next(state_dir.glob(f"workspaces/*/*/checkpoints/{checkpoint_id}.json")).unlink()
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    data = json.loads(result.stdout)["data"]
+    assert data["decision"] == "deny"
+    assert "released" in data["reason"]
+    assert data["checkpoint_id"] == checkpoint_id
+
+
 def test_guard_allows_only_the_bound_owner_session(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

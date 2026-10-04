@@ -3617,6 +3617,7 @@ out.ownedOtherSession = await toolCall(
   config.repos.owned, "bash", { command: "ls -la" },
   { sessionManager: { getSessionId: () => "pi-other-session" } },
 );
+out.ownedAbandon = await toolCall(config.repos.owned, "bash", { command: config.ownedAbandonPipeline });
 out.foreignOwner = await toolCall(config.repos.foreign, "bash", { command: "ls -la" });
 
 fs.writeFileSync(config.leasePath, "not-json{");
@@ -3800,6 +3801,10 @@ def _handoff_driver_result(tmp_path_factory, label, mutate=None):
             f'swe-workbench-handoff abandon "{released_id}" --source-stopped '
             "| swe-workbench-result-check swb.handoff/1"
         ),
+        "ownedAbandonPipeline": (
+            f'swe-workbench-handoff abandon "{owned_id}" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        ),
         "injectedPipeline": (
             f'swe-workbench-handoff resume "{released_id}" --as pi '
             f'--receiver-session {session_arg} | swe-workbench-result-check swb.handoff/1; touch /tmp/nope'
@@ -3862,6 +3867,7 @@ def test_handoff_blocks_mutating_tools_under_a_released_lease(tmp_path_factory):
     assert result["repos"]["released"] in out["releasedBash"]["reason"]
     assert "Start the receiver with: cd --" in out["releasedBash"]["reason"]
     assert out.get("releasedRead") is None
+    assert out["ownedAbandon"]["block"] is True
 
 
 @requires_node

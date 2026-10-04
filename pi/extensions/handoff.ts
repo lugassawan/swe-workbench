@@ -59,6 +59,9 @@ function escapeRegExp(value: string): string {
  * recover may pass through a released/foreign lease; close authenticates through the normal
  * owner/session check, so it is deliberately absent (mirrors the Claude-side decision).
  */
+const ABANDON_COMMAND = new RegExp(
+  `^swe-workbench-handoff abandon "?${UUID_PATTERN.source}"? --source-stopped ${CHECKED_PIPE}$`,
+);
 const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
@@ -76,9 +79,7 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
     `^swe-workbench-handoff recover --from "?claude"? --source-stopped ${CHECKED_PIPE}$`,
   ),
   new RegExp(`^swe-workbench-handoff list ${CHECKED_PIPE}$`),
-  new RegExp(
-    `^swe-workbench-handoff abandon "?${UUID_PATTERN.source}"? --source-stopped ${CHECKED_PIPE}$`,
-  ),
+  ABANDON_COMMAND,
 ];
 
 function controlCommand(command: string): RegExp | undefined {
@@ -178,7 +179,7 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
     if (toolName === "bash") {
       const command = (event.input as { command?: unknown } | undefined)?.command;
       const control = typeof command === "string" ? controlCommand(command) : undefined;
-      abandonControl = control === CONTROL_COMMANDS.at(-1);
+      abandonControl = control === ABANDON_COMMAND;
       if (control !== undefined && !abandonControl) return undefined;
     }
 
@@ -203,7 +204,12 @@ export function registerHandoff(pi: ExtensionAPI, root: string): void {
       const result = await runHandoffRuntime(runtimePath, args, ctx.cwd);
       const data = parseGuardDecision(result.stdout);
 
-      if (result.code === 0 && data !== undefined && data.decision === "allow") return undefined;
+      if (result.code === 0 && data !== undefined && data.decision === "allow") {
+        if (abandonControl) {
+          return { block: true, reason: "handoff abandon requires a released lease" };
+        }
+        return undefined;
+      }
       if (data !== undefined && data.decision === "deny") {
         if (abandonControl && typeof data.reason === "string" && data.reason.includes("released")) {
           return undefined;

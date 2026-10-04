@@ -26,6 +26,9 @@ _CLAUDE_SESSION_ARGUMENT = re.escape(
     '"${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}"'
 )
 _CLAUDE_SESSION_ENV_ARGUMENT = re.escape("CLAUDE_CODE_SESSION_ID")
+_ABANDON_COMMAND = re.compile(
+    rf'^swe-workbench-handoff abandon "?{_UUID}"? --source-stopped {_CHECKED_PIPE}$'
+)
 _CONTROL_COMMANDS = (
     re.compile(
         rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
@@ -43,7 +46,7 @@ _CONTROL_COMMANDS = (
         rf'^swe-workbench-handoff recover --from "?pi"? --source-stopped {_CHECKED_PIPE}$'
     ),
     re.compile(rf"^swe-workbench-handoff list {_CHECKED_PIPE}$"),
-    re.compile(rf'^swe-workbench-handoff abandon "?{_UUID}"? --source-stopped {_CHECKED_PIPE}$'),
+    _ABANDON_COMMAND,
 )
 
 
@@ -158,7 +161,7 @@ def main() -> None:
     if payload is None or payload.get("tool_name") not in _MUTATING_TOOLS:
         return
     control_command = _control_command(payload)
-    abandon_command = control_command is _CONTROL_COMMANDS[-1]
+    abandon_command = control_command is _ABANDON_COMMAND
     if control_command is not None and not abandon_command:
         return
 
@@ -186,6 +189,8 @@ def main() -> None:
 
     parsed = _decision(result.stdout)
     if result.returncode == 0 and parsed is not None and parsed[0] == "allow":
+        if abandon_command:
+            _block("handoff abandon requires a released lease")
         return
 
     if parsed is not None and parsed[0] == "deny":
@@ -193,12 +198,20 @@ def main() -> None:
         if abandon_command and "released" in reason:
             return
         if "released" in reason:
-            if checkpoint_id is None or target_harness is None or receiver_command is None:
+            if checkpoint_id is None or target_harness is None:
                 _block("handoff ownership is released but its receiver state is invalid")
+            instruction = (
+                f"/{'handoff' if target_harness == 'pi' else 'swe-workbench:handoff'} "
+                f"resume {checkpoint_id}"
+            )
+            receiver = (
+                f"start the receiver with `{receiver_command}`"
+                if receiver_command is not None
+                else f"start a {target_harness} receiver in this worktree, then run `{instruction}`"
+            )
             _block(
                 _with_worktree_clause(
-                    f"handoff ownership is released to {target_harness}; "
-                    f"start the receiver with `{receiver_command}`",
+                    f"handoff ownership is released to {target_harness}; {receiver}",
                     worktree_root,
                 )
             )

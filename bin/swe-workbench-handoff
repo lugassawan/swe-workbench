@@ -1289,7 +1289,19 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
             raise StorageError("released handoff lease has no checkpoint id")
         checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
         if not checkpoint_path.is_file():
-            raise StorageError(f"released handoff checkpoint {checkpoint_id} was not found")
+            return (
+                Envelope(
+                    "ok",
+                    {
+                        "decision": "deny",
+                        "reason": "handoff lease released; its checkpoint has been swept",
+                        "checkpoint_id": checkpoint_id,
+                        "worktree_root": worktree_root,
+                    },
+                    [],
+                ),
+                GUARD_DENY_EXIT_CODE,
+            )
         checkpoint = load_checkpoint(checkpoint_path)
         target_harness = checkpoint.get("target_harness")
         if target_harness not in HARNESSES:
