@@ -159,6 +159,8 @@ class TestForcePushBlocker:
         "git push -f origin master",
         "git push --force origin main:main",
         "git push --force origin master:master",
+        "git push --force origin refs/heads/main",
+        "git push --force origin refs/heads/master",
         "git push --force origin HEAD:main",
         "git push --force origin feature:main",
         "git push --force origin HEAD:master",
@@ -209,6 +211,11 @@ class TestForcePushBlocker:
         "git\tpush --force origin main",
         "(git push --force origin main)",
         "$(git push --force origin main)",
+        "OUT=`git push --force origin main`",
+        "OUT=`git push -f origin main`",
+        "/usr/bin/git push --force origin main",
+        "/usr/bin/git push -f origin main",
+        "bin/git push --force origin main",
     ])
     def test_wrapped_force_push_to_protected_ref_is_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)

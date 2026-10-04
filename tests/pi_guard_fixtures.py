@@ -27,6 +27,10 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("var=$(rm -rf /)", True),
     ("echo `rm -rf /`", True),
     ("echo $(rm -rf /)", True),
+    # force-push backtick command substitutions must remain blocked through
+    # both direct-hook and Pi-adapter paths.
+    ("OUT=`git push --force origin main`", True),
+    ("OUT=`git push -f origin main`", True),
     # same bypass class: process substitution (`<(...)`/`>(...)`) has the identical "(" shape
     # and was left open by a $(-only patch
     ("<(rm -rf ~)", True),

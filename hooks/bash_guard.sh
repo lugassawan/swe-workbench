@@ -27,9 +27,9 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# --force-with-lease/--force-if-includes intentionally unblocked (#163); force-push after a shell
-# separator (`&& echo main`) may over-block via the folded input (accepted fail-safe); a remote
-# literally named main/master over-blocks. Block 2's push-token scan trusts a small allowlist of
+# --force-with-lease/--force-if-includes intentionally unblocked (#163); quote-stripping may
+# over-block a force-push within its command segment (accepted fail-safe); a remote literally
+# named main/master over-blocks. Block 2's push-token scan trusts a small allowlist of
 # known BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
 # (assumes it takes a separate-word value, e.g. `-o ci.skip`) so an unknown flag's value can never
 # be miscounted as the remote/refspec (#501 senior-engineer consult); an unrecognized flag that
@@ -138,9 +138,9 @@ fi
 # Classify each force-push segment independently so later `-f` values do
 # not affect earlier non-force pushes; inspect every segment.
 while IFS= read -r push_cmd; do
-  push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr -d "'\"[]{}\\\\")
+  push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
   if ! echo "$push_norm" | grep -Eq \
-    '(^|[[:space:]])git[[:space:]]+push([[:space:]]|$)'; then
+    '(^|[[:space:]])([^[:space:]]*/)?git[[:space:]]+push([[:space:]]|$)'; then
     continue
   fi
 
@@ -149,7 +149,7 @@ while IFS= read -r push_cmd; do
   if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
     for _t in "${_toks[@]}"; do
       if (( seen_push == 0 )); then
-        if [[ "$previous" == git && "$_t" == push ]]; then
+        if [[ ( "$previous" == git || "$previous" == */git ) && "$_t" == push ]]; then
           seen_push=1
         fi
         previous=$_t
@@ -179,7 +179,7 @@ while IFS= read -r push_cmd; do
   fi
 
   if echo "$push_norm" | grep -Eq \
-    '(^|[[:space:]]|:)(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
+    '(^|[[:space:]]|:)(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
     echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
     exit 2
   fi
