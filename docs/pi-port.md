@@ -40,7 +40,8 @@ teaches a specific cd-vs-`EnterWorktree` distinction — `cd` only anchors the B
 cwd, while `EnterWorktree` re-anchors session-level caches (plans dir, memory dir) that `cd`
 cannot touch. A tool that shells out to `cd` under the `EnterWorktree` name would claim the
 stronger guarantee while delivering only the weaker one, silently breaking that diagnostic for
-every Pi session.
+every Pi session. A command-local `cd` also cannot re-anchor handoff ownership: the guard uses
+`ctx.cwd` for the existing session, so start a new receiver from the target directory instead.
 
 No prose edit and no new tool. `tool-vocab.ts`'s worktree note tells the model the `cd
 <absolute-path>` fallback documented in `skills/workflow-worktree-session/SKILL.md` (lines 30 and

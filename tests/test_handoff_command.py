@@ -127,7 +127,11 @@ def test_handoff_reference_doc_exists_and_covers_the_contract():
         "resume",
         "recover",
         "close",
-    ):
+        "list",
+        "abandon",
+        "receiver_command",
+        "subprocess",
+    ): 
         assert marker in text, f"handoff doc must cover {marker!r}"
     assert "swb.handoff/1" in text
 

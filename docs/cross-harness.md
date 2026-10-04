@@ -46,20 +46,13 @@ guard never blocked in the first place (only `Bash`/`Edit`/`Write`, Pi:
 `bash`/`write`/`edit`). `tests/test_handoff_guard.py`'s
 `test_still_blocks_arbitrary_read_only_bash_under_a_released_lease` is the standing ruling.
 
-**Auto-releasing a "stale" `released` lease — rejected.** The lease exists *because* the
-source harness is expected to be gone for hours at a time (quota exhaustion); `released` is
-the protocol's normal waiting state, not evidence of abandonment. Nothing observable from
-one harness's session can prove the other harness's session is dead — which is exactly why
-`recover` requires the operator to type `--source-stopped` by hand. Auto-releasing on a
-timeout would silently destroy a real in-flight checkpoint the moment it happened to outlive
-the timeout, converting a diagnostic annoyance into a destructive one. The existing 7-day
-open-checkpoint expiry, 24-hour consumed/closed sweep, and `_recorded_worktree_exists`
-orphan reaping are the correct staleness story; the escape hatch for a checkpoint an
-operator wants to walk back by hand is `resume` immediately followed by `close` (see
-`docs/cross-harness-handoff.md`'s "Abandoning a checkpoint"), not a new `abandon`
-subcommand or an allowlisted `close` — `close` authenticates on `owner_harness` *and*
-`receiver_session_ref`, and allowlisting it would let a non-owner delete a lease, which is
-the exact thing the guard exists to prevent.
+**Automatic stale-lease release — rejected; explicit abandonment accepted.** A `released`
+lease is the normal waiting state after quota exhaustion, not evidence that a receiver is gone.
+Nothing observable proves that session death, so timeout-based release remains unsafe. The
+operator may instead use the exact checked `abandon <checkpoint-id> --source-stopped` route:
+it records terminal abandonment before releasing only the matching lease. The flag is an
+explicit local assertion, not proof; a false assertion can allow concurrent mutation. Normal
+`close` remains owner/session authenticated and is never broadly allowlisted.
 
 **The harness's own worktree-isolation / git-detection guard is out of scope here.** A
 worktree-isolated Claude Code session's Bash tool refuses a compound command it cannot

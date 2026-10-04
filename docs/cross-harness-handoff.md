@@ -52,18 +52,28 @@ blocked can tell which worktree holds the lease even when it differs from its ow
   `--acknowledge-degraded` on resume before ownership is granted.
 - **close** — owner-authenticated (`--as` + `--session-ref-env` matching the lease); closes the
   checkpoint and removes the lease.
+- **list** — returns active lease rows for every live Git worktree in the current repository:
+  worktree root, checkpoint id/status, owner harness, and receiver session.
+- **abandon** — `abandon <checkpoint-id> --source-stopped` is an idempotent break-glass route.
+  It records `status: abandoned`, `abandoned_at`, and `abandon_reason: source_stopped` before
+  removing only that checkpoint's matching lease. The acknowledgement is not proof that the
+  capable session stopped; a false assertion can allow concurrent mutation.
+
+### Receiver launch and session cwd
+
+Runtime responses carry `receiver_command`, a shell-quoted command that launches a **new** Pi or
+Claude receiver from the recorded worktree root. The guard evaluates the harness-provided session
+cwd at tool dispatch. A `cd` inside a Bash command changes only that subprocess: it neither
+re-anchors the existing session nor changes which handoff lease the guard evaluates.
 
 ### Abandoning a checkpoint
 
 The guard mediates the *agent's* tools (`Bash`/`Edit`/`Write` on Claude, `bash`/`write`/`edit`
 on Pi) — it does not, and cannot, stop a human operator from running the runtime directly in a
 plain shell. If a checkpoint needs to be walked back (a lease left `released` with no live
-receiver, an abandoned salvage attempt), an operator can resume and immediately close it:
-
-```bash
-swe-workbench-handoff resume <id> --as <target> --receiver-session <ref>
-swe-workbench-handoff close <id> --as <same-target> --session-ref <same-ref>
-```
+receiver, an abandoned salvage attempt), an operator can inspect current-repository leases with `swe-workbench-handoff list`, then use
+`abandon <id> --source-stopped` only after confirming the capable session stopped. Normal
+completion remains owner-authenticated through `close`.
 
 Three sharp edges apply, all enforced by the runtime itself:
 

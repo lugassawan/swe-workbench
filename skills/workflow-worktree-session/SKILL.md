@@ -84,7 +84,7 @@ git worktree remove "$(git rev-parse --show-toplevel)"
 
 ## Forbidden pattern
 
-**`cd` is not the primary session switch — `EnterWorktree` is.** The Bash tool's working directory *does* persist across calls (subsequent commands run from the `cd`-ed directory), but `cd` does not re-anchor session-level caches (plans dir, memory dir, env cwd) the way `EnterWorktree` does. Use `cd` only as the sanctioned fallback when `EnterWorktree(path=…)` is rejected (see Mode A step 2 above).
+**`cd` is not the primary session switch — `EnterWorktree` is.** The Bash tool's working directory *does* persist across calls (subsequent commands run from the `cd`-ed directory), but `cd` does not re-anchor session-level caches (plans dir, memory dir, env cwd) the way `EnterWorktree` does. A command-local `cd` affects only that subprocess; it does not re-anchor handoff guard ownership, which uses the harness session cwd at dispatch. Use `cd` only as the sanctioned fallback when `EnterWorktree(path=…)` is rejected (see Mode A step 2 above).
 
 **Active remedy:** If you notice you have already been prepending `cd <worktree>` to commands this session, that is the signal — stop and try `EnterWorktree(path=<worktree-path>)` now. If it succeeds, the session is properly anchored. If it is rejected because the session is already inside a **different worktree** (target path outside `.claude/worktrees/`), call `ExitWorktree(action=keep)` to return to the main session, then retry `EnterWorktree(path=<worktree-path>)` — this is the correct switch-between-worktrees sequence (`action=keep` is non-destructive; the source worktree remains on disk). Use `cd` only as a last resort for non-rimba checkouts with no `.claude/worktrees` infrastructure.
 
