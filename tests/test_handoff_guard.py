@@ -295,7 +295,7 @@ def test_swept_released_lease_names_the_abandon_remedy(tmp_path):
 
     assert result.returncode == 2
     assert "clear the stale lease" in result.stderr
-    assert "abandon <checkpoint-id>" in result.stderr
+    assert f"abandon {checkpoint_id}" in result.stderr
 
 
 def test_blocks_exact_abandon_pipeline_under_an_active_receiver_lease(tmp_path):

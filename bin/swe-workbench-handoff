@@ -811,21 +811,36 @@ def abandon_checkpoint(checkpoint_id: str, source_stopped: bool) -> Envelope:
             if lease is not None and lease["checkpoint_id"] == checkpoint_id:
                 matches.append(lease_path.parent)
         if not matches:
-            return Envelope(
-                "ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": True}, []
+            tombstones = sorted(
+                (paths.root / "workspaces" / workspace.repo_key).glob(f"*/tombstones/{checkpoint_id}.json")
             )
+            if len(tombstones) == 1:
+                return Envelope(
+                    "ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": True}, []
+                )
+            raise
         if len(matches) != 1:
             raise
         workspace_directory = matches[0]
+        if workspace_directory != paths.workspace_directory(workspace):
+            raise InputError("abandon must run from the checkpoint's recorded worktree")
         with workspace_flock(workspace_directory, "lease.lock"):
             lease = load_lease(workspace_directory)
             if lease is None or lease["checkpoint_id"] != checkpoint_id:
                 raise InputError(f"cannot abandon stale checkpoint {checkpoint_id}")
+            tombstones_directory = workspace_directory / "tombstones"
+            ensure_owner_directory(tombstones_directory)
+            write_atomic(
+                tombstones_directory / f"{checkpoint_id}.json",
+                canonical_json({"checkpoint_id": checkpoint_id, "abandoned_at": iso_now()}),
+            )
             (workspace_directory / "lease.json").unlink(missing_ok=True)
             fsync_directory(workspace_directory)
         run_cleanup(paths)
         return Envelope("ok", {"checkpoint_id": checkpoint_id, "status": "abandoned", "already_abandoned": False}, [])
-    with workspace_flock(workspace_directory, "lease.lock"): 
+    if workspace_directory != paths.workspace_directory(workspace):
+        raise InputError("abandon must run from the checkpoint's recorded worktree")
+    with workspace_flock(workspace_directory, "lease.lock"):
         checkpoint = load_checkpoint(checkpoint_path)
         lease = load_lease(workspace_directory)
         if checkpoint["status"] == "abandoned":
@@ -1299,7 +1314,10 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
                     {
                         "decision": "deny",
                         "reason": "handoff lease released; its checkpoint has been swept",
-                        "instruction": "clear the stale lease with the documented abandon pipeline",
+                        "instruction": (
+                            f"clear the stale lease with `swe-workbench-handoff abandon {checkpoint_id} "
+                            "--source-stopped | swe-workbench-result-check swb.handoff/1`"
+                        ),
                         "checkpoint_id": checkpoint_id,
                         "worktree_root": worktree_root,
                     },
@@ -1379,6 +1397,9 @@ def _prune_workspace_directory(workspace_directory: Path, lease_active: bool) ->
     checkpoints_directory = workspace_directory / "checkpoints"
     if checkpoints_directory.is_dir() and any(checkpoints_directory.iterdir()):
         return
+    tombstones_directory = workspace_directory / "tombstones"
+    if tombstones_directory.is_dir() and any(tombstones_directory.iterdir()):
+        return
     shutil.rmtree(workspace_directory, ignore_errors=True)
 
 
@@ -1446,6 +1467,17 @@ def run_cleanup(paths: StatePaths) -> None:
                     except (KeyError, ValueError):
                         continue
                     if expired:
+                        if (
+                            lease is not None
+                            and lease.get("owner_harness") == "released"
+                            and lease_checkpoint_id == checkpoint["checkpoint_id"]
+                        ):
+                            tombstones_directory = workspace_directory / "tombstones"
+                            ensure_owner_directory(tombstones_directory)
+                            write_atomic(
+                                tombstones_directory / f"{checkpoint['checkpoint_id']}.json",
+                                canonical_json({"checkpoint_id": checkpoint["checkpoint_id"], "abandoned_at": iso_now()}),
+                            )
                         checkpoint_path.unlink(missing_ok=True)
             if orphaned:
                 checkpoints_directory = workspace_directory / "checkpoints"
@@ -1454,6 +1486,7 @@ def run_cleanup(paths: StatePaths) -> None:
                     # so the empty workspace directory can be pruned.
                     for stale_name in ("lease.json", "latest", "notices.json"):
                         (workspace_directory / stale_name).unlink(missing_ok=True)
+                    shutil.rmtree(workspace_directory / "tombstones", ignore_errors=True)
             _prune_workspace_directory(workspace_directory, lease_active)
         if repository_directory.is_dir() and not any(repository_directory.iterdir()):
             repository_directory.rmdir()

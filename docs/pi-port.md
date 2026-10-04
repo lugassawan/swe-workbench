@@ -43,10 +43,10 @@ stronger guarantee while delivering only the weaker one, silently breaking that 
 every Pi session. A command-local `cd` also cannot re-anchor handoff ownership: the guard uses
 `ctx.cwd` for the existing session, so start a new receiver from the target directory instead.
 
-No prose edit and no new tool. `tool-vocab.ts`'s worktree note tells the model the `cd
-<absolute-path>` fallback documented in `skills/workflow-worktree-session/SKILL.md` (lines 30 and
-87 as of this writing) is *the* mechanism on Pi, not a last resort. Recorded as an explicit
-`"n/a"`-shaped decision here — mirroring §1 — rather than left implicit.
+No new tool. Pi must start a **new session** from the target worktree when session identity
+matters; a command-local `cd` is only a subprocess operation and never changes the existing
+session's cwd or handoff lease. Recorded as an explicit `"n/a"`-shaped decision here — mirroring
+§1 — rather than left implicit.
 
 ## 3. `LSP` has no Pi tool registration — the capability lives in `bin/`, not the adapter
 
