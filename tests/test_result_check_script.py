@@ -168,6 +168,8 @@ def test_handoff_schema_accepts_each_subcommand_data_shape():
         {"checkpoint_id": "cp", "target_harness": "pi"},
         {"checkpoint": {"checkpoint_id": "cp"}},
         {"decision": "allow", "reason": "owned"},
+        {"leases": [{"worktree_root": "/tmp/repo", "checkpoint_id": "cp"}]},
+        {"checkpoint_id": "cp", "status": "abandoned", "already_abandoned": False},
     ):
         envelope = {
             "schema": "swb.handoff/1",

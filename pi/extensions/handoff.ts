@@ -75,6 +75,10 @@ const CONTROL_COMMANDS: readonly RegExp[] = [
   new RegExp(
     `^swe-workbench-handoff recover --from "?claude"? --source-stopped ${CHECKED_PIPE}$`,
   ),
+  new RegExp(`^swe-workbench-handoff list ${CHECKED_PIPE}$`),
+  new RegExp(
+    `^swe-workbench-handoff abandon "?${UUID_PATTERN.source}"? --source-stopped ${CHECKED_PIPE}$`,
+  ),
 ];
 
 function isControlCommand(command: string): boolean {

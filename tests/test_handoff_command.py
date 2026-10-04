@@ -38,11 +38,11 @@ def test_semantic_payload_reaches_create_via_redirected_temp_file():
     assert "printf '%s' \"$SEMANTIC" not in text
 
 
-def test_planned_handoff_prints_the_stop_invariant_and_exact_resume_commands():
+def test_planned_handoff_prints_the_stop_invariant_and_runtime_receiver_command():
     text = _text()
     assert "STOP:" in text
-    assert "/handoff resume" in text
-    assert "/swe-workbench:handoff resume" in text
+    assert "data.receiver_command" in text
+    assert "does not re-anchor" in text
 
 
 def test_resume_binds_a_receiver_session_from_the_harness_environment():
@@ -76,6 +76,8 @@ def test_lifecycle_routes_use_guard_allowlisted_single_pipelines():
     text = _text()
     assert 'swe-workbench-handoff resume "<checkpoint-id>"' in text
     assert 'swe-workbench-handoff recover --from "<source-harness>" --source-stopped' in text
+    assert "swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1" in text
+    assert 'swe-workbench-handoff abandon "<checkpoint-id>" --source-stopped' in text
     assert 'swe-workbench-handoff close "<checkpoint-id>"' in text
 
 
@@ -136,5 +138,5 @@ def test_frontmatter_carries_an_argument_hint_covering_every_route():
     hint_lines = [line for line in frontmatter.splitlines() if line.startswith("argument-hint:")]
     assert hint_lines, "commands/handoff.md must include an 'argument-hint:' frontmatter field"
     hint = hint_lines[0]
-    for marker in ("pi", "claude", "resume", "recover", "--source-stopped", "close"):
+    for marker in ("pi", "claude", "list", "resume", "recover", "abandon", "--source-stopped", "close"): 
         assert marker in hint, f"argument-hint must document {marker!r}"

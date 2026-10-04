@@ -264,6 +264,24 @@ def test_allows_exact_pi_source_recovery_pipeline_through_ownership_gate(tmp_pat
     assert _run_hook(payload, state_dir=state_dir).returncode == 0
 
 
+def test_allows_exact_list_and_abandon_pipelines_through_a_released_lease(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    payload = _payload(repo, "Bash")
+
+    payload["tool_input"] = {"command": "swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1"}
+    assert _run_hook(payload, state_dir=state_dir).returncode == 0
+    payload["tool_input"] = {
+        "command": (
+            f'swe-workbench-handoff abandon "{checkpoint_id}" --source-stopped '
+            "| swe-workbench-result-check swb.handoff/1"
+        )
+    }
+    assert _run_hook(payload, state_dir=state_dir).returncode == 0
+
+
 def test_blocks_close_pipeline_under_a_released_lease(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)

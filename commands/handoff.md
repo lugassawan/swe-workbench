@@ -1,13 +1,15 @@
 ---
 description: Hand work to Claude Code or Pi through a bounded semantic checkpoint, resume or recover a checkpoint, inspect status, or close a completed handoff.
-argument-hint: "[pi | claude] [--next <exact next action>] | resume <checkpoint-id> [--acknowledge-degraded] | recover --from <pi | claude> --source-stopped | close <checkpoint-id>"
+argument-hint: "[pi | claude] [--next <exact next action>] | list | resume <checkpoint-id> [--acknowledge-degraded] | recover --from <pi | claude> --source-stopped | abandon <checkpoint-id> --source-stopped | close <checkpoint-id>"
 ---
 
 Manage a Claude Code ↔ Pi handoff in the current git worktree. Parse `$ARGUMENTS` as exactly one of:
 
 - `pi [--next "<exact next action>"]` or `claude [--next "<exact next action>"]` — create a planned handoff to that harness.
 - `resume <checkpoint-id> [--acknowledge-degraded]` — acquire and continue a checkpoint in the current harness.
+- `list` — inspect every live worktree lease in the current repository.
 - `recover --from <claude|pi> --source-stopped` — salvage deterministic workspace state after the source harness has stopped unexpectedly.
+- `abandon <checkpoint-id> --source-stopped` — break-glass release of a stale lease after the capable session has stopped.
 - `close <checkpoint-id>` — end the lease and retain the closed checkpoint for normal cleanup.
 
 Reject any other arguments with a short usage message.
@@ -68,10 +70,7 @@ Never export, copy, summarize from, or persist a native Claude/Pi transcript. Ne
    printf '%s\n' "$HANDOFF_RESULT"
    ```
 
-3. Read `data.checkpoint_id`, `data.target_harness`, and `data.worktree_root` from the validated envelope. Print the appropriate exact receiver command:
-
-   - Pi: `cd <worktree-root> && /handoff resume <checkpoint-id>`
-   - Claude Code: `cd <worktree-root> && /swe-workbench:handoff resume <checkpoint-id>`
+3. Read `data.receiver_command` from the validated envelope and print it verbatim. It launches a new receiver session in the recorded worktree; it does not re-anchor the already-running source session.
 
 4. Print: **`STOP: the source harness must not mutate this worktree after checkpoint creation; continue only in the receiver.`** Then stop. Do not run another mutating tool. The ownership hook enforces this invariant.
 
@@ -106,7 +105,28 @@ swe-workbench-handoff recover --from "<source-harness>" --source-stopped \
   | swe-workbench-result-check swb.handoff/1
 ```
 
-Print the returned checkpoint id and warning. Recovery is truthful degraded salvage from git/worktree evidence, not semantic reconstruction. Tell the user to resume the returned checkpoint with explicit `--acknowledge-degraded` in the receiver.
+Print the returned checkpoint id, warning, and `data.receiver_command`. Recovery is truthful degraded salvage from git/worktree evidence, not semantic reconstruction.
+
+## List
+
+Run exactly one pipeline:
+
+```bash
+swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1
+```
+
+Present each bounded row: worktree root, checkpoint id, checkpoint status, owner harness, and receiver session. The list covers only live worktrees registered to the current repository.
+
+## Abandon
+
+Use only after confirming the session capable of continuing the lease has stopped. This is a destructive local break-glass assertion; a false assertion can allow concurrent mutation. Run exactly one pipeline:
+
+```bash
+swe-workbench-handoff abandon "<checkpoint-id>" --source-stopped \
+  | swe-workbench-result-check swb.handoff/1
+```
+
+The runtime records terminal abandonment before releasing only the matching lease. It is idempotent for an already-abandoned checkpoint, but never releases a newer lease.
 
 ## Close
 
