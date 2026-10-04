@@ -161,9 +161,10 @@ class TestFetchFailure:
 
         assert result.returncode != 0
         assert "FETCH_RESULT" not in result.stdout
-        # The script's own marker plus git's passthrough stderr — the skill
+        # The script's own marker plus git's verbatim passthrough stderr — the skill
         # reports this verbatim and aborts.
         assert "fetch-latest:" in result.stderr
+        assert "fatal:" in result.stderr
         assert result.stderr.strip()
 
 
@@ -208,6 +209,27 @@ class TestEvalSafety:
         probe = subprocess.run(
             ["bash", "-c", 'eval "$1"; test -n "$NEW_REF" && test -n "$DEFAULT_BRANCH"',
              "fetch-latest-eval-probe", stdout],
+            capture_output=True,
+            text=True,
+            env=_NO_GH_ENV,
+        )
+        assert probe.returncode == 0, probe.stderr
+
+    def test_metachar_branch_name_round_trips_eval(self, repo_pair):
+        """Branch names may legally contain shell metacharacters — the %q
+        quoting of DEFAULT_BRANCH must keep the contract eval-safe for them
+        (an unquoted emit would let the branch name execute as code)."""
+        _, repo = repo_pair
+        weird = "quo'te;br"
+        _run("git", "branch", weird, cwd=repo)
+        _run("git", "push", "origin", f"refs/heads/{weird}:refs/heads/{weird}", cwd=repo)
+
+        result = _run_script(repo, weird)
+
+        assert result.returncode == 0, result.stderr
+        probe = subprocess.run(
+            ["bash", "-c", 'eval "$1"; test "$DEFAULT_BRANCH" = "$2"',
+             "fetch-latest-eval-probe", result.stdout, weird],
             capture_output=True,
             text=True,
             env=_NO_GH_ENV,

@@ -44,7 +44,8 @@ Emits `CURRENT_BRANCH`, `DEFAULT_BRANCH` (detected — never hardcode `main`), `
 Never compare against a locally-cached `origin/$DEFAULT_BRANCH` — the sync decision is only as fresh as that ref. Before any advisory, capture, or mechanical sync runs:
 
 ```bash
-_FETCH_OUT="$(swe-workbench-skill-script workflow-branch-sync fetch-latest.sh "$DEFAULT_BRANCH")"
+_FETCH_OUT="$(swe-workbench-skill-script workflow-branch-sync fetch-latest.sh "$DEFAULT_BRANCH")" \
+  || { echo "branch-sync: remote ref refresh failed — git's error above; never continue against a ref of unknown freshness." >&2; exit 1; }
 eval "$_FETCH_OUT"
 ```
 

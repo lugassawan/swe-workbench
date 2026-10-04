@@ -465,9 +465,9 @@ class TestFetchLatestStep:
 
     def test_step8_summary_reports_fetch_status(self):
         body = _body()
-        step7 = body.split("### Step 8")[1].split("## ")[0]
-        assert "Fetch:" in step7
-        assert "unchanged" in step7
+        step8 = body.split("### Step 8")[1].split("## ")[0]
+        assert "Fetch:" in step8
+        assert "unchanged" in step8
 
     def test_common_mistakes_documents_stale_ref_row(self):
         body = _body()
@@ -480,3 +480,13 @@ class TestFetchLatestStep:
         table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
         assert "git fetch" in table
         assert "verbatim" in table.lower()
+
+    def test_step15_code_block_guards_nonzero_exit(self):
+        """The abort must be enforced by the code block, not just prose: an
+        agent executing the block mechanically sees a green tool result when
+        fetch-latest.sh fails, unless the invocation itself exits non-zero."""
+        body = _body()
+        step15 = body.split("### Step 1.5")[1].split("### Step 2")[0]
+        block = step15.split("```bash")[1].split("```")[0]
+        assert "|| {" in block
+        assert "exit 1" in block
