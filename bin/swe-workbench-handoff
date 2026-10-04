@@ -381,13 +381,17 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def resolve_workspace() -> Workspace:
-    current_directory = Path.cwd().resolve()
-    worktree_root = Path(git_text(["rev-parse", "--show-toplevel"], current_directory)).resolve()
+def resolve_common_directory(current_directory: Path) -> Path:
     common_directory = Path(git_text(["rev-parse", "--git-common-dir"], current_directory))
     if not common_directory.is_absolute():
         common_directory = current_directory / common_directory
-    common_directory = common_directory.resolve()
+    return common_directory.resolve()
+
+
+def resolve_workspace() -> Workspace:
+    current_directory = Path.cwd().resolve()
+    worktree_root = Path(git_text(["rev-parse", "--show-toplevel"], current_directory)).resolve()
+    common_directory = resolve_common_directory(current_directory)
     return Workspace(
         repo_key=sha256_text(str(common_directory)),
         worktree_key=sha256_text(str(worktree_root)),
@@ -762,6 +766,57 @@ def show_checkpoint(checkpoint_id: str) -> Envelope:
     if not checkpoint_path.is_file():
         raise StorageError(f"checkpoint {checkpoint_id} was not found for this worktree")
     return Envelope("ok", {"checkpoint": load_checkpoint(checkpoint_path)}, [])
+
+
+def repository_worktree_roots(workspace: Workspace) -> list[Path]:
+    records = git_output(["worktree", "list", "--porcelain", "-z"], workspace.worktree_root).split(b"\0")
+    roots: list[Path] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if not record.startswith(b"worktree "):
+            raise GitError("git worktree list returned an invalid porcelain record")
+        root = Path(record[9:].decode("utf-8", errors="surrogateescape")).resolve()
+        prunable = False
+        while index < len(records) and records[index]:
+            if records[index].startswith(b"prunable"):
+                prunable = True
+            index += 1
+        if prunable or not root.is_dir():
+            continue
+        if sha256_text(str(resolve_common_directory(root))) != workspace.repo_key:
+            continue
+        roots.append(root)
+    return sorted(set(roots), key=str)
+
+
+def list_handoffs() -> Envelope:
+    workspace = resolve_workspace()
+    paths = StatePaths.from_environment()
+    rows: list[dict[str, object]] = []
+    for root in repository_worktree_roots(workspace):
+        workspace_directory = paths.root / "workspaces" / workspace.repo_key / sha256_text(str(root))
+        lease = load_lease(workspace_directory)
+        if lease is None:
+            continue
+        checkpoint_id = str(lease["checkpoint_id"])
+        checkpoint_path = workspace_directory / "checkpoints" / f"{checkpoint_id}.json"
+        if not checkpoint_path.is_file():
+            raise StorageError(f"handoff checkpoint {checkpoint_id} was not found for {root}")
+        checkpoint = load_checkpoint(checkpoint_path)
+        rows.append(
+            {
+                "worktree_root": str(root),
+                "checkpoint_id": checkpoint_id,
+                "checkpoint_status": checkpoint["status"],
+                "owner_harness": lease["owner_harness"],
+                "receiver_session_ref": lease["receiver_session_ref"],
+            }
+        )
+    return Envelope("ok", {"leases": rows}, [])
 
 
 def record_urgent_notice(reset_window: str) -> None:
@@ -1294,6 +1349,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="swe-workbench-handoff")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("create", help="write a handoff checkpoint from semantic JSON")
+    subcommands.add_parser("list", help="list current-repository handoff leases")
     show_parser = subcommands.add_parser("show", help="show a handoff checkpoint")
     show_parser.add_argument("checkpoint_id")
     resume_parser = subcommands.add_parser("resume", help="acquire ownership of a handoff checkpoint")
@@ -1325,6 +1381,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "create":
             write_envelope(create_checkpoint())
+        elif args.command == "list":
+            write_envelope(list_handoffs())
         elif args.command == "show":
             write_envelope(show_checkpoint(args.checkpoint_id))
         elif args.command == "resume":

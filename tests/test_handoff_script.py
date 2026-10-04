@@ -71,7 +71,7 @@ def test_help_documents_every_subcommand():
 
     assert result.returncode == 0
     assert "swe-workbench-handoff" in result.stdout
-    for subcommand in ("create", "show", "status-segment", "resume", "recover", "close", "guard"):
+    for subcommand in ("create", "show", "list", "status-segment", "resume", "recover", "close", "guard"):
         assert subcommand in result.stdout
 
 
@@ -236,6 +236,106 @@ def test_released_guard_omits_unsafe_receiver_command_for_control_character_root
 
     assert result.returncode == 3, result.stderr
     assert "receiver_command" not in json.loads(result.stdout)["data"]
+
+
+def test_list_reports_leases_for_main_and_all_live_linked_worktrees(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked_one = tmp_path / "linked one"
+    linked_two = tmp_path / "linked two"
+    for linked in (linked_one, linked_two):
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+            check=True,
+            env=dict(_CLEAN_ENV),
+        )
+    state_dir = tmp_path / "state"
+
+    main_id = _planned_checkpoint(repo, state_dir, "list-main")
+    assert _resume(repo, state_dir, main_id, "--as", "pi", "--receiver-session", "main-session").returncode == 0
+    linked_one_id = _planned_checkpoint(linked_one, state_dir, "list-linked-one")
+    linked_two_id = _planned_checkpoint(linked_two, state_dir, "list-linked-two")
+    assert _resume(
+        linked_two, state_dir, linked_two_id, "--as", "pi", "--receiver-session", "linked-session"
+    ).returncode == 0
+
+    main_result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+    linked_result = _run_handoff("list", cwd=linked_one, env=_env_for(state_dir))
+
+    assert main_result.returncode == 0, main_result.stderr
+    assert linked_result.returncode == 0, linked_result.stderr
+    rows = json.loads(main_result.stdout)["data"]["leases"]
+    assert json.loads(linked_result.stdout)["data"]["leases"] == rows
+    assert [row["worktree_root"] for row in rows] == sorted(row["worktree_root"] for row in rows)
+    assert {frozenset(row) for row in rows} == {
+        frozenset({"worktree_root", "checkpoint_id", "checkpoint_status", "owner_harness", "receiver_session_ref"})
+    }
+    assert {row["checkpoint_id"] for row in rows} == {main_id, linked_one_id, linked_two_id}
+    assert {row["worktree_root"] for row in rows} == {
+        str(repo.resolve()), str(linked_one.resolve()), str(linked_two.resolve())
+    }
+
+
+def test_list_excludes_foreign_repository_state(tmp_path):
+    repo = tmp_path / "repo"
+    other_repo = tmp_path / "other-repo"
+    repo.mkdir()
+    other_repo.mkdir()
+    _initialize_repo(repo)
+    _initialize_repo(other_repo)
+    state_dir = tmp_path / "state"
+    own_id = _planned_checkpoint(repo, state_dir, "list-own")
+    _planned_checkpoint(other_repo, state_dir, "list-foreign")
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    rows = json.loads(result.stdout)["data"]["leases"]
+    assert [row["checkpoint_id"] for row in rows] == [own_id]
+    assert rows[0]["worktree_root"] == str(repo.resolve())
+
+
+def test_list_does_not_trust_stale_checkpoint_worktree_path(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(linked, state_dir, "list-stale")
+    _rewrite_checkpoint_with_valid_hash(
+        state_dir, checkpoint_id, lambda checkpoint: checkpoint.update(worktree_root=str(tmp_path / "invented"))
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "remove", "--force", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data"]["leases"] == []
+
+
+def test_list_fails_closed_on_corrupt_matching_lease_or_checkpoint(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "list-corrupt")
+    next(state_dir.glob("workspaces/*/*/lease.json")).write_text("not-json{")
+
+    result = _run_handoff("list", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "lease" in result.stderr.lower()
 
 
 def test_create_persists_only_changed_path_metadata_and_fingerprint_changes_with_content(tmp_path):
