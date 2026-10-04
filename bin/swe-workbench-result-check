@@ -77,6 +77,18 @@ REGISTRY: dict[str, dict[str, str]] = {
         "failed_thread_ids": "list[str]",
         "report_path": "str",
     },
+    "swb.pr-title-drift/1": {
+        "pr": "int",
+        "title": "str",
+        "base": "str",
+        "diff_scopes": "list[str]",
+        "type_tags": "list[str]",
+        "scope_tags": "list[str]",
+        "extra_tags": "list[str]",
+        "missing_scopes": "list[str]",
+        "verdict": "str",
+        "suggested_title": "str",
+    },
     "swb.address-feedback-worktree-acquire/1": {
         "path": "str",
         "branch": "str",
