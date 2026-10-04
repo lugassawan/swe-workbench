@@ -1215,6 +1215,82 @@ def test_submit_plan_approval_kicks_off_execution_once():
     )
 
 
+_PHASE_DUPLICATE_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const confirms = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: {
+    notify() {},
+    confirm: async () => { confirms.push(1); return true; },
+  },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+await handlers.agent_settled?.(undefined, ctx);
+await start("continue");
+const dup = await tools.submit_plan.execute("t2", { plan: "p2" }, undefined, () => {}, ctx);
+const confirmsAfterDuplicate = confirms.length;
+const sentAfterDuplicate = sent.length;
+const dupText = dup?.content?.[0]?.text ?? "";
+handlers.model_select({ source: "set" });
+await tools.submit_plan.execute("t3", { plan: "p3" }, undefined, () => {}, ctx);
+const confirmsAfterDisarmed = confirms.length;
+await handlers.agent_settled?.(undefined, ctx);
+const sentAfterDisarmed = sent.length;
+console.log(JSON.stringify({
+  confirmsAfterDuplicate, sentAfterDuplicate, dupText,
+  confirmsAfterDisarmed, sentAfterDisarmed,
+}));
+"""
+
+
+@requires_node
+def test_submit_plan_duplicate_approval_is_idempotent():
+    """A second submit_plan while in execute is a no-op; disarmed keeps the full flow."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-duplicate-dump.mjs"
+        driver.write_text(_PHASE_DUPLICATE_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["confirmsAfterDuplicate"] == 1, (
+        "a duplicate submit_plan while in execute must return before the approval dialog"
+    )
+    assert dumped["sentAfterDuplicate"] == 1, (
+        "a duplicate approval must not launch a second execution kickoff"
+    )
+    assert "already approved" in dumped["dupText"], (
+        "the duplicate guard must return idempotent guidance text"
+    )
+    assert dumped["confirmsAfterDisarmed"] == 2, (
+        "a disarmed (resume-mid-plan) submit_plan must keep the full approval flow"
+    )
+    assert dumped["sentAfterDisarmed"] == 2, (
+        "an approval from disarmed must still kick off execution"
+    )
+
+
 _PHASE_FLIP_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);

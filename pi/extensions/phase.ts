@@ -206,6 +206,17 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
           "submit_plan needs an interactive session — run the phase-armed command in the TUI, or proceed without the plan gate.",
         );
       }
+      // Idempotence: while in execute the plan is already approved and its kickoff has
+      // fired (or will on the next settle) — a re-call must not re-dialog or launch a
+      // second execution. "disarmed" deliberately falls through: resume-mid-plan resets
+      // the gate, and its approval must still work (docs/pi-plan-mode.md §4).
+      if (phase === "execute") {
+        const text =
+          "Plan already approved — execution phase is active and execution has already been " +
+          "kicked off; no second approval is needed. Send a message to continue if execution " +
+          "appears stalled.";
+        return { content: [{ type: "text" as const, text }], details: undefined };
+      }
       const { plan } = params as unknown as { plan: string };
       let approved = false;
       let revision: string | undefined;
