@@ -1056,7 +1056,9 @@ let flipWarnings = 0;
 const ctx = {
   hasUI: true,
   mode: "non-tui",
-  ui: { notify() { flipWarnings += 1; }, confirm: async () => true },
+  // Count only the flip-degradation warns (each ends "…current model.") — the approval
+  // path now also notifies (execution-starting), which is not a flip attempt.
+  ui: { notify(msg) { if (/current model\\.$/.test(msg)) flipWarnings += 1; }, confirm: async () => true },
   model: undefined,
 };
 const start = (prompt) => handlers.before_agent_start({ prompt, systemPrompt: "" }, ctx);
@@ -1127,6 +1129,89 @@ def test_plan_marker_arms_from_any_state():
     assert dumped["flipWarnings"] == 3, (
         "each of the three arming/approval turns must attempt its model flip exactly "
         "once, and the plain turn none"
+    )
+
+
+_PHASE_KICKOFF_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const notifies = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+// model: undefined -> both flips degrade to warns; the kickoff must still fire (degraded start).
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify(msg) { notifies.push(msg); }, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+const deferredUntilSettle = sent.length;
+const notifyOnApproval = notifies.some((m) => /execution starting automatically/i.test(m));
+await handlers.agent_settled?.(undefined, ctx);
+const kickoffCount = sent.length;
+const kickoffText = sent[0] ?? "";
+const section = await start("continue");
+const execSectionGoverns = (section?.systemPrompt ?? "").includes("Execute phase");
+await handlers.agent_settled?.(undefined, ctx);
+const exactlyOnceAfterDischarge = sent.length;
+handlers.session_before_switch(undefined, ctx);
+await handlers.agent_settled?.(undefined, ctx);
+const switchResetsPending = sent.length;
+console.log(JSON.stringify({
+  deferredUntilSettle, notifyOnApproval, kickoffCount, kickoffText,
+  execSectionGoverns, exactlyOnceAfterDischarge, switchResetsPending,
+}));
+"""
+
+
+@requires_node
+def test_submit_plan_approval_kicks_off_execution_once():
+    """Approve a plan and execution starts exactly once via a settled follow-up turn."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["deferredUntilSettle"] == 0, (
+        "the kickoff must defer until the approval run settles — firing inside the "
+        "tool call would land the turn under the stale plan-governed prompt"
+    )
+    assert dumped["notifyOnApproval"] is True, (
+        "approval must notify the user that execution is starting automatically"
+    )
+    assert dumped["kickoffCount"] == 1, (
+        "plan approval must start execution exactly once via sendUserMessage"
+    )
+    assert dumped["kickoffText"].startswith("Plan approved by the user"), (
+        "the kickoff must address the model as an execution instruction"
+    )
+    assert dumped["execSectionGoverns"] is True, (
+        "the post-approval turn must be governed by the execute-phase section"
+    )
+    assert dumped["exactlyOnceAfterDischarge"] == 1, (
+        "an execute-governed turn must discharge the pending kickoff — no duplicate send"
+    )
+    assert dumped["switchResetsPending"] == 1, (
+        "a session switch must reset the pending kickoff — no stale send in the "
+        "switched-to session"
     )
 
 
