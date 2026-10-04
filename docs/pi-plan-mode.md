@@ -22,7 +22,11 @@ plan mode (plan → approval → execute) is the reference UX — Pi has none; b
 - **Arming — latest explicit plan command wins** — a marker arms plan phase from ANY state
   and best-effort flips to the plan model; re-invocation re-arms idempotently.
 - **Approval (`submit_plan`)** — Claude Code's `ExitPlanMode` transposed: Approve flips to
-  the sonnet-tier execution model and disarms atomically; Revise returns feedback, stays armed.
+  the sonnet-tier execution model and disarms atomically, then schedules the execution
+  kickoff — a notify at approval and one follow-up turn fired automatically once the run
+  settles (`agent_settled` → `sendUserMessage` → the public prompt path, so the execute
+  section governs the turn); duplicate approvals while in execute are idempotent no-ops.
+  Revise returns feedback, stays armed.
 - **Read-only steering** — plan phase blocks `edit`/`write` with `terminate: true`, steering
   the model to `submit_plan`, except inside `~/.pi/agent/plans/`: the drafted plan persists as
   it goes, so a broken session never discards the work (durability over gate purity — the
@@ -49,6 +53,12 @@ its handler bodies self-wrap per the runner's no-try/catch contract.
 - One full-context re-bill at the flip; the stable section invalidates at most twice per run.
 - Thinking-level split and `defaultModel` flip: follow-up tunings, not v1.
 - Headless: no arming, gate, flip, or section; `submit_plan` throws actionable text without a UI.
+- The approval kickoff lands as an extension-source user-role transcript line — the only
+  public-path auto-start in the current SDK; a silent custom message's continuation would
+  inherit the approval turn's plan-governed forced prompt instead.
+- A kickoff-send failure is swallowed by the SDK's extension wrapper; recovery is the
+  retryable state — the pending flag and execute phase persist, and any user message
+  completes the start.
 
 ## 5. Explicitly rejected
 
