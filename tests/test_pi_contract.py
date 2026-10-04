@@ -1215,6 +1215,90 @@ def test_submit_plan_approval_kicks_off_execution_once():
     )
 
 
+_PHASE_KICKOFF_RETRY_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+let sendAttempts = 0;
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  // Throws exactly once: models the swallowed-send failure (SDK extension wrapper),
+  // then succeeds — the pending flag must survive the failure and retry on next settle.
+  sendUserMessage(text) {
+    sendAttempts += 1;
+    if (sendAttempts === 1) throw new Error("simulated send failure");
+    sent.push(text);
+  },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+start("x\\n<!-- swb-phase: plan -->\\ny");
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+// First settle: the send throws — the handler's catch must contain it (an escaping
+// throw rejects this await) and the flag must survive the swallowed failure.
+let handlerSurvivedThrow = false;
+try {
+  await handlers.agent_settled?.(undefined, ctx);
+  handlerSurvivedThrow = true;
+} catch {
+  handlerSurvivedThrow = false;
+}
+const nothingSentAfterFailure = sent.length;
+// Second settle: the retry succeeds only if the flag was never cleared in the handler.
+await handlers.agent_settled?.(undefined, ctx);
+const retriedOnNextSettle = sent.length;
+// An execute-governed turn discharges the flag; further settles never re-send.
+await start("continue");
+await handlers.agent_settled?.(undefined, ctx);
+const staysExactlyOnceAfterDischarge = sent.length;
+console.log(JSON.stringify({
+  handlerSurvivedThrow, nothingSentAfterFailure, retriedOnNextSettle,
+  staysExactlyOnceAfterDischarge,
+}));
+"""
+
+
+@requires_node
+def test_kickoff_send_failure_is_swallowed_and_retried():
+    """A failed kickoff send is swallowed, retried next settle, discharged exactly once."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-retry-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_RETRY_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["handlerSurvivedThrow"] is True, (
+        "the handler's catch must contain a throwing send — an escaping throw reaches "
+        "the extension runner uncaught"
+    )
+    assert dumped["nothingSentAfterFailure"] == 0, (
+        "a failed send must record nothing"
+    )
+    assert dumped["retriedOnNextSettle"] == 1, (
+        "the pending flag must survive a swallowed send — the kickoff retries on the "
+        "next settle rather than being lost"
+    )
+    assert dumped["staysExactlyOnceAfterDischarge"] == 1, (
+        "after an execute-governed discharge, no further settle may re-send"
+    )
+
+
 _PHASE_DUPLICATE_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);
