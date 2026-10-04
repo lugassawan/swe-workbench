@@ -131,8 +131,30 @@ def test_deeper_component_not_trimmable(tmp_path):
     repo = _feature_repo(tmp_path, {"core/service-y/f.py": "y"})
     data = _drift(repo, "[feat][service-y] Move parser")
     assert data["extra_tags"] == []
+    assert data["missing_scopes"] == []
     assert data["verdict"] == "clean"
     assert data["suggested_title"] == "[feat][service-y] Move parser"
+
+
+def test_mixed_verdict_rebuilds_kept_then_missing_tags(tmp_path):
+    repo = _feature_repo(
+        tmp_path,
+        {"service-y/src/a.py": "y", "service-z/src/b.py": "z"},
+    )
+    data = _drift(repo, "[feat][service-y][obsolete] Support modules")
+    assert data["extra_tags"] == ["obsolete"]
+    assert data["missing_scopes"] == ["service-z"]
+    assert data["verdict"] == "mixed"
+    assert data["suggested_title"] == "[feat][service-y][service-z] Support modules"
+
+
+def test_component_prefix_not_trimmable(tmp_path):
+    repo = _feature_repo(tmp_path, {"server/api_v2/routes.py": "x"})
+    title = "[feat][server][api] Add endpoint"
+    data = _drift(repo, title)
+    assert data["extra_tags"] == []
+    assert data["verdict"] == "clean"
+    assert data["suggested_title"] == title
 
 
 def test_missing_direction(tmp_path):

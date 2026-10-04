@@ -22,9 +22,10 @@ zero scope tags make the check a no-op, so Conventional-Commits and Jira-prefix
 repos never see false drift.
 
 Drift semantics:
-- ``extra_tags`` lists only TRIMMABLE extras — tags matching no kebab-normalized
-  path component ANYWHERE in the diff, not just the first-component scope set.
-  A tag buried at a deeper path component is layout, not drift.
+- ``extra_tags`` lists only TRIMMABLE extras — tags matching no exact or
+  kebab-boundary-prefix path component ANYWHERE in the diff, not just the
+  first-component scope set. A tag buried at a deeper path component (or
+  naming a versioned component such as `api` → `api-v2`) is layout, not drift.
 - ``missing_scopes`` uses only non-docs/CI paths; a docs-only diff suppresses the
   extra-direction too (topical tags on docs PRs are not stale on the diff's
   silence).
@@ -114,7 +115,7 @@ def _run_cmd(argv: list[str]) -> subprocess.CompletedProcess:
 def resolve_pr_via_gh() -> tuple[Optional[int], Optional[str], Optional[str]]:
     """PR number, title, and baseRefName for the current branch, via gh.
 
-    Returns (None, None, None) only via raised error — there is no meaningful
+    Never returns Nones — every failure path raises. There is no meaningful
     "no PR" result distinguishable from a gh failure here, and callers treat
     both as skip-worthy anyway.
     """
@@ -191,8 +192,15 @@ def classify(title: str, paths: Optional[list[str]]) -> tuple[dict, Optional[str
 
     missing = [s for s in code_scopes if not scope_acknowledged(s)]
     if code_paths:
+        def matches_component(tag: str) -> bool:
+            normalized = kebab(tag)
+            return any(
+                component == normalized or component.startswith(f"{normalized}-")
+                for component in components
+            )
+
         extra = [t for t in scope_tags
-                 if kebab(t) not in diff_scopes and kebab(t) not in components]
+                 if kebab(t) not in diff_scopes and not matches_component(t)]
     else:
         # Docs-only diff: no code scope to compare against — topical tags are
         # not stale merely because the diff is silent about them.

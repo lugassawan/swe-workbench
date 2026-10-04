@@ -188,15 +188,18 @@ Evaluates architectural and conceptual drift between the branch's additions and 
 Post-sync advisory: the merge-base just moved, so the branch's diff scope may have shrunk while the PR title's bracket scope tags (e.g. `[service-x]`) still describe the old scope. If `gh pr view` reports no open PR for the branch, skip this step silently.
 
 ```bash
-RESULT="$(swe-workbench-pr-title-drift 2>/dev/null)" && \
-  printf '%s' "$RESULT" | swe-workbench-result-check swb.pr-title-drift/1 >/dev/null
+PR="$(gh pr view --json number --jq .number 2>/dev/null || true)"
+if [ -n "$PR" ]; then
+  RESULT="$(swe-workbench-pr-title-drift --pr "$PR" 2>/dev/null)" && \
+    printf '%s' "$RESULT" | swe-workbench-result-check swb.pr-title-drift/1 >/dev/null
+fi
 ```
 
-Read `verdict`, `extra_tags`, `missing_scopes`, `suggested_title` from the envelope with `jq`. Then:
+An empty `$PR` means no open PR for this branch, so skip silently. Once `$PR` is set, read `verdict`, `extra_tags`, `missing_scopes`, `suggested_title` from the envelope with `jq`. Then:
 - Non-zero exit / empty output / envelope fails validation → one-line advisory skip ("title-drift check unavailable") — never abort a completed sync over it.
 - `no_scope_tags` / `no_diff` / `clean` → nothing to do.
-- `pure_extra` and `suggested_title` still carries ≥1 bracket scope tag → auto-apply via `swe-workbench-sync-pr-metadata "$PR" "$SUGGESTED_TITLE" ""` (empty body file skips the body; `PR`/`SUGGESTED_TITLE` are `jq -r .data.pr` / `.data.suggested_title` off the validated envelope) and list the trim in the Step 8 summary: "PR title trimmed: removed [x], [y] — no diff counterpart".
-- `missing` / `mixed`, or `pure_extra` whose suggested title retains zero scope tags → report the mismatch and the suggested title only — the user applies it (or asks); never auto-applied.
+- `pure_extra` and `len(scope_tags) > len(extra_tags)` from the envelope → auto-apply via `swe-workbench-sync-pr-metadata "$PR" "$SUGGESTED_TITLE" ""` (empty body file skips the body; `PR`/`SUGGESTED_TITLE` are `jq -r .data.pr` / `.data.suggested_title` off the validated envelope) and list the trim in the Step 8 summary: "PR title trimmed: removed [x], [y] — no diff counterpart".
+- `missing` / `mixed`, or `pure_extra` when `len(scope_tags) == len(extra_tags)` → report the mismatch and the suggested title only — the user applies it (or asks); never auto-applied.
 
 ### Step 8 — Leave Local & Prompt Before Push
 
