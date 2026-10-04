@@ -97,3 +97,19 @@ def test_output_documents_opt_in_alignment_assessment():
     output = body.split("## Output")[1]
     assert "--check-alignment" in output or "alignment" in output.lower()
     assert "opt-in" in output.lower()
+
+
+def test_output_reports_fetch_status():
+    """The Output contract must surface whether a fetch was performed —
+    prefixed to the Sync result line, so a "clean" report is visibly backed
+    by a fresh remote ref."""
+    body = _body()
+    output = body.split("## Output")[1]
+    assert "fetch" in output.lower()
+    assert "unchanged" in output
+
+
+def test_description_mentions_fresh_fetch():
+    body = _body()
+    frontmatter = body.split("---")[1]
+    assert "fetch" in frontmatter.lower()

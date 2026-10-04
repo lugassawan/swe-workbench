@@ -39,6 +39,18 @@ Emits `CURRENT_BRANCH`, `DEFAULT_BRANCH` (detected — never hardcode `main`), `
 - **`DETACHED=1`**: refuse. Report "detached HEAD — checkout a branch first" and stop.
 - **`DIRTY>0`**: offer **stash-or-abort** before touching history — `git stash push -u -m "branch-sync: pre-sync stash"` if the user opts to stash, otherwise stop and let the user commit or discard first. Never proceed with a dirty tree. If the user stashes, set `STASHED=1` — Step 8 restores it before reporting.
 
+### Step 1.5 — Refresh Remote Refs
+
+Never compare against a locally-cached `origin/$DEFAULT_BRANCH` — the sync decision is only as fresh as that ref. Before any advisory, capture, or mechanical sync runs:
+
+```bash
+_FETCH_OUT="$(swe-workbench-skill-script workflow-branch-sync fetch-latest.sh "$DEFAULT_BRANCH")" \
+  || { echo "branch-sync: remote ref refresh failed — git's error above; never continue against a ref of unknown freshness." >&2; exit 1; }
+eval "$_FETCH_OUT"
+```
+
+Capture once into `_FETCH_OUT`, then eval — same capture-once discipline as Step 4. `FETCH_RESULT=updated` means the tracking ref moved (or had no prior value — first fetch); `unchanged` means it already matched remote truth. Surface the one-line fetch status (`origin/$DEFAULT_BRANCH <old>→<new>` or `unchanged`) in Step 8's summary. On non-zero exit the fetch itself failed (offline, auth, remote down) — report the error verbatim and stop; never continue against a ref whose freshness is unknown.
+
 ### Step 2 — Overlap Advisory (optional)
 
 If the rimba MCP server is active in the session, invoke its `conflict-check` tool with `dry_merge: true` as an **informational heads-up only** — it detects cross-worktree file overlaps between rimba-managed worktrees, not the authoritative conflict set for this sync. Surface any overlap it reports, but never block or skip Step 3 on its account. Skip silently if rimba MCP is not active.
@@ -88,7 +100,7 @@ RIMBA=$(command -v rimba 2>/dev/null \
 - **`$RIMBA` non-empty (binary found)** → run the table's binary form. The binary exits non-zero with `Error: worktree not found for task "<task>"` when `CURRENT_BRANCH`'s derived task isn't a rimba-managed worktree — on exactly that message, fall through to the shell fallback below. Any other non-zero exit is a real sync failure (see Failure Mode Table) and must not fall through.
 - **rimba absent, or the rimba call above fell through on "worktree not found"** → shell fallback:
   ```bash
-  git fetch origin "$DEFAULT_BRANCH"
+  # origin/$DEFAULT_BRANCH was refreshed in Step 1.5 — no fetch here.
   git merge origin/"$DEFAULT_BRANCH"     # default (merge)
   # or, under --rebase:
   git rebase origin/"$DEFAULT_BRANCH"
@@ -177,7 +189,7 @@ Evaluates architectural and conceptual drift between the branch's additions and 
 - **Pop succeeds cleanly** → note it in the resolution summary ("Restored N file(s) from the pre-sync stash").
 - **Pop conflicts** → surface it exactly like a file conflict from Step 5 (show both sides, let the user resolve, `git add` the resolved files), then `git stash drop` once resolved — a conflicting pop leaves the stash entry in place rather than consuming it, so an explicit drop is required after manual resolution.
 
-Report the resolution summary: one line per file — which side was kept (or "manual") and the one-line rationale from Step 5, plus one line per Step 6/7 `[refactor]` commit (auto-applied or user-confirmed removal/edit), if any. **Never auto-push.**
+Report the resolution summary: lead with the fetch status line from Step 1.5 — `Fetch: origin/$DEFAULT_BRANCH updated <old>→<new>` (or `unchanged`) — so every sync visibly states whether remote truth was refreshed. Then one line per file — which side was kept (or "manual") and the one-line rationale from Step 5, plus one line per Step 6/7 `[refactor]` commit (auto-applied or user-confirmed removal/edit), if any. **Never auto-push.**
 
 Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 
@@ -192,7 +204,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Already on default branch | `IS_DEFAULT=1` | Refuse. Nothing to sync onto itself. |
 | Detached HEAD | `DETACHED=1` | Refuse. Ask the user to checkout a branch first. |
 | Dirty working tree | `DIRTY>0` | Offer stash-or-abort before touching history. Never proceed dirty. |
-| Mechanical sync itself fails (not a conflict — e.g. network) | Non-zero exit from `rimba sync` / `git fetch` / `git merge` / `git rebase` with no `MERGE_HEAD`/`rebase-merge` present | Report the error verbatim. Do not enter the resolve loop. |
+| Mechanical sync itself fails (not a conflict — e.g. network) | Non-zero exit from `fetch-latest.sh` (Step 1.5's `git fetch`) / `rimba sync` / `git merge` / `git rebase` with no `MERGE_HEAD`/`rebase-merge` present | Report the error verbatim. Do not enter the resolve loop. |
 | `swe-workbench:conflict-resolver` subagent cannot form a confident recommendation | Subagent emits `**Resolution: MANUAL**` | Route to the manual path — never force a keep-mine/keep-main guess. |
 | Rebase pauses again after `git rebase --continue` | Fresh `OPERATION=rebase` with non-empty `UNMERGED` from Step 4 | Loop back into Step 5. Do not treat the first `--continue` as completion. |
 | User declines to stash a dirty tree | User says no at Step 1 | Abort. Do not force-stash. |
@@ -218,6 +230,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Treat `--ours`/`--theirs` as the user's "mine"/"main" intent directly | Never. Under a **merge**, `--ours` = HEAD (your branch, "mine"), `--theirs` = the incoming default branch ("main"). Under a **rebase**, git inverts this: `--ours` = the rebase target ("main"), `--theirs` = your replayed commits ("mine"). Always route through `swe-workbench-apply-conflict-resolution`, which does this translation — never call `git checkout --ours/--theirs` inline. |
 | Assume `mcp__rimba__sync` defaults match this skill's defaults | They don't. rimba's `sync` **rebases by default** (pass `merge: true` for merge) and **pushes by default** (pass `no_push: true` to suppress it). This skill defaults to **merge** and **never** auto-pushes. Always pass `no_push: true` / `--no-push` regardless of strategy. |
 | Hardcode `main` as the default branch | Never. `preflight-guard.sh` detects `DEFAULT_BRANCH` via `gh repo view` with a `git symbolic-ref` fallback — the plugin runs against arbitrary repos. |
+| Compare against a locally-cached `origin/<default>` | Never — Step 1.5 refreshes the remote-tracking ref before any advisory, merge-base capture, or mechanical sync; a stale ref reports "already up to date" while the branch is actually behind. |
 | Treat the first `git rebase --continue` as "done" | A rebase replays one commit at a time and can pause again on the very next one. Re-run `detect-conflicts.sh` after every `--continue` and loop back into Step 5 until `OPERATION=none`. |
 | Resolve a file without showing both sides | Always present both sides plus the `swe-workbench:conflict-resolver` subagent's per-hunk rationale before prompting keep-mine/keep-main/manual — resolving is review-and-confirm, not a guess. |
 | Push automatically once conflicts are resolved | Never. Step 8 always stops and prompts — the result is left local until the user explicitly opts in. |
