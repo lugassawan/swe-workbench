@@ -1291,6 +1291,79 @@ def test_submit_plan_duplicate_approval_is_idempotent():
     )
 
 
+_PHASE_KICKOFF_CANCEL_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const tools = {};
+const sent = [];
+const stubPi = {
+  on(name, fn) { handlers[name] = fn; },
+  registerTool(def) { tools[def.name] = def; },
+  sendUserMessage(text) { sent.push(text); },
+};
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = {
+  hasUI: true,
+  mode: "non-tui",
+  ui: { notify() {}, confirm: async () => true },
+  model: undefined,
+};
+const start = (p) => handlers.before_agent_start({ prompt: p, systemPrompt: "" }, ctx);
+const planPrompt = "x\\n<!-- swb-phase: plan -->\\ny";
+// A user override abandons the phase mid-wrap-up: the armed kickoff must cancel, else
+// every settle re-sends it and each send starts a turn — a loop no user turn can break.
+start(planPrompt);
+await tools.submit_plan.execute("t1", { plan: "p" }, undefined, () => {}, ctx);
+handlers.model_select({ source: "set" });
+await handlers.agent_settled?.(undefined, ctx);
+const overrideCancelsKickoff = sent.length;
+await handlers.agent_settled?.(undefined, ctx);
+const noLoopAfterOverride = sent.length;
+// Re-arming plan while a kickoff is pending must cancel it: the user chose more planning.
+start(planPrompt);
+await tools.submit_plan.execute("t2", { plan: "p2" }, undefined, () => {}, ctx);
+start(planPrompt);
+await handlers.agent_settled?.(undefined, ctx);
+const rearmCancelsKickoff = sent.length;
+await handlers.agent_settled?.(undefined, ctx);
+const noLoopAfterRearm = sent.length;
+console.log(JSON.stringify({
+  overrideCancelsKickoff, noLoopAfterOverride, rearmCancelsKickoff, noLoopAfterRearm,
+}));
+"""
+
+
+@requires_node
+def test_kickoff_pending_cancels_when_phase_leaves_execute():
+    """A pending kickoff cancels when a user override or plan re-arm leaves execute."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-kickoff-cancel-dump.mjs"
+        driver.write_text(_PHASE_KICKOFF_CANCEL_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["overrideCancelsKickoff"] == 0, (
+        "a user model override abandons the phase — its pending kickoff must cancel"
+    )
+    assert dumped["noLoopAfterOverride"] == 0, (
+        "a stranded kickoff flag re-sends on every settle — unbounded turn loop"
+    )
+    assert dumped["rearmCancelsKickoff"] == 0, (
+        "re-arming plan phase must void the pending kickoff — the user chose more planning"
+    )
+    assert dumped["noLoopAfterRearm"] == 0, (
+        "a stranded kickoff flag re-sends on every settle — unbounded turn loop"
+    )
+
+
 _PHASE_FLIP_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);

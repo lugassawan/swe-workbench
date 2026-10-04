@@ -81,6 +81,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
       // re-invoking a plan command after approval re-arms), refreshing the flip idempotently.
       if (extractPhase(event.prompt) === "plan") {
         phase = "plan";
+        // Re-arming plan voids a pending kickoff: the user chose more planning over executing.
+        kickoffPending = false;
         await flipToPhaseModel(ctx, "plan", "plan phase armed", "staying on the current model");
       }
       // Any execute-governed turn satisfies the pending kickoff contract: a user-typed
@@ -121,6 +123,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
   pi.on("model_select", (event) => {
     if (!ourFlip && (event.source === "set" || event.source === "cycle")) {
       phase = "disarmed";
+      // Abandoning the phase voids its pending kickoff — a stranded flag re-sends every settle.
+      kickoffPending = false;
     }
     ourFlip = false;
   });
