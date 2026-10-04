@@ -1,6 +1,7 @@
 """Behavior tests for the Claude PreToolUse handoff guard (hooks/handoff_guard.py)."""
 
 import json
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -111,8 +112,8 @@ def test_blocks_mutating_tools_under_a_released_lease(tmp_path):
         result = _run_hook(_payload(repo, tool_name), state_dir=state_dir)
         assert result.returncode == 2, f"{tool_name}: {result.stderr}"
         assert "BLOCKED:" in result.stderr
-        assert f"/handoff resume {checkpoint_id}" in result.stderr
-        assert str(repo.resolve()) in result.stderr
+        assert shlex.join(["cd", "--", str(repo.resolve())]) in result.stderr
+        assert shlex.join(["pi", f"/handoff resume {checkpoint_id}"]) in result.stderr
 
 
 def test_released_lease_names_the_claude_receiver_command(tmp_path):

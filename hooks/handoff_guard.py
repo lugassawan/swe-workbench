@@ -78,21 +78,24 @@ def _working_directory(payload: dict[str, object]) -> Path:
     return Path.cwd()
 
 
-def _safe_worktree_root(value: object) -> str | None:
-    """Validate an untrusted worktree_root before it reaches stderr.
-
-    The path is decoded with ``surrogateescape`` upstream, so treat it as untrusted text:
-    require a bounded string free of control characters. Validation failure omits the
-    clause; it never raises.
-    """
+def _safe_terminal_text(value: object, *, absolute_path: bool = False) -> str | None:
+    """Validate untrusted runtime text before it reaches stderr."""
     if (
         isinstance(value, str)
-        and value.startswith("/")
+        and (not absolute_path or value.startswith("/"))
         and len(value) <= 4096
         and all(ord(character) >= 32 and ord(character) != 127 for character in value)
     ):
         return value
     return None
+
+
+def _safe_worktree_root(value: object) -> str | None:
+    return _safe_terminal_text(value, absolute_path=True)
+
+
+def _safe_receiver_command(value: object) -> str | None:
+    return _safe_terminal_text(value)
 
 
 def _is_control_command(payload: dict[str, object]) -> bool:
@@ -117,7 +120,7 @@ def _with_worktree_clause(message: str, worktree_root: str | None) -> str:
     return f"{message} (worktree: {worktree_root})" if worktree_root else message
 
 
-def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None] | None:
+def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None, str | None] | None:
     try:
         envelope = json.loads(output)
     except json.JSONDecodeError:
@@ -144,7 +147,8 @@ def _decision(output: str) -> tuple[str, str, str | None, str | None, str | None
         else None
     )
     safe_worktree_root = _safe_worktree_root(data.get("worktree_root"))
-    return decision, reason, safe_checkpoint_id, safe_target_harness, safe_worktree_root
+    safe_receiver_command = _safe_receiver_command(data.get("receiver_command"))
+    return decision, reason, safe_checkpoint_id, safe_target_harness, safe_worktree_root, safe_receiver_command
 
 
 def main() -> None:
@@ -181,15 +185,14 @@ def main() -> None:
         return
 
     if parsed is not None and parsed[0] == "deny":
-        reason, checkpoint_id, target_harness, worktree_root = parsed[1:]
+        reason, checkpoint_id, target_harness, worktree_root, receiver_command = parsed[1:]
         if "released" in reason:
-            if checkpoint_id is None or target_harness is None:
+            if checkpoint_id is None or target_harness is None or receiver_command is None:
                 _block("handoff ownership is released but its receiver state is invalid")
-            command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
             _block(
                 _with_worktree_clause(
                     f"handoff ownership is released to {target_harness}; "
-                    f"run `{command_name} resume {checkpoint_id}` in the receiver",
+                    f"start the receiver with `{receiver_command}`",
                     worktree_root,
                 )
             )

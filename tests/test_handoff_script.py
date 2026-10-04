@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import stat
 import subprocess
 import threading
@@ -176,6 +177,65 @@ def test_create_uses_canonical_repository_and_worktree_keys(tmp_path):
     assert checkpoint["repo_key"] == expected_repo_key
     assert checkpoint["worktree_key"] == expected_worktree_key
     assert checkpoint["worktree_root"] == str(repo.resolve())
+
+
+def test_create_in_linked_worktree_uses_linked_root_and_distinct_worktree_key(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked tree's"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+
+    main = _create_checkpoint(repo, state_dir, _create_input("linked-main"))
+    linked_result = _create_checkpoint(linked, state_dir, _create_input("linked-worktree"))
+    main_checkpoint = _checkpoint(state_dir, main["data"]["checkpoint_id"])
+    linked_checkpoint = _checkpoint(state_dir, linked_result["data"]["checkpoint_id"])
+
+    assert linked_result["data"]["worktree_root"] == str(linked.resolve())
+    assert linked_checkpoint["worktree_root"] == str(linked.resolve())
+    assert linked_checkpoint["worktree_key"] != main_checkpoint["worktree_key"]
+    assert linked_checkpoint["repo_key"] == main_checkpoint["repo_key"]
+
+
+def test_released_guard_returns_copyable_receiver_command_for_quoted_linked_root(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked tree's"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+    checkpoint_id = _planned_checkpoint(linked, state_dir, "linked-receiver")
+
+    result = _run_handoff("guard", "--as", "claude", cwd=linked, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    envelope = json.loads(result.stdout)
+    assert envelope["data"]["receiver_command"] == (
+        shlex.join(["cd", "--", str(linked.resolve())])
+        + " && "
+        + shlex.join(["pi", f"/handoff resume {checkpoint_id}"])
+    )
+
+
+def test_released_guard_omits_unsafe_receiver_command_for_control_character_root(tmp_path):
+    repo = tmp_path / "repo\nweird"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _planned_checkpoint(repo, state_dir, "unsafe-receiver")
+
+    result = _run_handoff("guard", "--as", "claude", cwd=repo, env=_env_for(state_dir))
+
+    assert result.returncode == 3, result.stderr
+    assert "receiver_command" not in json.loads(result.stdout)["data"]
 
 
 def test_create_persists_only_changed_path_metadata_and_fingerprint_changes_with_content(tmp_path):

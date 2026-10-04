@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -697,16 +698,20 @@ def build_checkpoint(request: CreateRequest, workspace: Workspace) -> dict[str, 
 
 
 def checkpoint_response(checkpoint: dict[str, object], path: Path) -> Envelope:
-    return Envelope(
-        "ok",
-        {
-            "checkpoint_id": checkpoint["checkpoint_id"],
-            "checkpoint_path": str(path),
-            "target_harness": checkpoint["target_harness"],
-            "worktree_root": checkpoint["worktree_root"],
-        },
-        [],
+    data = {
+        "checkpoint_id": checkpoint["checkpoint_id"],
+        "checkpoint_path": str(path),
+        "target_harness": checkpoint["target_harness"],
+        "worktree_root": checkpoint["worktree_root"],
+    }
+    command = receiver_command(
+        str(checkpoint["target_harness"]),
+        str(checkpoint["checkpoint_id"]),
+        str(checkpoint["worktree_root"]),
     )
+    if command is not None:
+        data["receiver_command"] = command
+    return Envelope("ok", data, [])
 
 
 def create_checkpoint() -> Envelope:
@@ -816,6 +821,22 @@ def status_segment() -> None:
     if reset_window is not None:
         record_urgent_notice(reset_window)
     print("handoff urgent: create a checkpoint now")
+
+
+def receiver_command(target_harness: str, checkpoint_id: str, worktree_root: str) -> str | None:
+    if (
+        target_harness not in HARNESSES
+        or not worktree_root.startswith("/")
+        or len(worktree_root) > 4096
+        or any(ord(character) < 32 or ord(character) == 127 for character in worktree_root)
+    ):
+        return None
+    prompt = (
+        f"/handoff resume {checkpoint_id}"
+        if target_harness == "pi"
+        else f"/swe-workbench:handoff resume {checkpoint_id}"
+    )
+    return f"{shlex.join(['cd', '--', worktree_root])} && {shlex.join([target_harness, prompt])}"
 
 
 def resume_instruction(checkpoint_id: str) -> str:
@@ -1034,14 +1055,20 @@ def recover_checkpoint(source_harness: str, source_stopped: bool, source_session
                 ),
             )
     run_cleanup(paths)
+    data = {
+        "checkpoint_id": salvage["checkpoint_id"],
+        "target_harness": salvage["target_harness"],
+        "worktree_root": salvage["worktree_root"],
+        "exact_next_action": salvage["exact_next_action"],
+    }
+    command = receiver_command(
+        str(salvage["target_harness"]), str(salvage["checkpoint_id"]), str(salvage["worktree_root"])
+    )
+    if command is not None:
+        data["receiver_command"] = command
     return Envelope(
         "partial",
-        {
-            "checkpoint_id": salvage["checkpoint_id"],
-            "target_harness": salvage["target_harness"],
-            "worktree_root": salvage["worktree_root"],
-            "exact_next_action": salvage["exact_next_action"],
-        },
+        data,
         [
             {
                 "code": "degraded_recovery",
@@ -1118,22 +1145,18 @@ def guard_decision(as_harness: str, session_ref: str | None) -> tuple[Envelope, 
         target_harness = checkpoint.get("target_harness")
         if target_harness not in HARNESSES:
             raise StorageError("released handoff checkpoint has an invalid target harness")
-        command_name = "/handoff" if target_harness == "pi" else "/swe-workbench:handoff"
-        return (
-            Envelope(
-                "ok",
-                {
-                    "decision": "deny",
-                    "reason": "handoff lease released; a receiver must resume the checkpoint",
-                    "checkpoint_id": checkpoint_id,
-                    "target_harness": target_harness,
-                    "instruction": f"{command_name} resume {checkpoint_id}",
-                    "worktree_root": worktree_root,
-                },
-                [],
-            ),
-            GUARD_DENY_EXIT_CODE,
-        )
+        data = {
+            "decision": "deny",
+            "reason": "handoff lease released; a receiver must resume the checkpoint",
+            "checkpoint_id": checkpoint_id,
+            "target_harness": target_harness,
+            "instruction": f"{('/handoff' if target_harness == 'pi' else '/swe-workbench:handoff')} resume {checkpoint_id}",
+            "worktree_root": worktree_root,
+        }
+        command = receiver_command(target_harness, checkpoint_id, worktree_root)
+        if command is not None:
+            data["receiver_command"] = command
+        return Envelope("ok", data, []), GUARD_DENY_EXIT_CODE
     if owner != as_harness:
         return (
             Envelope(
