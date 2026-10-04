@@ -430,3 +430,53 @@ class TestAlignmentAssessment:
         assert "No recognized sentinel" in step7
         assert "treat as unresolved" in step7
         assert "Never act silently" in step7
+
+
+class TestFetchLatestStep:
+    """Tests for the Step 1.5 remote-ref refresh — sync must never compare
+    against a locally-cached origin/<default>: a stale ref reports
+    "already up to date" while the branch is actually behind."""
+
+    def test_step_1_5_runs_before_step_2_and_step3_capture(self):
+        body = _body()
+        assert "### Step 1.5" in body
+        assert body.index("### Step 1.5") < body.index("### Step 2")
+        # The flag-gated merge-base capture must read the refreshed ref.
+        assert body.index("fetch-latest.sh") < body.index("MERGE_BASE=")
+
+    def test_step15_invokes_fetch_latest_script_with_default_branch(self):
+        body = _body()
+        step15 = body.split("### Step 1.5")[1].split("### Step 2")[0]
+        assert "swe-workbench-skill-script workflow-branch-sync fetch-latest.sh" in step15
+        assert '"$DEFAULT_BRANCH"' in step15
+
+    def test_step15_documents_abort_on_fetch_failure(self):
+        body = _body()
+        step15 = body.split("### Step 1.5")[1].split("### Step 2")[0]
+        assert "verbatim" in step15.lower()
+        assert "stop" in step15.lower()
+
+    def test_step3_shell_fallback_no_longer_fetches(self):
+        """The shell fallback's fetch is deduplicated — Step 1.5 already
+        refreshed the ref for every provider path."""
+        body = _body()
+        step3 = body.split("### Step 3")[1].split("### Step 4")[0]
+        assert "git fetch" not in step3
+
+    def test_step8_summary_reports_fetch_status(self):
+        body = _body()
+        step7 = body.split("### Step 8")[1].split("## ")[0]
+        assert "Fetch:" in step7
+        assert "unchanged" in step7
+
+    def test_common_mistakes_documents_stale_ref_row(self):
+        body = _body()
+        mistakes = body.split("## Common Mistakes")[1]
+        assert "stale" in mistakes.lower()
+        assert "Step 1.5" in mistakes
+
+    def test_failure_mode_table_covers_fetch_failure(self):
+        body = _body()
+        table = body.split("## Failure Mode Table")[1].split("## Common Mistakes")[0]
+        assert "git fetch" in table
+        assert "verbatim" in table.lower()
