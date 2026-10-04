@@ -16,7 +16,7 @@ orchestrator: true
 
 ## What This Skill Does NOT Do
 
-- Does not open, merge, or comment on a PR — that is `swe-workbench:workflow-commit-and-pr` / the user's action.
+- Does not open, merge, or comment on a PR — that is `swe-workbench:workflow-commit-and-pr` / the user's action. Sole exception: Step 7.5 may trim provably-stale scope tags from the open PR's title (reported in the summary) — never pushes, comments, or merges.
 - Does not resolve any conflict without first showing both sides and a recommendation with rationale.
 - Does not auto-push — ever. The push is a separate, explicitly prompted step at the end.
 - Does not rewrite history beyond the single merge or rebase the user asked for.
@@ -183,13 +183,28 @@ Evaluates architectural and conceptual drift between the branch's additions and 
      - If **Edit manually**: pause the sync, instruct the user to make their changes in the editor, wait for confirmation, then stage whatever they leave behind and commit with `git commit -m "[refactor] resolve architectural drift from main"`. List this commit in the Step 8 summary.
    - **No recognized sentinel** → treat as unresolved, report to the user, and proceed to Step 8. Never act silently on a malformed or missing sentinel.
 
+### Step 7.5 — PR Title Drift Check (always-on; branch with an open PR)
+
+Post-sync advisory: the merge-base just moved, so the branch's diff scope may have shrunk while the PR title's bracket scope tags (e.g. `[service-x]`) still describe the old scope. If `gh pr view` reports no open PR for the branch, skip this step silently.
+
+```bash
+RESULT="$(swe-workbench-pr-title-drift 2>/dev/null)" && \
+  printf '%s' "$RESULT" | swe-workbench-result-check swb.pr-title-drift/1 >/dev/null
+```
+
+Read `verdict`, `extra_tags`, `missing_scopes`, `suggested_title` from the envelope with `jq`. Then:
+- Non-zero exit / empty output / envelope fails validation → one-line advisory skip ("title-drift check unavailable") — never abort a completed sync over it.
+- `no_scope_tags` / `no_diff` / `clean` → nothing to do.
+- `pure_extra` and `suggested_title` still carries ≥1 bracket scope tag → auto-apply via `swe-workbench-sync-pr-metadata "$PR" "$SUGGESTED_TITLE" ""` (empty body file skips the body; `PR`/`SUGGESTED_TITLE` are `jq -r .data.pr` / `.data.suggested_title` off the validated envelope) and list the trim in the Step 8 summary: "PR title trimmed: removed [x], [y] — no diff counterpart".
+- `missing` / `mixed`, or `pure_extra` whose suggested title retains zero scope tags → report the mismatch and the suggested title only — the user applies it (or asks); never auto-applied.
+
 ### Step 8 — Leave Local & Prompt Before Push
 
 **If `STASHED=1`** (Step 1 stashed a dirty tree), restore it now, before reporting: `git stash pop`.
 - **Pop succeeds cleanly** → note it in the resolution summary ("Restored N file(s) from the pre-sync stash").
 - **Pop conflicts** → surface it exactly like a file conflict from Step 5 (show both sides, let the user resolve, `git add` the resolved files), then `git stash drop` once resolved — a conflicting pop leaves the stash entry in place rather than consuming it, so an explicit drop is required after manual resolution.
 
-Report the resolution summary: lead with the fetch status line from Step 1.5 — `Fetch: origin/$DEFAULT_BRANCH updated <old>→<new>` (or `unchanged`) — so every sync visibly states whether remote truth was refreshed. Then one line per file — which side was kept (or "manual") and the one-line rationale from Step 5, plus one line per Step 6/7 `[refactor]` commit (auto-applied or user-confirmed removal/edit), if any. **Never auto-push.**
+Report the resolution summary: lead with the fetch status line from Step 1.5 — `Fetch: origin/$DEFAULT_BRANCH updated <old>→<new>` (or `unchanged`) — so every sync visibly states whether remote truth was refreshed. Then one line per file — which side was kept (or "manual") and the one-line rationale from Step 5, plus one line per Step 6/7 `[refactor]` commit (auto-applied or user-confirmed removal/edit) and the Step 7.5 title-trim line, if any. **Never auto-push.**
 
 Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 
@@ -217,6 +232,7 @@ Prompt: "Sync complete locally on `$CURRENT_BRANCH`. Push now?"
 | Pre-sync stash pop conflicts | `git stash pop` reports a conflict in Step 8 | Surface exactly like a Step 5 file conflict — show both sides, let the user resolve, `git add`, then `git stash drop` (a conflicting pop leaves the stash entry in place rather than consuming it). |
 | `--check-redundancy` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 6 with a one-line reason ("unrelated histories") — never crash, never treat this as a sync failure. |
 | `--check-alignment` requested on an unrelated-history repo | `MERGE_BASE` comes back empty from Step 3's capture | Skip Step 7 with a one-line reason ("unrelated histories") — never crash. |
+| PR title drift detector fails or emits no valid envelope | Non-zero exit / empty stdout from `swe-workbench-pr-title-drift`, or `swe-workbench-result-check` rejects the envelope (Step 7.5) | One-line advisory skip — the sync already completed; never abort or retry it over this check. |
 | `swe-workbench:redundancy-assessor` emits an id `redundancy-scope.sh` never enumerated | Sentinel `id=<n>` with no matching `CANDIDATE id=<n>` line in `_REDUND_OUT` | Reject the finding outright — never act on an unvalidated id, regardless of how plausible its accompanying prose looks. |
 | `redundancy-assessor` labels a `refs>0` or symbol-level candidate `AUTO-APPLY` | That id's own `CANDIDATE ... refs=<count>` line in `_REDUND_OUT` shows `refs` nonzero despite an `AUTO-APPLY` sentinel | Downgrade to `ESCALATE` before the tiered gate runs — the tier label is agent free text too, not just the path/id; never bypass the human because of a mislabeled tier. <!-- validate: prose-ref --> |
 | `redundancy-scope.sh` enumerated a candidate but `swe-workbench:redundancy-assessor` never emitted a sentinel for its id | A `CANDIDATE id=<n>` line in `_REDUND_OUT` with no matching `**Redundancy: …** id=<n>` in the subagent's output | Treat that candidate as unresolved — do not assume `NONE`, do not act on it. Report it to the user alongside the resolved findings. |
