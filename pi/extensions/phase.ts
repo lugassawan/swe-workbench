@@ -178,10 +178,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
           "submit_plan needs an interactive session — run the phase-armed command in the TUI, or proceed without the plan gate.",
         );
       }
-      // Idempotence: while in execute the plan is already approved and its kickoff has
-      // fired (or will on the next settle) — a re-call must not re-dialog or launch a
-      // second execution. "disarmed" deliberately falls through: resume-mid-plan resets
-      // the gate, and its approval must still work (docs/pi-plan-mode.md §4).
+      // Idempotence: in execute the kickoff already fired (or will next settle); disarmed
+      // falls through — resume-mid-plan resets the gate, its approval must still work (§4).
       if (phase === "execute") {
         const text =
           "Plan already approved — execution phase is active and execution has already been " +
@@ -225,10 +223,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
             : "Plan rejected by user — plan phase stays active. Ask the user what to change, revise the plan, and call submit_plan again.";
         return { content: [{ type: "text" as const, text }], details: undefined };
       }
-      // Approval disarms the gate before the flip so no setModel failure path can leave an
-      // approved plan still mutation-blocked; the flip itself is best-effort. The kickoff
-      // flag arms after the flip: agent_settled then starts the execution turn through the
-      // public prompt path, so it runs on the flipped model under the execute section.
+      // Disarm before the flip so no setModel failure leaves an approved plan blocked; the
+      // flip is best-effort. The kickoff flag arms after it: the settled turn then runs flipped.
       phase = "execute";
       const switchedTo = await flipToPhaseModel(ctx, "execute", "plan approved", "continuing on the current model");
       kickoffPending = true;
