@@ -49,7 +49,7 @@ _FETCH_OUT="$(swe-workbench-skill-script workflow-branch-sync fetch-latest.sh "$
 eval "$_FETCH_OUT"
 ```
 
-Capture once into `_FETCH_OUT`, then eval — same capture-once discipline as Step 4. `FETCH_RESULT=updated` means new default-branch commits were just fetched; `unchanged` means the branch was already comparing against remote truth. Surface the one-line fetch status (`origin/$DEFAULT_BRANCH <old>→<new>` or `unchanged`) in Step 8's summary. On non-zero exit the fetch itself failed (offline, auth, remote down) — report the error verbatim and stop; never continue against a ref whose freshness is unknown.
+Capture once into `_FETCH_OUT`, then eval — same capture-once discipline as Step 4. `FETCH_RESULT=updated` means the tracking ref moved (or had no prior value — first fetch); `unchanged` means it already matched remote truth. Surface the one-line fetch status (`origin/$DEFAULT_BRANCH <old>→<new>` or `unchanged`) in Step 8's summary. On non-zero exit the fetch itself failed (offline, auth, remote down) — report the error verbatim and stop; never continue against a ref whose freshness is unknown.
 
 ### Step 2 — Overlap Advisory (optional)
 
