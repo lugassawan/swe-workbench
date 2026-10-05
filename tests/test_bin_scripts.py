@@ -29,6 +29,7 @@ SCRIPTS = {
     "swe-workbench-clean-ephemeral": "bash",
     "swe-workbench-clean-state-files": "bash",
     "swe-workbench-comment-scan": "python3",
+    "swe-workbench-dead-code-scan": "python3",
     "swe-workbench-diff-line-lookup": "bash",
     "swe-workbench-doctor": "bash",
     "swe-workbench-fetch-pr": "bash",
@@ -59,6 +60,7 @@ SCRIPTS = {
 SIBLING_CALLERS = {
     "swe-workbench-address-feedback-fetch": ["swe-workbench-preflight-pr", "swe-workbench-gh-timeout", "swe-workbench-repo-scope"],
     "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
+    "swe-workbench-dead-code-scan": ["swe-workbench-lsp"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
     "swe-workbench-preflight-pr": [
