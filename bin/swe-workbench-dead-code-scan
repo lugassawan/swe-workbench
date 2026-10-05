@@ -91,6 +91,7 @@ IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
 MARKER_RE = re.compile(r"dead-code:\s*keep\s+(.+?)\s*$")
 DUNDER_RE = re.compile(r"^__\w+__$")
 RUST_PUB_RE = re.compile(r"pub\s")  # bare `pub` only — pub(crate)/pub(super) are not external API
+COMMENT_TAIL_RE = re.compile(r"\s+(?:#|//).*$")
 DECORATOR_RE = re.compile(r"^(?:@\s*|#!?\[\s*)([\w:.]+)")
 SHEBANG_RE = re.compile(r"(?:/|\s)(python[\d.]*|nodejs|node|bash|zsh|sh|ruby)\b")
 SHEBANG_EXTS = {
@@ -201,15 +202,17 @@ def _decorator_starts(ext: str) -> tuple[str, ...]:
 
 def _decorator_start(lines: list[str], j: int, starts: tuple[str, ...]) -> int | None:
     """0-based index of the decorator/attribute that ends at line j, else None.
-    A line ending in a closing bracket is walked upward until the brackets
-    balance, and counts only if that opening line carries a decorator marker."""
+    A line ending in a closing bracket (trailing comment aside) is walked upward
+    until the brackets balance, and counts only if that opening line carries a
+    decorator marker. A bracket inside a string literal is out of scope."""
     if lines[j].lstrip().startswith(starts):
         return j
-    if not lines[j].rstrip().endswith((")", "]")):
+    if not COMMENT_TAIL_RE.sub("", lines[j]).rstrip().endswith((")", "]")):
         return None
     balance = 0
     for k in range(j, max(j - MAX_DECORATOR_SPAN, -1), -1):
-        balance += sum(lines[k].count(c) for c in ")]}") - sum(lines[k].count(c) for c in "([{")
+        code = COMMENT_TAIL_RE.sub("", lines[k])
+        balance += sum(code.count(c) for c in ")]}") - sum(code.count(c) for c in "([{")
         if balance <= 0:
             return k if lines[k].lstrip().startswith(starts) else None
     return None
@@ -650,8 +653,8 @@ def _has_go_mod(root: Path, records: list[FileRecord]) -> bool:
     return (root / "go.mod").is_file()
 
 
-# vulture matches names, not bindings, so a re-export reads as unused; knip
-# already treats package entry points as public, so its export rows stand.
+# vulture matches names, not bindings, so a re-export reads as unused; knip models
+# entry points, so an export it lists is unused and its rows lose the exported safe-keep.
 NAME_BASED_TOOLS = {"native:vulture"}
 EXPORT_AWARE_TOOLS = {"native:knip"}
 
@@ -667,8 +670,8 @@ class NativeTool(NamedTuple):
 # designed skip like an absent one: no run, no warning, status stays "ok".
 NATIVE_TOOLS: dict[str, NativeTool] = {
     "vulture": NativeTool(
-        # Trailing slash: vulture reads a bare name as a substring (`out` hits `outbound/`).
-        ["vulture", ".", "--exclude", ",".join(f"{d}/" for d in sorted(EXCLUDED_DIRS))],
+        # Globs: vulture wraps a glob-free pattern as `*p*`, so `out/` would hide `checkout/`.
+        ["vulture", ".", "--exclude", ",".join(f"*/{d}/*,{d}/*" for d in sorted(EXCLUDED_DIRS))],
         parse_vulture, _has_python_sources, (0, 3),
     ),
     "staticcheck": NativeTool(
@@ -711,8 +714,8 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
 
     Native-only findings go through classify()'s entry-point and safe-keep chain;
     test-path and excluded-dir findings are dropped. Defs match by (path, symbol),
-    never name alone. Name-based vulture def rows are checked against the text
-    index too (it misses re-exports); type-aware tools are trusted.
+    never name alone. Name-based vulture rows (imports aside) are checked against
+    the text index too, since it misses re-exports; type-aware tools are trusted.
     """
     entries = entries or EntryPoints()
     index, dynamic_index, by_rel = _reference_index(records)
@@ -727,6 +730,10 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         for hit in record.defs:
             record_defs.setdefault((record.relpath, hit.name), (hit, record))
 
+    def decide(hit: DefHit, record: FileRecord, tool: str) -> tuple[str, str]:
+        dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
+        return _safe_keep_decision(hit, record, dyn_refs, entries.symbols, ignore_exported=tool in EXPORT_AWARE_TOOLS)
+
     for native in native_rows:
         path, symbol = native["path"].removeprefix("./"), native["symbol"]
         if TEST_PATH_RE.search(path) or EXCLUDED_DIRS.intersection(Path(path).parts):
@@ -735,9 +742,16 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         existing = by_key.get(key) or by_path_symbol.get((path, symbol))
         if existing is not None:
             existing["detected_by"] = native["detected_by"]
+            hit_record = record_defs.get((path, symbol))
+            if (
+                native["detected_by"] in EXPORT_AWARE_TOOLS
+                and existing["keep_reason"] == "exported API"
+                and hit_record is not None
+            ):
+                existing["keep_class"], existing["keep_reason"] = decide(*hit_record, native["detected_by"])
             continue
         test_only, references = False, []
-        if native["detected_by"] in NAME_BASED_TOOLS and native["kind"] in ("function", "method", "class"):
+        if native["detected_by"] in NAME_BASED_TOOLS and native["kind"] != "import":
             cross = index.get(symbol, set()) - {path}
             normal_refs = {rel for rel in cross if symbol not in by_rel[rel].dynamic}
             if any(not TEST_PATH_RE.search(rel) for rel in normal_refs):
@@ -748,13 +762,8 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         hit_record = record_defs.get((path, symbol))
         if hit_record is not None:
             hit, record = hit_record
-            dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
             keep_class, keep_reason = (
-                _entry_file_decision(hit, record, entries)
-                or _safe_keep_decision(
-                    hit, record, dyn_refs, entries.symbols,
-                    ignore_exported=native["detected_by"] in EXPORT_AWARE_TOOLS,
-                )
+                _entry_file_decision(hit, record, entries) or decide(hit, record, native["detected_by"])
             )
             note = hit.note
         else:

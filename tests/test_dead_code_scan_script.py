@@ -379,7 +379,7 @@ def test_native_funnel_without_tools_falls_back_to_grep(tmp_path, monkeypatch):
     assert envelope["data"]["candidate_count"] == 1
 
 
-# ── Review-fix regression tests ─────────────────────────────────────────
+# ── Test-path handling, LSP iteration and native safe-keep ───────────────────
 
 
 def test_defs_in_test_files_are_never_candidates(tmp_path):
@@ -467,7 +467,7 @@ def test_all_tuple_form_is_recognized(tmp_path):
     assert row["keep_class"] == "safe-keep"
 
 
-# ── Review-round-2 regression tests ──────────────────────────────────────────
+# ── Entry points, keep markers, export conventions and native gating ─────────
 
 
 def _parse_records(module, root: Path):
@@ -660,7 +660,7 @@ def test_repo_with_no_applicable_native_tool_stays_ok(tmp_path, monkeypatch):
     assert envelope["warnings"] == []
 
 
-# ── Review-round-3 regression tests ──────────────────────────────────────────
+# ── Real-format native parsers, decorators and shebang scripts ───────────────
 
 # Captured from the real tools: vulture 2.16 (exit 3), staticcheck (exit 1),
 # knip 6.39.0 `--reporter json` (exit 1). The parsers must accept exactly this.
@@ -757,7 +757,7 @@ def test_vulture_is_told_to_skip_excluded_dirs_and_rows_under_them_are_dropped()
     module = _load_module()
     argv = module.NATIVE_TOOLS["vulture"].argv
     assert "--exclude" in argv
-    assert {".venv/", "node_modules/"} <= set(argv[argv.index("--exclude") + 1].split(","))
+    assert {"*/.venv/*", "node_modules/*"} <= set(argv[argv.index("--exclude") + 1].split(","))
     native = [{"symbol": "dead", "kind": "function", "path": ".venv/lib/x.py", "line": 1,
                "detected_by": "native:vulture"}]
     assert module.merge_native([], native, []) == []
@@ -803,6 +803,7 @@ def test_lsp_plain_text_reply_leaves_row_unverified_and_continues(tmp_path, tmp_
     symbols = {c["symbol"] for c in envelope["data"]["candidates"]}
     assert "first_orphan" in symbols, "unresolved anchor stays an unverified candidate"
     assert "second_orphan" not in symbols, "the pass must continue past the unresolved anchor"
+    assert envelope["data"]["funnel"] == "lsp+grep", "a resolved anchor must be claimed in the funnel"
 
 
 def test_decorator_registered_symbols_are_safe_keep(tmp_path):
@@ -872,7 +873,7 @@ def test_shebang_interpreter_selects_def_rules(tmp_path, shebang, def_line, symb
     assert _find(envelope["data"]["candidates"], symbol) is not None
 
 
-# ── Review-round-4 regression tests ──────────────────────────────────────────
+# ── Native merge cross-checks, multi-line decorators and vulture exclusion ───
 
 
 def _reexport_fixture(tmp_path):
@@ -919,6 +920,26 @@ def test_vulture_unused_import_is_not_judged_by_a_common_name(tmp_path):
     assert _find(module.merge_native([], native, _parse_records(module, tmp_path)), "os") is not None
 
 
+@pytest.mark.parametrize("kind", ["variable", "attribute"])
+def test_vulture_variable_reexport_is_dropped(tmp_path, kind):
+    """The re-export check covers constants and attributes too; only imports,
+    whose names recur everywhere, are exempt."""
+    _write(tmp_path, "lib/__init__.py", "from .config import DEFAULTS\n")
+    _write(tmp_path, "lib/config.py", "DEFAULTS = {}\n")
+    module = _load_module()
+    native = [_vulture_row(symbol="DEFAULTS", kind=kind, path="lib/config.py")]
+    assert module.merge_native([], native, _parse_records(module, tmp_path)) == []
+
+
+@pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
+def test_real_vulture_scan_does_not_offer_a_variable_reexport(tmp_path):
+    _write(tmp_path, "lib/__init__.py", "from .config import DEFAULTS\n")
+    _write(tmp_path, "lib/config.py", "DEFAULTS = {}\n")
+    rc, envelope = _scan(tmp_path, "--funnel", "native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    assert _find(envelope["data"]["candidates"], "DEFAULTS") is None
+
+
 @pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
 def test_real_vulture_scan_does_not_offer_a_package_reexport(tmp_path):
     _reexport_fixture(tmp_path)
@@ -927,24 +948,35 @@ def test_real_vulture_scan_does_not_offer_a_package_reexport(tmp_path):
     assert _find(envelope["data"]["candidates"], "Client") is None
 
 
-def test_knip_export_rows_are_classified_uniformly(tmp_path):
-    """knip already lists only unused exports, so every export/type row stays a
-    candidate — not safe-kept just because a def regex happened to match."""
+def test_knip_export_rows_are_classified_uniformly_end_to_end(tmp_path, tmp_path_factory, monkeypatch):
+    """knip lists only unused exports, so function/class exports that classify()
+    safe-kept as "exported API" must land in the same class as const/type exports
+    — while a keep marker still wins."""
     _write(
         tmp_path, "lib.ts",
         "export function unusedExport() {}\n"
         "export class UnusedCls {}\n"
         "export const unusedConst = 1;\n"
-        "export type UnusedType = number;\n",
+        "export type UnusedType = number;\n"
+        "// dead-code: keep wired by the host app\n"
+        "export function keptExport() {}\n",
     )
-    module = _load_module()
-    parsed = module.parse_knip(json.dumps({"issues": [{"file": "lib.ts", "exports": [
+    report = json.dumps({"issues": [{"file": "lib.ts", "exports": [
         {"name": "unusedExport", "line": 1}, {"name": "UnusedCls", "line": 2},
-        {"name": "unusedConst", "line": 3}], "types": [{"name": "UnusedType", "line": 4}]}]}))
-    merged = module.merge_native([], parsed, _parse_records(module, tmp_path))
-    assert {r["symbol"]: r["keep_class"] for r in merged} == {
+        {"name": "unusedConst", "line": 3}, {"name": "keptExport", "line": 6}],
+        "types": [{"name": "UnusedType", "line": 4}]}]})
+    stub = _stub_lsp(tmp_path_factory.mktemp("knip-stub"), f"cat <<'OUT'\n{report}\nOUT\nexit 1")
+    module = _load_module()
+    monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
+    monkeypatch.setattr(
+        module, "NATIVE_TOOLS",
+        {"knip": module.NATIVE_TOOLS["knip"]._replace(argv=[str(stub)], applicable=lambda root, records: True)},
+    )
+    envelope = module.scan_root(str(tmp_path), funnel="native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    assert {c["symbol"]: c["keep_class"] for c in envelope["data"]["candidates"]} == {
         "unusedExport": "candidate", "UnusedCls": "candidate",
-        "unusedConst": "candidate", "UnusedType": "candidate",
+        "unusedConst": "candidate", "UnusedType": "candidate", "keptExport": "justified",
     }
 
 
@@ -952,6 +984,7 @@ def test_knip_export_rows_are_classified_uniformly(tmp_path):
     "decorator",
     [
         '@router.get(\n    "/items",\n    response_model=Item,\n)\n',
+        '@router.get(\n    "/a",\n)  # noqa: E501\n',
         "@app.route(\n    \"/x\",\n    methods=[\"GET\"],\n)\n",
         "@registry.register(\n    name=\"hook\",\n    aliases=[\n        \"a\",\n    ],\n)\n",
     ],
@@ -991,27 +1024,36 @@ def test_multiline_rust_attribute_is_followed_and_plain_call_is_not_a_decorator(
     assert _find(cands, "plain_fn")["keep_class"] == "candidate", "a balanced call above a def is not a decorator"
 
 
-def test_vulture_exclude_uses_directory_form_so_names_do_not_collide(tmp_path):
-    """vulture treats a bare name as a substring: `out` would hide `outbound/`
-    and `output.py`. Every pattern must be a trailing-slash directory."""
+def test_vulture_exclude_passes_globs_that_vulture_cannot_wrap(tmp_path):
+    """vulture wraps a glob-free pattern as `*p*`, so `out` or `out/` would hide
+    `checkout/` and `output.py`. Every pattern must carry its own wildcard."""
     module = _load_module()
     argv = module.NATIVE_TOOLS["vulture"].argv
     patterns = argv[argv.index("--exclude") + 1].split(",")
-    assert patterns and all(p.endswith("/") for p in patterns)
-    assert {"build/", "out/", ".venv/", "node_modules/"} <= set(patterns)
+    assert patterns and all("*" in p for p in patterns)
+    assert {"*/build/*", "build/*", "*/.venv/*", "node_modules/*"} <= set(patterns)
 
 
 @pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
 def test_real_vulture_reports_files_whose_names_resemble_excluded_dirs(tmp_path):
-    _write(tmp_path, "src/output.py", "def dead_output():\n    pass\n")
-    _write(tmp_path, "pkg/outbound/handlers.py", "def dead_handler():\n    pass\n")
-    _write(tmp_path, "build/gen.py", "def dead_generated():\n    pass\n")
+    kept = {
+        "src/output.py": "dead_output", "pkg/outbound/handlers.py": "dead_handler",
+        "src/checkout/cart.py": "dead_checkout", "src/layout/grid.py": "dead_layout",
+        "src/rebuild/plan.py": "dead_rebuild", "pkg/redist/pack.py": "dead_redist",
+    }
+    excluded = {
+        "build/gen.py": "dead_build", "src/sub/build/gen.py": "dead_nested_build",
+        "out/bundle.py": "dead_out", ".venv/lib/x.py": "dead_venv",
+    }
+    for path, name in {**kept, **excluded}.items():
+        _write(tmp_path, path, f"def {name}():\n    pass\n")
     rc, envelope = _scan(tmp_path, "--funnel", "native")
     assert envelope["status"] == "ok", envelope["warnings"]
     by_symbol = {c["symbol"]: c["detected_by"] for c in envelope["data"]["candidates"]}
-    assert by_symbol.get("dead_output") == "native:vulture"
-    assert by_symbol.get("dead_handler") == "native:vulture"
-    assert "dead_generated" not in by_symbol, "build/ is a real excluded directory"
+    for name in kept.values():
+        assert by_symbol.get(name) == "native:vulture", f"{name} lives in a look-alike dir and must be reported"
+    for name in excluded.values():
+        assert name not in by_symbol, f"{name} lives in a real excluded dir"
 
 
 def test_funnel_omits_lsp_when_no_anchor_was_resolved(tmp_path, tmp_path_factory):
