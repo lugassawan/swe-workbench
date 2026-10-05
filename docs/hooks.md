@@ -45,17 +45,19 @@ and follows each guard's fail posture):
 | Verdict | Wire shape |
 |---|---|
 | `allow` | exit 0, empty stdout — silent |
-| `warn` | exit 0, exactly one line of stdout JSON: `hookSpecificOutput.permissionDecision` `"allow"` + `permissionDecisionReason` (the semantic channel), mirrored in a top-level `systemMessage` (Claude Code's user-visible warning surface) |
+| `warn` | exit 0, exactly one line of stdout JSON: `{"systemMessage": <reason>}` and nothing else — Claude Code shows it as a user-visible warning and still applies normal permission handling |
 | `block` | exit 2, stderr only — never emits stdout JSON, byte-compatible with the pre-warn contract |
 
 Verdict precedence is `block > warn > allow`: a warn accumulated anywhere in the command is
 suppressed when any segment blocks. The reason string is decided once, at the guard — adapters
 translate presentation only (Claude Code consumes the JSON natively; `pi/extensions/guards.ts`
-reads `permissionDecisionReason` and surfaces it via `ctx.ui.notify` when a dialog-capable UI
-exists — TUI and RPC — or a display-only `sendMessage` custom message in non-interactive mode).
+reads `systemMessage` and surfaces it via `ctx.ui.notify` when a dialog-capable UI exists — TUI
+and RPC — or a `sendMessage` custom message with `triggerTurn: false` in non-interactive mode).
+That message is model-visible (Pi converts custom messages to user-role context); `triggerTurn:
+false` only keeps it from steering a streaming turn — it is deferred to the end of the turn.
 Malformed stdout is a silent allow: a warn must never block or throw on its own output shape.
-Watch-signal: Claude Code displaying both `systemMessage` and the allow-reason would double-show
-one warning — harmless, but worth noting if it surfaces.
+The warn deliberately carries no `permissionDecision`: `"allow"` would auto-approve the command in
+Claude Code and skip its permission prompt, exactly where attribution is least certain.
 
 **Attribution semantics.** Base dir = the payload's top-level `cwd` when absolute (Claude Code
 provides it; the Pi adapter passes `ctx.cwd`), else the guard process CWD. A conservative
@@ -74,20 +76,29 @@ arguments in another shell and attribute uncertain.
 | confident, target ≠ base | protected | block (message cites the target) |
 | confident, target ≠ base | non-protected | allow + warn (re-attribution message) |
 | confident, target == base | protected / non-protected | block / silent allow — pre-attribution behavior unchanged |
-| uncertain | protected (per base) | block — legacy check verbatim |
-| uncertain | non-protected | allow + warn (attribution-uncertain message) |
+| uncertain | protected (base dir or guard process CWD) | block — superset of the legacy check |
+| uncertain | non-protected in both | allow + warn (attribution-uncertain message names what was checked) |
 
-**Never-shrinks guarantee:** uncertain attribution runs the legacy process-CWD check byte-identically
-and may only *add* the allow-side warn — the block set cannot shrink. Attribution identity is
+**Never-shrinks guarantee:** uncertain attribution checks BOTH the base dir and the guard process
+CWD and blocks when either is protected — a strict superset of the legacy process-CWD check — and
+may only *add* the allow-side warn, so the block set cannot shrink. Attribution identity is
 resolved by `git -C <dir> rev-parse` itself (symlinks included), never by path-prefix matching.
-Resolvable path forms: absolute literals, `~`/`$HOME`, relative literals without `..` components;
+Resolvable path forms: absolute literals, `~`/`$HOME` (only as a whole word or followed by `/` —
+`$HOMEx` and `~user` are other variables/users), relative literals without `..` components;
 everything else — variables, command substitution, `..` components, `cd -`, `pushd` — is
 uncertain. A resolvable subdir of the base repo counts as target ≠ base (the warn fires); same-repo
 noise suppression is deliberately not implemented. Two resolver invariants pinned by fixtures:
 a command right of `||` runs only when the left side failed, so a cd left of `||` never keeps its
 folded target for the chain tail; and only the literal token `cd` folds — a pathed `cd` is an
-external binary that cannot change the parent cwd. Repo-redirecting git flags (`--git-dir`,
-`--work-tree`, `--namespace`) decide the repo elsewhere and attribute uncertain. One deliberate
+external binary that cannot change the parent cwd. A cd counts only in command position (after
+env assignments, `!`, `if`/`then`/`do`/`else`/`while`/`until`, `time`/`command`/`builtin`), so `cd`
+as an argument (`git commit -m 'handle cd edge'`) is not a cd; `eval` mentioning a cd taints. An
+ampersand inside a redirection (`2>&1`, `>&2`, `&>`) is not a background operator and leaves the
+chain state alone. Repo-redirecting git flags (`--git-dir`, `--work-tree`, `--namespace`) and
+env vars (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, also via `export`/`env`;
+sticky for the rest of the command) decide the repo elsewhere and attribute uncertain, as does any
+git invocation behind a wrapper (`sudo`, `env`, `timeout`, `xargs`, …) whose globals are not
+parsed. One deliberate
 detection-scope change vs the pre-tokenization reset scan: a quoted `git reset --hard` mention
 inside another git command (e.g. a commit message) no longer matches — the tokenized scan does
 not resume after a non-reset subcommand, so that pre-existing over-block is gone.

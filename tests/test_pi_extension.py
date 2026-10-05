@@ -1174,7 +1174,7 @@ console.log(JSON.stringify(results));
 
 @pytest.fixture(scope="module")
 def bash_fixtures_via_adapter(tmp_path_factory):
-    from pi_guard_fixtures import guard_cases, stage_guard_scene
+    from pi_guard_fixtures import adapter_cases, stage_guard_scene
 
     protected, feature = stage_guard_scene(tmp_path_factory.mktemp("guard-scene"))
     paths = {"protected": str(protected), "feature": str(feature)}
@@ -1183,7 +1183,7 @@ def bash_fixtures_via_adapter(tmp_path_factory):
             "command": case.command.format(**paths) if case.scene else case.command,
             "cwd": str(protected if case.process_cwd_role == "protected" else feature) if case.scene else str(ROOT),
         }
-        for case in guard_cases()
+        for case in adapter_cases()
     ]
     config = {"root": str(ROOT), "cases": cases}
     results = _run_node(
@@ -1197,9 +1197,9 @@ def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtur
     """Verdict AND message parity: the adapter must reproduce the direct-invocation
     outcome for every shared fixture — block reasons via the block result, warn reasons
     via the notify the adapter issues (the guard's own string, unmodified)."""
-    from pi_guard_fixtures import guard_cases
+    from pi_guard_fixtures import adapter_cases
 
-    cases = guard_cases()
+    cases = adapter_cases()
     results = bash_fixtures_via_adapter["results"]
     paths = bash_fixtures_via_adapter["paths"]
     assert len(results) == len(cases)
@@ -1261,14 +1261,7 @@ console.log(JSON.stringify({ result: result ?? null, notifyCalls, sentMessages }
 
 
 def _warn_stdout(reason: str) -> str:
-    return json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": reason,
-        },
-        "systemMessage": reason,
-    })
+    return json.dumps({"systemMessage": reason})
 
 
 def _run_warn_driver(tmp_path_factory, config):
@@ -1296,7 +1289,7 @@ def test_warn_stdout_sends_display_message_without_ui(tmp_path_factory):
     assert sent["message"]["customType"] == "swe-workbench:guard-warning"
     assert sent["message"]["content"] == "R"
     assert sent["message"]["display"] is True
-    assert "options" not in sent, "warn must not trigger or steer a turn"
+    assert sent["options"] == {"triggerTurn": False}, "warn must defer to end of turn, not steer a streaming turn"
 
 
 @requires_node

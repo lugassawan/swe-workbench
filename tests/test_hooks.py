@@ -486,10 +486,10 @@ class TestImplicitForcePushBlocker:
 
 
 class TestWarnVerdictWireContract:
-    """The warn verdict rides exit-0 stdout as one line of Claude-Code-native
-    JSON: permissionDecisionReason carries the semantic message Pi parses,
-    systemMessage mirrors it for Claude Code user visibility. A block anywhere
-    in the command suppresses the warn entirely — block stays stderr-only."""
+    """The warn verdict rides exit-0 stdout as one line of `{"systemMessage": ...}` JSON
+    and nothing else — a permissionDecision "allow" would auto-approve the push in Claude
+    Code and skip its permission prompt. A block anywhere in the command suppresses the warn
+    entirely — block stays stderr-only."""
 
     @pytest.fixture()
     def scene(self, tmp_path):
@@ -500,7 +500,9 @@ class TestWarnVerdictWireContract:
 
     @staticmethod
     def _parse_warn(stdout):
-        return json.loads(stdout.strip())
+        payload = json.loads(stdout.strip())
+        assert set(payload) == {"systemMessage"}, "warn must not carry hookSpecificOutput/permissionDecision"
+        return payload
 
     def test_reattributed_allow_warns_with_resolved_target(self, guard_script, scene):
         protected, feature = scene
@@ -511,8 +513,6 @@ class TestWarnVerdictWireContract:
             f"bash_guard: target repo resolved to {feature}; "
             f"protected-branch check ran there, not {protected}"
         )
-        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
-        assert payload["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert payload["systemMessage"] == expected
         assert result.stdout.endswith("\n") and result.stdout.count("\n") == 1
 
@@ -525,7 +525,7 @@ class TestWarnVerdictWireContract:
             f"bash_guard: could not resolve effective directory (unresolvable cd); "
             f"protected-branch check ran against {feature} only"
         )
-        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+        assert payload["systemMessage"] == expected
 
     def test_uncertain_block_from_protected_cwd_stays_stderr_only(self, guard_script, scene):
         protected, feature = scene
@@ -554,7 +554,7 @@ class TestWarnVerdictWireContract:
             f"bash_guard: target repo resolved to {feature}; "
             f"protected-branch check ran there, not {protected}"
         )
-        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+        assert payload["systemMessage"] == expected
 
     def test_reset_hard_uncertain_allow_warns(self, guard_script, scene):
         protected, feature = scene
@@ -565,7 +565,33 @@ class TestWarnVerdictWireContract:
             f"bash_guard: could not resolve effective directory (unresolvable cd); "
             f"protected-branch check ran against {feature} only"
         )
-        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+        assert payload["systemMessage"] == expected
+
+
+    # $HOME / ~ matchers need a right boundary: HOME=<tmp>/fea makes `$HOMEture` and `~ture`
+    # prefix-match, which would resolve confidently to the feature repo and warn instead of
+    # staying uncertain (protected base → legacy block).
+    @pytest.mark.parametrize("target", ["$HOMEture", "~ture"])
+    def test_home_prefix_lookalike_is_uncertain_not_confident(self, guard_script, scene, target):
+        protected, feature = scene
+        fake_home = feature.parent / "fea"
+        result = run_guard(
+            guard_script, f"cd {target} && git push -f",
+            cwd=str(protected), payload_cwd=str(protected), env={"HOME": str(fake_home)},
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr, (result.stdout, result.stderr)
+
+    @pytest.mark.parametrize("target", ["~", "$HOME", "~/sub", "$HOME/sub"])
+    def test_home_forms_still_resolve_confidently(self, guard_script, scene, target):
+        protected, feature = scene
+        result = run_guard(
+            guard_script, f"cd {target} && git push -f",
+            cwd=str(protected), payload_cwd=str(protected), env={"HOME": str(feature)},
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parse_warn(result.stdout)["systemMessage"].startswith(
+            f"bash_guard: target repo resolved to {feature}"
+        )
 
 
 # ──────────────────────────────────────────────
@@ -960,6 +986,7 @@ class TestDifferentialFixtures:
                 assert case.scene, f"placeholder row needs scene=True: {case.command!r}"
             if case.scene:
                 assert case.process_cwd_role in ("protected", "feature"), case.command
+                assert case.payload_cwd_role in (None, "protected", "feature"), case.command
 
     @pytest.mark.parametrize("case", guard_cases())
     def test_direct_invocation_matches_expected_verdict(self, guard_script, case, tmp_path):
@@ -968,10 +995,12 @@ class TestDifferentialFixtures:
             paths = {"protected": str(protected), "feature": str(feature)}
             cmd = case.command.format(**paths)
             process_cwd = protected if case.process_cwd_role == "protected" else feature
+            payload_role = case.payload_cwd_role or case.process_cwd_role
+            payload_cwd = protected if payload_role == "protected" else feature
             expected_reason = (
                 case.expected_reason.format(**paths) if case.expected_reason else None
             )
-            result = run_guard(guard_script, cmd, cwd=str(process_cwd), payload_cwd=str(process_cwd))
+            result = run_guard(guard_script, cmd, cwd=str(process_cwd), payload_cwd=str(payload_cwd))
         else:
             cmd = case.command
             expected_reason = case.expected_reason
@@ -985,7 +1014,8 @@ class TestDifferentialFixtures:
                 f"expected warn-allow for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
             )
             payload = json.loads(result.stdout.strip())
-            reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+            assert set(payload) == {"systemMessage"}, f"for {cmd!r}: warn must be systemMessage-only"
+            reason = payload["systemMessage"]
             assert reason == expected_reason, f"for {cmd!r}: {reason!r} != {expected_reason!r}"
         else:
             assert result.returncode == 0 and result.stderr == "" and result.stdout == "", (

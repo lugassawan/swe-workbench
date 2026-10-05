@@ -41,7 +41,7 @@ interface HookSpecificOutput {
 }
 
 interface PreToolUseHookOutput {
-  hookSpecificOutput?: { permissionDecisionReason?: unknown };
+  systemMessage?: unknown;
 }
 
 /** Parses a hint script's stdout envelope; absent/malformed/empty stdout is a silent no-op —
@@ -56,15 +56,14 @@ function parseAdditionalContext(stdout: string): string | undefined {
   }
 }
 
-/** Parses bash_guard.sh's warn envelope (exit 0 + one line of CC-native stdout JSON).
- *  Absent/malformed/empty stdout is a silent allow — a warn must never block or throw on
- *  its own output shape. */
+/** Parses bash_guard.sh's warn envelope (exit 0 + one line of `{"systemMessage": ...}` stdout
+ *  JSON). Absent/malformed/empty stdout is a silent allow — a warn must never block or throw
+ *  on its own output shape. */
 function parseWarnReason(stdout: string): string | undefined {
   const trimmed = stdout.trim();
   if (!trimmed) return undefined;
   try {
-    const reason = (JSON.parse(trimmed) as PreToolUseHookOutput).hookSpecificOutput
-      ?.permissionDecisionReason;
+    const reason = (JSON.parse(trimmed) as PreToolUseHookOutput).systemMessage;
     return typeof reason === "string" && reason ? reason : undefined;
   } catch {
     return undefined;
@@ -119,14 +118,18 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
     }
     if (result.code === 0) {
       // Non-blocking, visible warn: notify when a dialog-capable UI exists (TUI and RPC),
-      // else inject a display-only custom message so non-interactive modes still surface
-      // it. No deliverAs — a warn must never trigger or steer a turn.
+      // else send a custom message so non-interactive modes still surface it. It is
+      // model-visible (custom messages enter LLM context as user-role). triggerTurn:false
+      // defers it to end of turn — without options, a streaming session steers on it.
       const reason = parseWarnReason(result.stdout);
       if (reason) {
         if (ctx.hasUI) {
           ctx.ui.notify(reason, "warning");
         } else {
-          pi.sendMessage({ customType: "swe-workbench:guard-warning", content: reason, display: true });
+          pi.sendMessage(
+            { customType: "swe-workbench:guard-warning", content: reason, display: true },
+            { triggerTurn: false },
+          );
         }
       }
       return undefined;

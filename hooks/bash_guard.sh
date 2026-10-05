@@ -49,9 +49,9 @@ fi
 # absolute one, else the guard process cwd (the pre-attribution behavior).
 _base=$(printf '%s' "$_payload" | jq -r '.cwd // ""' 2>/dev/null)
 [[ "$_base" == /* ]] || _base=$PWD
-# Allow-side attribution note, set by the push/reset passes and emitted as one
-# line of Claude-Code-native stdout JSON at the final exit 0 (never printed when
-# any check blocks — block paths exit before emission, keeping stderr-only).
+_checked=$_base; [[ "$PWD" == "$_base" ]] || _checked="$_base and $PWD"   # dirs the uncertain fallback consults
+# Allow-side attribution note, emitted as one `systemMessage` stdout line at the final
+# exit 0 (never when a check blocks). docs/hooks.md §2.
 _warn_reason=''
 
 # Strip shell comments per-line BEFORE folding newlines or joining backslash
@@ -164,31 +164,21 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Attribution stream: one line per segment the push/reset passes consume, in the
-# same order _segment_awk emits them — CONF:<abs-path> (the directory this
-# segment's push/reset consults) or UNCERTAIN (use the legacy process-cwd
-# check). Conservative by construction: a cd folds into the state only for
-# commands later in the SAME &&-chain (their execution is gated on the cd
-# succeeding); at an unconditional separator a chain that touched a cd leaves
-# the committed state UNCERTAIN because follow-ups run whether or not the cd
-# succeeded. A cd in a pipeline stage, background chain, subshell, or
-# substitution cannot affect the parent shell and neither folds nor taints.
-# Wrapper segments (bash -c / ssh / docker exec / …) re-parse their arguments
-# in another shell and attribute UNCERTAIN. Resolvable path forms: absolute
-# literals, ~/$HOME, relative literals without .. — everything else
-# (variables, substitutions, .. components, cd -) is UNCERTAIN.
+# Attribution stream: one CONF:<abs-path> | UNCERTAIN line per segment, in _segment_awk
+# order (docs/hooks.md §2). UNCERTAIN must always fall back to the legacy check.
 _attr_awk='
 function basename(t) { sub(/.*\//, "", t); return t }
 function resolve(a,   r) {
   if (a == "") return (home != "" ? "CONF:" home : "UNCERTAIN")   # bare cd → HOME
   if (a == "-") return "UNCERTAIN"
-  if (a ~ /^\$\{?HOME\}?/) {
+  if (a ~ /^\$\{?HOME\}?(\/|$)/) {                                # $HOME_DIR etc. fall through to UNCERTAIN
     if (home == "") return "UNCERTAIN"
     r = a; sub(/^\$\{?HOME\}?/, "", r)
     return "CONF:" home r
   }
   if (a ~ /^\$/) return "UNCERTAIN"
-  if (a ~ /^~/) { if (home == "") return "UNCERTAIN"; return "CONF:" home substr(a, 2) }
+  if (a ~ /^~(\/|$)/) { if (home == "") return "UNCERTAIN"; return "CONF:" home substr(a, 2) }
+  if (a ~ /^~/) return "UNCERTAIN"                                # ~user is not our HOME
   if (a == ".." || a ~ /(\/|^)\.\.(\/|$)/ || a ~ /[$`]/) return "UNCERTAIN"
   if (a ~ /^\//) return "CONF:" a
   if (tentative ~ /^CONF:/) return "CONF:" substr(tentative, 6) "/" a
@@ -199,18 +189,26 @@ function commit_chain() {
   if (chain_has_cd && !bg_chain) committed = "UNCERTAIN"   # a cd may or may not have run
   start_chain(0)
 }
-function finalize(close_reason,   i, nt, T, cmd, raw, attr, has_cdtok, j, t, dashc, pa) {
+function finalize(close_reason,   i, k, nt, T, cmd, raw, attr, has_cdtok, j, t, dashc, pa, rc) {
+  rc = redir_cd; redir_cd = 0
   if (nested) { print "UNCERTAIN"; seg = ""; pipe_adj = 0; seg_folded_cd = 0; return }
   pa = (pipe_adj || close_reason == "|" || close_reason == "&")   # subshell-executed segment
-  seg_folded_cd = 0
+  # A cd split off by a redirect-& (2>&1) continues in this fragment: keep its || taint,
+  # and it cannot stay folded when the fragment turns out to be a pipeline stage.
+  seg_folded_cd = rc
+  if (rc && pa) tentative = "UNCERTAIN"
   nt = split(seg, T, /[ \t]+/)
+  # Env-var repo redirects (also via export/env) decide the repo elsewhere — sticky for the rest of the command.
+  for (j = 1; j <= nt; j++) if (T[j] ~ /^GIT_(DIR|WORK_TREE|COMMON_DIR|NAMESPACE)=/) git_redirect = 1
   i = 1
   while (i <= nt && (T[i] == "" || T[i] ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) i++   # empties + env assignments
   if (i <= nt && T[i] == "!") i++
   raw = (i <= nt ? T[i] : "")
   cmd = basename(raw)
-  has_cdtok = 0
-  for (j = i; j <= nt; j++) if (T[j] == "cd" || T[j] == "pushd" || T[j] == "popd") { has_cdtok = 1; break }
+  k = i                                                           # cd counts only in command position
+  while (k <= nt && T[k] ~ /^(!|if|then|do|else|elif|while|until|time|command|builtin)$/) k++
+  has_cdtok = (k <= nt && T[k] ~ /^(cd|pushd|popd)$/)
+  if (cmd == "eval") for (j = i + 1; j <= nt; j++) if (T[j] ~ /^(cd|pushd|popd)$/) has_cdtok = 1
   attr = ""
   if (raw == "cd" && !pa) {                 # literal token only: a pathed cd is an
     j = i + 1                                # external binary — it cannot fold
@@ -242,14 +240,17 @@ function finalize(close_reason,   i, nt, T, cmd, raw, attr, has_cdtok, j, t, das
       if (t == "push" || t == "reset") { if (dashc != "") attr = dashc }
       break
     }
+  } else {
+    # git behind a wrapper (sudo/env/timeout/xargs/…): its globals are not parsed here.
+    for (j = i + 1; j <= nt; j++) if (basename(T[j]) == "git") { attr = "UNCERTAIN"; break }
   }
-  print (attr != "" ? attr : tentative)
+  print (git_redirect ? "UNCERTAIN" : (attr != "" ? attr : tentative))
   seg = ""; pipe_adj = 0
 }
 BEGIN {
   in_sq = 0; in_dq = 0; committed = "CONF:" base; tentative = committed
   chain_has_cd = 0; chain_or = 0; bg_chain = 0; pipe_adj = 0
-  nested = 0; bt = 0; twin = 0; seg = ""; seg_folded_cd = 0
+  nested = 0; bt = 0; twin = 0; seg = ""; seg_folded_cd = 0; git_redirect = 0; redir_cd = 0
 }
 {
   line = $0; n = length(line)
@@ -266,6 +267,11 @@ BEGIN {
       if (c == "`") { finalize("`"); if (bt) { bt = 0; if (nested > 0) nested-- } else { bt = 1; nested++ }; twin = 0; continue }
       if (c == ";") { finalize(";"); commit_chain(); twin = 0; continue }
       if (c == "&" || c == "|") {
+        # Redirection ampersand (2>&1, >&2, &>): not a background operator. Still finalize
+        # for line parity with _segment_awk, but leave the chain state alone.
+        if (c == "&" && !twin && (substr(line, i - 1, 1) ~ /[<>]/ || substr(line, i + 1, 1) == ">")) {
+          finalize("redir"); redir_cd = seg_folded_cd; continue
+        }
         if (twin) { finalize("twin"); twin = 0; continue }
         tw = (substr(line, i + 1, 1) == c)
         if (c == "|") finalize(tw ? "or" : "|")
@@ -291,10 +297,9 @@ BEGIN {
 }
 END { if (seg != "") finalize("eof") }'
 
-# Resolve the branch verdict inputs for one push/reset segment: consult the
-# attributed target dir when confident, fall back to the guard process cwd
-# (the pre-attribution behavior) when uncertain or when the target is not a
-# git repo. Sets _branch and _target (empty when the legacy check decided).
+# Sets _branch/_target for one push/reset segment. Uncertain (or non-repo) targets check
+# BOTH the base dir and the guard process cwd and keep whichever is protected, so the
+# block set stays a superset of the legacy process-cwd check (docs/hooks.md §2).
 _attributed_branch() {
   _branch=''; _target=''
   case "$1" in
@@ -302,16 +307,18 @@ _attributed_branch() {
             _branch=$(git -C "$_target" rev-parse --abbrev-ref HEAD 2>/dev/null || true) ;;
   esac
   if [[ -z "$_branch" ]]; then
-    _branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     _target=
+    _branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    case "$_branch" in
+      main|master|release/*) ;;
+      *) _base_branch=$(git -C "$_base" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+         case "$_base_branch" in main|master|release/*) _branch=$_base_branch ;; esac ;;
+    esac
   fi
 }
 
-# Classify each force-push segment independently so later `-f` values do
-# not affect earlier non-force pushes; inspect every shell-command segment.
-# FD3 carries the attribution stream (one CONF:<path>/UNCERTAIN line per
-# segment, same order) — exhausted or malformed stream reads as UNCERTAIN,
-# which keeps the legacy process-cwd behavior.
+# Classify each force-push segment independently so later `-f` values do not affect earlier
+# non-force pushes. FD3 carries the attribution stream; an exhausted stream reads UNCERTAIN.
 while IFS= read -r push_cmd; do
   IFS= read -r seg_attr <&3 || seg_attr='UNCERTAIN'
   push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
@@ -426,18 +433,14 @@ while IFS= read -r push_cmd; do
     if [[ -n "$_target" && "$_target" != "$_base" ]]; then
       _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
     elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
-      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_base only"
+      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_checked only"
     fi
   fi
 done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
 
 case "$norm" in
 *reset*--hard*)
-  # Tokenized per-segment reset detection: `git` → global flags (-C <dir>, -c k=v,
-  # … — values consumed) → `reset` subcommand → a `--hard` argument. Matches plain
-  # `git reset --hard` exactly like the old text-adjacency scan, and additionally
-  # recognizes global-flag forms like `git -C <dir> reset --hard`, which the
-  # attribution re-targets. FD3 carries the attribution stream as in the push loop.
+  # Tokenized per-segment scan (git → global flags → reset → --hard) so `git -C <dir> reset --hard` matches.
   while IFS= read -r seg_cmd; do
     IFS= read -r seg_attr <&3 || seg_attr='UNCERTAIN'
     seg_norm=$(printf '%s' "$seg_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
@@ -474,7 +477,7 @@ case "$norm" in
     if [[ -n "$_target" && "$_target" != "$_base" ]]; then
       _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
     elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
-      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_base only"
+      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_checked only"
     fi
   done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
   ;;
@@ -513,7 +516,6 @@ case "$norm" in
 esac
 
 if [[ -n "$_warn_reason" ]]; then
-  jq -cn --arg msg "$_warn_reason" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$msg},systemMessage:$msg}'
+  jq -cn --arg msg "$_warn_reason" '{systemMessage:$msg}'   # no permissionDecision: "allow" would skip Claude Code's prompt
 fi
 exit 0

@@ -1639,7 +1639,7 @@ def test_guard_dispatch_fail_postures_are_pinned(guard_dispatch):
 
 # Every JSON field path each hook actually reads, verified against hooks/*.sh|py source below.
 REFERENCED_FIELDS = {
-    "bash_guard.sh": {"tool_input.command"},
+    "bash_guard.sh": {"tool_input.command", "cwd"},
     "secret_guard.py": {"tool_name", "tool_input.content", "tool_input.file_path", "tool_input.new_string"},
     "workflow_resume_hint.sh": {"cwd", "source"},
     "memory_hint.sh": {"cwd", "harness"},

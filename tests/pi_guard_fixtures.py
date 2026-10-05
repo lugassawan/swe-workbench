@@ -12,7 +12,7 @@ against it, or CI fails on whichever one goes stale.
 Each entry is a GuardCase. expected="block" means exit 2 + "BLOCKED" in stderr directly, or
 {block: true} through the Pi adapter; expected="allow" means exit 0 with empty stdout (a
 plain allow is SILENT); expected="warn" means exit 0 with one line of stdout JSON whose
-permissionDecisionReason equals expected_reason — asserted on BOTH paths, so the
+systemMessage equals expected_reason — asserted on BOTH paths, so the
 differential criterion covers verdict and message parity. scene=True rows stage the
 two-repo attribution scene via stage_guard_scene() and format {protected}/{feature}
 placeholders at runtime.
@@ -36,8 +36,12 @@ class GuardCase:
     expected: Verdict
     scene: bool = False
     expected_reason: str | None = None
-    # Which staged repo is the process/payload cwd for scene rows.
+    # Which staged repo is the process cwd for scene rows (also the payload cwd unless
+    # payload_cwd_role says otherwise).
     process_cwd_role: str = "protected"
+    # Payload .cwd role when it must differ from the process cwd. The Pi adapter always sends
+    # ctx.cwd for both, so split rows are direct-invocation only (see adapter_cases()).
+    payload_cwd_role: str | None = None
 
 
 # Allow/block rows predating tri-state verdicts; guard_cases() lifts them into GuardCase
@@ -169,6 +173,12 @@ def guard_cases() -> list[GuardCase]:
     return [GuardCase(command=cmd, expected="block" if blocked else "allow") for cmd, blocked in _LEGACY_ROWS] + _SCENE_ROWS
 
 
+def adapter_cases() -> list[GuardCase]:
+    """guard_cases() minus rows whose payload cwd differs from the process cwd — the Pi
+    adapter has no way to express that split."""
+    return [case for case in guard_cases() if case.payload_cwd_role is None]
+
+
 def stage_guard_scene(base: Path) -> tuple[Path, Path]:
     """Stage the attribution scene: protected/ on main and feature/ on feat/work.
 
@@ -201,6 +211,11 @@ def stage_guard_scene(base: Path) -> tuple[Path, Path]:
     (feature / "protlink").symlink_to(protected)
     return protected, feature
 
+
+_UNCERTAIN_REASON = (
+    "bash_guard: could not resolve effective directory (unresolvable cd); "
+    "protected-branch check ran against {feature} only"
+)
 
 # CWD-attribution rows. Placeholders ({protected}/{feature}) format against
 # stage_guard_scene() at run time; expected_reason carries the same placeholders so both
@@ -303,6 +318,49 @@ _SCENE_ROWS: list[GuardCase] = [
             "bash_guard: could not resolve effective directory (unresolvable cd); "
             "protected-branch check ran against {feature} only"
         ),
+    ),
+    # never-shrinks: wrapped git and env-var repo redirects ignore the preceding cd's target,
+    # so the legacy base/process-cwd check must still decide (protected → block).
+    GuardCase("cd {feature} && GIT_DIR={protected}/.git git push -f", "block", scene=True),
+    GuardCase("cd {feature} && GIT_WORK_TREE={protected} git push -f", "block", scene=True),
+    GuardCase("export GIT_DIR={protected}/.git && cd {feature} && git push -f", "block", scene=True),
+    GuardCase("cd {feature} && sudo git -C {protected} push -f", "block", scene=True),
+    GuardCase("cd {feature} && env -i git -C {protected} push -f", "block", scene=True),
+    GuardCase("cd {feature} && timeout 5 git -C {protected} push -f", "block", scene=True),
+    GuardCase("cd {feature} && echo x | xargs git -C {protected} push -f", "block", scene=True),
+    # An ampersand inside a redirection is not a background operator: it must not reset the
+    # folded cd (base is feature, the push really runs in protected).
+    GuardCase("cd {protected} && ls 2>&1 && git push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("cd {protected} && ls &>/dev/null && git push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("cd {protected} && echo x >&2 && git push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("cd {protected} 2>&1 && git push -f", "block", scene=True, process_cwd_role="feature"),
+    # ...and a cd whose redirect splits it off must still not fold out of a pipeline / past ||.
+    GuardCase("cd {feature} 2>&1 | cat && git push -f", "block", scene=True),
+    GuardCase("cd {feature} 2>&1 || git push -f", "block", scene=True),
+    # Tainting constructs: each keeps the legacy check instead of a confident wrong target.
+    GuardCase("cd {feature} | cat && git push -f", "block", scene=True),
+    GuardCase("(cd {feature}) && git push -f", "block", scene=True),
+    GuardCase("cd {protected} || cd {feature} && git push -f", "block", scene=True),
+    # A cd the resolver cannot fold (pushd / conditional / eval) must taint the chain: from a
+    # feature cwd the push is uncertain (warn), never a silent confident allow.
+    GuardCase("pushd {protected} && git push -f", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    GuardCase("command cd {protected} && git push -f", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    GuardCase("if cd {protected}; then git push -f; fi", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    GuardCase('eval "cd {protected}" && git push -f', "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    # `cd` as an argument is not a cd — no spurious attribution warn on a plain push.
+    GuardCase('git commit -m "handle cd edge" && git push -f', "allow", scene=True, process_cwd_role="feature"),
+    GuardCase("grep -rn cd src; git push -f", "allow", scene=True, process_cwd_role="feature"),
+    # Payload cwd and process cwd differ: the plain-push base is the payload cwd, and the
+    # uncertain fallback checks BOTH (block when either is protected).
+    GuardCase("git push -f", "block", scene=True, process_cwd_role="feature", payload_cwd_role="protected"),
+    GuardCase("git push -f", "allow", scene=True, process_cwd_role="protected", payload_cwd_role="feature"),
+    GuardCase(
+        "cd $DEPLOY_DIR && git push -f", "block", scene=True,
+        process_cwd_role="feature", payload_cwd_role="protected",
+    ),
+    GuardCase(
+        "cd $DEPLOY_DIR && git push -f", "block", scene=True,
+        process_cwd_role="protected", payload_cwd_role="feature",
     ),
     # Detection-scope pin: a quoted reset mention inside another git command is not a
     # reset — the tokenized scan does not resume after a non-reset subcommand.
