@@ -26,7 +26,7 @@ orchestrator: true
 
 This skill orchestrates; domain analysis is delegated to:
 
-- `swe-workbench:auditor` subagent — broad multi-domain sweep (security, perf, reliability, tooling, testing).
+- `swe-workbench:auditor` subagent — broad multi-domain sweep (security, perf, reliability, tooling, testing, dead-code).
 - `swe-workbench:security-auditor` subagent — depth-first CVE + threat review; **deep mode only**, top-N security findings.
 - `swe-workbench:debugger` subagent — root-cause + fix path on top-N reliability findings by rank; **deep mode only**.
 - `swe-workbench:ticket-context` skill — prepended when a ticket ref is present in `$ARGUMENTS`.
@@ -37,7 +37,7 @@ This skill orchestrates; domain analysis is delegated to:
 
 Skip this phase entirely if `--scope` appears explicitly in `$ARGUMENTS` — including `--scope=all`, which means "all domains, no clarification needed."
 
-Only when `--scope` is completely absent: ask the user which domains matter most (security, perf, reliability, tooling, testing), then proceed. If `superpowers:brainstorming` is available, invoke it to surface assumptions about the codebase before sweeping. If unavailable, ask directly: "Which audit domains do you want covered? (security, perf, reliability, tooling, testing — or all?)"
+Only when `--scope` is completely absent: ask the user which domains matter most (security, perf, reliability, tooling, testing, dead-code), then proceed. If `superpowers:brainstorming` is available, invoke it to surface assumptions about the codebase before sweeping. If unavailable, ask directly: "Which audit domains do you want covered? (security, perf, reliability, tooling, testing, dead-code — or all?)"
 
 ### Phase 2 — Dispatch auditor
 
@@ -46,7 +46,7 @@ Build a plain-prose prompt from the parsed flags:
 > "Time-box: `<time-box>`. Scope: `<scope>`. Depth: `<depth>`. Top-N: `<top-n>`.
 > Run a cold-start multi-domain audit of this codebase. Return findings in the full 11-field schema."
 
-Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box.
+Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box. When `dead-code` is in scope, the auditor runs `bin/swe-workbench-dead-code-scan` (via `Bash`) and translates each emitted candidate row into the 11-field finding schema — a test-only row's `references` populate `reasoning_chain`; an unused row has none by construction, so its evidence is the envelope's own claim ("no references across N scanned files, funnel X"). The auditor never reports a dead-code finding without one or the other.
 
 Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `bin/swe-workbench-lsp` (via `Bash`; the subagent's `LSP` grant, if any, is main-loop-only and unreachable here) expands from it — one attempt only; on no servers or error (exit 3), state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
 

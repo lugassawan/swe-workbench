@@ -19,9 +19,11 @@ code and stdout are the only two outcomes — a caller can drop this into
 replacement for `eval "$(producer ...)"` with no further exit-code branching.
 
 Registry field kinds are a closed, intentionally small vocabulary: "str", "int",
-"bool", "list[str]", and "list[path_reason]" (a list of {"path": str, "reason": str}
+"bool", "list[str]", "list[path_reason]" (a list of {"path": str, "reason": str}
 objects — the shape `swe-workbench-sweep-residuals` uses for retained/failed
-records). A field kind outside this vocabulary is a bug in this module's own
+records), and "list[candidate]" (a list of dead-code candidate records — the
+shape `swe-workbench-dead-code-scan` emits; see that script for the field
+set). A field kind outside this vocabulary is a bug in this module's own
 REGISTRY, not a caller error — it raises rather than silently passing validation.
 """
 
@@ -127,6 +129,15 @@ REGISTRY: dict[str, dict[str, str]] = {
         "nothing_to_address": "bool",
         "resume_available": "bool",
     },
+    "swb.dead-code-scan/1": {
+        "root": "str",
+        "funnel": "str",
+        "scanned_files": "int",
+        "candidate_count": "int",
+        "safe_keep_count": "int",
+        "justified_count": "int",
+        "candidates": "list[candidate]",
+    },
 }
 
 _STATUSES = {"ok", "partial", "failed"}
@@ -146,6 +157,30 @@ def _type_ok(kind: str, value: object) -> bool:
     if kind == "list[path_reason]":
         return isinstance(value, list) and all(
             isinstance(v, dict) and isinstance(v.get("path"), str) and isinstance(v.get("reason"), str)
+            for v in value
+        )
+    if kind == "list[candidate]":
+        # A dead-code candidate record: flat scalars plus a nested
+        # list[path_reason] of reference evidence (see
+        # bin/swe-workbench-dead-code-scan for the producer).
+        return isinstance(value, list) and all(
+            isinstance(v, dict)
+            and isinstance(v.get("symbol"), str)
+            and isinstance(v.get("kind"), str)
+            and isinstance(v.get("path"), str)
+            and isinstance(v.get("line"), int) and not isinstance(v.get("line"), bool)
+            and isinstance(v.get("keep_class"), str)
+            and isinstance(v.get("keep_reason"), str)
+            and isinstance(v.get("note"), str)
+            and isinstance(v.get("detected_by"), str)
+            and isinstance(v.get("test_only"), bool)
+            and isinstance(v.get("references"), list)
+            and all(
+                isinstance(r, dict)
+                and isinstance(r.get("path"), str)
+                and isinstance(r.get("reason"), str)
+                for r in v["references"]
+            )
             for v in value
         )
     raise AssertionError(f"swe-workbench-result-check: unregistered field kind {kind!r} in REGISTRY")
