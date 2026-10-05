@@ -83,6 +83,15 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     # Container/session wrappers also execute the protected force push.
     ("docker exec dev git push --force origin main", True),
     ("su -c 'git push --force origin main'", True),
+    ("podman exec dev git push --force origin main", True),
+    ("kubectl exec pod -- git push --force origin main", True),
+    ("setsid git push --force origin main", True),
+    ("stdbuf -oL git push --force origin main", True),
+    ("flock lock git push --force origin main", True),
+    ("script -q /dev/null git push --force origin main", True),
+    ("/usr/local/bin/docker exec dev git push --force origin main", True),
+    ("/usr/local/bin/podman exec dev git push --force origin main", True),
+    ("/usr/local/bin/kubectl exec pod -- git push --force origin main", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),

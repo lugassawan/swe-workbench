@@ -167,6 +167,7 @@ while IFS= read -r push_cmd; do
     case "$_prefix" in
       git|*/git) found_git=1; break ;;
       [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
+      # Transparent pass-through prefixes; additions require BASH_GUARD_FIXTURES coverage.
       sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
       docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
         prefix_args=1 ;;
