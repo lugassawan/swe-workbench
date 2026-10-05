@@ -216,10 +216,13 @@ def test_package_json_values():
     assert floor == f">={dev_pin}", (
         f"peerDependencies floor must equal the devDependencies pin ({dev_pin!r}), got {floor!r}"
     )
-    assert ceiling == "<1", (
-        "peerDependencies ceiling must stay below the next major — pre-1.0 semver gives no "
-        f"compatibility guarantee across majors — got {ceiling!r}. A widened or dropped "
-        "ceiling would let an untested major version of the peer satisfy this range silently."
+    # Next major above the pin ("<1" for 0.x, "<2" for 1.x); a fixed "<1" would make a 1.x
+    # pin unsatisfiable.
+    expected_ceiling = f"<{int(dev_pin.split('.')[0]) + 1}"
+    assert ceiling == expected_ceiling, (
+        f"peerDependencies ceiling must be the next major above the pin ({expected_ceiling!r}), "
+        f"got {ceiling!r}. A widened or dropped ceiling would let an untested major version of "
+        "the peer satisfy this range silently."
     )
 
     assert data["peerDependenciesMeta"]["@earendil-works/pi-coding-agent"]["optional"] is True, (
