@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keeps the peerDependencies floor for @earendil-works/pi-coding-agent and pi-tui locked to
+# Keeps the peerDependencies range for @earendil-works/pi-coding-agent and pi-tui locked to
 # the exact devDependencies pin — tests/test_pi_extension.py::test_package_json_values
 # enforces this lockstep so a consumer can never sit on a floor whose tested behavior has
-# since changed underneath it (see commit 0e34767). Dependabot only ever bumps the exact
-# devDependencies pin, never peerDependencies (">=X <1" already satisfies the new pin, so its
-# semver updater has no violation to fix), so this drifts on every pi-coding-agent/pi-tui
-# bump unless synced explicitly — this script is that explicit sync, run by hand or by
-# .github/workflows/dependabot-peer-sync.yml.
+# since changed underneath it (see commit 0e34767). The range is ">=PIN <MAJOR+1": the floor
+# is the pin itself and the ceiling is the next major above it, so a 0.x pin keeps "<1" and a
+# 1.x pin gets "<2" rather than the unsatisfiable ">=1.0.3 <1". Dependabot only ever bumps
+# the exact devDependencies pin, never peerDependencies (the old range already satisfies a
+# new pin, so its semver updater has no violation to fix), so this drifts on every
+# pi-coding-agent/pi-tui bump unless synced explicitly — this script is that explicit sync,
+# run by hand or by .github/workflows/dependabot-peer-sync.yml.
 #
 # Usage:
-#   scripts/sync-peer-deps.sh --check   # fail if the floor is out of sync; make no changes
+#   scripts/sync-peer-deps.sh --check   # fail if any range is out of sync; make no changes
 #   scripts/sync-peer-deps.sh           # rewrite package.json + package-lock.json in place
 #
 # Exit codes (distinguished so a caller like dependabot-peer-sync.yml can tell "there is
@@ -19,10 +21,12 @@ set -euo pipefail
 # and pi-tui are bumped as two SEPARATE dependabot PRs, so the first of every such pair
 # always hits the lockstep guard below; that must never be treated as syncable drift):
 #   0 - already in sync (or, in apply mode, sync completed)
-#   1 - actionable floor drift found (only in --check mode)
-#   2 - hard error: cannot determine or apply the correct floor (missing jq, missing/
-#       malformed devDependencies or peerDependencies keys, or the two packages' pins are
-#       out of lockstep) — nothing was or could be synced
+#   1 - actionable range drift found in any of the four sites — pi-coding-agent and pi-tui,
+#       each in package.json and package-lock.json (only in --check mode)
+#   2 - hard error: cannot determine or apply the correct range (missing jq, missing/
+#       malformed devDependencies or peerDependencies keys, a pin that is not an exact
+#       X.Y.Z, or the two packages' pins are out of lockstep) — nothing was or could be
+#       synced
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="${ROOT}/package.json"
@@ -51,22 +55,52 @@ if [[ "$TUI_PIN" != "$PIN" ]]; then
   exit 2
 fi
 
-FLOOR=$(jq -e -r '.peerDependencies["@earendil-works/pi-coding-agent"] | split(" ")[0]' "$PKG") || {
+# Anything but a bare X.Y.Z (a ^/~ range, a prerelease tag) would make the major-derived
+# ceiling below wrong without any visible error.
+if [[ ! "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: devDependencies pin must be an exact X.Y.Z version, got ${PIN}" >&2
+  exit 2
+fi
+
+CURRENT_RANGE=$(jq -e -r '.peerDependencies["@earendil-works/pi-coding-agent"]' "$PKG") || {
   echo "Error: could not read peerDependencies[\"@earendil-works/pi-coding-agent\"] from ${PKG}" >&2
   exit 2
 }
-EXPECTED_FLOOR=">=${PIN}"
+EXPECTED_CEILING="<$(( ${PIN%%.*} + 1 ))"
+EXPECTED_RANGE=">=${PIN} ${EXPECTED_CEILING}"
 
 MODE="${1:-}"
 
-if [[ "$FLOOR" == "$EXPECTED_FLOOR" ]]; then
-  echo "peerDependencies floor already in sync with devDependencies pin (${PIN})."
+# Every site the apply step writes; a missing key reads as empty and so counts as drift.
+_drift_sites() {
+  local pkg_agent pkg_tui lock_agent lock_tui
+  pkg_agent=$(jq -r '.peerDependencies["@earendil-works/pi-coding-agent"] // ""' "$PKG")
+  pkg_tui=$(jq -r '.peerDependencies["@earendil-works/pi-tui"] // ""' "$PKG")
+  lock_agent=$(jq -r '.packages[""].peerDependencies["@earendil-works/pi-coding-agent"] // ""' "$LOCK")
+  lock_tui=$(jq -r '.packages[""].peerDependencies["@earendil-works/pi-tui"] // ""' "$LOCK")
+  [[ "$pkg_agent" == "$EXPECTED_RANGE" ]] || echo "package.json pi-coding-agent (${pkg_agent:-missing})"
+  [[ "$pkg_tui" == "$EXPECTED_RANGE" ]] || echo "package.json pi-tui (${pkg_tui:-missing})"
+  [[ "$lock_agent" == "$EXPECTED_RANGE" ]] || echo "package-lock.json pi-coding-agent (${lock_agent:-missing})"
+  [[ "$lock_tui" == "$EXPECTED_RANGE" ]] || echo "package-lock.json pi-tui (${lock_tui:-missing})"
+}
+
+DRIFT=$(_drift_sites)
+
+if [[ -z "$DRIFT" ]]; then
+  echo "peerDependencies already in sync with devDependencies pin (${PIN}): ${EXPECTED_RANGE}."
   exit 0
 fi
 
 if [[ "$MODE" == "--check" ]]; then
-  echo "::error::peerDependencies floor (${FLOOR}) is out of sync with the devDependencies pin (${PIN} -> expected floor ${EXPECTED_FLOOR}); run scripts/sync-peer-deps.sh" >&2
+  echo "::error::peerDependencies out of sync with the devDependencies pin (${PIN} -> expected ${EXPECTED_RANGE}): ${DRIFT//$'\n'/, }; run scripts/sync-peer-deps.sh" >&2
   exit 1
+fi
+
+# A major crossing widens what the published range accepts; surface it so a reviewer sees
+# the new ceiling without the script blocking the sync.
+CURRENT_CEILING="${CURRENT_RANGE##* }"
+if [[ "$CURRENT_CEILING" != "$EXPECTED_CEILING" ]]; then
+  echo "::warning::peerDependencies ceiling widened from ${CURRENT_CEILING} to ${EXPECTED_CEILING} (pin ${PIN})"
 fi
 
 # package-lock.json (lockfileVersion 3) mirrors the root manifest's peerDependencies under
@@ -75,7 +109,7 @@ _sync_json() {
   local file="$1" jq_filter="$2"
   local tmp
   tmp=$(mktemp)
-  jq --arg range ">=${PIN} <1" "$jq_filter" "$file" > "$tmp"
+  jq --arg range "$EXPECTED_RANGE" "$jq_filter" "$file" > "$tmp"
   mv "$tmp" "$file"
 }
 
@@ -89,4 +123,4 @@ _sync_json "$LOCK" '
   | .packages[""].peerDependencies["@earendil-works/pi-tui"] = $range
 '
 
-echo "Synced peerDependencies floor to >=${PIN} <1 in package.json and package-lock.json."
+echo "Synced peerDependencies to ${EXPECTED_RANGE} in package.json and package-lock.json."

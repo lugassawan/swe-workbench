@@ -174,3 +174,97 @@ class TestSyncPeerDepsApply:
         result = _run(script, cwd=tmp_path)
         assert result.returncode == 2
         assert "could not read peerDependencies" in result.stderr
+
+
+def _pkg(pin: str, agent_range: str, tui_range: str | None = None) -> dict:
+    return {
+        "devDependencies": {
+            "@earendil-works/pi-coding-agent": pin,
+            "@earendil-works/pi-tui": pin,
+        },
+        "peerDependencies": {
+            "@earendil-works/pi-coding-agent": agent_range,
+            "@earendil-works/pi-tui": tui_range or agent_range,
+        },
+    }
+
+
+class TestSyncPeerDepsCeiling:
+    """The ceiling is derived from the pin's major (`<{major+1}`), not hardcoded, so a 0.x
+    pin keeps `<1` while a 1.x pin yields `<2` instead of the unsatisfiable `>=1.0.3 <1`."""
+
+    def test_check_flags_ceiling_only_drift(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("1.0.3", ">=1.0.3 <1"), ">=1.0.3 <1")
+        result = _run(script, "--check", cwd=tmp_path)
+        assert result.returncode == 1
+        assert "out of sync" in result.stderr
+
+    def test_apply_crossing_to_next_major_writes_new_ceiling_everywhere(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("1.0.3", ">=0.99.2 <1"), ">=0.99.2 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 0
+
+        pkg = json.loads((tmp_path / "package.json").read_text())
+        lock = json.loads((tmp_path / "package-lock.json").read_text())
+        for peers in (pkg["peerDependencies"], lock["packages"][""]["peerDependencies"]):
+            assert peers["@earendil-works/pi-coding-agent"] == ">=1.0.3 <2"
+            assert peers["@earendil-works/pi-tui"] == ">=1.0.3 <2"
+
+    def test_zero_major_pin_keeps_ceiling_below_one(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("0.99.2", ">=0.84.3 <1"), ">=0.84.3 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 0
+        assert "::warning::" not in result.stdout
+
+        pkg = json.loads((tmp_path / "package.json").read_text())
+        assert pkg["peerDependencies"]["@earendil-works/pi-coding-agent"] == ">=0.99.2 <1"
+
+    def test_apply_warns_when_ceiling_widens(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("1.0.3", ">=0.99.2 <1"), ">=0.99.2 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 0
+        assert "::warning::" in result.stdout
+        assert "<2" in result.stdout
+
+    def test_apply_with_unchanged_ceiling_does_not_warn(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("1.0.4", ">=1.0.3 <2"), ">=1.0.3 <2")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 0
+        assert "::warning::" not in result.stdout
+
+
+class TestSyncPeerDepsAllSites:
+    """--check must cover every write site: both packages x (package.json, lock)."""
+
+    def test_check_flags_lock_only_drift(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("0.84.4", ">=0.84.4 <1"), ">=0.84.3 <1")
+        result = _run(script, "--check", cwd=tmp_path)
+        assert result.returncode == 1
+
+    def test_check_flags_pi_tui_only_drift(self, tmp_path):
+        pkg = _pkg("0.84.4", ">=0.84.4 <1", tui_range=">=0.84.3 <1")
+        script = _scaffold(tmp_path, pkg, ">=0.84.4 <1")
+        result = _run(script, "--check", cwd=tmp_path)
+        assert result.returncode == 1
+
+    def test_apply_repairs_lock_only_drift(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("0.84.4", ">=0.84.4 <1"), ">=0.84.3 <1")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 0
+        lock = json.loads((tmp_path / "package-lock.json").read_text())
+        peers = lock["packages"][""]["peerDependencies"]
+        assert peers["@earendil-works/pi-coding-agent"] == ">=0.84.4 <1"
+        assert peers["@earendil-works/pi-tui"] == ">=0.84.4 <1"
+
+
+class TestSyncPeerDepsPinValidation:
+    def test_malformed_pin_errors(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("^1.0.3", ">=1.0.3 <2"), ">=1.0.3 <2")
+        result = _run(script, "--check", cwd=tmp_path)
+        assert result.returncode == 2
+        assert "exact X.Y.Z" in result.stderr
+
+    def test_prerelease_pin_errors(self, tmp_path):
+        script = _scaffold(tmp_path, _pkg("1.0.3-beta.1", ">=1.0.3 <2"), ">=1.0.3 <2")
+        result = _run(script, cwd=tmp_path)
+        assert result.returncode == 2
