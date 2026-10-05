@@ -27,7 +27,9 @@ Envelope (validated by swe-workbench-result-check swb.dead-code-scan/1):
 
 Each candidate row: {"symbol", "kind", "path", "line", "keep_class"
 (candidate|safe-keep|justified), "keep_reason", "note", "detected_by",
-"test_only", "references": [{"path", "reason" (test|code)}]}.
+"test_only", "references": [{"path", "reason"}]} — the reason field is
+"test" (references are only attached to test-only rows; used symbols are
+omitted entirely).
 
 Exit 0 with a valid envelope even when candidates were found — findings are
 not failures. "partial" plus a warning reports degradation (file cap hit, LSP
@@ -66,7 +68,7 @@ SOURCE_EXTS = {
 }
 
 TEST_PATH_RE = re.compile(
-    r"(^|/)(tests?|__tests__|spec)(/|$)|[._-](test|spec)[._]|\.(test|spec)\.",
+    r"(^|/)(tests?|__tests__|spec)(/|$)|(^|/)(test|spec)[._-]|[._-](test|spec)[._]|\.(test|spec)\.",
     re.IGNORECASE,
 )
 
@@ -76,7 +78,7 @@ DYNAMIC_CALL_RE = re.compile(
     r"\b(getattr|import_module|__import__|require|send|const_get|method_missing)\s*\("
 )
 QUOTED_IDENT_RE = re.compile(r"['\"]([A-Za-z_$][\w$]*)['\"]")
-ALL_RE = re.compile(r"__all__\s*=\s*\[(.*?)\]", re.DOTALL)
+ALL_RE = re.compile(r"__all__\s*=\s*[\[(](.*?)[\])\)]", re.DOTALL)
 QUOTED_ANY_RE = re.compile(r"['\"]([^'\"]+)['\"]")
 
 # (pattern, kind, name_group) per extension; group(name_group) is the symbol
@@ -177,8 +179,6 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
         record.idents.update(line_idents)
         if DYNAMIC_CALL_RE.search(line):
             record.dynamic.update(QUOTED_IDENT_RE.findall(line))
-        for match in MARKER_RE.finditer(line):
-            pass  # marker association handled per-def below
 
     rules = DEF_RULES.get(ext, [])
     comment_prefixes = ("#", "//") if ext in {".py", ".pyi", ".rb", ".sh", ".bash"} else ("//", "#")
@@ -273,6 +273,20 @@ def _is_declaration_only(line: str) -> bool:
     return stripped.startswith(("#", "//", "*", "/*")) or "__all__" in line
 
 
+def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entries: set[str]) -> tuple[str, str]:
+    """The keep-class chain every row passes through — grep-classified and
+    native-only alike. Marker wins; then structural safe-keeps; else candidate."""
+    if hit.marker_reason is not None:
+        return "justified", hit.marker_reason
+    if hit.name in record.all_names or hit.exported:
+        return "safe-keep", "exported API"
+    if hit.name == "main":
+        return "safe-keep", "entry-point name 'main'"
+    if dyn_refs:
+        return "safe-keep", "dynamically referenced (getattr/import/require)"
+    return "candidate", ""
+
+
 def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
     index: dict[str, set[str]] = {}
     dynamic_index: dict[str, set[str]] = {}
@@ -286,6 +300,11 @@ def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
 
     rows: list[dict] = []
     for record in records:
+        if TEST_PATH_RE.search(record.relpath):
+            # Test files are harness code: their defs are invoked by the
+            # runner by name/pattern (zero textual references by design), so
+            # reporting them would flood the envelope with false candidates.
+            continue
         for hit in record.defs:
             # Entry-point files (package.json bin/main) are flagged per spec,
             # never usage-analyzed — the file runs as a whole.
@@ -314,18 +333,7 @@ def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
             elif dyn_refs:
                 pass  # dynamic-only references: emitted below as safe-keep
 
-            if hit.marker_reason is not None:
-                keep_class, keep_reason = "justified", hit.marker_reason
-            elif hit.name in record.all_names or hit.exported:
-                keep_class, keep_reason = "safe-keep", "exported API"
-            elif hit.path in entries:
-                keep_class, keep_reason = "safe-keep", "CLI/module entry point (package.json)"
-            elif hit.name == "main":
-                keep_class, keep_reason = "safe-keep", "entry-point name 'main'"
-            elif dyn_refs:
-                keep_class, keep_reason = "safe-keep", "dynamically referenced (getattr/import/require)"
-            else:
-                keep_class, keep_reason = "candidate", ""
+            keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries)
             rows.append(_row(hit, keep_class, keep_reason, test_only, references))
     return rows
 
@@ -377,21 +385,30 @@ def parse_staticcheck(out: str) -> list[dict]:
 
 
 def parse_knip(out: str) -> list[dict]:
+    """knip's JSON reporter nests rule arrays under issues.files.<rule>, each
+    entry carrying file + name (exports) or just file (files rules)."""
     payload = json.loads(out)
     rows = []
-    issues = payload.get("issues", payload)
+    issues = payload.get("issues", {})
     if not isinstance(issues, dict):
         raise ValueError("knip payload has no issues object")
-    for group, entries in issues.items():
-        if "unused" not in group or not isinstance(entries, list):
+    files_issues = issues.get("files", issues)
+    if not isinstance(files_issues, dict):
+        raise ValueError("knip issues.files is not an object keyed by rule")
+    for rule, entries in files_issues.items():
+        if "unused" not in rule or not isinstance(entries, list):
             continue
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            name = entry.get("name") or entry.get("symbol")
+            name = entry.get("name") or entry.get("identifier")
             file_field = entry.get("file") or entry.get("path")
-            if not (isinstance(name, str) and isinstance(file_field, str)):
-                raise ValueError(f"knip {group} entry missing name/file")
+            if not isinstance(file_field, str):
+                raise ValueError(f"knip {rule} entry missing file")
+            if not isinstance(name, str):
+                # file-level rules (unusedFiles &c.) carry no symbol name;
+                # the scanner is symbol-scoped, so skip those entries.
+                continue
             pos = entry.get("pos") or {}
             line = pos.get("line", 0) if isinstance(pos, dict) else 0
             rows.append(
@@ -435,21 +452,27 @@ def run_native(root: Path, warnings: list) -> tuple[list[dict], bool]:
     return rows, ran_ok
 
 
-def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRecord]) -> list[dict]:
+def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRecord], entries: set[str] | None = None) -> list[dict]:
     """Merge native findings into grep-classified rows.
 
     A native finding whose symbol matches a grep row marks provenance; a
-    native-only finding becomes a new row, reusing any grep classification we
-    have for the same symbol name so exports/CLI entries stay safe-kept.
+    native-only finding becomes a new row re-classified through the same
+    safe-keep chain classify() uses, so exports/CLI entries/dynamic refs stay
+    safe-kept regardless of which funnel spotted them.
     """
+    entries = entries or set()
     by_key = {(r["path"], r["line"], r["symbol"]): r for r in rows}
     by_symbol: dict[str, dict] = {}
     for row in rows:
         by_symbol.setdefault(row["symbol"], row)
-    record_defs: dict[str, DefHit] = {}
+    record_defs: dict[str, tuple[DefHit, FileRecord]] = {}
     for record in records:
         for hit in record.defs:
-            record_defs.setdefault(hit.name, hit)
+            record_defs.setdefault(hit.name, (hit, record))
+    dynamic_index: dict[str, set[str]] = {}
+    for record in records:
+        for name in record.dynamic:
+            dynamic_index.setdefault(name, set()).add(record.relpath)
 
     for native in native_rows:
         key = (native["path"], native["line"], native["symbol"])
@@ -461,11 +484,14 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         if sibling is not None:
             sibling["detected_by"] = native["detected_by"]
             continue
-        hit = record_defs.get(native["symbol"])
-        if hit is not None and hit.marker_reason is None:
+        hit_record = record_defs.get(native["symbol"])
+        if hit_record is not None:
+            hit, record = hit_record
+            dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
+            keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries)
             row = {
                 "symbol": native["symbol"], "kind": native["kind"], "path": native["path"],
-                "line": native["line"], "keep_class": "candidate", "keep_reason": "",
+                "line": native["line"], "keep_class": keep_class, "keep_reason": keep_reason,
                 "note": hit.note, "detected_by": native["detected_by"],
                 "test_only": False, "references": [],
             }
@@ -473,8 +499,8 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
             row = {
                 "symbol": native["symbol"], "kind": native["kind"], "path": native["path"],
                 "line": native["line"], "keep_class": "candidate", "keep_reason": "",
-                "note": hit.note if hit is not None else "",
-                "detected_by": native["detected_by"], "test_only": False, "references": [],
+                "note": "", "detected_by": native["detected_by"], "test_only": False,
+                "references": [],
             }
         rows.append(row)
         by_key[key] = row
@@ -501,7 +527,7 @@ def lsp_verify(root: Path, rows: list[dict], warnings: list) -> tuple[list[dict]
     """
     bin_path = _lsp_bin()
     verified = 0
-    for row in rows:
+    for row in list(rows):  # snapshot: rows are removed mid-verification
         if row["keep_class"] != "candidate" or row["kind"] not in ("function", "method", "class"):
             continue
         if verified >= MAX_LSP_VERIFIES:
@@ -563,7 +589,7 @@ def scan_root(root: str, funnel: str = "auto", max_files: int = DEFAULT_MAX_FILE
         native_rows, native_ran = run_native(rootp, warnings)
         if native_ran:
             parts.append("native")
-        rows = merge_native(rows, native_rows, records)
+        rows = merge_native(rows, native_rows, records, entries)
     if funnel in ("auto", "lsp"):
         rows, lsp_ran = lsp_verify(rootp, rows, warnings)
         if lsp_ran:

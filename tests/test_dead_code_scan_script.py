@@ -377,6 +377,94 @@ def test_native_funnel_without_tools_falls_back_to_grep(tmp_path, monkeypatch):
     assert envelope["data"]["candidate_count"] == 1
 
 
+# ── Review-fix regression tests ─────────────────────────────────────────
+
+
+def test_defs_in_test_files_are_never_candidates(tmp_path):
+    """Test functions are invoked by the runner by name/pattern — zero textual
+    references by design. Reporting them as removable candidates floods the
+    envelope (a repo self-scan is ~90% test functions)."""
+    _write(tmp_path, "src/mod.py", "def prod_fn():\n    return 1\n")
+    _write(
+        tmp_path, "tests/test_mod.py",
+        "from src.mod import prod_fn\n\n"
+        "def helper_fixture():\n    return 2\n\n"
+        "def test_mod():\n    assert prod_fn() == 1\n",
+    )
+    rc, envelope = _scan(tmp_path)
+    symbols = [c["symbol"] for c in envelope["data"]["candidates"]]
+    assert "test_mod" not in symbols, "test functions must never be removal candidates"
+    assert "helper_fixture" not in symbols, "helpers defined in test files are harness code"
+    prod = _find(envelope["data"]["candidates"], "prod_fn")
+    assert prod is not None, "referenced only by tests → test-only candidate (the headline feature)"
+    assert prod["test_only"] is True
+
+
+def test_flat_layout_test_file_counts_as_test_path(tmp_path):
+    """pytest's canonical flat layout (test_utils.py next to sources) must count
+    as a test path, not a production reference."""
+    _write(tmp_path, "src/mod.py", "def lonely():\n    return 1\n")
+    _write(tmp_path, "src/test_utils.py", "from src.mod import lonely\n\ndef check():\n    return lonely()\n")
+    rc, envelope = _scan(tmp_path)
+    lonely = _find(envelope["data"]["candidates"], "lonely")
+    assert lonely is not None, "a reference from test_utils.py is a test reference"
+    assert lonely["test_only"] is True
+    assert all(ref["reason"] == "test" for ref in lonely["references"])
+
+
+def test_lsp_verify_covers_row_after_removed_row(tmp_path):
+    """Removing a row mid-iteration must not skip the next row's verification."""
+    _write(tmp_path, "src/mod.py", "def first_orphan():\n    return 1\n\ndef second_orphan():\n    return 2\n")
+    payload = (
+        '{"server":"stub","analyzed_files":1,"truncated":false,'
+        '"elapsed_seconds":0,"results":[{"file":"src/real_caller.py","line":3,"character":1}]}'
+    )
+    stub = _stub_lsp(
+        tmp_path,
+        f"if [[ \"$*\" == *\"--symbol\"* ]]; then cat <<'JSON'\n{payload}\nJSON\nfi",
+    )
+    rc, envelope = _scan(
+        tmp_path, "--funnel", "lsp", env=_env(SWB_DEAD_CODE_LSP_BIN=str(stub))
+    )
+    symbols = [c["symbol"] for c in envelope["data"]["candidates"]
+               if c["symbol"] in ("first_orphan", "second_orphan")]
+    assert symbols == [], (
+        f"both orphans must be LSP-verified and dropped; got {symbols} "
+        "(second row was skipped after the first was removed)"
+    )
+
+
+def test_native_only_row_respects_safe_keep(tmp_path):
+    """A native finding for a symbol grep counts as used must still pass the
+    safe-keep chain before becoming a candidate row."""
+    _write(tmp_path, "src/api.ts", "export function pubApi(): number {\n  return 1;\n}\n")
+    _write(tmp_path, "src/app.ts", "import { pubApi } from \"./api\";\npubApi();\n")
+    module = _load_module()
+    records = [r for r in (module.parse_file(tmp_path.resolve(), p) for p in tmp_path.rglob("*.ts")) if r]
+    native_row = {
+        "symbol": "pubApi", "kind": "function", "path": "src/api.ts",
+        "line": 1, "detected_by": "native:vulture",
+    }
+    merged = module.merge_native([], [native_row], records)
+    pub = _find(merged, "pubApi")
+    assert pub is not None
+    assert pub["keep_class"] == "safe-keep", (
+        "exported symbols found only by native tooling must never be removal candidates"
+    )
+
+
+def test_all_tuple_form_is_recognized(tmp_path):
+    _write(
+        tmp_path, "src/api.py",
+        "__all__ = (\"tuple_exported\",)\n\n"
+        "def tuple_exported():\n    return 1\n",
+    )
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "tuple_exported")
+    assert row is not None
+    assert row["keep_class"] == "safe-keep"
+
+
 # ── CLI surface ──────────────────────────────────────────────────────────────
 
 
