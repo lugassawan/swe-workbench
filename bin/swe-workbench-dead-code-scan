@@ -7,7 +7,9 @@ orchestrators own diffs and filter the emitted candidates consumer-side.
 
 Detection funnel (first available wins for candidate sourcing; the text index
 below always runs so every candidate carries reference evidence):
-  1. native tooling when installed (vulture, staticcheck U1000, knip),
+  1. native tooling when installed and applicable to the repo (vulture needs
+     Python sources, staticcheck a go.mod, knip a package.json — an
+     inapplicable tool is a designed skip, not a failure),
   2. the sibling swe-workbench-lsp script (callers verification pass),
   3. an in-process one-pass identifier index (the "grep" funnel) — never a
      subprocess per candidate.
@@ -41,6 +43,7 @@ and the diagnostic goes to stderr.
 from __future__ import annotations
 
 import argparse
+import configparser
 import json
 import os
 import re
@@ -48,6 +51,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:  # Python < 3.11: pyproject.toml entry points go unmodeled
+    tomllib = None
 
 SCHEMA = "swb.dead-code-scan/1"
 
@@ -67,6 +75,10 @@ SOURCE_EXTS = {
     ".go", ".rb", ".rs", ".sh", ".bash",
 }
 
+# Manifests walked alongside sources: they declare entry points the text index
+# can never see referenced.
+MANIFEST_NAMES = {"package.json", "pyproject.toml", "setup.cfg"}
+
 TEST_PATH_RE = re.compile(
     r"(^|/)(tests?|__tests__|spec)(/|$)|(^|/)(test|spec)[._-]|[._-](test|spec)[._]|\.(test|spec)\.",
     re.IGNORECASE,
@@ -74,6 +86,8 @@ TEST_PATH_RE = re.compile(
 
 IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
 MARKER_RE = re.compile(r"dead-code:\s*keep\s+(.+?)\s*$")
+DUNDER_RE = re.compile(r"^__\w+__$")
+RUST_PUB_RE = re.compile(r"pub\s")  # bare `pub` only — pub(crate)/pub(super) are not external API
 DYNAMIC_CALL_RE = re.compile(
     r"\b(getattr|import_module|__import__|require|send|const_get|method_missing)\s*\("
 )
@@ -152,13 +166,23 @@ def _comment_text_above(lines: list[str], idx: int, comment_prefixes: tuple[str,
     while j >= 0:
         stripped = lines[j].strip()
         if stripped.startswith(comment_prefixes):
-            text = stripped.lstrip("/# ")
+            text = stripped.lstrip("/#* ").removesuffix("*/").strip()
             if text:
                 collected.append(text)
             j -= 1
         else:
             break
     return " ".join(reversed(collected))[:MARKER_NOTE_MAX]
+
+
+def _is_exported(ext: str, matched: str, name: str) -> bool:
+    """Language export conventions for non-`def` rules: JS/TS `export`, Rust
+    bare `pub`, Go's capitalized identifiers."""
+    if ext == ".go":
+        return name[:1].isupper()
+    if ext == ".rs":
+        return RUST_PUB_RE.match(matched.lstrip()) is not None
+    return matched.lstrip().startswith("export ")
 
 
 def parse_file(root: Path, path: Path) -> FileRecord | None:
@@ -181,7 +205,10 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
             record.dynamic.update(QUOTED_IDENT_RE.findall(line))
 
     rules = DEF_RULES.get(ext, [])
-    comment_prefixes = ("#", "//") if ext in {".py", ".pyi", ".rb", ".sh", ".bash"} else ("//", "#")
+    if ext in {".py", ".pyi", ".rb", ".sh", ".bash"}:
+        comment_prefixes = ("#", "//")
+    else:  # C-family: line comments plus /* … */ and JSDoc-style ` * …` bodies
+        comment_prefixes = ("//", "#", "/*", "*")
     for no, line in enumerate(lines, start=1):
         for pattern, base_kind, name_group in rules:
             m = pattern.match(line)
@@ -194,7 +221,7 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
             else:
                 name = m.group(name_group)
                 kind = base_kind
-                exported = bool(m.group(0).lstrip().startswith("export "))
+                exported = _is_exported(ext, m.group(0), name)
             note = _comment_text_above(lines, no, comment_prefixes)
             # docstring on the line directly below also carries marker/note
             if no < len(lines):
@@ -209,10 +236,9 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
                         record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note))
                         break
             marker_reason = None
-            if note:
-                marker = MARKER_RE.search(note) or MARKER_RE.search(line)
-                if marker:
-                    marker_reason = marker.group(1).strip()
+            marker = MARKER_RE.search(note) or MARKER_RE.search(line)
+            if marker:
+                marker_reason = marker.group(1).strip()
             record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note))
             break
 
@@ -229,7 +255,7 @@ def walk_files(root: Path, max_files: int, warnings: list) -> list[Path]:
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            if path.suffix.lower() in SOURCE_EXTS or name == "package.json":
+            if path.suffix.lower() in SOURCE_EXTS or name in MANIFEST_NAMES:
                 files.append(path)
                 if len(files) >= max_files:
                     capped = True
@@ -241,25 +267,114 @@ def walk_files(root: Path, max_files: int, warnings: list) -> list[Path]:
     return files
 
 
-def _package_json_entries(root: Path, files: list[Path]) -> set[str]:
-    entries: set[str] = set()
+class EntryPoints:
+    """Manifest-declared entry points. `files` are repo-root-relative paths that
+    run as a whole (package.json bin/main); `symbols` are callable names the
+    runtime invokes by name (Python console-script targets)."""
+
+    __slots__ = ("files", "symbols")
+
+    def __init__(self, files: set[str] | None = None, symbols: set[str] | None = None):
+        self.files = files if files is not None else set()
+        self.symbols = symbols if symbols is not None else set()
+
+
+def _manifest_relative(root: Path, manifest: Path, entry: str) -> str | None:
+    """Resolve a manifest-relative entry path to repo-root-relative posix form;
+    None when it escapes the scan root."""
+    resolved = Path(os.path.normpath(manifest.parent / entry))
+    try:
+        return resolved.relative_to(root).as_posix()
+    except ValueError:
+        return None
+
+
+def _package_json_entries(root: Path, manifest_path: Path, entries: EntryPoints) -> None:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(manifest, dict):
+        return
+    declared: list[str] = []
+    bin_field = manifest.get("bin")
+    if isinstance(bin_field, str):
+        declared.append(bin_field)
+    elif isinstance(bin_field, dict):
+        declared.extend(str(v) for v in bin_field.values())
+    main_field = manifest.get("main")
+    if isinstance(main_field, str):
+        declared.append(main_field)
+    for entry in declared:
+        rel = _manifest_relative(root, manifest_path, entry)
+        if rel is not None:
+            entries.files.add(rel)
+
+
+def _symbols_from_target(target: str) -> set[str]:
+    """`pkg.mod:Class.attr [extra]` → {"Class", "attr"}; module-only targets
+    (no `:`) name no callable."""
+    _, sep, attr = target.partition(":")
+    if not sep:
+        return set()
+    attr = attr.split("[", 1)[0]
+    return {seg.strip() for seg in attr.split(".") if seg.strip().isidentifier()}
+
+
+def _toml_entry_targets(manifest: dict) -> list[str]:
+    """Targets from [project.scripts|gui-scripts|entry-points.*] and the Poetry
+    equivalents ([tool.poetry.scripts|plugins.*])."""
+    tables: list[object] = []
+    project = manifest.get("project")
+    if isinstance(project, dict):
+        tables.extend([project.get("scripts"), project.get("gui-scripts")])
+        groups = project.get("entry-points")
+        if isinstance(groups, dict):
+            tables.extend(groups.values())
+    tool = manifest.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    if isinstance(poetry, dict):
+        tables.append(poetry.get("scripts"))
+        plugins = poetry.get("plugins")
+        if isinstance(plugins, dict):
+            tables.extend(plugins.values())
+    return [v for table in tables if isinstance(table, dict) for v in table.values() if isinstance(v, str)]
+
+
+def _pyproject_entries(manifest_path: Path, entries: EntryPoints) -> None:
+    if tomllib is None:
+        return
+    try:
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return
+    for target in _toml_entry_targets(manifest):
+        entries.symbols.update(_symbols_from_target(target))
+
+
+def _setup_cfg_entries(manifest_path: Path, entries: EntryPoints) -> None:
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read_string(manifest_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, configparser.Error):
+        return
+    if not parser.has_section("options.entry_points"):
+        return
+    for _group, block in parser.items("options.entry_points"):
+        for line in block.splitlines():
+            _name, _eq, target = line.partition("=")
+            entries.symbols.update(_symbols_from_target(target.strip()))
+
+
+def collect_entry_points(root: Path, files: list[Path]) -> EntryPoints:
+    entries = EntryPoints()
     for path in files:
-        if path.name != "package.json":
-            continue
-        try:
-            manifest = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(manifest, dict):
-            continue
-        bin_field = manifest.get("bin")
-        if isinstance(bin_field, str):
-            entries.add(bin_field.removeprefix("./"))
-        elif isinstance(bin_field, dict):
-            entries.update(str(v).removeprefix("./") for v in bin_field.values())
-        main_field = manifest.get("main")
-        if isinstance(main_field, str):
-            entries.add(main_field.removeprefix("./"))
+        if path.name == "package.json":
+            _package_json_entries(root, path, entries)
+        elif path.name == "pyproject.toml":
+            _pyproject_entries(path, entries)
+        elif path.name == "setup.cfg":
+            _setup_cfg_entries(path, entries)
     return entries
 
 
@@ -273,7 +388,17 @@ def _is_declaration_only(line: str) -> bool:
     return stripped.startswith(("#", "//", "*", "/*")) or "__all__" in line
 
 
-def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entries: set[str]) -> tuple[str, str]:
+def _entry_file_decision(hit: DefHit, record: FileRecord, entries: EntryPoints) -> tuple[str, str] | None:
+    """Defs in a manifest entry file are flagged per spec, never usage-analyzed
+    — the file runs as a whole. None when the file is not an entry point."""
+    if record.relpath not in entries.files:
+        return None
+    if hit.marker_reason is not None:
+        return "justified", hit.marker_reason
+    return "safe-keep", "CLI/module entry point (package.json)"
+
+
+def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entry_symbols: set[str]) -> tuple[str, str]:
     """The keep-class chain every row passes through — grep-classified and
     native-only alike. Marker wins; then structural safe-keeps; else candidate."""
     if hit.marker_reason is not None:
@@ -282,12 +407,16 @@ def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entries:
         return "safe-keep", "exported API"
     if hit.name == "main":
         return "safe-keep", "entry-point name 'main'"
+    if hit.name in entry_symbols:
+        return "safe-keep", "console-script entry point (pyproject.toml/setup.cfg)"
+    if DUNDER_RE.match(hit.name):
+        return "safe-keep", "dunder protocol method"
     if dyn_refs:
         return "safe-keep", "dynamically referenced (getattr/import/require)"
     return "candidate", ""
 
 
-def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
+def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
     index: dict[str, set[str]] = {}
     dynamic_index: dict[str, set[str]] = {}
     by_rel: dict[str, FileRecord] = {}
@@ -306,12 +435,9 @@ def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
             # reporting them would flood the envelope with false candidates.
             continue
         for hit in record.defs:
-            # Entry-point files (package.json bin/main) are flagged per spec,
-            # never usage-analyzed — the file runs as a whole.
-            if record.relpath in entries:
-                keep_class = "justified" if hit.marker_reason is not None else "safe-keep"
-                keep_reason = hit.marker_reason or "CLI/module entry point (package.json)"
-                rows.append(_row(hit, keep_class, keep_reason, False, []))
+            entry_decision = _entry_file_decision(hit, record, entries)
+            if entry_decision is not None:
+                rows.append(_row(hit, *entry_decision, False, []))
                 continue
             cross = index.get(hit.name, set()) - {record.relpath}
             normal_refs = {rel for rel in cross if hit.name not in by_rel[rel].dynamic}
@@ -333,7 +459,7 @@ def classify(records: list[FileRecord], entries: set[str]) -> list[dict]:
             elif dyn_refs:
                 pass  # dynamic-only references: emitted below as safe-keep
 
-            keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries)
+            keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries.symbols)
             rows.append(_row(hit, keep_class, keep_reason, test_only, references))
     return rows
 
@@ -418,19 +544,35 @@ def parse_knip(out: str) -> list[dict]:
     return rows
 
 
-NATIVE_TOOLS: dict[str, tuple[list[str], object]] = {
-    "vulture": (["vulture", "."], parse_vulture),
-    "staticcheck": (["staticcheck", "-checks", "U1000", "./..."], parse_staticcheck),
-    "knip": (["knip", "--reporter", "json"], parse_knip),
+def _has_python_sources(root: Path, records: list[FileRecord]) -> bool:
+    return any(r.relpath.endswith((".py", ".pyi")) for r in records)
+
+
+def _has_package_json(root: Path, records: list[FileRecord]) -> bool:
+    return (root / "package.json").is_file()
+
+
+def _has_go_mod(root: Path, records: list[FileRecord]) -> bool:
+    return (root / "go.mod").is_file()
+
+
+# argv, output parser, repo-applicability predicate — a tool that is installed
+# but inapplicable (knip without package.json, …) is a designed skip, exactly
+# like a tool that is absent: no run, no warning, status stays "ok".
+NATIVE_TOOLS: dict[str, tuple[list[str], object, object]] = {
+    "vulture": (["vulture", "."], parse_vulture, _has_python_sources),
+    "staticcheck": (["staticcheck", "-checks", "U1000", "./..."], parse_staticcheck, _has_go_mod),
+    "knip": (["knip", "--reporter", "json"], parse_knip, _has_package_json),
 }
 
 
-def run_native(root: Path, warnings: list) -> tuple[list[dict], bool]:
-    """Run whichever native tools are installed. Returns (rows, any_ran_ok)."""
+def run_native(root: Path, records: list[FileRecord], warnings: list) -> tuple[list[dict], bool]:
+    """Run whichever native tools are installed and apply to this repo.
+    Returns (rows, any_ran_ok)."""
     rows: list[dict] = []
     ran_ok = False
-    for tool, (argv, parser) in NATIVE_TOOLS.items():
-        if shutil.which(argv[0]) is None:
+    for tool, (argv, parser, applicable) in NATIVE_TOOLS.items():
+        if shutil.which(argv[0]) is None or not applicable(root, records):
             continue
         try:
             proc = subprocess.run(
@@ -452,21 +594,25 @@ def run_native(root: Path, warnings: list) -> tuple[list[dict], bool]:
     return rows, ran_ok
 
 
-def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRecord], entries: set[str] | None = None) -> list[dict]:
+def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRecord], entries: EntryPoints | None = None) -> list[dict]:
     """Merge native findings into grep-classified rows.
 
     A native finding whose symbol matches a grep row marks provenance; a
     native-only finding becomes a new row re-classified through the same
-    safe-keep chain classify() uses, so exports/CLI entries/dynamic refs stay
-    safe-kept regardless of which funnel spotted them.
+    entry-point and safe-keep chain classify() uses, so exports/CLI
+    entries/dynamic refs stay safe-kept regardless of which funnel spotted
+    them. Test-path findings are dropped, as classify() does — test defs are
+    harness code the runner invokes by name.
     """
-    entries = entries or set()
+    entries = entries or EntryPoints()
     by_key = {(r["path"], r["line"], r["symbol"]): r for r in rows}
     by_symbol: dict[str, dict] = {}
     for row in rows:
         by_symbol.setdefault(row["symbol"], row)
     record_defs: dict[str, tuple[DefHit, FileRecord]] = {}
     for record in records:
+        if TEST_PATH_RE.search(record.relpath):
+            continue
         for hit in record.defs:
             record_defs.setdefault(hit.name, (hit, record))
     dynamic_index: dict[str, set[str]] = {}
@@ -475,6 +621,8 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
             dynamic_index.setdefault(name, set()).add(record.relpath)
 
     for native in native_rows:
+        if TEST_PATH_RE.search(native["path"]):
+            continue
         key = (native["path"], native["line"], native["symbol"])
         existing = by_key.get(key)
         if existing is not None:
@@ -488,7 +636,10 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         if hit_record is not None:
             hit, record = hit_record
             dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
-            keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries)
+            keep_class, keep_reason = (
+                _entry_file_decision(hit, record, entries)
+                or _safe_keep_decision(hit, record, dyn_refs, entries.symbols)
+            )
             row = {
                 "symbol": native["symbol"], "kind": native["kind"], "path": native["path"],
                 "line": native["line"], "keep_class": keep_class, "keep_reason": keep_reason,
@@ -581,12 +732,12 @@ def scan_root(root: str, funnel: str = "auto", max_files: int = DEFAULT_MAX_FILE
     warnings: list[dict] = []
     files = walk_files(rootp, max_files, warnings)
     records = [r for r in (parse_file(rootp, p) for p in files if p.suffix.lower() in SOURCE_EXTS) if r]
-    entries = _package_json_entries(rootp, files)
+    entries = collect_entry_points(rootp, files)
     rows = classify(records, entries)
 
     parts: list[str] = []
     if funnel in ("auto", "native"):
-        native_rows, native_ran = run_native(rootp, warnings)
+        native_rows, native_ran = run_native(rootp, records, warnings)
         if native_ran:
             parts.append("native")
         rows = merge_native(rows, native_rows, records, entries)

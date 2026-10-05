@@ -465,6 +465,199 @@ def test_all_tuple_form_is_recognized(tmp_path):
     assert row["keep_class"] == "safe-keep"
 
 
+# ── Review-round-2 regression tests ──────────────────────────────────────────
+
+
+def _parse_records(module, root: Path):
+    return [
+        r for r in (module.parse_file(root.resolve(), p) for p in sorted(root.rglob("*")) if p.is_file()) if r
+    ]
+
+
+def test_native_findings_in_test_files_are_dropped(tmp_path):
+    """The native funnel must honor the same test-file invariant as classify():
+    a vulture report naming a test-path symbol never becomes a candidate row."""
+    _write(tmp_path, "src/mod.py", "def prod_fn():\n    return 1\n")
+    _write(tmp_path, "tests/test_mod.py", "def test_mod():\n    assert True\n")
+    module = _load_module()
+    records = _parse_records(module, tmp_path)
+    native = [
+        {"symbol": "test_mod", "kind": "function", "path": "tests/test_mod.py",
+         "line": 1, "detected_by": "native:vulture"},
+        {"symbol": "unseen_helper", "kind": "function", "path": "tests/helpers.py",
+         "line": 4, "detected_by": "native:vulture"},
+    ]
+    merged = module.merge_native([], native, records)
+    assert merged == [], "test-path native findings must be dropped, including symbols with no parsed def"
+
+
+def test_native_same_name_prod_symbol_not_classified_from_test_def(tmp_path):
+    """A prod-path native row must be classified from the prod def, not from a
+    same-named def that happens to live in a test file."""
+    _write(tmp_path, "tests/test_a.py", "# dead-code: keep fixture\ndef shared_name():\n    return 1\n")
+    _write(tmp_path, "src/b.py", "def shared_name():\n    return 2\n")
+    module = _load_module()
+    native = [{"symbol": "shared_name", "kind": "function", "path": "src/b.py",
+               "line": 1, "detected_by": "native:vulture"}]
+    merged = module.merge_native([], native, _parse_records(module, tmp_path))
+    row = _find(merged, "shared_name")
+    assert row is not None
+    assert row["keep_class"] == "candidate", "the test file's keep marker must not leak onto the prod def"
+
+
+@pytest.mark.parametrize("entry", ["bin/cli.js", "./bin/cli.js"])
+def test_monorepo_package_json_entry_resolves_against_manifest_dir(tmp_path, entry):
+    _write(tmp_path, "packages/cli/package.json", f'{{"name": "cli", "bin": "{entry}"}}\n')
+    _write(tmp_path, "packages/cli/bin/cli.js", "function cliMain() {\n  return 1;\n}\n")
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "cliMain")
+    assert row is not None
+    assert row["keep_class"] == "safe-keep"
+    assert "entry" in row["keep_reason"]
+
+
+def test_package_json_entry_escaping_scan_root_is_ignored(tmp_path):
+    _write(tmp_path, "pkg/package.json", '{"main": "../../outside.js"}\n')
+    _write(tmp_path, "pkg/lib.js", "function orphanFn() {\n  return 1;\n}\n")
+    rc, envelope = _scan(tmp_path)
+    assert rc == 0
+    assert _find(envelope["data"]["candidates"], "orphanFn")["keep_class"] == "candidate"
+
+
+@pytest.mark.parametrize(
+    ("manifest", "text"),
+    [
+        ("pyproject.toml", '[project.scripts]\nxcmd = "pkg.mod:cliMain"\n'),
+        ("pyproject.toml", '[tool.poetry.scripts]\nxcmd = "pkg.mod:cliMain"\n'),
+        ("pyproject.toml", '[project.entry-points."my.plugins"]\nxcmd = "pkg.mod:cliMain [extra]"\n'),
+        ("setup.cfg", "[options.entry_points]\nconsole_scripts =\n    xcmd = pkg.mod:cliMain\n"),
+    ],
+)
+def test_python_console_script_target_is_safe_keep(tmp_path, manifest, text):
+    if manifest == "pyproject.toml" and sys.version_info < (3, 11):
+        pytest.skip("tomllib unavailable before Python 3.11")
+    _write(tmp_path, manifest, text)
+    _write(tmp_path, "pkg/mod.py", "def cliMain():\n    return 0\n\ndef orphanFn():\n    return 1\n")
+    rc, envelope = _scan(tmp_path)
+    cands = envelope["data"]["candidates"]
+    cli = _find(cands, "cliMain")
+    assert cli is not None
+    assert cli["keep_class"] == "safe-keep"
+    assert "entry" in cli["keep_reason"]
+    assert _find(cands, "orphanFn")["keep_class"] == "candidate", "only the declared target is protected"
+
+
+def test_native_only_row_in_entry_file_is_safe_keep(tmp_path):
+    _write(tmp_path, "package.json", '{"bin": "bin/x.js"}\n')
+    _write(tmp_path, "bin/x.js", "function cliMain() {\n  return 1;\n}\n")
+    module = _load_module()
+    files = [tmp_path / "package.json", tmp_path / "bin" / "x.js"]
+    entries = module.collect_entry_points(tmp_path.resolve(), files)
+    native = [{"symbol": "cliMain", "kind": "export", "path": "bin/x.js",
+               "line": 1, "detected_by": "native:knip"}]
+    merged = module.merge_native([], native, _parse_records(module, tmp_path), entries)
+    assert _find(merged, "cliMain")["keep_class"] == "safe-keep"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "/**\n * dead-code: keep public SDK surface\n */\nfunction f(): void {}\n",
+        "/** dead-code: keep public SDK surface */\nfunction f(): void {}\n",
+        "/* dead-code: keep public SDK surface */\nfunction f(): void {}\n",
+    ],
+)
+def test_block_comment_keep_marker_is_justified(tmp_path, source):
+    _write(tmp_path, "src/api.ts", source)
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "f")
+    assert row is not None
+    assert row["keep_class"] == "justified"
+    assert row["keep_reason"] == "public SDK surface", "comment delimiters must not leak into the reason"
+
+
+def test_same_line_keep_marker_without_comment_above_is_justified(tmp_path):
+    _write(tmp_path, "src/api.ts", "function f(): void {} // dead-code: keep trailing marker\n")
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "f")
+    assert row is not None
+    assert row["keep_class"] == "justified"
+    assert row["keep_reason"] == "trailing marker"
+
+
+def test_rust_pub_and_go_capitalized_are_exported_safe_keep(tmp_path):
+    _write(tmp_path, "src/lib.rs", "pub fn public_api_fn() {}\n\nfn private_fn() {}\n\npub(crate) fn crate_fn() {}\n")
+    _write(tmp_path, "pkg/api.go", "package pkg\n\nfunc ExportedFn() {}\n\nfunc unexportedFn() {}\n")
+    rc, envelope = _scan(tmp_path)
+    cands = envelope["data"]["candidates"]
+    assert _find(cands, "public_api_fn")["keep_class"] == "safe-keep"
+    assert _find(cands, "ExportedFn")["keep_class"] == "safe-keep"
+    assert _find(cands, "private_fn")["keep_class"] == "candidate"
+    assert _find(cands, "crate_fn")["keep_class"] == "candidate", "pub(crate) is not external API"
+    assert _find(cands, "unexportedFn")["keep_class"] == "candidate"
+
+
+def test_dunder_methods_are_safe_keep(tmp_path):
+    _write(
+        tmp_path, "src/widget.py",
+        "class Widget:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "    def __eq__(self, other):\n"
+        "        return True\n"
+        "    def orphan_method(self):\n"
+        "        return 2\n",
+    )
+    _write(tmp_path, "src/app.py", "from src.widget import Widget\nWidget()\n")
+    rc, envelope = _scan(tmp_path)
+    cands = envelope["data"]["candidates"]
+    for dunder in ("__init__", "__eq__"):
+        row = _find(cands, dunder)
+        assert row is not None
+        assert row["keep_class"] == "safe-keep"
+        assert "dunder" in row["keep_reason"]
+    assert _find(cands, "orphan_method")["keep_class"] == "candidate"
+
+
+def test_inapplicable_native_tools_are_a_designed_skip(tmp_path, monkeypatch):
+    """Installed-but-inapplicable tools must not run (no warning, status stays
+    ok); applicable ones still do. Every registry argv is swapped for a stub
+    that exits 2, so a warning for a tool proves it ran."""
+    _write(tmp_path, "src/mod.py", "def orphan():\n    return 1\n")
+    stub = _stub_lsp(tmp_path, "exit 2")
+    module = _load_module()
+    monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
+    monkeypatch.setattr(
+        module, "NATIVE_TOOLS",
+        {name: ([str(stub)], parser, applicable) for name, (_argv, parser, applicable) in module.NATIVE_TOOLS.items()},
+    )
+
+    def ran(envelope):
+        return {w["message"].split()[0] for w in envelope["warnings"] if w["code"] == "native-error"}
+
+    python_only = module.scan_root(str(tmp_path), funnel="native")
+    assert ran(python_only) == {"vulture"}, "knip needs package.json, staticcheck needs go.mod"
+
+    _write(tmp_path, "package.json", "{}\n")
+    _write(tmp_path, "go.mod", "module x\n")
+    all_markers = module.scan_root(str(tmp_path), funnel="native")
+    assert ran(all_markers) == {"vulture", "staticcheck", "knip"}
+
+
+def test_repo_with_no_applicable_native_tool_stays_ok(tmp_path, monkeypatch):
+    _write(tmp_path, "src/lib.rs", "pub fn api() {}\n")
+    stub = _stub_lsp(tmp_path, "exit 2")
+    module = _load_module()
+    monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
+    monkeypatch.setattr(
+        module, "NATIVE_TOOLS",
+        {name: ([str(stub)], parser, applicable) for name, (_argv, parser, applicable) in module.NATIVE_TOOLS.items()},
+    )
+    envelope = module.scan_root(str(tmp_path), funnel="native")
+    assert envelope["status"] == "ok"
+    assert envelope["warnings"] == []
+
+
 # ── CLI surface ──────────────────────────────────────────────────────────────
 
 
