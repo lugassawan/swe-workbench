@@ -159,6 +159,8 @@ class TestForcePushBlocker:
         "git push -f origin master",
         "git push --force origin main:main",
         "git push --force origin master:master",
+        "git push --force origin refs/heads/main",
+        "git push --force origin refs/heads/master",
         "git push --force origin HEAD:main",
         "git push --force origin feature:main",
         "git push --force origin HEAD:master",
@@ -173,6 +175,13 @@ class TestForcePushBlocker:
         # not let a '#'-starting continuation line swallow the real force-push
         # that follows on the same physical line (issue #501 re-review finding)
         'git commit -m "line one\n# note" && git push --force origin main',
+        # Direct-hook-only prefix and attached-option spellings; shared
+        # direct/Pi vectors belong in BASH_GUARD_FIXTURES.
+        "GIT_DIR=.git git push --force origin main",
+        "time git push --force origin main",
+        "command git push --force origin main",
+        "git push -oci.skip --force origin main",
+        "git push -uorigin --force origin main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -191,6 +200,8 @@ class TestForcePushBlocker:
         "git push --force-with-lease origin master",
         "git push --force-if-includes origin main",
         "git push --force-with-lease=origin/main origin main",
+        # A quoted prose mention of a global-option push must not become a command match.
+        'echo "git -c x=y push --force origin main"',
         # no false positives for similar-looking branch names (issue #341)
         "git push --force origin prerelease/x",
         "git push --force-with-lease origin release/1.2",
@@ -202,14 +213,35 @@ class TestForcePushBlocker:
             f"stderr: {result.stderr!r}"
         )
 
+    @pytest.mark.parametrize("cmd", [
+        r"\git push --force origin main",
+        r"g\it push --force origin main",
+        '"git" push --force origin main',
+        "git\tpush --force origin main",
+        "(git push --force origin main)",
+        "$(git push --force origin main)",
+        "OUT=`git push --force origin main`",
+        "OUT=`git push -f origin main`",
+        "/usr/bin/git push --force origin main",
+        "/usr/bin/git push -f origin main",
+        "bin/git push --force origin main",
+    ])
+    def test_wrapped_force_push_to_protected_ref_is_blocked(self, guard_script, cmd):
+        result = run_guard(guard_script, cmd)
+        assert result.returncode == 2, (
+            f"Expected exit 2 (BLOCKED) for {cmd!r}, got {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
 
 # ──────────────────────────────────────────────
 # implicit-branch force-push — branch-aware (requires temp git repo)
 # ──────────────────────────────────────────────
 
 class TestImplicitForcePushBlocker:
-    """git push --force/-f with NO explicit refspec, relying on
-    push.default/upstream, from a protected branch (issue #501 Block 2).
+    """Force push with no explicit refspec, relying on push.default or an
+    upstream, from a protected branch.
     """
 
     @pytest.mark.parametrize("branch", ["main", "master", "release/2025-01"])
@@ -232,10 +264,24 @@ class TestImplicitForcePushBlocker:
             f"{result.returncode}\nstderr: {result.stderr!r}"
         )
 
+    @pytest.mark.parametrize("cmd", [
+        "git push --force --all origin",
+        "git push --mirror origin",
+    ])
+    def test_all_or_mirror_push_is_blocked_on_feature_branch(self, guard_script, repo_on, cmd):
+        """These modes can update protected remote refs regardless of the current branch."""
+        repo = repo_on("feature/x")
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
     def test_explicit_nonprotected_refspec_still_allowed(self, guard_script, repo_on):
-        """An explicit non-protected refspec must not regress — Block 1
-        already owns explicit protected refspecs, Block 2 only fires when
-        no refspec is present at all.
+        """An explicit non-protected refspec must not regress — the
+        protected-refspec scan owns explicit protected destinations, while
+        the implicit-branch heuristic applies only without a refspec.
         """
         repo = repo_on("main")
         result = run_guard(guard_script, "git push --force origin feat", cwd=str(repo))
@@ -270,8 +316,8 @@ class TestImplicitForcePushBlocker:
 
     def test_chained_nonforce_push_does_not_hide_forced_push(self, guard_script, repo_on):
         """An explicit, innocuous push chained BEFORE an implicit force-push
-        must not cause Block 2 to inspect the wrong invocation and miss the
-        dangerous one.
+        must not cause the implicit-branch heuristic to inspect the wrong
+        invocation and miss the dangerous one.
         """
         repo = repo_on("main")
         result = run_guard(
@@ -357,6 +403,78 @@ class TestImplicitForcePushBlocker:
             f"Expected ALLOWED for flag {flag!r}, got exit {result.returncode}\n"
             f"stderr: {result.stderr!r}"
         )
+
+    @pytest.mark.parametrize("prefix", ["git", "rtk git"])
+    def test_nonforce_push_with_later_cleanup_flag_is_allowed(
+        self, guard_script, repo_on, prefix
+    ):
+        repo = repo_on("main")
+        command = (
+            f"{prefix} push -u origin feature/x && TMP=$(mktemp) "
+            "&& trap 'rm -f \"$TMP\"' EXIT"
+        )
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    def test_every_force_push_segment_is_checked(self, guard_script, repo_on):
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "git push --force origin feature/x && git push --force",
+            cwd=str(repo),
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("command", [
+        "rtk git push --force",
+        "rtk git push -f",
+        "rtk git push --force origin",
+        "rtk git push -f origin",
+    ])
+    def test_rtk_implicit_force_push_still_blocked(self, guard_script, repo_on, command):
+        repo = repo_on("main")
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("command", [
+        "bash -c 'git push --force'",
+        "git push -o ci.skip origin --force",
+    ])
+    def test_transparent_prefix_implicit_force_push_is_blocked(
+        self, guard_script, repo_on, command
+    ):
+        repo = repo_on("main")
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_inline_cd_before_implicit_force_push_remains_blocked(self, guard_script, repo_on):
+        repo = repo_on("main")
+        result = run_guard(
+            guard_script,
+            "cd /tmp/feature-worktree && rtk git push --force",
+            cwd=str(repo),
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
 
 
 # ──────────────────────────────────────────────

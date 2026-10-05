@@ -27,6 +27,10 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("var=$(rm -rf /)", True),
     ("echo `rm -rf /`", True),
     ("echo $(rm -rf /)", True),
+    # force-push backtick command substitutions must remain blocked through
+    # both direct-hook and Pi-adapter paths.
+    ("OUT=`git push --force origin main`", True),
+    ("OUT=`git push -f origin main`", True),
     # same bypass class: process substitution (`<(...)`/`>(...)`) has the identical "(" shape
     # and was left open by a $(-only patch
     ("<(rm -rf ~)", True),
@@ -45,6 +49,49 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("echo `ls`", False),
     ("x=$(date)", False),
     ("echo $(pwd)", False),
+    # Force-push forms must remain blocked through both direct-hook and Pi-adapter paths.
+    ('git push -o "x;y" --force origin main', True),
+    (r"git push -o x\;y --force origin main", True),
+    ('git push -o "x&&y" --force origin main', True),
+    ("git -c x=y push --force origin main", True),
+    ("git push --force --all origin", True),
+    ("git push --mirror origin", True),
+    # Prefix and option spellings must not hide protected force pushes.
+    ("FOO=1 git push --force origin main", True),
+    ("sudo git push --force origin main", True),
+    ("/usr/local/bin/rtk git push --force origin main", True),
+    ('ssh host "git push --force origin main"', True),
+    ("xargs git push --force origin main", True),
+    ("git push -oX --force origin main", True),
+    ("git push --repo=up --force origin main", True),
+    ("git push --dry-run -fq origin main", True),
+    ("git push -forigin main", True),
+    # Wrapper arguments, interpreters, and shell control prefixes stay transparent.
+    ("env FOO=1 git push --force origin main", True),
+    ("sudo -u root git push --force origin main", True),
+    ("sudo FOO=1 git push --force origin main", True),
+    ("nice -n 5 git push --force origin main", True),
+    ("timeout 30 git push --force origin main", True),
+    ("watch -n1 git push --force origin main", True),
+    ("xargs -n1 git push --force origin main", True),
+    ("bash -c 'git push --force origin main'", True),
+    ('sh -c "git push --force origin main"', True),
+    ('ssh -p 2222 host "git push --force origin main"', True),
+    ("! git push --force origin main", True),
+    ("until git push --force origin main; do sleep 1; done", True),
+    ("FOO='a b' git push --force origin main", True),
+    # Container/session wrappers also execute the protected force push.
+    ("docker exec dev git push --force origin main", True),
+    ("su -c 'git push --force origin main'", True),
+    ("podman exec dev git push --force origin main", True),
+    ("kubectl exec pod -- git push --force origin main", True),
+    ("setsid git push --force origin main", True),
+    ("stdbuf -oL git push --force origin main", True),
+    ("flock lock git push --force origin main", True),
+    ("script -q /dev/null git push --force origin main", True),
+    ("/usr/local/bin/docker exec dev git push --force origin main", True),
+    ("/usr/local/bin/podman exec dev git push --force origin main", True),
+    ("/usr/local/bin/kubectl exec pod -- git push --force origin main", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
@@ -80,4 +127,9 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("pi --version", False),
     ("pi list", False),
     ("git log -p && pi list", False),
+    (
+        "rtk git push -u origin feature/x && TMP=$(mktemp) "
+        "&& trap 'rm -f \"$TMP\"' EXIT",
+        False,
+    ),
 ]

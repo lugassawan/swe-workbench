@@ -27,10 +27,10 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# --force-with-lease/--force-if-includes intentionally unblocked (#163); force-push after a shell
-# separator (`&& echo main`) may over-block via the folded input (accepted fail-safe); a remote
-# literally named main/master over-blocks. Block 2's push-token scan trusts a small allowlist of
-# known BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
+# --force-with-lease/--force-if-includes intentionally unblocked (#163); quote-stripping may
+# over-block a force-push within its command segment (accepted fail-safe); a remote literally
+# named main/master over-blocks. The push-token scan trusts a small allowlist of known
+# BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
 # (assumes it takes a separate-word value, e.g. `-o ci.skip`) so an unknown flag's value can never
 # be miscounted as the remote/refspec (#501 senior-engineer consult); an unrecognized flag that
 # actually takes NO value will over-block by one token (fail-safe direction, not a bypass).
@@ -135,55 +135,126 @@ if echo "$norm" | grep -Eq \
   exit 2
 fi
 
-if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))' \
-   && echo "$norm" | grep -Eq '(^|[[:space:]]|:)(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
-  echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
-  exit 2
-fi
+# Shared quote- and escape-aware shell segmenter. `tab_mode` preserves literal
+# tabs for push matching and folds them for the pi detector.
+_segment_awk='
+  BEGIN { in_sq = 0; in_dq = 0 }
+  {
+    line = $0; n = length(line); out = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(line, i, 1)
+      if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
+      if (c == "\\") { continue }
+      if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
+      if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
+      if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
+      if (c == "\t") { out = out (tab_mode == "space" ? " " : c); continue }
+      if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
+      out = out c
+    }
+    if (in_sq || in_dq) printf "%s ", out; else print out
+  }'
 
-# Block 2: implicit-branch force-push from a protected branch — additive to the
-# explicit-refspec block above. Force detection reuses the SAME anchored pattern,
-# so --force-with-lease stays unblocked (settled: #163). Fires ONLY when no
-# explicit refspec is present (push relies on push.default/upstream); an explicit
-# non-protected refspec (`origin feat`) must stay allowed even from a protected
-# branch — Block 1 already owns explicit protected refspecs.
-if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))'; then
-  # Isolate the FORCE-flagged push invocation from the comment-stripped,
-  # backslash-joined command ($_bj keeps real separators). Fold the SAME
-  # separator alphabet as $_norm (;|&\n\t, not just ;|&) so a tab/newline-
-  # prefixed command doesn't leak extra tokens onto the push line, and filter
-  # to lines that actually match the force pattern — a chained non-force
-  # `git push` (e.g. `git push origin x && git push --force`) must not be the
-  # one inspected for a refspec, or the real force-push line is skipped
-  # entirely (#501 review).
-  push_cmd=$(printf '%s' "$_bj" | tr ';|&\n\t' '\n\n\n\n\n' \
-    | grep -E 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:space:]])-f([[:space:]]|$))' \
-    | tr -d "'\"" | head -n1)
-  has_refspec=0; seen_positional=0; consume_next=0
-  read -ra _toks <<<"$push_cmd"
+# Classify each force-push segment independently so later `-f` values do
+# not affect earlier non-force pushes; inspect every shell-command segment.
+while IFS= read -r push_cmd; do
+  push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
+  _toks=()
+  read -ra _toks <<<"$push_norm"
+  prefix_ok=1; prefix_args=0; found_git=0
+  if (( ${#_toks[@]} )); then                 # bash 3.2 + set -u rejects empty "${arr[@]}"
+  for _prefix in "${_toks[@]}"; do
+    case "$_prefix" in
+      git|*/git) found_git=1; break ;;
+      [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
+      # Transparent pass-through prefixes; additions require BASH_GUARD_FIXTURES coverage.
+      sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
+      docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
+        prefix_args=1 ;;
+      '!'|if|while|until|do|then) ;;
+      -*) (( prefix_args )) || prefix_ok=0 ;;
+      *) (( prefix_args )) || prefix_ok=0 ;;
+    esac
+  done
+  fi
+  # Keep the established fail-safe treatment of literal tab-prefixed git.
+  [[ "$push_cmd" == *$'\t'* ]] && prefix_ok=1
+  if (( found_git == 0 || prefix_ok == 0 )); then
+    continue
+  fi
+
+  has_force=0; has_refspec=0; pushes_all_refs=0; seen_positional=0; consume_next=0
+  seen_git=0; seen_push=0; global_value=0
   if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
     for _t in "${_toks[@]}"; do
+      if (( seen_push == 0 )); then
+        if (( seen_git == 0 )); then
+          [[ "$_t" == git || "$_t" == */git ]] && seen_git=1
+          continue
+        fi
+        if (( global_value )); then
+          global_value=0
+          continue
+        fi
+        case "$_t" in
+          push) seen_push=1 ;;
+          -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
+            global_value=1 ;;
+          --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
+          -*) ;;
+          *) ;;
+        esac
+        continue
+      fi
       if (( consume_next )); then             # swallow an unrecognized flag's separate-word value
+        case "$_t" in
+          --force|-f) has_force=1 ;;
+          --all) pushes_all_refs=1 ;;
+          --mirror) has_force=1; pushes_all_refs=1 ;;
+          -*) [[ "$_t" != --* && "$_t" == *f* ]] && has_force=1 ;;
+        esac
         consume_next=0
         continue
       fi
       case "$_t" in
-        git|push) ;;                          # command words
+        --force|-f) has_force=1 ;;
+        --all) pushes_all_refs=1 ;;
+        --mirror) has_force=1; pushes_all_refs=1 ;;
         # Known BOOLEAN-only push flags — safe to skip outright. An
-        # unrecognized `-*` flag (senior-engineer consult, #501: `-o <val>`
-        # miscounted as a positional and silently allowed the push through)
-        # is assumed to take a separate-word value and that value is
-        # consumed too, so it can never be mistaken for the remote/refspec.
-        --force|-f|--force-with-lease*|--force-if-includes|--all|--tags|--follow-tags|\
-        --prune|--thin|--atomic|--no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|\
-        --progress|--no-progress|-u|--set-upstream|-d|--delete|--signed|--no-signed|\
-        --mirror|-n) ;;
-        -*) consume_next=1 ;;                 # unrecognized flag — assume it takes a value
-        *:*) has_refspec=1; break ;;          # src:dst refspec
-        *) if (( seen_positional )); then has_refspec=1; break; fi; seen_positional=1 ;;  # 1st bareword = remote
+        # unrecognized `-*` flag is assumed to take a separate-word value and
+        # that value is consumed too, so it cannot be a remote or refspec.
+        --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
+        --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
+        -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
+        --*=*) ;;                             # attached long-option value
+        -*)
+          if [[ "$_t" != --* && "$_t" == *f* ]]; then
+            has_force=1                       # fail-safe short cluster containing -f
+          elif [[ "$_t" == -[[:alnum:]][[:alnum:]]* ]]; then
+            :                                 # attached short-option value
+          else
+            consume_next=1                   # unknown flag may take a separate-word value
+          fi ;;
+        *:*) has_refspec=1 ;;                 # src:dst refspec
+        *) if (( seen_positional )); then has_refspec=1; else seen_positional=1; fi ;;  # 1st bareword = remote
       esac
     done
   fi
+  if (( has_force == 0 )); then
+    continue
+  fi
+
+  if (( pushes_all_refs )); then
+    echo 'BLOCKED: force push of all refs may update protected branches' >&2
+    exit 2
+  fi
+
+  if echo "$push_norm" | grep -Eq \
+    '(^|[[:space:]]|:)(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
+    echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
+    exit 2
+  fi
+
   if (( has_refspec == 0 )); then             # relies on push.default / upstream
     branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     case "$branch" in
@@ -193,7 +264,7 @@ if echo "$norm" | grep -Eq 'git[[:space:]]+push.*(--force([[:space:]]|$)|(^|[[:s
         ;;
     esac
   fi
-fi
+done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk")
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -228,23 +299,7 @@ fi
 # filesystem; the -p/--print flag check stays case-sensitive.
 case "$norm" in
   [Pp][Ii]\ *|*\ [Pp][Ii]\ *|*/[Pp][Ii]\ *)
-    pi_seg=$(printf '%s' "$_bj" | awk '
-      BEGIN { in_sq = 0; in_dq = 0 }
-      {
-        line = $0; n = length(line); out = ""
-        for (i = 1; i <= n; i++) {
-          c = substr(line, i, 1)
-          if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
-          if (c == "\\") { continue }
-          if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
-          if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
-          if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
-          if (c == "\t") { out = out " "; continue }
-          if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
-          out = out c
-        }
-        if (in_sq || in_dq) printf "%s ", out; else print out
-      }')
+    pi_seg=$(printf '%s' "$_bj" | awk -v tab_mode=space "$_segment_awk")
     if printf '%s\n' "$pi_seg" | grep -iE '(^|[[:space:]])([^[:space:]]*/)?pi[[:space:]]' \
        | grep -Eq '(^|[[:space:]])(-p|--print)([[:space:]]|=|$)'; then
       echo 'BLOCKED: nested non-interactive pi session (subagent recursion guard)' >&2
