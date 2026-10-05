@@ -83,7 +83,14 @@ resolved by `git -C <dir> rev-parse` itself (symlinks included), never by path-p
 Resolvable path forms: absolute literals, `~`/`$HOME`, relative literals without `..` components;
 everything else — variables, command substitution, `..` components, `cd -`, `pushd` — is
 uncertain. A resolvable subdir of the base repo counts as target ≠ base (the warn fires); same-repo
-noise suppression is deliberately not implemented.
+noise suppression is deliberately not implemented. Two resolver invariants pinned by fixtures:
+a command right of `||` runs only when the left side failed, so a cd left of `||` never keeps its
+folded target for the chain tail; and only the literal token `cd` folds — a pathed `cd` is an
+external binary that cannot change the parent cwd. Repo-redirecting git flags (`--git-dir`,
+`--work-tree`, `--namespace`) decide the repo elsewhere and attribute uncertain. One deliberate
+detection-scope change vs the pre-tokenization reset scan: a quoted `git reset --hard` mention
+inside another git command (e.g. a commit message) no longer matches — the tokenized scan does
+not resume after a non-reset subcommand, so that pre-existing over-block is gone.
 
 **Considered, not adopted:** a third exit code for warn — `guards.ts` treats any code outside
 `{0, 2}` as guard failure (fail-closed for `bash_guard.sh`), so it would demand a lockstep

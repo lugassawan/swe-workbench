@@ -199,24 +199,27 @@ function commit_chain() {
   if (chain_has_cd && !bg_chain) committed = "UNCERTAIN"   # a cd may or may not have run
   start_chain(0)
 }
-function finalize(close_reason,   i, nt, T, cmd, attr, has_cdtok, j, t, dashc, pa) {
-  if (nested) { print "UNCERTAIN"; seg = ""; pipe_adj = 0; return }
+function finalize(close_reason,   i, nt, T, cmd, raw, attr, has_cdtok, j, t, dashc, pa) {
+  if (nested) { print "UNCERTAIN"; seg = ""; pipe_adj = 0; seg_folded_cd = 0; return }
   pa = (pipe_adj || close_reason == "|" || close_reason == "&")   # subshell-executed segment
+  seg_folded_cd = 0
   nt = split(seg, T, /[ \t]+/)
   i = 1
   while (i <= nt && (T[i] == "" || T[i] ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) i++   # empties + env assignments
   if (i <= nt && T[i] == "!") i++
-  cmd = (i <= nt ? basename(T[i]) : "")
+  raw = (i <= nt ? T[i] : "")
+  cmd = basename(raw)
   has_cdtok = 0
   for (j = i; j <= nt; j++) if (T[j] == "cd" || T[j] == "pushd" || T[j] == "popd") { has_cdtok = 1; break }
   attr = ""
-  if (cmd == "cd" && !pa) {
-    j = i + 1
+  if (raw == "cd" && !pa) {                 # literal token only: a pathed cd is an
+    j = i + 1                                # external binary — it cannot fold
     while (j <= nt && T[j] ~ /^-/) j++                           # cd -L / -P flags
     t = (j <= nt ? T[j] : "")
     if (t == "--" && j + 1 <= nt) t = T[j + 1]
     tentative = (chain_or ? "UNCERTAIN" : resolve(t))
     chain_has_cd = 1
+    seg_folded_cd = 1
   } else if (has_cdtok && !pa) {
     tentative = "UNCERTAIN"                                     # conditional-position cd
     chain_has_cd = 1
@@ -228,9 +231,10 @@ function finalize(close_reason,   i, nt, T, cmd, attr, has_cdtok, j, t, dashc, p
     j = i + 1
     while (j <= nt) {
       t = T[j]
+      if (t ~ /^--(git-dir|work-tree|namespace)(=|$)/) { attr = "UNCERTAIN"; break }   # repo decided elsewhere
       if (t == "-C") { dashc = (j + 1 <= nt ? resolve(T[j + 1]) : "UNCERTAIN"); j += 2; continue }
       if (t ~ /^-C./) { dashc = resolve(substr(t, 3)); j++; continue }
-      if (t == "-c" || t ~ /^--(config|config-env|exec-path|git-dir|work-tree|namespace)(=|$)/) {
+      if (t == "-c" || t ~ /^--(config|config-env|exec-path)(=|$)/) {
         if (t ~ /=/ || t ~ /^-c./) j++; else j += 2
         continue
       }
@@ -245,7 +249,7 @@ function finalize(close_reason,   i, nt, T, cmd, attr, has_cdtok, j, t, dashc, p
 BEGIN {
   in_sq = 0; in_dq = 0; committed = "CONF:" base; tentative = committed
   chain_has_cd = 0; chain_or = 0; bg_chain = 0; pipe_adj = 0
-  nested = 0; bt = 0; twin = 0; seg = ""
+  nested = 0; bt = 0; twin = 0; seg = ""; seg_folded_cd = 0
 }
 {
   line = $0; n = length(line)
@@ -266,7 +270,15 @@ BEGIN {
         tw = (substr(line, i + 1, 1) == c)
         if (c == "|") finalize(tw ? "or" : "|")
         else finalize(tw ? "and" : "&")
-        if (tw) { twin = 1; if (c == "|") chain_or = 1 }
+        if (tw) {
+          twin = 1
+          if (c == "|") {
+            chain_or = 1
+            # A command right of || runs only when the left side FAILED — a cd that
+            # just folded left of || must not keep its target for the chain tail.
+            if (seg_folded_cd) tentative = "UNCERTAIN"
+          }
+        }
         else if (c == "&") start_chain(1)
         else pipe_adj = 1
         continue
@@ -311,7 +323,7 @@ while IFS= read -r push_cmd; do
     case "$_prefix" in
       git|*/git) found_git=1; break ;;
       [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
-      # Transparent pass-through prefixes; additions require BASH_GUARD_FIXTURES coverage.
+      # Transparent pass-through prefixes; additions require guard_cases() coverage.
       sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
       docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
         prefix_args=1 ;;

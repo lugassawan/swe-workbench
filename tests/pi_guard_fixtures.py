@@ -285,4 +285,26 @@ _SCENE_ROWS: list[GuardCase] = [
         scene=True,
         process_cwd_role="feature",
     ),
+    # A push right of || runs only when the left side FAILED — a cd left of || must not
+    # leave its target folded for the rest of the chain (never-shrinks).
+    GuardCase("cd {feature} || git push -f", "block", scene=True),
+    GuardCase("cd {feature} || true && git push -f", "block", scene=True),
+    GuardCase("cd {feature} || git reset --hard", "block", scene=True),
+    # A pathed cd is an external binary in a child process — it cannot change the parent
+    # cwd, so it must neither fold nor evade the legacy check.
+    GuardCase("/usr/bin/cd {feature} && git push -f", "block", scene=True),
+    # Repo-redirecting git flags decide the repo elsewhere — attribution is uncertain.
+    GuardCase(
+        "git --git-dir={protected}/.git reset --hard",
+        "warn",
+        scene=True,
+        process_cwd_role="feature",
+        expected_reason=(
+            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "protected-branch check ran against {feature} only"
+        ),
+    ),
+    # Detection-scope pin: a quoted reset mention inside another git command is not a
+    # reset — the tokenized scan does not resume after a non-reset subcommand.
+    GuardCase('git commit -m "git reset --hard"', "allow"),
 ]
