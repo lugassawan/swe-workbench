@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import glob
 import json
 import os
 import re
@@ -91,7 +92,8 @@ IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
 MARKER_RE = re.compile(r"dead-code:\s*keep\s+(.+?)\s*$")
 DUNDER_RE = re.compile(r"^__\w+__$")
 RUST_PUB_RE = re.compile(r"pub\s")  # bare `pub` only — pub(crate)/pub(super) are not external API
-COMMENT_TAIL_RE = re.compile(r"\s+(?:#|//).*$")
+# A trailing comment needs code before it, and `#[`/`#![` is a Rust attribute, not a comment.
+COMMENT_TAIL_RE = re.compile(r"(?<=\S)\s+(?:#(?!!?\[)|//).*$")
 DECORATOR_RE = re.compile(r"^(?:@\s*|#!?\[\s*)([\w:.]+)")
 SHEBANG_RE = re.compile(r"(?:/|\s)(python[\d.]*|nodejs|node|bash|zsh|sh|ruby)\b")
 SHEBANG_EXTS = {
@@ -659,20 +661,29 @@ NAME_BASED_TOOLS = {"native:vulture"}
 EXPORT_AWARE_TOOLS = {"native:knip"}
 
 
+def _vulture_exclude_args(root: Path) -> list[str]:
+    """vulture wraps a glob-free pattern as `*p*` and matches against the absolute
+    path, so exclusions are globs anchored to the resolved root (an excluded name
+    in an ancestor, e.g. `.claude/worktrees/`, must not match every file)."""
+    base = glob.escape(str(root))
+    if "," in base:  # the list is comma-separated; merge_native still drops these dirs
+        return []
+    return ["--exclude", ",".join(f"{base}/*/{d}/*,{base}/{d}/*" for d in sorted(EXCLUDED_DIRS))]
+
+
 class NativeTool(NamedTuple):
     argv: list[str]
     parser: Callable[[str], list[dict]]
     applicable: Callable[[Path, list[FileRecord]], bool]
     ok_codes: tuple[int, ...]  # findings are signalled by exit code, not failure
+    extra_args: Callable[[Path], list[str]] | None = None  # root-dependent argv tail
 
 
 # An installed-but-inapplicable tool (knip without package.json, …) is a
 # designed skip like an absent one: no run, no warning, status stays "ok".
 NATIVE_TOOLS: dict[str, NativeTool] = {
     "vulture": NativeTool(
-        # Globs: vulture wraps a glob-free pattern as `*p*`, so `out/` would hide `checkout/`.
-        ["vulture", ".", "--exclude", ",".join(f"*/{d}/*,{d}/*" for d in sorted(EXCLUDED_DIRS))],
-        parse_vulture, _has_python_sources, (0, 3),
+        ["vulture", "."], parse_vulture, _has_python_sources, (0, 3), _vulture_exclude_args
     ),
     "staticcheck": NativeTool(
         ["staticcheck", "-checks", "U1000", "./..."], parse_staticcheck, _has_go_mod, (0, 1)
@@ -686,12 +697,13 @@ def run_native(root: Path, records: list[FileRecord], warnings: list) -> tuple[l
     Returns (rows, any_ran_ok)."""
     rows: list[dict] = []
     ran_ok = False
-    for tool, (argv, parser, applicable, ok_codes) in NATIVE_TOOLS.items():
+    for tool, (argv, parser, applicable, ok_codes, extra_args) in NATIVE_TOOLS.items():
         if shutil.which(argv[0]) is None or not applicable(root, records):
             continue
         try:
             proc = subprocess.run(
-                argv, cwd=str(root), capture_output=True, text=True, timeout=120
+                argv + (extra_args(root) if extra_args else []),
+                cwd=str(root), capture_output=True, text=True, timeout=120,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             warnings.append(_warning("native-error", f"{tool} failed: {exc}"))

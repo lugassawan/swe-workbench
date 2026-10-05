@@ -755,9 +755,9 @@ def test_findings_exit_code_is_not_a_native_failure(
 
 def test_vulture_is_told_to_skip_excluded_dirs_and_rows_under_them_are_dropped():
     module = _load_module()
-    argv = module.NATIVE_TOOLS["vulture"].argv
-    assert "--exclude" in argv
-    assert {"*/.venv/*", "node_modules/*"} <= set(argv[argv.index("--exclude") + 1].split(","))
+    args = module._vulture_exclude_args(Path("/proj"))
+    assert args[0] == "--exclude"
+    assert {"/proj/*/.venv/*", "/proj/node_modules/*"} <= set(args[1].split(","))
     native = [{"symbol": "dead", "kind": "function", "path": ".venv/lib/x.py", "line": 1,
                "detected_by": "native:vulture"}]
     assert module.merge_native([], native, []) == []
@@ -1016,22 +1016,58 @@ def test_multiline_rust_attribute_is_followed_and_plain_call_is_not_a_decorator(
         "#[derive(\n    Debug,\n    Clone,\n)]\nstruct Plain;\n\n"
         "#[cfg_attr(\n    test,\n    test\n)]\nfn registered() {}\n",
     )
+    _write(
+        tmp_path, "src/imp.rs",
+        "impl Server {\n"
+        "    #[route(\n        path = \"/x\",\n    )]\n"
+        "    fn handler() {}\n\n"
+        "    #[test_case(\n        1,\n    )] // note\n"
+        "    fn nested_case() {}\n\n"
+        "    #[derive(\n        Debug,\n    )]  // note\n"
+        "    fn plain_method() {}\n"
+        "}\n",
+    )
     _write(tmp_path, "src/setup.py", "x = build(\n    1,\n    2,\n)\ndef plain_fn():\n    return 1\n")
     rc, envelope = _scan(tmp_path)
     cands = envelope["data"]["candidates"]
+    for name in ("handler", "nested_case"):
+        assert _find(cands, name)["keep_class"] == "safe-keep", f"{name}: indented multi-line attribute"
+    assert _find(cands, "plain_method")["keep_class"] == "candidate", "derive-only attributes don't register"
     assert _find(cands, "Plain")["keep_class"] == "candidate", "derive-only attributes don't register"
     assert _find(cands, "registered")["keep_class"] == "safe-keep"
     assert _find(cands, "plain_fn")["keep_class"] == "candidate", "a balanced call above a def is not a decorator"
 
 
-def test_vulture_exclude_passes_globs_that_vulture_cannot_wrap(tmp_path):
-    """vulture wraps a glob-free pattern as `*p*`, so `out` or `out/` would hide
-    `checkout/` and `output.py`. Every pattern must carry its own wildcard."""
+def test_vulture_exclude_globs_are_anchored_to_the_resolved_root():
+    """vulture wraps a glob-free pattern as `*p*` and matches the absolute path, so
+    every pattern needs a wildcard and must start at the root: an excluded name in
+    an ancestor (`.claude/worktrees/`) must not match every file."""
     module = _load_module()
-    argv = module.NATIVE_TOOLS["vulture"].argv
-    patterns = argv[argv.index("--exclude") + 1].split(",")
-    assert patterns and all("*" in p for p in patterns)
-    assert {"*/build/*", "build/*", "*/.venv/*", "node_modules/*"} <= set(patterns)
+    args = module._vulture_exclude_args(Path("/repo/.claude/worktrees/w1"))
+    patterns = args[1].split(",")
+    assert all(p.startswith("/repo/.claude/worktrees/w1/") and "*" in p for p in patterns)
+    assert {"/repo/.claude/worktrees/w1/*/build/*", "/repo/.claude/worktrees/w1/build/*"} <= set(patterns)
+
+
+def test_vulture_exclude_escapes_glob_characters_and_skips_comma_roots():
+    module = _load_module()
+    assert module._vulture_exclude_args(Path("/tmp/x[1]"))[1].startswith("/tmp/x[[]1]/*/")
+    assert module._vulture_exclude_args(Path("/tmp/a,b")) == [], "a comma would split the pattern list"
+
+
+@pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
+@pytest.mark.parametrize("ancestor", [".claude/worktrees/w1", "build/proj", "out/x", "target/dist"])
+def test_real_vulture_works_when_the_root_sits_under_an_excluded_dir_name(tmp_path, ancestor):
+    """Claude Code's own worktrees live under `.claude/worktrees/`; an ancestor
+    named like an excluded dir must not silence vulture for the whole tree."""
+    root = tmp_path / ancestor
+    _write(root, "src/checkout/cart.py", "def dead_checkout():\n    pass\n")
+    _write(root, "build/gen.py", "def dead_build():\n    pass\n")
+    rc, envelope = _scan(root, "--funnel", "native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    by_symbol = {c["symbol"]: c["detected_by"] for c in envelope["data"]["candidates"]}
+    assert by_symbol.get("dead_checkout") == "native:vulture"
+    assert "dead_build" not in by_symbol, "a real build/ dir under the root stays excluded"
 
 
 @pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
