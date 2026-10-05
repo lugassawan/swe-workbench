@@ -147,6 +147,15 @@ EXPECTED_REGISTRY = {
         "nothing_to_address": "bool",
         "resume_available": "bool",
     },
+    "swb.dead-code-scan/1": {
+        "root": "str",
+        "funnel": "str",
+        "scanned_files": "int",
+        "candidate_count": "int",
+        "safe_keep_count": "int",
+        "justified_count": "int",
+        "candidates": "list[candidate]",
+    },
 }
 
 
@@ -407,3 +416,88 @@ def test_every_nonzero_exit_pairs_with_empty_stdout():
         result = _run(args, stdin=stdin)
         assert result.returncode != 0, f"expected non-zero exit for args={args!r}"
         assert result.stdout == "", f"expected empty stdout for args={args!r}, got {result.stdout!r}"
+
+
+# ── list[candidate] closed record kind (swb.dead-code-scan/1) ───────────────
+
+
+def _scan_envelope(candidates, **overrides):
+    data = {
+        "root": "/tmp/repo",
+        "funnel": "grep",
+        "scanned_files": 1,
+        "candidate_count": sum(
+            1 for c in candidates if isinstance(c, dict) and c.get("keep_class") == "candidate"
+        ),
+        "safe_keep_count": 0,
+        "justified_count": 0,
+        "candidates": candidates,
+    }
+    data.update(overrides)
+    return {"schema": "swb.dead-code-scan/1", "status": "ok", "data": data, "warnings": []}
+
+
+def _candidate_row(**overrides):
+    row = {
+        "symbol": "orphan_fn",
+        "kind": "function",
+        "path": "src/mod.py",
+        "line": 1,
+        "keep_class": "candidate",
+        "keep_reason": "",
+        "note": "",
+        "detected_by": "grep",
+        "test_only": False,
+        "references": [{"path": "tests/test_mod.py", "reason": "test"}],
+    }
+    row.update(overrides)
+    return row
+
+
+def test_candidate_list_valid_rows_accepted():
+    envelope = _scan_envelope([_candidate_row(), _candidate_row(symbol="other", keep_class="safe-keep")])
+    assert rc.validate_envelope("swb.dead-code-scan/1", envelope) == []
+
+
+def test_candidate_list_missing_required_field_rejected():
+    for missing in ("symbol", "kind", "path", "line", "keep_class", "keep_reason", "note", "detected_by", "test_only", "references"):
+        row = _candidate_row()
+        del row[missing]
+        problems = rc.validate_envelope("swb.dead-code-scan/1", _scan_envelope([row]))
+        assert problems, f"candidate missing {missing!r} must be rejected"
+
+
+def test_candidate_list_wrong_field_types_rejected():
+    for field, bad in (
+        ("symbol", 42),
+        ("line", "3"),
+        ("line", True),
+        ("test_only", "yes"),
+        ("references", ["tests/test_mod.py"]),
+        ("keep_class", ["candidate"]),
+    ):
+        row = _candidate_row()
+        row[field] = bad
+        problems = rc.validate_envelope("swb.dead-code-scan/1", _scan_envelope([row]))
+        assert problems, f"candidate {field}={bad!r} must be rejected"
+
+
+def test_candidate_list_non_dict_entry_rejected():
+    envelope = _scan_envelope(["orphan_fn"])
+    assert rc.validate_envelope("swb.dead-code-scan/1", envelope) != []
+
+
+def test_scanner_output_passes_result_check(tmp_path):
+    """Integration: the real producer's envelope validates against its schema
+    and passes through the checker verbatim."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "mod.py").write_text("def orphan_fn():\n    return 1\n")
+    scan = subprocess.run(
+        [sys.executable, str(ROOT / "bin" / "swe-workbench-dead-code-scan"),
+         "--root", str(tmp_path), "--funnel", "grep"],
+        capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+    assert scan.returncode == 0, scan.stderr
+    checked = _run(["swb.dead-code-scan/1"], stdin=scan.stdout)
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["data"]["candidate_count"] == 1
