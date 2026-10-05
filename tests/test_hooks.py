@@ -620,6 +620,89 @@ class TestCwdAttribution:
         )
 
 
+class TestWarnVerdictWireContract:
+    """The warn verdict rides exit-0 stdout as one line of Claude-Code-native
+    JSON: permissionDecisionReason carries the semantic message Pi parses,
+    systemMessage mirrors it for Claude Code user visibility. A block anywhere
+    in the command suppresses the warn entirely — block stays stderr-only."""
+
+    @pytest.fixture()
+    def scene(self, tmp_path):
+        return stage_guard_scene(tmp_path)
+
+    def _run(self, guard_script, command, *, process_cwd):
+        return run_guard(guard_script, command, cwd=str(process_cwd), payload_cwd=str(process_cwd))
+
+    @staticmethod
+    def _parse_warn(stdout):
+        return json.loads(stdout.strip())
+
+    def test_reattributed_allow_warns_with_resolved_target(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, f"cd {feature} && git push -f", process_cwd=protected)
+        assert result.returncode == 0, result.stderr
+        payload = self._parse_warn(result.stdout)
+        expected = (
+            f"bash_guard: target repo resolved to {feature}; "
+            f"protected-branch check ran there, not {protected}"
+        )
+        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert payload["systemMessage"] == expected
+        assert result.stdout.endswith("\n") and result.stdout.count("\n") == 1
+
+    def test_uncertain_allow_from_feature_cwd_warns(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, "cd $DEPLOY_DIR && git push -f", process_cwd=feature)
+        assert result.returncode == 0, result.stderr
+        payload = self._parse_warn(result.stdout)
+        expected = (
+            f"bash_guard: could not resolve effective directory (unresolvable cd); "
+            f"protected-branch check ran against {feature} only"
+        )
+        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+
+    def test_uncertain_block_from_protected_cwd_stays_stderr_only(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, "cd $DEPLOY_DIR && git push -f", process_cwd=protected)
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+        assert result.stdout == ""
+
+    def test_warn_is_suppressed_when_a_later_segment_blocks(self, guard_script, scene):
+        protected, feature = scene
+        command = f"cd {feature} && git push -f; cd {protected} && git push -f"
+        result = self._run(guard_script, command, process_cwd=feature)
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+        assert result.stdout == ""
+
+    def test_plain_feature_push_stays_silent_allow(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, "git push -f", process_cwd=feature)
+        assert result.returncode == 0 and result.stdout == "" and result.stderr == ""
+
+    def test_reset_hard_reattributed_allow_warns(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, f"cd {feature} && git reset --hard", process_cwd=protected)
+        assert result.returncode == 0, result.stderr
+        payload = self._parse_warn(result.stdout)
+        expected = (
+            f"bash_guard: target repo resolved to {feature}; "
+            f"protected-branch check ran there, not {protected}"
+        )
+        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+
+    def test_reset_hard_uncertain_allow_warns(self, guard_script, scene):
+        protected, feature = scene
+        result = self._run(guard_script, "cd $DEPLOY_DIR && git reset --hard", process_cwd=feature)
+        assert result.returncode == 0, result.stderr
+        payload = self._parse_warn(result.stdout)
+        expected = (
+            f"bash_guard: could not resolve effective directory (unresolvable cd); "
+            f"protected-branch check ran against {feature} only"
+        )
+        assert payload["hookSpecificOutput"]["permissionDecisionReason"] == expected
+
+
 # ──────────────────────────────────────────────
 # hard reset — branch-aware (requires temp git repo)
 # ──────────────────────────────────────────────

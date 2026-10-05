@@ -49,6 +49,10 @@ fi
 # absolute one, else the guard process cwd (the pre-attribution behavior).
 _base=$(printf '%s' "$_payload" | jq -r '.cwd // ""' 2>/dev/null)
 [[ "$_base" == /* ]] || _base=$PWD
+# Allow-side attribution note, set by the push/reset passes and emitted as one
+# line of Claude-Code-native stdout JSON at the final exit 0 (never printed when
+# any check blocks — block paths exit before emission, keeping stderr-only).
+_warn_reason=''
 
 # Strip shell comments per-line BEFORE folding newlines or joining backslash
 # continuations. A `#` comment ends at its line's newline; folding first would
@@ -407,6 +411,11 @@ while IFS= read -r push_cmd; do
         exit 2
         ;;
     esac
+    if [[ -n "$_target" && "$_target" != "$_base" ]]; then
+      _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
+    elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
+      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_base only"
+    fi
   fi
 done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
 
@@ -450,6 +459,11 @@ case "$norm" in
         exit 2
         ;;
     esac
+    if [[ -n "$_target" && "$_target" != "$_base" ]]; then
+      _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
+    elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
+      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_base only"
+    fi
   done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
   ;;
 esac
@@ -486,4 +500,8 @@ case "$norm" in
     ;;
 esac
 
+if [[ -n "$_warn_reason" ]]; then
+  jq -cn --arg msg "$_warn_reason" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$msg},systemMessage:$msg}'
+fi
 exit 0
