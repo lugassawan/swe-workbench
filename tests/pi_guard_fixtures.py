@@ -49,6 +49,13 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("echo `ls`", False),
     ("x=$(date)", False),
     ("echo $(pwd)", False),
+    # Force-push forms must remain blocked through both direct-hook and Pi-adapter paths.
+    ('git push -o "x;y" --force origin main', True),
+    (r"git push -o x\;y --force origin main", True),
+    ('git push -o "x&&y" --force origin main', True),
+    ("git -c x=y push --force origin main", True),
+    ("git push --force --all origin", True),
+    ("git push --mirror origin", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),

@@ -175,6 +175,13 @@ class TestForcePushBlocker:
         # not let a '#'-starting continuation line swallow the real force-push
         # that follows on the same physical line (issue #501 re-review finding)
         'git commit -m "line one\n# note" && git push --force origin main',
+        # Separator-like bytes inside quoted or escaped arguments are not real
+        # shell separators and must not split a protected force push.
+        'git push -o "x;y" --force origin main',
+        r"git push -o x\;y --force origin main",
+        'git push -o "x&&y" --force origin main',
+        # Git global options may precede the push subcommand.
+        "git -c x=y push --force origin main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -193,6 +200,8 @@ class TestForcePushBlocker:
         "git push --force-with-lease origin master",
         "git push --force-if-includes origin main",
         "git push --force-with-lease=origin/main origin main",
+        # A quoted prose mention of a global-option push must not become a command match.
+        'echo "git -c x=y push --force origin main"',
         # no false positives for similar-looking branch names (issue #341)
         "git push --force origin prerelease/x",
         "git push --force-with-lease origin release/1.2",
@@ -254,6 +263,20 @@ class TestImplicitForcePushBlocker:
             f"Expected ALLOWED for {cmd!r} on feature/x, got exit "
             f"{result.returncode}\nstderr: {result.stderr!r}"
         )
+
+    @pytest.mark.parametrize("cmd", [
+        "git push --force --all origin",
+        "git push --mirror origin",
+    ])
+    def test_all_or_mirror_push_is_blocked_on_feature_branch(self, guard_script, repo_on, cmd):
+        """These modes can update protected remote refs regardless of the current branch."""
+        repo = repo_on("feature/x")
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
 
     def test_explicit_nonprotected_refspec_still_allowed(self, guard_script, repo_on):
         """An explicit non-protected refspec must not regress — Block 1

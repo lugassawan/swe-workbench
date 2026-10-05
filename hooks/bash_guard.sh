@@ -29,8 +29,8 @@
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); quote-stripping may
 # over-block a force-push within its command segment (accepted fail-safe); a remote literally
-# named main/master over-blocks. Block 2's push-token scan trusts a small allowlist of
-# known BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
+# named main/master over-blocks. The push-token scan trusts a small allowlist of known
+# BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
 # (assumes it takes a separate-word value, e.g. `-o ci.skip`) so an unknown flag's value can never
 # be miscounted as the remote/refspec (#501 senior-engineer consult); an unrecognized flag that
 # actually takes NO value will over-block by one token (fail-safe direction, not a bypass).
@@ -136,23 +136,39 @@ if echo "$norm" | grep -Eq \
 fi
 
 # Classify each force-push segment independently so later `-f` values do
-# not affect earlier non-force pushes; inspect every segment.
+# not affect earlier non-force pushes; inspect every shell-command segment.
 while IFS= read -r push_cmd; do
   push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
-  if ! echo "$push_norm" | grep -Eq \
-    '(^|[[:space:]])([^[:space:]]*/)?git[[:space:]]+push([[:space:]]|$)'; then
-    continue
+  push_pattern='[[:space:]]*(rtk[[:space:]]+)?([^[:space:]]*/)?git([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+push([[:space:]]|$)'
+  if ! echo "$push_norm" | grep -Eq "^$push_pattern"; then
+    # Keep the established fail-safe treatment of literal tab-prefixed git.
+    if [[ "$push_cmd" != *$'\t'* ]] || ! echo "$push_norm" | grep -Eq "(^|[[:space:]])$push_pattern"; then
+      continue
+    fi
   fi
 
-  has_force=0; has_refspec=0; seen_positional=0; consume_next=0; seen_push=0; previous=
+  has_force=0; has_refspec=0; pushes_all_refs=0; seen_positional=0; consume_next=0
+  seen_git=0; seen_push=0; global_value=0
   read -ra _toks <<<"$push_norm"
   if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
     for _t in "${_toks[@]}"; do
       if (( seen_push == 0 )); then
-        if [[ ( "$previous" == git || "$previous" == */git ) && "$_t" == push ]]; then
-          seen_push=1
+        if (( seen_git == 0 )); then
+          [[ "$_t" == git || "$_t" == */git ]] && seen_git=1
+          continue
         fi
-        previous=$_t
+        if (( global_value )); then
+          global_value=0
+          continue
+        fi
+        case "$_t" in
+          push) seen_push=1 ;;
+          -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
+            global_value=1 ;;
+          --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
+          -*) ;;
+          *) ;;
+        esac
         continue
       fi
       if (( consume_next )); then             # swallow an unrecognized flag's separate-word value
@@ -161,13 +177,14 @@ while IFS= read -r push_cmd; do
       fi
       case "$_t" in
         --force|-f) has_force=1 ;;
+        --all) pushes_all_refs=1 ;;
+        --mirror) has_force=1; pushes_all_refs=1 ;;
         # Known BOOLEAN-only push flags — safe to skip outright. An
         # unrecognized `-*` flag is assumed to take a separate-word value and
         # that value is consumed too, so it cannot be a remote or refspec.
-        --force-with-lease*|--force-if-includes|--all|--tags|--follow-tags|\
-        --prune|--thin|--atomic|--no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|\
-        --progress|--no-progress|-u|--set-upstream|-d|--delete|--signed|--no-signed|\
-        --mirror|-n) ;;
+        --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
+        --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
+        -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
         -*) consume_next=1 ;;                 # unrecognized flag — assume it takes a value
         *:*) has_refspec=1 ;;                 # src:dst refspec
         *) if (( seen_positional )); then has_refspec=1; else seen_positional=1; fi ;;  # 1st bareword = remote
@@ -176,6 +193,11 @@ while IFS= read -r push_cmd; do
   fi
   if (( has_force == 0 )); then
     continue
+  fi
+
+  if (( pushes_all_refs )); then
+    echo 'BLOCKED: force push of all refs may update protected branches' >&2
+    exit 2
   fi
 
   if echo "$push_norm" | grep -Eq \
@@ -193,7 +215,23 @@ while IFS= read -r push_cmd; do
         ;;
     esac
   fi
-done < <(printf '%s\n' "$_bj" | tr ';|&\n' '\n\n\n\n')
+done < <(printf '%s' "$_bj" | awk '
+  BEGIN { in_sq = 0; in_dq = 0 }
+  {
+    line = $0; n = length(line); out = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(line, i, 1)
+      if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
+      if (c == "\\") { continue }
+      if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
+      if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
+      if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
+      if (c == "\t") { out = out c; continue }
+      if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
+      out = out c
+    }
+    if (in_sq || in_dq) printf "%s ", out; else print out
+  }')
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
