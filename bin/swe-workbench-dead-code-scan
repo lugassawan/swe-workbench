@@ -92,8 +92,8 @@ IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
 MARKER_RE = re.compile(r"dead-code:\s*keep\s+(.+?)\s*$")
 DUNDER_RE = re.compile(r"^__\w+__$")
 RUST_PUB_RE = re.compile(r"pub\s")  # bare `pub` only — pub(crate)/pub(super) are not external API
-# A trailing comment needs code before it, and `#[`/`#![` is a Rust attribute, not a comment.
-COMMENT_TAIL_RE = re.compile(r"(?<=\S)\s+(?:#(?!!?\[)|//).*$")
+# `#[`/`#![` is a Rust attribute, not a comment.
+COMMENT_TAIL_RE = re.compile(r"(?:^|\s+)(?:#(?!!?\[)|//).*$")
 DECORATOR_RE = re.compile(r"^(?:@\s*|#!?\[\s*)([\w:.]+)")
 SHEBANG_RE = re.compile(r"(?:/|\s)(python[\d.]*|nodejs|node|bash|zsh|sh|ruby)\b")
 SHEBANG_EXTS = {
@@ -665,9 +665,7 @@ def _vulture_exclude_args(root: Path) -> list[str]:
     """vulture wraps a glob-free pattern as `*p*` and matches against the absolute
     path, so exclusions are globs anchored to the resolved root (an excluded name
     in an ancestor, e.g. `.claude/worktrees/`, must not match every file)."""
-    base = glob.escape(str(root))
-    if "," in base:  # the list is comma-separated; merge_native still drops these dirs
-        return []
+    base = glob.escape(str(root)).replace(",", "?")  # the list splits on "," before matching
     return ["--exclude", ",".join(f"{base}/*/{d}/*,{base}/{d}/*" for d in sorted(EXCLUDED_DIRS))]
 
 

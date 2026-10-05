@@ -985,6 +985,7 @@ def test_knip_export_rows_are_classified_uniformly_end_to_end(tmp_path, tmp_path
     [
         '@router.get(\n    "/items",\n    response_model=Item,\n)\n',
         '@router.get(\n    "/a",\n)  # noqa: E501\n',
+        '@router.get(\n    # 1) list all items\n    "/items",\n)\n',
         "@app.route(\n    \"/x\",\n    methods=[\"GET\"],\n)\n",
         "@registry.register(\n    name=\"hook\",\n    aliases=[\n        \"a\",\n    ],\n)\n",
     ],
@@ -1023,6 +1024,8 @@ def test_multiline_rust_attribute_is_followed_and_plain_call_is_not_a_decorator(
         "    fn handler() {}\n\n"
         "    #[test_case(\n        1,\n    )] // note\n"
         "    fn nested_case() {}\n\n"
+        "    #[route(\n        // 1) the path\n        path = \"/y\",\n    )]\n"
+        "    fn commented() {}\n\n"
         "    #[derive(\n        Debug,\n    )]  // note\n"
         "    fn plain_method() {}\n"
         "}\n",
@@ -1030,7 +1033,7 @@ def test_multiline_rust_attribute_is_followed_and_plain_call_is_not_a_decorator(
     _write(tmp_path, "src/setup.py", "x = build(\n    1,\n    2,\n)\ndef plain_fn():\n    return 1\n")
     rc, envelope = _scan(tmp_path)
     cands = envelope["data"]["candidates"]
-    for name in ("handler", "nested_case"):
+    for name in ("handler", "nested_case", "commented"):
         assert _find(cands, name)["keep_class"] == "safe-keep", f"{name}: indented multi-line attribute"
     assert _find(cands, "plain_method")["keep_class"] == "candidate", "derive-only attributes don't register"
     assert _find(cands, "Plain")["keep_class"] == "candidate", "derive-only attributes don't register"
@@ -1049,14 +1052,16 @@ def test_vulture_exclude_globs_are_anchored_to_the_resolved_root():
     assert {"/repo/.claude/worktrees/w1/*/build/*", "/repo/.claude/worktrees/w1/build/*"} <= set(patterns)
 
 
-def test_vulture_exclude_escapes_glob_characters_and_skips_comma_roots():
+def test_vulture_exclude_escapes_glob_characters_and_wildcards_commas():
     module = _load_module()
     assert module._vulture_exclude_args(Path("/tmp/x[1]"))[1].startswith("/tmp/x[[]1]/*/")
-    assert module._vulture_exclude_args(Path("/tmp/a,b")) == [], "a comma would split the pattern list"
+    patterns = module._vulture_exclude_args(Path("/tmp/a,b"))[1]
+    assert patterns.startswith("/tmp/a?b/*/"), "the list splits on commas before matching; `?` matches one"
+    assert all(p.startswith("/tmp/a?b/") for p in patterns.split(","))
 
 
 @pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
-@pytest.mark.parametrize("ancestor", [".claude/worktrees/w1", "build/proj", "out/x", "target/dist"])
+@pytest.mark.parametrize("ancestor", [".claude/worktrees/w1", "build/proj", "out/x", "target/dist", "a,b/proj"])
 def test_real_vulture_works_when_the_root_sits_under_an_excluded_dir_name(tmp_path, ancestor):
     """Claude Code's own worktrees live under `.claude/worktrees/`; an ancestor
     named like an excluded dir must not silence vulture for the whole tree."""
