@@ -7,7 +7,6 @@
  * every @earendil-works/pi-coding-agent import here stays `import type`-only (pinned by
  * tests/test_pi_contract.py).
  */
-import { join } from "node:path";
 import type {
   BashToolCallEvent,
   EditToolCallEvent,
@@ -18,6 +17,7 @@ import type {
   ToolCallEventResult,
   WriteToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
 import {
   bashPayload,
   editPayloads,
