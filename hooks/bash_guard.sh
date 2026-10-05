@@ -14,7 +14,7 @@
 # "git", or "pi". This is the common case (ls, cat, echo, make, npm, …) and
 # removes the per-call grep tax flagged in #233.
 #
-# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal; compound cd (cwd not in hook payload);
+# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal (attribution treats .. components as unresolvable, keeping the legacy check);
 # IFS/word-splitting substitution (e.g. rm${IFS}-rf, pi${IFS}-p) — a shared limitation of the
 # regex/tr token-matching approach across all three detectors (rm, git, pi), not specific to any one.
 # A backslash-escaped quote (e.g. `\"`) inside an already-open double-quoted string desyncs the
@@ -40,10 +40,15 @@
 
 set -u
 
-if ! cmd=$(jq -r '.tool_input.command // ""'); then
+_payload=$(cat)
+if ! cmd=$(printf '%s' "$_payload" | jq -r '.tool_input.command // ""'); then
   echo 'bash_guard: jq parse error — blocking by default' >&2
   exit 2
 fi
+# Base dir for attribution: the harness-supplied session cwd when the payload carries an
+# absolute one, else the guard process cwd (the pre-attribution behavior).
+_base=$(printf '%s' "$_payload" | jq -r '.cwd // ""' 2>/dev/null)
+[[ "$_base" == /* ]] || _base=$PWD
 
 # Strip shell comments per-line BEFORE folding newlines or joining backslash
 # continuations. A `#` comment ends at its line's newline; folding first would
@@ -155,9 +160,144 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
+# Attribution stream: one line per segment the push/reset passes consume, in the
+# same order _segment_awk emits them — CONF:<abs-path> (the directory this
+# segment's push/reset consults) or UNCERTAIN (use the legacy process-cwd
+# check). Conservative by construction: a cd folds into the state only for
+# commands later in the SAME &&-chain (their execution is gated on the cd
+# succeeding); at an unconditional separator a chain that touched a cd leaves
+# the committed state UNCERTAIN because follow-ups run whether or not the cd
+# succeeded. A cd in a pipeline stage, background chain, subshell, or
+# substitution cannot affect the parent shell and neither folds nor taints.
+# Wrapper segments (bash -c / ssh / docker exec / …) re-parse their arguments
+# in another shell and attribute UNCERTAIN. Resolvable path forms: absolute
+# literals, ~/$HOME, relative literals without .. — everything else
+# (variables, substitutions, .. components, cd -) is UNCERTAIN.
+_attr_awk='
+function basename(t) { sub(/.*\//, "", t); return t }
+function resolve(a,   r) {
+  if (a == "") return (home != "" ? "CONF:" home : "UNCERTAIN")   # bare cd → HOME
+  if (a == "-") return "UNCERTAIN"
+  if (a ~ /^\$\{?HOME\}?/) {
+    if (home == "") return "UNCERTAIN"
+    r = a; sub(/^\$\{?HOME\}?/, "", r)
+    return "CONF:" home r
+  }
+  if (a ~ /^\$/) return "UNCERTAIN"
+  if (a ~ /^~/) { if (home == "") return "UNCERTAIN"; return "CONF:" home substr(a, 2) }
+  if (a == ".." || a ~ /(\/|^)\.\.(\/|$)/ || a ~ /[$`]/) return "UNCERTAIN"
+  if (a ~ /^\//) return "CONF:" a
+  if (tentative ~ /^CONF:/) return "CONF:" substr(tentative, 6) "/" a
+  return "UNCERTAIN"
+}
+function start_chain(bg) { tentative = committed; chain_has_cd = 0; chain_or = 0; bg_chain = bg }
+function commit_chain() {
+  if (chain_has_cd && !bg_chain) committed = "UNCERTAIN"   # a cd may or may not have run
+  start_chain(0)
+}
+function finalize(close_reason,   i, nt, T, cmd, attr, has_cdtok, j, t, dashc, pa) {
+  if (nested) { print "UNCERTAIN"; seg = ""; pipe_adj = 0; return }
+  pa = (pipe_adj || close_reason == "|" || close_reason == "&")   # subshell-executed segment
+  nt = split(seg, T, /[ \t]+/)
+  i = 1
+  while (i <= nt && (T[i] == "" || T[i] ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) i++   # empties + env assignments
+  if (i <= nt && T[i] == "!") i++
+  cmd = (i <= nt ? basename(T[i]) : "")
+  has_cdtok = 0
+  for (j = i; j <= nt; j++) if (T[j] == "cd" || T[j] == "pushd" || T[j] == "popd") { has_cdtok = 1; break }
+  attr = ""
+  if (cmd == "cd" && !pa) {
+    j = i + 1
+    while (j <= nt && T[j] ~ /^-/) j++                           # cd -L / -P flags
+    t = (j <= nt ? T[j] : "")
+    if (t == "--" && j + 1 <= nt) t = T[j + 1]
+    tentative = (chain_or ? "UNCERTAIN" : resolve(t))
+    chain_has_cd = 1
+  } else if (has_cdtok && !pa) {
+    tentative = "UNCERTAIN"                                     # conditional-position cd
+    chain_has_cd = 1
+    if (cmd == "eval") attr = "UNCERTAIN"
+  } else if (cmd ~ /^(bash|sh|zsh|dash|ssh|docker|podman|kubectl|su)$/) {
+    attr = "UNCERTAIN"                                          # body re-parsed elsewhere
+  } else if (cmd == "git") {
+    dashc = ""
+    j = i + 1
+    while (j <= nt) {
+      t = T[j]
+      if (t == "-C") { dashc = (j + 1 <= nt ? resolve(T[j + 1]) : "UNCERTAIN"); j += 2; continue }
+      if (t ~ /^-C./) { dashc = resolve(substr(t, 3)); j++; continue }
+      if (t == "-c" || t ~ /^--(config|config-env|exec-path|git-dir|work-tree|namespace)(=|$)/) {
+        if (t ~ /=/ || t ~ /^-c./) j++; else j += 2
+        continue
+      }
+      if (t ~ /^-/) { j++; continue }
+      if (t == "push" || t == "reset") { if (dashc != "") attr = dashc }
+      break
+    }
+  }
+  print (attr != "" ? attr : tentative)
+  seg = ""; pipe_adj = 0
+}
+BEGIN {
+  in_sq = 0; in_dq = 0; committed = "CONF:" base; tentative = committed
+  chain_has_cd = 0; chain_or = 0; bg_chain = 0; pipe_adj = 0
+  nested = 0; bt = 0; twin = 0; seg = ""
+}
+{
+  line = $0; n = length(line)
+  for (i = 1; i <= n; i++) {
+    c = substr(line, i, 1)
+    if (c == "\\" && !in_sq) { if (i < n) { seg = seg substr(line, i + 1, 1); i++ }; continue }
+    if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
+    if (c == "\"" && !in_sq) { in_dq = !in_dq; continue }
+    if (c == "[" || c == "]" || c == "{" || c == "}") continue
+    if (c == "\t") c = " "
+    if (!in_sq && !in_dq) {
+      if (c == "(" ) { finalize("("); nested++; twin = 0; continue }
+      if (c == ")") { finalize(")"); if (nested > 0) nested--; twin = 0; continue }
+      if (c == "`") { finalize("`"); if (bt) { bt = 0; if (nested > 0) nested-- } else { bt = 1; nested++ }; twin = 0; continue }
+      if (c == ";") { finalize(";"); commit_chain(); twin = 0; continue }
+      if (c == "&" || c == "|") {
+        if (twin) { finalize("twin"); twin = 0; continue }
+        tw = (substr(line, i + 1, 1) == c)
+        if (c == "|") finalize(tw ? "or" : "|")
+        else finalize(tw ? "and" : "&")
+        if (tw) { twin = 1; if (c == "|") chain_or = 1 }
+        else if (c == "&") start_chain(1)
+        else pipe_adj = 1
+        continue
+      }
+    }
+    seg = seg c
+  }
+  if (in_sq || in_dq) { seg = seg " " }
+  else { finalize("nl"); commit_chain(); twin = 0 }
+}
+END { if (seg != "") finalize("eof") }'
+
+# Resolve the branch verdict inputs for one push/reset segment: consult the
+# attributed target dir when confident, fall back to the guard process cwd
+# (the pre-attribution behavior) when uncertain or when the target is not a
+# git repo. Sets _branch and _target (empty when the legacy check decided).
+_attributed_branch() {
+  _branch=''; _target=''
+  case "$1" in
+    CONF:*) _target=${1#CONF:}
+            _branch=$(git -C "$_target" rev-parse --abbrev-ref HEAD 2>/dev/null || true) ;;
+  esac
+  if [[ -z "$_branch" ]]; then
+    _branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    _target=
+  fi
+}
+
 # Classify each force-push segment independently so later `-f` values do
 # not affect earlier non-force pushes; inspect every shell-command segment.
+# FD3 carries the attribution stream (one CONF:<path>/UNCERTAIN line per
+# segment, same order) — exhausted or malformed stream reads as UNCERTAIN,
+# which keeps the legacy process-cwd behavior.
 while IFS= read -r push_cmd; do
+  IFS= read -r seg_attr <&3 || seg_attr='UNCERTAIN'
   push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
   _toks=()
   read -ra _toks <<<"$push_norm"
@@ -256,25 +396,63 @@ while IFS= read -r push_cmd; do
   fi
 
   if (( has_refspec == 0 )); then             # relies on push.default / upstream
-    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    case "$branch" in
+    _attributed_branch "$seg_attr"
+    case "$_branch" in
       main|master|release/*)
-        echo "BLOCKED: force push of current protected branch '$branch' (implicit upstream)" >&2
+        if [[ -n "$_target" && "$_target" != "$_base" ]]; then
+          echo "BLOCKED: force push of current protected branch '$_branch' (implicit upstream, target $_target)" >&2
+        else
+          echo "BLOCKED: force push of current protected branch '$_branch' (implicit upstream)" >&2
+        fi
         exit 2
         ;;
     esac
   fi
-done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk")
+done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
 
-if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
-  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-  case "$branch" in
-    main|master|release/*)
-      echo "BLOCKED: git reset --hard on protected branch '$branch'" >&2
-      exit 2
-      ;;
-  esac
-fi
+case "$norm" in
+*reset*--hard*)
+  # Tokenized per-segment reset detection: `git` → global flags (-C <dir>, -c k=v,
+  # … — values consumed) → `reset` subcommand → a `--hard` argument. Matches plain
+  # `git reset --hard` exactly like the old text-adjacency scan, and additionally
+  # recognizes global-flag forms like `git -C <dir> reset --hard`, which the
+  # attribution re-targets. FD3 carries the attribution stream as in the push loop.
+  while IFS= read -r seg_cmd; do
+    IFS= read -r seg_attr <&3 || seg_attr='UNCERTAIN'
+    seg_norm=$(printf '%s' "$seg_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
+    read -ra _rt <<<"$seg_norm"
+    _rs=0 _hit=0
+    if (( ${#_rt[@]} )); then
+      for _t in "${_rt[@]}"; do
+        case $_rs in
+          0) [[ "$_t" == git || "$_t" == */git ]] && _rs=1 ;;
+          1) case "$_t" in
+               -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace) _rs=3 ;;
+               --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
+               -*) ;;
+               reset) _rs=2 ;;
+               *) break ;;
+             esac ;;
+          2) [[ "$_t" == --hard ]] && { _hit=1; break; } ;;
+          3) _rs=1 ;;
+        esac
+      done
+    fi
+    (( _hit )) || continue
+    _attributed_branch "$seg_attr"
+    case "$_branch" in
+      main|master|release/*)
+        if [[ -n "$_target" && "$_target" != "$_base" ]]; then
+          echo "BLOCKED: git reset --hard on protected branch '$_branch' (target $_target)" >&2
+        else
+          echo "BLOCKED: git reset --hard on protected branch '$_branch'" >&2
+        fi
+        exit 2
+        ;;
+    esac
+  done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
+  ;;
+esac
 
 # Nested non-interactive `pi` session — subagent recursion guard. Segment-scoped:
 # a `pi` command token and a -p/--print flag must appear in the SAME segment, so everyday
