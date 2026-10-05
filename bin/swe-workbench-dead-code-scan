@@ -64,6 +64,7 @@ SCHEMA = "swb.dead-code-scan/1"
 DEFAULT_MAX_FILES = 5000
 MAX_LSP_VERIFIES = 50
 MARKER_NOTE_MAX = 300
+MAX_DECORATOR_SPAN = 30  # lines walked upward to find a multi-line decorator's opener
 
 # Directories never scanned and whose references never count as usage.
 EXCLUDED_DIRS = {
@@ -198,17 +199,37 @@ def _decorator_starts(ext: str) -> tuple[str, ...]:
     return ("@",)
 
 
+def _decorator_start(lines: list[str], j: int, starts: tuple[str, ...]) -> int | None:
+    """0-based index of the decorator/attribute that ends at line j, else None.
+    A line ending in a closing bracket is walked upward until the brackets
+    balance, and counts only if that opening line carries a decorator marker."""
+    if lines[j].lstrip().startswith(starts):
+        return j
+    if not lines[j].rstrip().endswith((")", "]")):
+        return None
+    balance = 0
+    for k in range(j, max(j - MAX_DECORATOR_SPAN, -1), -1):
+        balance += sum(lines[k].count(c) for c in ")]}") - sum(lines[k].count(c) for c in "([{")
+        if balance <= 0:
+            return k if lines[k].lstrip().startswith(starts) else None
+    return None
+
+
 def _decorators_above(lines: list[str], idx: int, starts: tuple[str, ...]) -> tuple[int, list[str]]:
-    """Decorator/attribute lines directly above line idx (1-based). Returns the
-    1-based line of the topmost one (idx when none) and their bare names."""
+    """Decorator/attribute blocks directly above line idx (1-based), multi-line
+    ones included. Returns the 1-based line of the topmost one (idx when none)
+    and their bare names."""
     top, names = idx, []
     j = idx - 2
-    while j >= 0 and lines[j].lstrip().startswith(starts):
-        m = DECORATOR_RE.match(lines[j].strip())
+    while starts and j >= 0:
+        k = _decorator_start(lines, j, starts)
+        if k is None:
+            break
+        m = DECORATOR_RE.match(lines[k].strip())
         if m:
             names.append(m.group(1).replace("::", ".").rsplit(".", 1)[-1])
-        top = j + 1
-        j -= 1
+        top = k + 1
+        j = k - 1
     return top, names
 
 
@@ -463,12 +484,15 @@ def _entry_file_decision(hit: DefHit, record: FileRecord, entries: EntryPoints) 
     return "safe-keep", "CLI/module entry point (package.json)"
 
 
-def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entry_symbols: set[str]) -> tuple[str, str]:
+def _safe_keep_decision(
+    hit: DefHit, record: FileRecord, dyn_refs: set, entry_symbols: set[str], ignore_exported: bool = False
+) -> tuple[str, str]:
     """The keep-class chain every row passes through — grep-classified and
-    native-only alike. Marker wins; then structural safe-keeps; else candidate."""
+    native-only alike. Marker wins; then structural safe-keeps; else candidate.
+    `ignore_exported` is for tools that already model public entry points."""
     if hit.marker_reason is not None:
         return "justified", hit.marker_reason
-    if hit.name in record.all_names or hit.exported:
+    if hit.name in record.all_names or (hit.exported and not ignore_exported):
         return "safe-keep", "exported API"
     if hit.name == "main":
         return "safe-keep", "entry-point name 'main'"
@@ -483,7 +507,8 @@ def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entry_sy
     return "candidate", ""
 
 
-def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
+def _reference_index(records: list[FileRecord]) -> tuple[dict, dict, dict]:
+    """(identifier → files, dynamically-named identifier → files, relpath → record)."""
     index: dict[str, set[str]] = {}
     dynamic_index: dict[str, set[str]] = {}
     by_rel: dict[str, FileRecord] = {}
@@ -493,7 +518,11 @@ def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
             index.setdefault(name, set()).add(record.relpath)
         for name in record.dynamic:
             dynamic_index.setdefault(name, set()).add(record.relpath)
+    return index, dynamic_index, by_rel
 
+
+def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
+    index, dynamic_index, by_rel = _reference_index(records)
     rows: list[dict] = []
     for record in records:
         if TEST_PATH_RE.search(record.relpath):
@@ -621,6 +650,12 @@ def _has_go_mod(root: Path, records: list[FileRecord]) -> bool:
     return (root / "go.mod").is_file()
 
 
+# vulture matches names, not bindings, so a re-export reads as unused; knip
+# already treats package entry points as public, so its export rows stand.
+NAME_BASED_TOOLS = {"native:vulture"}
+EXPORT_AWARE_TOOLS = {"native:knip"}
+
+
 class NativeTool(NamedTuple):
     argv: list[str]
     parser: Callable[[str], list[dict]]
@@ -632,7 +667,8 @@ class NativeTool(NamedTuple):
 # designed skip like an absent one: no run, no warning, status stays "ok".
 NATIVE_TOOLS: dict[str, NativeTool] = {
     "vulture": NativeTool(
-        ["vulture", ".", "--exclude", ",".join(sorted(EXCLUDED_DIRS))],
+        # Trailing slash: vulture reads a bare name as a substring (`out` hits `outbound/`).
+        ["vulture", ".", "--exclude", ",".join(f"{d}/" for d in sorted(EXCLUDED_DIRS))],
         parse_vulture, _has_python_sources, (0, 3),
     ),
     "staticcheck": NativeTool(
@@ -673,15 +709,13 @@ def run_native(root: Path, records: list[FileRecord], warnings: list) -> tuple[l
 def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRecord], entries: EntryPoints | None = None) -> list[dict]:
     """Merge native findings into grep-classified rows.
 
-    A native finding whose symbol matches a grep row marks provenance; a
-    native-only finding becomes a new row re-classified through the same
-    entry-point and safe-keep chain classify() uses, so exports/CLI
-    entries/dynamic refs stay safe-kept regardless of which funnel spotted
-    them. Test-path and excluded-dir findings are dropped, as the grep walk
-    drops them. Defs are matched by (path, symbol), never by name alone, so a
-    same-named def in another file can't lend its marker or export status.
+    Native-only findings go through classify()'s entry-point and safe-keep chain;
+    test-path and excluded-dir findings are dropped. Defs match by (path, symbol),
+    never name alone. Name-based vulture def rows are checked against the text
+    index too (it misses re-exports); type-aware tools are trusted.
     """
     entries = entries or EntryPoints()
+    index, dynamic_index, by_rel = _reference_index(records)
     by_key = {(r["path"], r["line"], r["symbol"]): r for r in rows}
     by_path_symbol: dict[tuple[str, str], dict] = {}
     for row in rows:
@@ -692,10 +726,6 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
             continue
         for hit in record.defs:
             record_defs.setdefault((record.relpath, hit.name), (hit, record))
-    dynamic_index: dict[str, set[str]] = {}
-    for record in records:
-        for name in record.dynamic:
-            dynamic_index.setdefault(name, set()).add(record.relpath)
 
     for native in native_rows:
         path, symbol = native["path"].removeprefix("./"), native["symbol"]
@@ -706,13 +736,25 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         if existing is not None:
             existing["detected_by"] = native["detected_by"]
             continue
+        test_only, references = False, []
+        if native["detected_by"] in NAME_BASED_TOOLS and native["kind"] in ("function", "method", "class"):
+            cross = index.get(symbol, set()) - {path}
+            normal_refs = {rel for rel in cross if symbol not in by_rel[rel].dynamic}
+            if any(not TEST_PATH_RE.search(rel) for rel in normal_refs):
+                continue  # a production reference the tool can't see (e.g. a package re-export)
+            if normal_refs:
+                test_only = True
+                references = [{"path": rel, "reason": "test"} for rel in sorted(normal_refs)]
         hit_record = record_defs.get((path, symbol))
         if hit_record is not None:
             hit, record = hit_record
             dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
             keep_class, keep_reason = (
                 _entry_file_decision(hit, record, entries)
-                or _safe_keep_decision(hit, record, dyn_refs, entries.symbols)
+                or _safe_keep_decision(
+                    hit, record, dyn_refs, entries.symbols,
+                    ignore_exported=native["detected_by"] in EXPORT_AWARE_TOOLS,
+                )
             )
             note = hit.note
         else:
@@ -720,7 +762,7 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
         row = {
             "symbol": symbol, "kind": native["kind"], "path": path, "line": native["line"],
             "keep_class": keep_class, "keep_reason": keep_reason, "note": note,
-            "detected_by": native["detected_by"], "test_only": False, "references": [],
+            "detected_by": native["detected_by"], "test_only": test_only, "references": references,
         }
         rows.append(row)
         by_key[key] = row
@@ -746,7 +788,7 @@ def lsp_verify(root: Path, rows: list[dict], warnings: list) -> tuple[list[dict]
     degradation: warning, keep grep results, caller flips status to partial.
     """
     bin_path = _lsp_bin()
-    verified = 0
+    verified = resolved = 0  # verified counts calls (the cap); resolved counts anchors the server answered
     for row in list(rows):  # snapshot: rows are removed mid-verification
         if row["keep_class"] != "candidate" or row["kind"] not in ("function", "method", "class"):
             continue
@@ -780,6 +822,7 @@ def lsp_verify(root: Path, rows: list[dict], warnings: list) -> tuple[list[dict]
         except json.JSONDecodeError:
             warnings.append(_warning("lsp-error", "lsp callers emitted unparsable JSON"))
             return rows, False
+        resolved += 1
         caller_files = {c.get("file", "") for c in callers if isinstance(c, dict)}
         non_test = [f for f in caller_files if f and not TEST_PATH_RE.search(f)]
         if non_test:
@@ -789,7 +832,7 @@ def lsp_verify(root: Path, rows: list[dict], warnings: list) -> tuple[list[dict]
             for f in sorted(caller_files):
                 if not any(r["path"] == f for r in row["references"]):
                     row["references"].append({"path": f, "reason": "test"})
-    return rows, verified > 0
+    return rows, resolved > 0
 
 
 # ── Scan driver ─────────────────────────────────────────────────────────────

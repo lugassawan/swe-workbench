@@ -445,7 +445,7 @@ def test_native_only_row_respects_safe_keep(tmp_path):
     records = [r for r in (module.parse_file(tmp_path.resolve(), p) for p in tmp_path.rglob("*.ts")) if r]
     native_row = {
         "symbol": "pubApi", "kind": "function", "path": "src/api.ts",
-        "line": 1, "detected_by": "native:vulture",
+        "line": 1, "detected_by": "native:staticcheck",  # type-aware: trusted over the text index
     }
     merged = module.merge_native([], [native_row], records)
     pub = _find(merged, "pubApi")
@@ -757,7 +757,7 @@ def test_vulture_is_told_to_skip_excluded_dirs_and_rows_under_them_are_dropped()
     module = _load_module()
     argv = module.NATIVE_TOOLS["vulture"].argv
     assert "--exclude" in argv
-    assert {".venv", "node_modules"} <= set(argv[argv.index("--exclude") + 1].split(","))
+    assert {".venv/", "node_modules/"} <= set(argv[argv.index("--exclude") + 1].split(","))
     native = [{"symbol": "dead", "kind": "function", "path": ".venv/lib/x.py", "line": 1,
                "detected_by": "native:vulture"}]
     assert module.merge_native([], native, []) == []
@@ -870,6 +870,158 @@ def test_shebang_interpreter_selects_def_rules(tmp_path, shebang, def_line, symb
     _write(tmp_path, "bin/run", f"{shebang}\n{def_line}\n")
     rc, envelope = _scan(tmp_path)
     assert _find(envelope["data"]["candidates"], symbol) is not None
+
+
+# ── Review-round-4 regression tests ──────────────────────────────────────────
+
+
+def _reexport_fixture(tmp_path):
+    _write(tmp_path, "lib/__init__.py", "from .core import Client\n")
+    _write(tmp_path, "lib/core.py", "class Client:\n    pass\n")
+    return _parse_records(_load_module(), tmp_path)
+
+
+def _vulture_row(symbol="Client", kind="class", path="lib/core.py", line=1):
+    return {"symbol": symbol, "kind": kind, "path": path, "line": line, "detected_by": "native:vulture"}
+
+
+def test_vulture_row_for_package_reexport_is_dropped(tmp_path):
+    """vulture reads `from .core import Client` as no use at all; the text index
+    sees the production reference, so the native-only row must not survive."""
+    module = _load_module()
+    assert module.merge_native([], [_vulture_row()], _reexport_fixture(tmp_path)) == []
+
+
+def test_type_aware_native_rows_are_trusted_over_the_text_index(tmp_path):
+    module = _load_module()
+    native = [dict(_vulture_row(), detected_by="native:staticcheck")]
+    merged = module.merge_native([], native, _reexport_fixture(tmp_path))
+    assert _find(merged, "Client")["keep_class"] == "candidate"
+
+
+def test_vulture_row_referenced_only_by_tests_becomes_test_only(tmp_path):
+    _write(tmp_path, "lib/core.py", "class Client:\n    pass\n")
+    _write(tmp_path, "tests/test_core.py", "from lib.core import Client\n\ndef test_it():\n    Client()\n")
+    module = _load_module()
+    merged = module.merge_native([], [_vulture_row()], _parse_records(module, tmp_path))
+    row = _find(merged, "Client")
+    assert row["test_only"] is True
+    assert row["references"] == [{"path": "tests/test_core.py", "reason": "test"}]
+
+
+def test_vulture_unused_import_is_not_judged_by_a_common_name(tmp_path):
+    """Imports and variables recur by name across files; only definitions
+    (function/method/class) are cross-checked against the text index."""
+    _write(tmp_path, "src/a.py", "import os\n")
+    _write(tmp_path, "src/b.py", "import os\nprint(os.name)\n")
+    module = _load_module()
+    native = [_vulture_row(symbol="os", kind="import", path="src/a.py")]
+    assert _find(module.merge_native([], native, _parse_records(module, tmp_path)), "os") is not None
+
+
+@pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
+def test_real_vulture_scan_does_not_offer_a_package_reexport(tmp_path):
+    _reexport_fixture(tmp_path)
+    rc, envelope = _scan(tmp_path, "--funnel", "native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    assert _find(envelope["data"]["candidates"], "Client") is None
+
+
+def test_knip_export_rows_are_classified_uniformly(tmp_path):
+    """knip already lists only unused exports, so every export/type row stays a
+    candidate — not safe-kept just because a def regex happened to match."""
+    _write(
+        tmp_path, "lib.ts",
+        "export function unusedExport() {}\n"
+        "export class UnusedCls {}\n"
+        "export const unusedConst = 1;\n"
+        "export type UnusedType = number;\n",
+    )
+    module = _load_module()
+    parsed = module.parse_knip(json.dumps({"issues": [{"file": "lib.ts", "exports": [
+        {"name": "unusedExport", "line": 1}, {"name": "UnusedCls", "line": 2},
+        {"name": "unusedConst", "line": 3}], "types": [{"name": "UnusedType", "line": 4}]}]}))
+    merged = module.merge_native([], parsed, _parse_records(module, tmp_path))
+    assert {r["symbol"]: r["keep_class"] for r in merged} == {
+        "unusedExport": "candidate", "UnusedCls": "candidate",
+        "unusedConst": "candidate", "UnusedType": "candidate",
+    }
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        '@router.get(\n    "/items",\n    response_model=Item,\n)\n',
+        "@app.route(\n    \"/x\",\n    methods=[\"GET\"],\n)\n",
+        "@registry.register(\n    name=\"hook\",\n    aliases=[\n        \"a\",\n    ],\n)\n",
+    ],
+)
+def test_multiline_decorator_registers_the_def(tmp_path, decorator):
+    _write(tmp_path, "src/api.py", f"{decorator}def list_items():\n    return []\n")
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "list_items")
+    assert row is not None and row["keep_class"] == "safe-keep"
+    assert "decorator" in row["keep_reason"]
+
+
+def test_keep_marker_above_multiline_decorator_is_honored(tmp_path):
+    _write(
+        tmp_path, "src/api.py",
+        "# dead-code: keep mounted by the plugin loader\n"
+        "@router.get(\n    \"/items\",\n)\n"
+        "def list_items():\n    return []\n",
+    )
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "list_items")
+    assert row["keep_class"] == "justified"
+    assert row["keep_reason"] == "mounted by the plugin loader"
+
+
+def test_multiline_rust_attribute_is_followed_and_plain_call_is_not_a_decorator(tmp_path):
+    _write(
+        tmp_path, "src/lib.rs",
+        "#[derive(\n    Debug,\n    Clone,\n)]\nstruct Plain;\n\n"
+        "#[cfg_attr(\n    test,\n    test\n)]\nfn registered() {}\n",
+    )
+    _write(tmp_path, "src/setup.py", "x = build(\n    1,\n    2,\n)\ndef plain_fn():\n    return 1\n")
+    rc, envelope = _scan(tmp_path)
+    cands = envelope["data"]["candidates"]
+    assert _find(cands, "Plain")["keep_class"] == "candidate", "derive-only attributes don't register"
+    assert _find(cands, "registered")["keep_class"] == "safe-keep"
+    assert _find(cands, "plain_fn")["keep_class"] == "candidate", "a balanced call above a def is not a decorator"
+
+
+def test_vulture_exclude_uses_directory_form_so_names_do_not_collide(tmp_path):
+    """vulture treats a bare name as a substring: `out` would hide `outbound/`
+    and `output.py`. Every pattern must be a trailing-slash directory."""
+    module = _load_module()
+    argv = module.NATIVE_TOOLS["vulture"].argv
+    patterns = argv[argv.index("--exclude") + 1].split(",")
+    assert patterns and all(p.endswith("/") for p in patterns)
+    assert {"build/", "out/", ".venv/", "node_modules/"} <= set(patterns)
+
+
+@pytest.mark.skipif(shutil.which("vulture") is None, reason="vulture not installed")
+def test_real_vulture_reports_files_whose_names_resemble_excluded_dirs(tmp_path):
+    _write(tmp_path, "src/output.py", "def dead_output():\n    pass\n")
+    _write(tmp_path, "pkg/outbound/handlers.py", "def dead_handler():\n    pass\n")
+    _write(tmp_path, "build/gen.py", "def dead_generated():\n    pass\n")
+    rc, envelope = _scan(tmp_path, "--funnel", "native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    by_symbol = {c["symbol"]: c["detected_by"] for c in envelope["data"]["candidates"]}
+    assert by_symbol.get("dead_output") == "native:vulture"
+    assert by_symbol.get("dead_handler") == "native:vulture"
+    assert "dead_generated" not in by_symbol, "build/ is a real excluded directory"
+
+
+def test_funnel_omits_lsp_when_no_anchor_was_resolved(tmp_path, tmp_path_factory):
+    """`funnel` is cited as evidence; a server that answered nothing mustn't be claimed."""
+    _write(tmp_path, "src/mod.py", "def first_orphan():\n    return 1\n\ndef second_orphan():\n    return 2\n")
+    stub = _stub_lsp(tmp_path_factory.mktemp("lsp-stub"), 'echo "no call-hierarchy item resolved at anchor"')
+    rc, envelope = _scan(tmp_path, "--funnel", "lsp", env=_env(SWB_DEAD_CODE_LSP_BIN=str(stub)))
+    assert envelope["status"] == "ok", envelope["warnings"]
+    assert envelope["data"]["funnel"] == "grep"
+    assert envelope["data"]["candidate_count"] == 2
 
 
 # ── CLI surface ──────────────────────────────────────────────────────────────
