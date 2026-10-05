@@ -17,7 +17,8 @@ Every script documents itself: run `swe-workbench-<name> --help` for usage, argu
 — there is no separate script-by-script table here to keep in sync with the code as scripts change.
 The scripts in this directory that carry a `#!/usr/bin/env python3` shebang instead of
 `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
-`swe-workbench-handoff`, `swe-workbench-lsp`, `swe-workbench-memory`,
+`swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-lsp`,
+`swe-workbench-memory`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
 `swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, and
 `swe-workbench-result-check`. `comment-scan` is a pure
@@ -29,7 +30,10 @@ which needs a real threaded reader loop bash can't give it; `preflight-commit` c
 NUL-delimited raw staged paths and emits JSON — bash would need `jq` for escaping arbitrary path
 bytes and a second regex dialect (Oniguruma) for matching, a second engine to audit in a security
 gate that should have exactly one; `result-check` needs the same JSON-object type/shape validation
-`preflight-commit` does, for the same reason; `address-feedback-fetch` needed the same
+`preflight-commit` does, for the same reason; `dead-code-scan` normalizes three heterogeneous
+detection funnels (native tools, the sibling `lsp` script, and an in-process identifier index)
+into one JSON envelope — multi-adapter subprocess wrapping plus structured emission that bash
+would need `jq` and per-funnel text-munging for; `address-feedback-fetch` needed the same
 paginated-cursor state machine as `pr-review-submit` (a `reviewThreads(first:100, after:$after)` /
 `pageInfo{endCursor hasNextPage}` loop) plus JSON emission over arbitrary-byte review-comment text,
 where bash would again mean a second escaping engine (`jq`) layered under the same shell

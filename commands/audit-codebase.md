@@ -1,5 +1,5 @@
 ---
-description: Cold-start, time-boxed, multi-domain audit sweep — surfaces ranked findings with reasoning chains across security, performance, reliability, tooling, and testing
+description: Cold-start, time-boxed, multi-domain audit sweep — surfaces ranked findings with reasoning chains across security, performance, reliability, tooling, testing, and dead code
 argument-hint: "[--time-box <duration>] [--scope <list>] [--depth <quick|standard|deep>] [--top-n <int>] [optional ticket ref]"
 ---
 
@@ -12,7 +12,7 @@ Cold-start audit of this codebase across multiple domains.
 From `$ARGUMENTS`, extract:
 
 - `--time-box <duration>` — default `30m`. Any trailing `m`/`h` suffix is accepted (e.g. `30m`, `2h`).
-- `--scope <list>` — default `all`. Comma-separated domain names: `security`, `perf`, `reliability`, `tooling`, `testing`, or `all`.
+- `--scope <list>` — default `all`. Comma-separated domain names: `security`, `perf`, `reliability`, `tooling`, `testing`, `dead-code`, or `all`.
 - `--depth <quick|standard|deep>` — default `standard`. Controls fan-out behaviour:
   - `quick` — single-pass auditor, no fan-out.
   - `standard` — single-pass auditor, no fan-out.
@@ -40,7 +40,7 @@ The `swe-workbench:workflow-codebase-audit` skill (via the `swe-workbench:audito
 
 - **Summary header** — scope, depth, and time-box used; total finding count by domain.
 - **Ranked findings** — ordered by severity (Critical → High → Medium → Low), each with: domain tag, `File:Line` anchor, concise issue title, root-cause reasoning chain, and counter-evidence note (what was checked that did NOT confirm the finding).
-- **Domain sections** — `security`, `perf`, `reliability`, `tooling`, `testing` (only domains in `--scope` are rendered; `all` renders all five).
+- **Domain sections** — `security`, `perf`, `reliability`, `tooling`, `testing`, `dead-code` (only domains in `--scope` are rendered; `all` renders all six).
 - **Next-action recommendations** — top-N actionable fixes the team should address first, keyed to finding IDs.
 
 In `--depth deep`, the `swe-workbench:security-auditor` additionally deep-dives the top-N security findings and the `swe-workbench:debugger` attempts to reproduce the top-N reliability findings; their outputs are appended as sub-sections.

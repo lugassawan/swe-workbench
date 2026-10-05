@@ -61,7 +61,7 @@ For each finding derive a **subsystem** from `file_line`:
 5. No path (tool-level or unknown finding) → subsystem **`misc`**.
 
 Within each subsystem, sub-group findings by `domain` (security, perf, reliability,
-tooling, testing) to form sections within the issue body.
+tooling, testing, dead-code) to form sections within the issue body.
 
 Report: "N findings across M subsystems."
 
@@ -90,9 +90,10 @@ the preview, and retain the `.cmd` sidecar so the user can run it manually.
 | reliability | "bug" |
 | tooling | "chore" or "tooling" |
 | testing | "test" |
+| dead-code | "chore" or "cleanup" |
 
 **Dominant domain** = the domain with the most findings in that subsystem.
-Tie-break: prefer the higher-severity domain (security > reliability > perf > tooling > testing);
+Tie-break: prefer the higher-severity domain (security > reliability > perf > tooling > testing > dead-code);
 break further ties alphabetically.
 
 Chain: template-frontmatter label → substring match → omit `--label` entirely.

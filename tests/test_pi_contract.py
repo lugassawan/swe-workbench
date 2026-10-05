@@ -2189,7 +2189,9 @@ def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
         data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES[provider]
         data = json.loads(data_path.read_text(encoding="utf-8"))
         api = next(iter(data))
-        ids_on_catalog = set(data[api].keys())
+        # Catalog keys are model-kind-prefixed ("chat:claude-opus-5") from Pi 1.0 on; strip the
+        # prefix so MODEL_POLICY's bare ids match under either shape.
+        ids_on_catalog = {key.removeprefix("chat:") for key in data[api]}
         for tier, cell in tiers.items():
             models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
             assert any(m in ids_on_catalog for m in models), (
@@ -2205,7 +2207,7 @@ const [, , modelsJsPath, zaiDataPath] = process.argv;
 const mod = await import(pathToFileURL(modelsJsPath).href);
 const zaiData = JSON.parse(readFileSync(zaiDataPath, "utf8"));
 const api = Object.keys(zaiData)[0];
-const model = zaiData[api]["glm-5.3"];
+const model = zaiData[api]["chat:glm-5.3"] ?? zaiData[api]["glm-5.3"];
 console.log(JSON.stringify({
   supported: mod.getSupportedThinkingLevels(model),
   clampedMax: mod.clampThinkingLevel(model, "max"),
@@ -2268,7 +2270,7 @@ const googleData = JSON.parse(readFileSync(googleDataPath, "utf8"));
 const api = Object.keys(googleData)[0];
 const dump = {};
 for (const id of ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3.7-flash", "gemini-3.5-flash-lite"]) {
-  const model = googleData[api][id];
+  const model = googleData[api][`chat:${id}`] ?? googleData[api][id];
   if (!model) continue;
   dump[id] = {
     supported: mod.getSupportedThinkingLevels(model),
@@ -2310,6 +2312,12 @@ def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_poli
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
     pro = dumped.get("gemini-3.1-pro-preview") or dumped.get("gemini-3.1-pro")
+    # Every check below is gated on an id being present, so a catalog key-shape or id change
+    # would pass vacuously instead of failing; require the pro and at least one flash id.
+    assert pro, f"neither google pro id resolved in the pinned catalog (resolved: {sorted(dumped)})"
+    assert any(f in dumped for f in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite")), (
+        f"no google flash id resolved in the pinned catalog (resolved: {sorted(dumped)})"
+    )
     if pro:
         assert {"low", "high"} <= set(pro["supported"]), (
             f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} no longer declares low/high support ({pro['supported']}) in the "
