@@ -92,7 +92,7 @@ jobs:
           elif [ "$code" -eq 1 ]; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::sync-peer-deps.sh could not determine an actionable floor (exit ${code}) — skipping auto-fix. This is expected when only one of pi-coding-agent/pi-tui has bumped so far; it resolves once the other one bumps too."
+            echo "::warning::sync-peer-deps.sh could not determine an actionable range (exit ${code}) — skipping auto-fix. This is expected when only one of pi-coding-agent/pi-tui has bumped so far (it resolves once the other one bumps too); otherwise check the script's error output for a malformed pin or manifest."
             echo "drift=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -106,5 +106,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
-          git commit -m "[chore] Sync peerDependencies floor to devDependencies pin"
+          git commit -m "[chore] Sync peerDependencies range to devDependencies pin"
           git push origin "HEAD:refs/heads/${HEAD_REF}"

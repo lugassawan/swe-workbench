@@ -45,8 +45,8 @@ fi
 
 # pi-coding-agent and pi-tui are nested and published lockstep (see
 # tests/test_pi_extension.py's tui_dev_pin == dev_pin assertion) — this script only derives
-# the expected floor from one pin, so a partial bump that skips pi-tui must fail loudly here
-# rather than silently syncing pi-tui's floor to a pin pi-tui never actually moved to. This is
+# the expected range from one pin, so a partial bump that skips pi-tui must fail loudly here
+# rather than silently syncing pi-tui's range to a pin pi-tui never actually moved to. This is
 # not a rare edge case: dependabot.yml has no `groups:` for npm, so pi-coding-agent and pi-tui
 # bump as two separate PRs — every such pair's first PR lands in exactly this state.
 TUI_PIN=$(jq -r '.devDependencies["@earendil-works/pi-tui"]' "$PKG")
@@ -55,9 +55,10 @@ if [[ "$TUI_PIN" != "$PIN" ]]; then
   exit 2
 fi
 
-# Anything but a bare X.Y.Z (a ^/~ range, a prerelease tag) would make the major-derived
-# ceiling below wrong without any visible error.
-if [[ ! "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Anything but a bare semver X.Y.Z (a ^/~ range, a prerelease tag, a leading-zero part that
+# bash arithmetic would read as octal) would make the major-derived ceiling below wrong
+# without any visible error.
+if [[ ! "$PIN" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "Error: devDependencies pin must be an exact X.Y.Z version, got ${PIN}" >&2
   exit 2
 fi
@@ -66,15 +67,23 @@ CURRENT_RANGE=$(jq -e -r '.peerDependencies["@earendil-works/pi-coding-agent"]' 
   echo "Error: could not read peerDependencies[\"@earendil-works/pi-coding-agent\"] from ${PKG}" >&2
   exit 2
 }
+
+# The drift reads below run in a command substitution, where errexit is off — an unreadable
+# lockfile would otherwise show up as "missing" drift (exit 1, actionable) instead of the
+# hard error it is.
+if ! jq -e '.packages[""]' "$LOCK" &>/dev/null; then
+  echo "Error: could not read packages[\"\"] from ${LOCK}" >&2
+  exit 2
+fi
 EXPECTED_CEILING="<$(( ${PIN%%.*} + 1 ))"
 EXPECTED_RANGE=">=${PIN} ${EXPECTED_CEILING}"
 
 MODE="${1:-}"
 
-# Every site the apply step writes; a missing key reads as empty and so counts as drift.
+# Every site the apply step writes. pi-coding-agent's package.json entry was already required
+# above; a missing pi-tui or lockfile entry reads as empty and so counts as drift.
 _drift_sites() {
-  local pkg_agent pkg_tui lock_agent lock_tui
-  pkg_agent=$(jq -r '.peerDependencies["@earendil-works/pi-coding-agent"] // ""' "$PKG")
+  local pkg_agent="$CURRENT_RANGE" pkg_tui lock_agent lock_tui
   pkg_tui=$(jq -r '.peerDependencies["@earendil-works/pi-tui"] // ""' "$PKG")
   lock_agent=$(jq -r '.packages[""].peerDependencies["@earendil-works/pi-coding-agent"] // ""' "$LOCK")
   lock_tui=$(jq -r '.packages[""].peerDependencies["@earendil-works/pi-tui"] // ""' "$LOCK")
@@ -96,11 +105,14 @@ if [[ "$MODE" == "--check" ]]; then
   exit 1
 fi
 
-# A major crossing widens what the published range accepts; surface it so a reviewer sees
+# A major crossing changes what the published range accepts; surface it so a reviewer sees
 # the new ceiling without the script blocking the sync.
-CURRENT_CEILING="${CURRENT_RANGE##* }"
+CURRENT_CEILING="none"
+if [[ "$CURRENT_RANGE" =~ (\<[0-9]+)[[:space:]]*$ ]]; then
+  CURRENT_CEILING="${BASH_REMATCH[1]}"
+fi
 if [[ "$CURRENT_CEILING" != "$EXPECTED_CEILING" ]]; then
-  echo "::warning::peerDependencies ceiling widened from ${CURRENT_CEILING} to ${EXPECTED_CEILING} (pin ${PIN})"
+  echo "::warning::peerDependencies ceiling changed from ${CURRENT_CEILING} to ${EXPECTED_CEILING} (pin ${PIN})"
 fi
 
 # package-lock.json (lockfileVersion 3) mirrors the root manifest's peerDependencies under

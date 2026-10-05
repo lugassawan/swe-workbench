@@ -216,9 +216,8 @@ def test_package_json_values():
     assert floor == f">={dev_pin}", (
         f"peerDependencies floor must equal the devDependencies pin ({dev_pin!r}), got {floor!r}"
     )
-    # Derived from the pin's major, not hardcoded: a 0.x pin gives "<1" (pre-1.0 semver has
-    # no compatibility guarantee across minors, let alone majors) and a 1.x pin gives "<2".
-    # A fixed "<1" would turn a 1.x pin into the unsatisfiable range ">=1.0.3 <1".
+    # Next major above the pin ("<1" for 0.x, "<2" for 1.x); a fixed "<1" would make a 1.x
+    # pin unsatisfiable.
     expected_ceiling = f"<{int(dev_pin.split('.')[0]) + 1}"
     assert ceiling == expected_ceiling, (
         f"peerDependencies ceiling must be the next major above the pin ({expected_ceiling!r}), "
