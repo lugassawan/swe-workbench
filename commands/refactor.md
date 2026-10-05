@@ -1,6 +1,6 @@
 ---
-description: Invoke the refactorer subagent for a behavior-preserving refactor
-argument-hint: <file, function, or module>
+description: Invoke the refactorer subagent for a behavior-preserving refactor, or a preview-gated dead-code removal with --dead-code
+argument-hint: <file, function, or module> | --dead-code [path]
 ---
 
 <!-- swb-phase: plan -->
@@ -8,6 +8,20 @@ argument-hint: <file, function, or module>
 Target: $ARGUMENTS
 
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
+
+## Dead-code mode (`--dead-code [path]`)
+
+If `$ARGUMENTS` begins with `--dead-code` (optionally followed by a path), run this two-pass flow instead of the default delegation. The main loop owns the confirm gate — the subagent cannot ask questions.
+
+1. **Scan.** Run `bin/swe-workbench-dead-code-scan --root <path-or-repo-root> --funnel auto` via `Bash` and capture the JSON envelope. On `status: "failed"` or a hard error, stop and report.
+2. **Preview pass.** Delegate the envelope to the `swe-workbench:refactorer` subagent (dead-code preview): it applies judgment — reclassifying candidates whose `note` genuinely justifies keeping as "justified — kept", verifying references of `detected_by: "grep"` candidates before confirming them — and returns a preview table (Symbol | Kind | File:Line | Class | Evidence) plus its recommended removal list.
+3. **Confirm gate.** In the main loop, present the preview table and ask via `AskUserQuestion`: "Remove N confirmed candidates?" — options: **Remove all confirmed** (recommended), **Remove a subset** (user names the symbols), **Abort**. Rows classified safe-keep or justified are shown for information and are never offered for removal.
+4. **Removal pass.** For each confirmed symbol, in envelope order: delegate to the `swe-workbench:refactorer` (dead-code removal, one symbol) — remove the symbol and the tests that only exercise it — then run the target repo's test suite. Green → commit that symbol alone, then re-run the scan as a drift-guard: a still-confirmed symbol whose `keep_class` or evidence changed pauses for re-confirmation; newly surfaced candidates (cascade orphans) render a new preview and go back to the confirm gate — they never chain automatically. Red → revert that symbol's commit and mark it "kept — tests failed".
+5. **Report.** Removed (with one commit hash per symbol), kept — tests failed, justified — kept, safe-kept, and any drift pauses.
+
+Absolute rules carry over: no feature changes; safe-keep and justified symbols are never removed; a removal that alters public behavior is a stop-and-report, not a fix-forward.
+
+## Default delegation
 
 Delegate to the `swe-workbench:refactorer` subagent. Its output must include:
 
