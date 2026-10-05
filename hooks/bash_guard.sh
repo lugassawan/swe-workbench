@@ -45,11 +45,6 @@ if ! cmd=$(printf '%s' "$_payload" | jq -r '.tool_input.command // ""'); then
   echo 'bash_guard: jq parse error — blocking by default' >&2
   exit 2
 fi
-# Base dir for attribution: the harness-supplied session cwd when the payload carries an
-# absolute one, else the guard process cwd (the pre-attribution behavior).
-_base=$(printf '%s' "$_payload" | jq -r '.cwd // ""' 2>/dev/null)
-[[ "$_base" == /* ]] || _base=$PWD
-_checked=$_base; [[ "$PWD" == "$_base" ]] || _checked="$_base and $PWD"   # dirs the uncertain fallback consults
 # Allow-side attribution note, emitted as one `systemMessage` stdout line at the final
 # exit 0 (never when a check blocks). docs/hooks.md §2.
 _warn_reason=''
@@ -136,6 +131,13 @@ case "$norm" in
   *)                                                             exit 0 ;;
 esac
 
+# Base dir for attribution: the payload's absolute `.cwd`, else the guard process cwd. Read here,
+# after the fast gate, so commands that skip every detector never pay for the extra jq spawn.
+_base=$(printf '%s' "$_payload" | jq -r '.cwd // ""' 2>/dev/null)
+[[ "$_base" == /* ]] || _base=$PWD
+while [[ "$_base" == */ && "$_base" != / ]]; do _base=${_base%/}; done
+_checked=$_base; [[ "$PWD" == "$_base" ]] || _checked="$_base and $PWD"   # dirs the uncertain fallback consults
+
 # shellcheck disable=SC2016  # $HOME in single quotes is intentional: matches literal text, not the shell variable
 # [rR] covers both -rf and -Rf (BSD/macOS rm accepts -R as synonym for -r).
 if echo "$norm" | grep -Eq \
@@ -168,28 +170,38 @@ _segment_awk='
 # order (docs/hooks.md §2). UNCERTAIN must always fall back to the legacy check.
 _attr_awk='
 function basename(t) { sub(/.*\//, "", t); return t }
+function canon(p) {                       # collapse //, /./ and a trailing / or /. (.. is uncertain upstream)
+  gsub(/\/+/, "/", p)
+  while (p ~ /\/\.\//) sub(/\/\.\//, "/", p)
+  sub(/\/\.$/, "", p)
+  if (length(p) > 1) sub(/\/$/, "", p)
+  return (p == "" ? "/" : p)
+}
+function conf(p) { return "CONF:" canon(p) }
+# A later -C is relative to the previous -C: only an absolute-looking value can be resolved.
+function dashc_resolve(v, prev) { return (prev != "" && v !~ /^[\/~$]/) ? "UNCERTAIN" : resolve(v) }
 function resolve(a,   r) {
-  if (a == "") return (home != "" ? "CONF:" home : "UNCERTAIN")   # bare cd → HOME
+  if (a == "") return (home != "" ? conf(home) : "UNCERTAIN")   # bare cd → HOME
   if (a == "-") return "UNCERTAIN"
   if (a ~ /^\$\{?HOME\}?(\/|$)/) {                                # $HOME_DIR etc. fall through to UNCERTAIN
     if (home == "") return "UNCERTAIN"
     r = a; sub(/^\$\{?HOME\}?/, "", r)
-    return "CONF:" home r
+    return conf(home r)
   }
   if (a ~ /^\$/) return "UNCERTAIN"
-  if (a ~ /^~(\/|$)/) { if (home == "") return "UNCERTAIN"; return "CONF:" home substr(a, 2) }
+  if (a ~ /^~(\/|$)/) { if (home == "") return "UNCERTAIN"; return conf(home substr(a, 2)) }
   if (a ~ /^~/) return "UNCERTAIN"                                # ~user is not our HOME
   if (a == ".." || a ~ /(\/|^)\.\.(\/|$)/ || a ~ /[$`]/) return "UNCERTAIN"
-  if (a ~ /^\//) return "CONF:" a
-  if (tentative ~ /^CONF:/) return "CONF:" substr(tentative, 6) "/" a
+  if (a ~ /^\//) return conf(a)
+  if (tentative ~ /^CONF:/) return conf(substr(tentative, 6) "/" a)
   return "UNCERTAIN"
 }
-function start_chain(bg) { tentative = committed; chain_has_cd = 0; chain_or = 0; bg_chain = bg }
+function start_chain() { tentative = committed; chain_has_cd = 0; chain_or = 0 }
 function commit_chain() {
-  if (chain_has_cd && !bg_chain) committed = "UNCERTAIN"   # a cd may or may not have run
-  start_chain(0)
+  if (chain_has_cd) committed = "UNCERTAIN"   # a cd may or may not have run
+  start_chain()
 }
-function finalize(close_reason,   i, k, nt, T, cmd, raw, attr, has_cdtok, j, t, dashc, pa, rc) {
+function finalize(close_reason,   i, gi, gcmd, k, nt, T, cmd, raw, attr, has_cdtok, j, t, dashc, pa, rc) {
   rc = redir_cd; redir_cd = 0
   if (nested) { print "UNCERTAIN"; seg = ""; pipe_adj = 0; seg_folded_cd = 0; return }
   pa = (pipe_adj || close_reason == "|" || close_reason == "&")   # subshell-executed segment
@@ -209,12 +221,14 @@ function finalize(close_reason,   i, k, nt, T, cmd, raw, attr, has_cdtok, j, t, 
   while (k <= nt && T[k] ~ /^(!|if|then|do|else|elif|while|until|time|command|builtin)$/) k++
   has_cdtok = (k <= nt && T[k] ~ /^(cd|pushd|popd)$/)
   if (cmd == "eval") for (j = i + 1; j <= nt; j++) if (T[j] ~ /^(cd|pushd|popd)$/) has_cdtok = 1
+  gi = i; gcmd = cmd                                              # skip wrappers that cannot move cwd or repo
+  while (gi < nt && gcmd ~ /^(rtk|time|command|nohup|exec)$/ && T[gi + 1] !~ /^-/) { gi++; gcmd = basename(T[gi]) }
   attr = ""
   if (raw == "cd" && !pa) {                 # literal token only: a pathed cd is an
     j = i + 1                                # external binary — it cannot fold
-    while (j <= nt && T[j] ~ /^-/) j++                           # cd -L / -P flags
+    while (j <= nt && T[j] ~ /^-./ && T[j] != "--") j++         # cd -L / -P flags; a lone "-" is an operand
+    if (j <= nt && T[j] == "--") j++
     t = (j <= nt ? T[j] : "")
-    if (t == "--" && j + 1 <= nt) t = T[j + 1]
     tentative = (chain_or ? "UNCERTAIN" : resolve(t))
     chain_has_cd = 1
     seg_folded_cd = 1
@@ -222,16 +236,16 @@ function finalize(close_reason,   i, k, nt, T, cmd, raw, attr, has_cdtok, j, t, 
     tentative = "UNCERTAIN"                                     # conditional-position cd
     chain_has_cd = 1
     if (cmd == "eval") attr = "UNCERTAIN"
-  } else if (cmd ~ /^(bash|sh|zsh|dash|ssh|docker|podman|kubectl|su)$/) {
+  } else if (gcmd ~ /^(bash|sh|zsh|dash|ssh|docker|podman|kubectl|su)$/) {
     attr = "UNCERTAIN"                                          # body re-parsed elsewhere
-  } else if (cmd == "git") {
+  } else if (gcmd == "git") {
     dashc = ""
-    j = i + 1
+    j = gi + 1
     while (j <= nt) {
       t = T[j]
       if (t ~ /^--(git-dir|work-tree|namespace)(=|$)/) { attr = "UNCERTAIN"; break }   # repo decided elsewhere
-      if (t == "-C") { dashc = (j + 1 <= nt ? resolve(T[j + 1]) : "UNCERTAIN"); j += 2; continue }
-      if (t ~ /^-C./) { dashc = resolve(substr(t, 3)); j++; continue }
+      if (t == "-C") { dashc = (j + 1 <= nt ? dashc_resolve(T[j + 1], dashc) : "UNCERTAIN"); j += 2; continue }
+      if (t ~ /^-C./) { dashc = dashc_resolve(substr(t, 3), dashc); j++; continue }
       if (t == "-c" || t ~ /^--(config|config-env|exec-path)(=|$)/) {
         if (t ~ /=/ || t ~ /^-c./) j++; else j += 2
         continue
@@ -248,8 +262,8 @@ function finalize(close_reason,   i, k, nt, T, cmd, raw, attr, has_cdtok, j, t, 
   seg = ""; pipe_adj = 0
 }
 BEGIN {
-  in_sq = 0; in_dq = 0; committed = "CONF:" base; tentative = committed
-  chain_has_cd = 0; chain_or = 0; bg_chain = 0; pipe_adj = 0
+  in_sq = 0; in_dq = 0; committed = conf(base); tentative = committed
+  chain_has_cd = 0; chain_or = 0; pipe_adj = 0
   nested = 0; bt = 0; twin = 0; seg = ""; seg_folded_cd = 0; git_redirect = 0; redir_cd = 0
 }
 {
@@ -285,7 +299,7 @@ BEGIN {
             if (seg_folded_cd) tentative = "UNCERTAIN"
           }
         }
-        else if (c == "&") start_chain(1)
+        else if (c == "&") start_chain()
         else pipe_adj = 1
         continue
       }
@@ -433,7 +447,7 @@ while IFS= read -r push_cmd; do
     if [[ -n "$_target" && "$_target" != "$_base" ]]; then
       _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
     elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
-      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_checked only"
+      _warn_reason="bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); protected-branch check ran against $_checked only"
     fi
   fi
 done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
@@ -454,6 +468,7 @@ case "$norm" in
                -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace) _rs=3 ;;
                --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
                -*) ;;
+               git|*/git) ;;                       # `sudo -u git git reset`: the real git follows
                reset) _rs=2 ;;
                *) break ;;
              esac ;;
@@ -477,7 +492,7 @@ case "$norm" in
     if [[ -n "$_target" && "$_target" != "$_base" ]]; then
       _warn_reason="bash_guard: target repo resolved to $_target; protected-branch check ran there, not $_base"
     elif [[ -z "$_target" && "$seg_attr" != "CONF:$_base" ]]; then
-      _warn_reason="bash_guard: could not resolve effective directory (unresolvable cd); protected-branch check ran against $_checked only"
+      _warn_reason="bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); protected-branch check ran against $_checked only"
     fi
   done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk") 3< <(printf '%s' "$_bj" | awk -v base="$_base" -v home="${HOME:-}" "$_attr_awk")
   ;;

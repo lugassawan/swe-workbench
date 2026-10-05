@@ -42,6 +42,9 @@ class GuardCase:
     # Payload .cwd role when it must differ from the process cwd. The Pi adapter always sends
     # ctx.cwd for both, so split rows are direct-invocation only (see adapter_cases()).
     payload_cwd_role: str | None = None
+    # Staged repo whose path becomes $HOME for the row. The Pi adapter driver cannot set a
+    # per-row environment, so these rows are direct-invocation only (see adapter_cases()).
+    home_role: str | None = None
 
 
 # Allow/block rows predating tri-state verdicts; guard_cases() lifts them into GuardCase
@@ -174,9 +177,9 @@ def guard_cases() -> list[GuardCase]:
 
 
 def adapter_cases() -> list[GuardCase]:
-    """guard_cases() minus rows whose payload cwd differs from the process cwd — the Pi
-    adapter has no way to express that split."""
-    return [case for case in guard_cases() if case.payload_cwd_role is None]
+    """guard_cases() minus rows the Pi adapter cannot express: a payload cwd that differs
+    from the process cwd, or a per-row $HOME."""
+    return [case for case in guard_cases() if case.payload_cwd_role is None and case.home_role is None]
 
 
 def stage_guard_scene(base: Path) -> tuple[Path, Path]:
@@ -213,7 +216,7 @@ def stage_guard_scene(base: Path) -> tuple[Path, Path]:
 
 
 _UNCERTAIN_REASON = (
-    "bash_guard: could not resolve effective directory (unresolvable cd); "
+    "bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
     "protected-branch check ran against {feature} only"
 )
 
@@ -248,7 +251,7 @@ _SCENE_ROWS: list[GuardCase] = [
         scene=True,
         process_cwd_role="feature",
         expected_reason=(
-            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
             "protected-branch check ran against {feature} only"
         ),
     ),
@@ -265,7 +268,7 @@ _SCENE_ROWS: list[GuardCase] = [
         scene=True,
         process_cwd_role="feature",
         expected_reason=(
-            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
             "protected-branch check ran against {feature} only"
         ),
     ),
@@ -315,7 +318,7 @@ _SCENE_ROWS: list[GuardCase] = [
         scene=True,
         process_cwd_role="feature",
         expected_reason=(
-            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
             "protected-branch check ran against {feature} only"
         ),
     ),
@@ -362,6 +365,32 @@ _SCENE_ROWS: list[GuardCase] = [
         "cd $DEPLOY_DIR && git push -f", "block", scene=True,
         process_cwd_role="protected", payload_cwd_role="feature",
     ),
+    # cd - is an operand, not an option: it must stay uncertain, never fold to $HOME.
+    GuardCase("cd - && git push -f", "block", scene=True, home_role="feature"),
+    # Bare cd folds to $HOME (HOME on the protected repo is a confident protected target).
+    GuardCase("cd && git push -f", "block", scene=True, process_cwd_role="feature", home_role="protected"),
+    # A cd left of ; runs whether or not it succeeded, so the push after it is uncertain.
+    GuardCase("cd {protected}; git push -f", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    # The chain after a single ampersand is a foreground chain: its cd still taints.
+    GuardCase("sleep 1 & cd {protected}; git push -f", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
+    # A backgrounded cd runs in a subshell: it must not leave its target folded for what follows.
+    GuardCase("cd {feature} & git push -f", "block", scene=True),
+    GuardCase("cd {feature} && sleep 1 & git push -f", "block", scene=True),
+    # Repeated -C applies in sequence, each relative to the previous one.
+    GuardCase("cd {feature} && git -C {protected} -C . push -f", "block", scene=True),
+    # A git token used as a user/name/id before the real git must not hide the reset.
+    GuardCase("sudo -u git git reset --hard", "block", scene=True),
+    GuardCase("xargs -I git git reset --hard", "block", scene=True),
+    GuardCase("echo git git reset --hard", "block", scene=True),
+    GuardCase("find . -name git -exec git reset --hard \\;", "block", scene=True),
+    # Equivalent spellings of the base dir are not a re-attribution — no noise warn.
+    GuardCase("git -C . push -f", "allow", scene=True, process_cwd_role="feature"),
+    GuardCase("cd {feature}/ && git push -f", "allow", scene=True, process_cwd_role="feature"),
+    # Pass-through wrappers (rtk/time/command/nohup/exec) cannot move cwd or repo: parse the git
+    # behind them. Wrappers that can (sudo/env/timeout/xargs) stay uncertain.
+    GuardCase("rtk git push -f", "allow", scene=True, process_cwd_role="feature"),
+    GuardCase("rtk git -C {protected} push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("sudo git push -f", "warn", scene=True, process_cwd_role="feature", expected_reason=_UNCERTAIN_REASON),
     # Detection-scope pin: a quoted reset mention inside another git command is not a
     # reset — the tokenized scan does not resume after a non-reset subcommand.
     GuardCase('git commit -m "git reset --hard"', "allow"),

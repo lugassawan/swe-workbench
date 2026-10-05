@@ -522,7 +522,7 @@ class TestWarnVerdictWireContract:
         assert result.returncode == 0, result.stderr
         payload = self._parse_warn(result.stdout)
         expected = (
-            f"bash_guard: could not resolve effective directory (unresolvable cd); "
+            f"bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
             f"protected-branch check ran against {feature} only"
         )
         assert payload["systemMessage"] == expected
@@ -562,7 +562,7 @@ class TestWarnVerdictWireContract:
         assert result.returncode == 0, result.stderr
         payload = self._parse_warn(result.stdout)
         expected = (
-            f"bash_guard: could not resolve effective directory (unresolvable cd); "
+            f"bash_guard: could not resolve the target repository (wrapper, env or unresolvable cd); "
             f"protected-branch check ran against {feature} only"
         )
         assert payload["systemMessage"] == expected
@@ -987,6 +987,7 @@ class TestDifferentialFixtures:
             if case.scene:
                 assert case.process_cwd_role in ("protected", "feature"), case.command
                 assert case.payload_cwd_role in (None, "protected", "feature"), case.command
+                assert case.home_role in (None, "protected", "feature"), case.command
 
     @pytest.mark.parametrize("case", guard_cases())
     def test_direct_invocation_matches_expected_verdict(self, guard_script, case, tmp_path):
@@ -1000,7 +1001,11 @@ class TestDifferentialFixtures:
             expected_reason = (
                 case.expected_reason.format(**paths) if case.expected_reason else None
             )
-            result = run_guard(guard_script, cmd, cwd=str(process_cwd), payload_cwd=str(payload_cwd))
+            home = {"protected": protected, "feature": feature}.get(case.home_role)
+            result = run_guard(
+                guard_script, cmd, cwd=str(process_cwd), payload_cwd=str(payload_cwd),
+                env={"HOME": str(home)} if home else None,
+            )
         else:
             cmd = case.command
             expected_reason = case.expected_reason

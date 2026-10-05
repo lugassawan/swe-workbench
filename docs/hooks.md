@@ -64,9 +64,11 @@ provides it; the Pi adapter passes `ctx.cwd`), else the guard process CWD. A con
 in-script resolver folds the command's segments: a `cd` folds into the state only for commands
 later in the same `&&`-chain (their execution is gated on the cd succeeding); at an
 unconditional separator a chain that touched a cd commits the state to *uncertain*, because
-follow-ups run whether or not the cd succeeded. `git -C <dir>` overrides per segment. A cd in a
-pipeline stage, background chain, subshell, or substitution cannot affect the parent shell and
-neither folds nor taints; wrapper segments (`bash -c`, `ssh`, `docker exec`, …) re-parse their
+follow-ups run whether or not the cd succeeded. `git -C <dir>` overrides per segment (a repeated
+`-C` is relative to the previous one, so a non-absolute second `-C` is uncertain). A cd in a
+pipeline stage, a command backgrounded with `&`, a subshell, or a substitution cannot affect the
+parent shell and neither folds nor taints; the chain that follows a single `&` is an ordinary
+foreground chain, so a cd there taints like any other. Wrapper segments (`bash -c`, `ssh`, `docker exec`, …) re-parse their
 arguments in another shell and attribute uncertain.
 
 **Behavior matrix** (target = resolved dir, base = session cwd):
@@ -97,11 +99,17 @@ ampersand inside a redirection (`2>&1`, `>&2`, `&>`) is not a background operato
 chain state alone. Repo-redirecting git flags (`--git-dir`, `--work-tree`, `--namespace`) and
 env vars (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, also via `export`/`env`;
 sticky for the rest of the command) decide the repo elsewhere and attribute uncertain, as does any
-git invocation behind a wrapper (`sudo`, `env`, `timeout`, `xargs`, …) whose globals are not
-parsed. One deliberate
-detection-scope change vs the pre-tokenization reset scan: a quoted `git reset --hard` mention
-inside another git command (e.g. a commit message) no longer matches — the tokenized scan does
-not resume after a non-reset subcommand, so that pre-existing over-block is gone.
+git invocation behind a wrapper that can change cwd, env or arguments (`sudo`, `env`, `timeout`,
+`xargs`, …) whose globals are not parsed. Pass-through wrappers that cannot move cwd or repo
+(`rtk`, `time`, `command`, `nohup`, `exec`) are skipped and the git behind them is parsed like a
+direct one, so everyday `rtk git push` stays silent. A lone `cd -` is an operand (uncertain), not
+an option: it never folds to `$HOME`. Resolved paths are canonicalized (`//`, `/./`, a trailing
+`/` or `/.`) before the target-vs-base comparison, so `git -C .` or `cd <base>/` is not a
+re-attribution. One deliberate detection-scope change vs the pre-tokenization reset scan: a quoted
+`git reset --hard` mention inside another git command (e.g. a commit message) no longer matches —
+the tokenized scan does not resume after a non-reset subcommand, so that pre-existing over-block is
+gone. A repeated `git` token still restarts the scan, so a user, name or id spelled `git` before
+the real command (`sudo -u git git reset --hard`) cannot hide the reset.
 
 **Considered, not adopted:** a third exit code for warn — `guards.ts` treats any code outside
 `{0, 2}` as guard failure (fail-closed for `bash_guard.sh`), so it would demand a lockstep
