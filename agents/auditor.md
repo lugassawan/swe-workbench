@@ -1,6 +1,6 @@
 ---
 name: auditor
-description: Cold-start codebase audit specialist — readonly multi-domain sweep across security, dead code, and more
+description: Cold-start codebase audit specialist — readonly multi-domain sweep across security
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
