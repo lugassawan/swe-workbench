@@ -1,6 +1,6 @@
 ---
 name: auditor
-description: Cold-start codebase audit specialist — readonly multi-domain sweep across security
+description: Cold-start codebase audit specialist — readonly multi-domain sweep across security, dead code, and more
 model: sonnet
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Skill
@@ -42,7 +42,7 @@ Use `Glob` for top-level layout. Read manifests: `package.json`, `pyproject.toml
 
 `--depth` is an orchestrator concern — the auditor always runs identically regardless of depth value. Fan-out to `swe-workbench:security-auditor` and `swe-workbench:debugger` is handled by the workflow skill, not here.
 
-Run only the domains listed in `--scope`. If scope is `all`, run all five.
+Run only the domains listed in `--scope`. If scope is `all`, run all six.
 
 **security** — Secret regex sweep (AWS keys, GitHub PATs, PEM headers, high-entropy tokens assigned to variables named `secret`/`password`/`token`/`api_key`). Dependency CVE surface via `npm audit --json`, `cargo audit`, `govulncheck ./...`, or `pip-audit`. Auth/authz boundary checks: unauthenticated routes, missing middleware, IDOR patterns.
 
@@ -53,6 +53,8 @@ Run only the domains listed in `--scope`. If scope is `all`, run all five.
 **tooling** — Lockfile drift (`npm ci` / `cargo build --locked` / `go mod verify` fail indicators). CI flakiness signals: `sleep` in test setup, port conflicts, order-dependent tests. Missing pre-commit hooks for format/lint. Stale or missing `.tool-versions` / `.nvmrc` / `rust-toolchain.toml`.
 
 **testing** — Coverage gaps on critical paths (auth, payments, data mutations). Mock-heavy tests that wouldn't catch real integration failures. Missing contract tests on external API integrations. Test files that `import` from `../src` rather than the public module boundary.
+
+**dead-code** — Run `bin/swe-workbench-dead-code-scan --root <repo> --funnel auto` (via `Bash`) and translate each emitted candidate row into the 11-field schema. Classification rules: rows with `keep_class: "candidate"` are findings — `test_only: true` ones are test-only symbols, the rest are unused; `reasoning_chain` cites the row's `references` evidence verbatim (file + test/code reason). For rows with `detected_by: "grep"` (or any single-funnel grep provenance), verify at least one reference by reading it before reporting — the text index can be fooled by shadowing or same-name methods; drop the finding if the evidence does not hold up. Rows with `keep_class: "safe-keep"` or `"justified"` are reported as informational "justified — kept" rows (Low severity, `suggested_fix`: none — never suggest removal), never as removal candidates.
 
 ### 3. Time-box self-pacing
 
@@ -74,7 +76,7 @@ Every finding must include all 11 fields. **Omit any finding you cannot fill all
 | ----------------------------- | ------------- | ------------------------------------------------------- |
 | `title`                       | yes           | ≤80 chars, verb phrase                                  |
 | `severity`                    | yes           | Critical / High / Medium / Low                          |
-| `domain`                      | yes           | security / perf / reliability / tooling / testing       |
+| `domain`                      | yes           | security / perf / reliability / tooling / testing / dead-code |
 | `file_line`                   | yes           | `path/to/file.ext:line` — no finding without a citation |
 | `symptom`                     | yes           | What the reviewer will observe in the code              |
 | `root_cause`                  | **MANDATORY** | The underlying code-level cause, not the symptom        |
