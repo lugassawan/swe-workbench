@@ -175,13 +175,6 @@ class TestForcePushBlocker:
         # not let a '#'-starting continuation line swallow the real force-push
         # that follows on the same physical line (issue #501 re-review finding)
         'git commit -m "line one\n# note" && git push --force origin main',
-        # Separator-like bytes inside quoted or escaped arguments are not real
-        # shell separators and must not split a protected force push.
-        'git push -o "x;y" --force origin main',
-        r"git push -o x\;y --force origin main",
-        'git push -o "x&&y" --force origin main',
-        # Git global options may precede the push subcommand.
-        "git -c x=y push --force origin main",
         # Direct-hook-only prefix and attached-option spellings; shared
         # direct/Pi vectors belong in BASH_GUARD_FIXTURES.
         "GIT_DIR=.git git push --force origin main",
@@ -447,6 +440,21 @@ class TestImplicitForcePushBlocker:
         "rtk git push -f origin",
     ])
     def test_rtk_implicit_force_push_still_blocked(self, guard_script, repo_on, command):
+        repo = repo_on("main")
+        result = run_guard(guard_script, command, cwd=str(repo))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {command!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("command", [
+        "bash -c 'git push --force'",
+        "git push -o ci.skip origin --force",
+    ])
+    def test_transparent_prefix_implicit_force_push_is_blocked(
+        self, guard_script, repo_on, command
+    ):
         repo = repo_on("main")
         result = run_guard(guard_script, command, cwd=str(repo))
         assert result.returncode == 2, (

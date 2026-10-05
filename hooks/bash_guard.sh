@@ -167,7 +167,8 @@ while IFS= read -r push_cmd; do
     case "$_prefix" in
       git|*/git) found_git=1; break ;;
       [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
-      sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|*/rtk)
+      sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
+      docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
         prefix_args=1 ;;
       '!'|if|while|until|do|then) ;;
       -*) (( prefix_args )) || prefix_ok=0 ;;

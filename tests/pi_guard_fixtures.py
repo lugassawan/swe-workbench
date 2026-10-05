@@ -80,6 +80,9 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("! git push --force origin main", True),
     ("until git push --force origin main; do sleep 1; done", True),
     ("FOO='a b' git push --force origin main", True),
+    # Container/session wrappers also execute the protected force push.
+    ("docker exec dev git push --force origin main", True),
+    ("su -c 'git push --force origin main'", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
