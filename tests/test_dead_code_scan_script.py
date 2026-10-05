@@ -361,6 +361,8 @@ def test_native_vulture_funnel_marks_detected_by(tmp_path):
     _write(tmp_path, "src/mod.py", "def orphan():\n    return 1\n")
     rc, envelope = _scan(tmp_path, "--funnel", "native")
     assert rc == 0
+    assert envelope["status"] == "ok", f"real vulture exits 3 on findings: {envelope['warnings']}"
+    assert envelope["data"]["funnel"] == "native+grep"
     orphan = _find(envelope["data"]["candidates"], "orphan")
     assert orphan is not None
     assert orphan["detected_by"] == "native:vulture"
@@ -629,7 +631,7 @@ def test_inapplicable_native_tools_are_a_designed_skip(tmp_path, monkeypatch):
     monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
     monkeypatch.setattr(
         module, "NATIVE_TOOLS",
-        {name: ([str(stub)], parser, applicable) for name, (_argv, parser, applicable) in module.NATIVE_TOOLS.items()},
+        {name: tool._replace(argv=[str(stub)]) for name, tool in module.NATIVE_TOOLS.items()},
     )
 
     def ran(envelope):
@@ -651,11 +653,223 @@ def test_repo_with_no_applicable_native_tool_stays_ok(tmp_path, monkeypatch):
     monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
     monkeypatch.setattr(
         module, "NATIVE_TOOLS",
-        {name: ([str(stub)], parser, applicable) for name, (_argv, parser, applicable) in module.NATIVE_TOOLS.items()},
+        {name: tool._replace(argv=[str(stub)]) for name, tool in module.NATIVE_TOOLS.items()},
     )
     envelope = module.scan_root(str(tmp_path), funnel="native")
     assert envelope["status"] == "ok"
     assert envelope["warnings"] == []
+
+
+# ── Review-round-3 regression tests ──────────────────────────────────────────
+
+# Captured from the real tools: vulture 2.16 (exit 3), staticcheck (exit 1),
+# knip 6.39.0 `--reporter json` (exit 1). The parsers must accept exactly this.
+VULTURE_REAL = (
+    "mod.py:4: unused function 'unused_fn' (60% confidence)\n"
+    "mod.py:7: unused class 'Unused' (60% confidence)\n"
+    "pkg/svc.py:3: unused import 'os' (90% confidence)\n"
+    "pkg/svc.py:9: unreachable code after 'return' (100% confidence)\n"
+)
+STATICCHECK_REAL = (
+    "main.go:5:2: field unusedF is unused (U1000)\n"
+    "main.go:8:13: func (*T).unusedM is unused (U1000)\n"
+    "main.go:12:5: var unusedV is unused (U1000)\n"
+    "main.go:14:7: const unusedC is unused (U1000)\n"
+    "main.go:16:6: func unusedFn is unused (U1000)\n"
+)
+KNIP_REAL = json.dumps({"issues": [{
+    "file": "lib.js", "binaries": [], "dependencies": [], "duplicates": [], "files": [],
+    "exports": [{"name": "neverUsed", "line": 2, "col": 17, "pos": 42},
+                {"name": "alsoUnused", "line": 3, "col": 14, "pos": 70}],
+    "types": [{"name": "Shape", "line": 4, "col": 13, "pos": 90}],
+    "unlisted": [], "unresolved": [],
+}]})
+
+
+def test_parse_vulture_real_format():
+    rows = _load_module().parse_vulture(VULTURE_REAL)
+    assert [(r["symbol"], r["kind"], r["path"], r["line"]) for r in rows] == [
+        ("unused_fn", "function", "mod.py", 4),
+        ("Unused", "class", "mod.py", 7),
+        ("os", "import", "pkg/svc.py", 3),
+    ], "unreachable-code lines carry no symbol and must be skipped"
+    assert {r["detected_by"] for r in rows} == {"native:vulture"}
+
+
+def test_parse_staticcheck_real_format():
+    rows = _load_module().parse_staticcheck(STATICCHECK_REAL)
+    assert [(r["symbol"], r["kind"], r["line"]) for r in rows] == [
+        ("unusedF", "attribute", 5),
+        ("unusedM", "method", 8),
+        ("unusedV", "variable", 12),
+        ("unusedC", "variable", 14),
+        ("unusedFn", "function", 16),
+    ]
+    assert {r["path"] for r in rows} == {"main.go"}
+
+
+def test_parse_knip_real_format():
+    rows = _load_module().parse_knip(KNIP_REAL)
+    assert [(r["symbol"], r["kind"], r["path"], r["line"]) for r in rows] == [
+        ("neverUsed", "export", "lib.js", 2),
+        ("alsoUnused", "export", "lib.js", 3),
+        ("Shape", "type", "lib.js", 4),
+    ]
+
+
+@pytest.mark.parametrize("payload", ['{"issues": {"files": {}}}', "[]", '{"issues": [{"exports": []}]}'])
+def test_parse_knip_rejects_unrecognised_shape(payload):
+    with pytest.raises(ValueError):
+        _load_module().parse_knip(payload)
+
+
+@pytest.mark.parametrize(
+    ("tool", "sample", "path", "symbol", "exit_code"),
+    [
+        ("vulture", VULTURE_REAL, "mod.py", "unused_fn", 3),
+        ("staticcheck", STATICCHECK_REAL, "main.go", "unusedFn", 1),
+        ("knip", KNIP_REAL, "lib.js", "neverUsed", 1),
+    ],
+)
+def test_findings_exit_code_is_not_a_native_failure(
+    tmp_path, tmp_path_factory, monkeypatch, tool, sample, path, symbol, exit_code
+):
+    """Each tool signals findings through its own exit code; that must neither
+    warn nor flip the status to partial, and the rows must reach the envelope."""
+    _write(tmp_path, "go.mod", "module x\n")
+    _write(tmp_path, "package.json", "{}\n")
+    _write(tmp_path, "mod.py", "def unused_fn():\n    return 1\n")
+    stub = _stub_lsp(tmp_path_factory.mktemp("native-stub"), f"cat <<'OUT'\n{sample.rstrip()}\nOUT\nexit {exit_code}")
+    module = _load_module()
+    monkeypatch.delenv("GIT_DIR", raising=False)  # in-process scan: drop the conftest guard sentinel
+    monkeypatch.setattr(
+        module, "NATIVE_TOOLS",
+        {tool: module.NATIVE_TOOLS[tool]._replace(argv=[str(stub)], applicable=lambda root, records: True)},
+    )
+    envelope = module.scan_root(str(tmp_path), funnel="native")
+    assert envelope["status"] == "ok", envelope["warnings"]
+    assert envelope["warnings"] == []
+    assert envelope["data"]["funnel"] == "native+grep"
+    assert _find(envelope["data"]["candidates"], symbol)["detected_by"] == f"native:{tool}"
+
+
+def test_vulture_is_told_to_skip_excluded_dirs_and_rows_under_them_are_dropped():
+    module = _load_module()
+    argv = module.NATIVE_TOOLS["vulture"].argv
+    assert "--exclude" in argv
+    assert {".venv", "node_modules"} <= set(argv[argv.index("--exclude") + 1].split(","))
+    native = [{"symbol": "dead", "kind": "function", "path": ".venv/lib/x.py", "line": 1,
+               "detected_by": "native:vulture"}]
+    assert module.merge_native([], native, []) == []
+
+
+def test_native_row_is_matched_to_its_own_def_not_a_same_named_one(tmp_path):
+    """Common names (`process`, `run`) recur across files: the native row for
+    b.go must see b.go's keep marker, and must not fold into a.go's row."""
+    _write(tmp_path, "pkg_a/a.go", "package a\n\nfunc process() {}\n")
+    _write(tmp_path, "pkg_b/b.go", "package b\n\n// dead-code: keep wired up by the plugin loader\nfunc process() {}\n")
+    module = _load_module()
+    records = _parse_records(module, tmp_path)
+    grep_row = {"symbol": "process", "kind": "function", "path": "pkg_a/a.go", "line": 3,
+                "keep_class": "candidate", "keep_reason": "", "note": "", "detected_by": "grep",
+                "test_only": False, "references": []}
+    native = [{"symbol": "process", "kind": "function", "path": "pkg_b/b.go", "line": 4,
+               "detected_by": "native:staticcheck"}]
+    merged = module.merge_native([grep_row], native, records)
+    assert len(merged) == 2, "b.go's finding must not be absorbed by a.go's same-named row"
+    assert grep_row["detected_by"] == "grep"
+    b_row = next(r for r in merged if r["path"] == "pkg_b/b.go")
+    assert b_row["keep_class"] == "justified"
+    assert b_row["keep_reason"] == "wired up by the plugin loader"
+
+
+def test_lsp_plain_text_reply_leaves_row_unverified_and_continues(tmp_path, tmp_path_factory):
+    """An unresolved anchor prints plain text with exit 0; that is not an LSP
+    failure — the rest of the candidates must still be verified."""
+    _write(tmp_path, "src/mod.py", "def first_orphan():\n    return 1\n\ndef second_orphan():\n    return 2\n")
+    payload = (
+        '{"server":"stub","analyzed_files":1,"truncated":false,'
+        '"elapsed_seconds":0,"results":[{"file":"src/real_caller.py","line":3,"character":1}]}'
+    )
+    stub = _stub_lsp(
+        tmp_path_factory.mktemp("lsp-stub"),
+        'case "$*" in\n'
+        '  *first_orphan*) echo "no call-hierarchy item resolved at anchor";;\n'
+        f"  *) cat <<'JSON'\n{payload}\nJSON\n;;\n"
+        "esac",
+    )
+    rc, envelope = _scan(tmp_path, "--funnel", "lsp", env=_env(SWB_DEAD_CODE_LSP_BIN=str(stub)))
+    assert envelope["status"] == "ok", envelope["warnings"]
+    symbols = {c["symbol"] for c in envelope["data"]["candidates"]}
+    assert "first_orphan" in symbols, "unresolved anchor stays an unverified candidate"
+    assert "second_orphan" not in symbols, "the pass must continue past the unresolved anchor"
+
+
+def test_decorator_registered_symbols_are_safe_keep(tmp_path):
+    _write(
+        tmp_path, "src/cli.py",
+        "import click\n\n"
+        "@click.command()\n"
+        "def migrate():\n    pass\n\n"
+        "@register\n"
+        "def hook_a():\n    pass\n\n"
+        "class Box:\n"
+        "    @staticmethod\n"
+        "    def helper():\n        return 1\n\n"
+        "    @property\n"
+        "    def size(self):\n        return 2\n",
+    )
+    _write(
+        tmp_path, "src/lib.rs",
+        "#[test]\nfn adds_two() {}\n\n#[derive(Debug)]\nstruct Plain;\n\nfn bare() {}\n",
+    )
+    rc, envelope = _scan(tmp_path)
+    cands = envelope["data"]["candidates"]
+    for name in ("migrate", "hook_a", "adds_two"):
+        row = _find(cands, name)
+        assert row is not None and row["keep_class"] == "safe-keep", name
+        assert "decorator" in row["keep_reason"]
+    for name in ("helper", "size", "Plain", "bare"):
+        assert _find(cands, name)["keep_class"] == "candidate", f"{name}: non-registering decorators don't protect"
+
+
+def test_keep_marker_above_decorator_is_honored(tmp_path):
+    _write(
+        tmp_path, "src/cli.py",
+        "# dead-code: keep exposed to the plugin API\n"
+        "@functools.lru_cache(maxsize=None)\n"
+        "def cached():\n    return 1\n",
+    )
+    rc, envelope = _scan(tmp_path)
+    row = _find(envelope["data"]["candidates"], "cached")
+    assert row["keep_class"] == "justified"
+    assert row["keep_reason"] == "exposed to the plugin API"
+
+
+def test_extensionless_shebang_script_counts_as_a_reference(tmp_path):
+    """`bin/` executables carry no extension; a function they alone call is used."""
+    _write(tmp_path, "lib/util.py", "def helper():\n    return 1\n")
+    _write(tmp_path, "bin/tool", "#!/usr/bin/env python3\nfrom lib.util import helper\nhelper()\n\ndef orphan_in_script():\n    return 2\n")
+    _write(tmp_path, "LICENSE", "helper — not a script, never scanned\n")
+    rc, envelope = _scan(tmp_path)
+    assert envelope["data"]["scanned_files"] == 2, "only the shebang script joins the scan"
+    cands = envelope["data"]["candidates"]
+    assert _find(cands, "helper") is None
+    assert _find(cands, "orphan_in_script")["path"] == "bin/tool"
+
+
+@pytest.mark.parametrize(
+    ("shebang", "def_line", "symbol"),
+    [
+        ("#!/usr/bin/env node", "function nodeFn() {}", "nodeFn"),
+        ("#!/usr/bin/ruby", "def rubyFn\nend", "rubyFn"),
+        ("#!/usr/bin/python3 -u", "def pyFn():\n    pass", "pyFn"),
+    ],
+)
+def test_shebang_interpreter_selects_def_rules(tmp_path, shebang, def_line, symbol):
+    _write(tmp_path, "bin/run", f"{shebang}\n{def_line}\n")
+    rc, envelope = _scan(tmp_path)
+    assert _find(envelope["data"]["candidates"], symbol) is not None
 
 
 # ── CLI surface ──────────────────────────────────────────────────────────────

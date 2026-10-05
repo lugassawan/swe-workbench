@@ -61,7 +61,7 @@ For each finding derive a **subsystem** from `file_line`:
 5. No path (tool-level or unknown finding) → subsystem **`misc`**.
 
 Within each subsystem, sub-group findings by `domain` (security, perf, reliability,
-tooling, testing) to form sections within the issue body.
+tooling, testing, dead-code) to form sections within the issue body.
 
 Report: "N findings across M subsystems."
 

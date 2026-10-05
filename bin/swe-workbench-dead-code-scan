@@ -50,7 +50,9 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     import tomllib
@@ -88,6 +90,19 @@ IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
 MARKER_RE = re.compile(r"dead-code:\s*keep\s+(.+?)\s*$")
 DUNDER_RE = re.compile(r"^__\w+__$")
 RUST_PUB_RE = re.compile(r"pub\s")  # bare `pub` only — pub(crate)/pub(super) are not external API
+DECORATOR_RE = re.compile(r"^(?:@\s*|#!?\[\s*)([\w:.]+)")
+SHEBANG_RE = re.compile(r"(?:/|\s)(python[\d.]*|nodejs|node|bash|zsh|sh|ruby)\b")
+SHEBANG_EXTS = {
+    "python": ".py", "node": ".js", "nodejs": ".js", "bash": ".sh", "zsh": ".sh", "sh": ".sh", "ruby": ".rb",
+}
+# Decorators/attributes that modify a def without registering it anywhere, so
+# an unused def carrying only these is still dead.
+NON_REGISTERING = {
+    "staticmethod", "classmethod", "property", "setter", "getter", "deleter",
+    "abstractmethod", "override", "final", "overload", "cached_property",
+    "lru_cache", "cache", "wraps", "derive", "inline", "allow", "warn", "deny",
+    "cfg", "doc", "must_use", "repr", "deprecated", "cold",
+}
 DYNAMIC_CALL_RE = re.compile(
     r"\b(getattr|import_module|__import__|require|send|const_get|method_missing)\s*\("
 )
@@ -95,9 +110,8 @@ QUOTED_IDENT_RE = re.compile(r"['\"]([A-Za-z_$][\w$]*)['\"]")
 ALL_RE = re.compile(r"__all__\s*=\s*[\[(](.*?)[\])\)]", re.DOTALL)
 QUOTED_ANY_RE = re.compile(r"['\"]([^'\"]+)['\"]")
 
-# (pattern, kind, name_group) per extension; group(name_group) is the symbol
-# name. Python methods are distinguished from functions by indentation in the
-# parser, not here.
+# (pattern, kind, name_group) per extension; Python methods vs functions are
+# told apart by indentation in the parser, not here.
 DEF_RULES: dict[str, list[tuple[re.Pattern, str, int]]] = {
     ".py": [
         (re.compile(r"^(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)"), "def", 2),
@@ -134,9 +148,9 @@ def _warning(code: str, message: str) -> dict:
 
 
 class DefHit:
-    __slots__ = ("name", "kind", "path", "line", "exported", "marker_reason", "note")
+    __slots__ = ("name", "kind", "path", "line", "exported", "marker_reason", "note", "registered")
 
-    def __init__(self, name, kind, path, line, exported=False, marker_reason=None, note=""):
+    def __init__(self, name, kind, path, line, exported=False, marker_reason=None, note="", registered=False):
         self.name = name
         self.kind = kind
         self.path = path
@@ -144,6 +158,7 @@ class DefHit:
         self.exported = exported
         self.marker_reason = marker_reason
         self.note = note
+        self.registered = registered
 
 
 class FileRecord:
@@ -175,6 +190,53 @@ def _comment_text_above(lines: list[str], idx: int, comment_prefixes: tuple[str,
     return " ".join(reversed(collected))[:MARKER_NOTE_MAX]
 
 
+def _decorator_starts(ext: str) -> tuple[str, ...]:
+    if ext == ".rs":
+        return ("#[", "#![")
+    if ext in {".go", ".rb", ".sh", ".bash"}:
+        return ()
+    return ("@",)
+
+
+def _decorators_above(lines: list[str], idx: int, starts: tuple[str, ...]) -> tuple[int, list[str]]:
+    """Decorator/attribute lines directly above line idx (1-based). Returns the
+    1-based line of the topmost one (idx when none) and their bare names."""
+    top, names = idx, []
+    j = idx - 2
+    while j >= 0 and lines[j].lstrip().startswith(starts):
+        m = DECORATOR_RE.match(lines[j].strip())
+        if m:
+            names.append(m.group(1).replace("::", ".").rsplit(".", 1)[-1])
+        top = j + 1
+        j -= 1
+    return top, names
+
+
+def _shebang_ext(path: Path) -> str:
+    """Source extension implied by an extensionless script's shebang, else ''."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.readline(200)
+    except OSError:
+        return ""
+    if not head.startswith(b"#!"):
+        return ""
+    m = SHEBANG_RE.search(head.decode("utf-8", errors="replace"))
+    if not m:
+        return ""
+    word = m.group(1)
+    return SHEBANG_EXTS.get("python" if word.startswith("python") else word, "")
+
+
+def _source_ext(path: Path) -> str:
+    """Effective source extension: the real one, or a shebang-derived one for
+    extensionless executables (`bin/tool`); '' when not a source file."""
+    ext = path.suffix.lower()
+    if ext in SOURCE_EXTS:
+        return ext
+    return "" if ext else _shebang_ext(path)
+
+
 def _is_exported(ext: str, matched: str, name: str) -> bool:
     """Language export conventions for non-`def` rules: JS/TS `export`, Rust
     bare `pub`, Go's capitalized identifiers."""
@@ -186,8 +248,8 @@ def _is_exported(ext: str, matched: str, name: str) -> bool:
 
 
 def parse_file(root: Path, path: Path) -> FileRecord | None:
-    ext = path.suffix.lower()
-    if ext not in SOURCE_EXTS:
+    ext = _source_ext(path)
+    if not ext:
         return None
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -209,6 +271,7 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
         comment_prefixes = ("#", "//")
     else:  # C-family: line comments plus /* … */ and JSDoc-style ` * …` bodies
         comment_prefixes = ("//", "#", "/*", "*")
+    decorator_starts = _decorator_starts(ext)
     for no, line in enumerate(lines, start=1):
         for pattern, base_kind, name_group in rules:
             m = pattern.match(line)
@@ -222,7 +285,11 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
                 name = m.group(name_group)
                 kind = base_kind
                 exported = _is_exported(ext, m.group(0), name)
-            note = _comment_text_above(lines, no, comment_prefixes)
+            # Notes and markers sit above any decorators/attributes, not just the def line.
+            deco_top, deco_names = _decorators_above(lines, no, decorator_starts)
+            registered = any(n not in NON_REGISTERING for n in deco_names)
+            note = _comment_text_above(lines, deco_top, comment_prefixes)
+            marker_reason = None
             # docstring on the line directly below also carries marker/note
             if no < len(lines):
                 below = lines[no].strip()
@@ -233,13 +300,11 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
                     below_marker = MARKER_RE.search(below)
                     if below_marker:
                         marker_reason = below_marker.group(1).strip()
-                        record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note))
-                        break
-            marker_reason = None
-            marker = MARKER_RE.search(note) or MARKER_RE.search(line)
-            if marker:
-                marker_reason = marker.group(1).strip()
-            record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note))
+            if marker_reason is None:
+                marker = MARKER_RE.search(note) or MARKER_RE.search(line)
+                if marker:
+                    marker_reason = marker.group(1).strip()
+            record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note, registered))
             break
 
     if ext in {".py", ".pyi"}:
@@ -255,7 +320,7 @@ def walk_files(root: Path, max_files: int, warnings: list) -> list[Path]:
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            if path.suffix.lower() in SOURCE_EXTS or name in MANIFEST_NAMES:
+            if name in MANIFEST_NAMES or _source_ext(path):
                 files.append(path)
                 if len(files) >= max_files:
                     capped = True
@@ -411,6 +476,8 @@ def _safe_keep_decision(hit: DefHit, record: FileRecord, dyn_refs: set, entry_sy
         return "safe-keep", "console-script entry point (pyproject.toml/setup.cfg)"
     if DUNDER_RE.match(hit.name):
         return "safe-keep", "dunder protocol method"
+    if hit.registered:
+        return "safe-keep", "registered via decorator/attribute"
     if dyn_refs:
         return "safe-keep", "dynamically referenced (getattr/import/require)"
     return "candidate", ""
@@ -430,9 +497,7 @@ def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
     rows: list[dict] = []
     for record in records:
         if TEST_PATH_RE.search(record.relpath):
-            # Test files are harness code: their defs are invoked by the
-            # runner by name/pattern (zero textual references by design), so
-            # reporting them would flood the envelope with false candidates.
+            # Test files are harness code the runner invokes by name; skip their defs.
             continue
         for hit in record.defs:
             entry_decision = _entry_file_decision(hit, record, entries)
@@ -456,8 +521,6 @@ def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
                 references = [
                     {"path": rel, "reason": "test"} for rel in sorted(normal_refs)
                 ]
-            elif dyn_refs:
-                pass  # dynamic-only references: emitted below as safe-keep
 
             keep_class, keep_reason = _safe_keep_decision(hit, record, dyn_refs, entries.symbols)
             rows.append(_row(hit, keep_class, keep_reason, test_only, references))
@@ -482,65 +545,67 @@ def _row(hit: DefHit, keep_class: str, keep_reason: str, test_only: bool, refere
 # ── Native tool adapters ────────────────────────────────────────────────────
 
 
+VULTURE_RE = re.compile(r"^(.+?):(\d+): unused ([\w ]+?) '([^']+)' \(\d+% confidence\)")
+VULTURE_KINDS = {
+    "function": "function", "method": "method", "class": "class", "variable": "variable",
+    "import": "import", "attribute": "attribute", "property": "attribute",
+}
+STATICCHECK_RE = re.compile(r"^(.+?):(\d+):\d+: (\w+) (\S+) is unused \(U1000\)")
+STATICCHECK_KINDS = {
+    "func": "function", "type": "type", "var": "variable", "const": "variable", "field": "attribute",
+}
+
+
 def parse_vulture(out: str) -> list[dict]:
-    kind_map = {
-        "UnusedFunction": "function", "UnusedMethod": "method", "UnusedClass": "class",
-        "UnusedVariable": "variable", "UnusedImport": "import", "UnusedAttribute": "attribute",
-    }
+    """`mod.py:4: unused function 'unused_fn' (60% confidence)` per finding."""
     rows = []
     for line in out.splitlines():
-        m = re.match(r"^(.+?):(\d+): (Unused\w+) (\w+)", line.strip())
-        if m and m.group(3) in kind_map:
+        m = VULTURE_RE.match(line.strip())
+        if m and m.group(3) in VULTURE_KINDS:
             rows.append(
-                {"symbol": m.group(4), "kind": kind_map[m.group(3)],
+                {"symbol": m.group(4), "kind": VULTURE_KINDS[m.group(3)],
                  "path": m.group(1), "line": int(m.group(2)), "detected_by": "native:vulture"}
             )
     return rows
 
 
 def parse_staticcheck(out: str) -> list[dict]:
+    """`main.go:3:6: func unusedFn is unused (U1000)`; methods print with their
+    receiver (`func (*T).m`), so the bare symbol is the last dotted segment."""
     rows = []
     for line in out.splitlines():
-        m = re.match(r"^(.+?):(\d+):\d+: U1000: .*\b(?:func|method|type)\s+(\w+)", line.strip())
-        if m:
+        m = STATICCHECK_RE.match(line.strip())
+        if m and m.group(3) in STATICCHECK_KINDS:
+            name = m.group(4)
+            kind = "method" if name.startswith("(") else STATICCHECK_KINDS[m.group(3)]
             rows.append(
-                {"symbol": m.group(3), "kind": "function",
+                {"symbol": name.rsplit(".", 1)[-1], "kind": kind,
                  "path": m.group(1), "line": int(m.group(2)), "detected_by": "native:staticcheck"}
             )
     return rows
 
 
 def parse_knip(out: str) -> list[dict]:
-    """knip's JSON reporter nests rule arrays under issues.files.<rule>, each
-    entry carrying file + name (exports) or just file (files rules)."""
+    """knip's JSON reporter emits `{"issues": [{"file", "exports": [{"name",
+    "line"}], "types": [...], ...}]}` — one object per file."""
     payload = json.loads(out)
+    issues = payload.get("issues") if isinstance(payload, dict) else None
+    if not isinstance(issues, list):
+        raise ValueError("knip payload has no issues list")
     rows = []
-    issues = payload.get("issues", {})
-    if not isinstance(issues, dict):
-        raise ValueError("knip payload has no issues object")
-    files_issues = issues.get("files", issues)
-    if not isinstance(files_issues, dict):
-        raise ValueError("knip issues.files is not an object keyed by rule")
-    for rule, entries in files_issues.items():
-        if "unused" not in rule or not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name") or entry.get("identifier")
-            file_field = entry.get("file") or entry.get("path")
-            if not isinstance(file_field, str):
-                raise ValueError(f"knip {rule} entry missing file")
-            if not isinstance(name, str):
-                # file-level rules (unusedFiles &c.) carry no symbol name;
-                # the scanner is symbol-scoped, so skip those entries.
-                continue
-            pos = entry.get("pos") or {}
-            line = pos.get("line", 0) if isinstance(pos, dict) else 0
-            rows.append(
-                {"symbol": name, "kind": "export", "path": file_field.removeprefix("./"),
-                 "line": int(line) if isinstance(line, int) else 0, "detected_by": "native:knip"}
-            )
+    for file_issue in issues:
+        file_field = file_issue.get("file") if isinstance(file_issue, dict) else None
+        if not isinstance(file_field, str):
+            raise ValueError("knip issue entry missing file")
+        for field, kind in (("exports", "export"), ("types", "type")):
+            for entry in file_issue.get(field) or []:
+                if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                    continue
+                line = entry.get("line")
+                rows.append(
+                    {"symbol": entry["name"], "kind": kind, "path": file_field.removeprefix("./"),
+                     "line": line if isinstance(line, int) else 0, "detected_by": "native:knip"}
+                )
     return rows
 
 
@@ -556,13 +621,24 @@ def _has_go_mod(root: Path, records: list[FileRecord]) -> bool:
     return (root / "go.mod").is_file()
 
 
-# argv, output parser, repo-applicability predicate — a tool that is installed
-# but inapplicable (knip without package.json, …) is a designed skip, exactly
-# like a tool that is absent: no run, no warning, status stays "ok".
-NATIVE_TOOLS: dict[str, tuple[list[str], object, object]] = {
-    "vulture": (["vulture", "."], parse_vulture, _has_python_sources),
-    "staticcheck": (["staticcheck", "-checks", "U1000", "./..."], parse_staticcheck, _has_go_mod),
-    "knip": (["knip", "--reporter", "json"], parse_knip, _has_package_json),
+class NativeTool(NamedTuple):
+    argv: list[str]
+    parser: Callable[[str], list[dict]]
+    applicable: Callable[[Path, list[FileRecord]], bool]
+    ok_codes: tuple[int, ...]  # findings are signalled by exit code, not failure
+
+
+# An installed-but-inapplicable tool (knip without package.json, …) is a
+# designed skip like an absent one: no run, no warning, status stays "ok".
+NATIVE_TOOLS: dict[str, NativeTool] = {
+    "vulture": NativeTool(
+        ["vulture", ".", "--exclude", ",".join(sorted(EXCLUDED_DIRS))],
+        parse_vulture, _has_python_sources, (0, 3),
+    ),
+    "staticcheck": NativeTool(
+        ["staticcheck", "-checks", "U1000", "./..."], parse_staticcheck, _has_go_mod, (0, 1)
+    ),
+    "knip": NativeTool(["knip", "--reporter", "json"], parse_knip, _has_package_json, (0, 1)),
 }
 
 
@@ -571,7 +647,7 @@ def run_native(root: Path, records: list[FileRecord], warnings: list) -> tuple[l
     Returns (rows, any_ran_ok)."""
     rows: list[dict] = []
     ran_ok = False
-    for tool, (argv, parser, applicable) in NATIVE_TOOLS.items():
+    for tool, (argv, parser, applicable, ok_codes) in NATIVE_TOOLS.items():
         if shutil.which(argv[0]) is None or not applicable(root, records):
             continue
         try:
@@ -581,7 +657,7 @@ def run_native(root: Path, records: list[FileRecord], warnings: list) -> tuple[l
         except (OSError, subprocess.TimeoutExpired) as exc:
             warnings.append(_warning("native-error", f"{tool} failed: {exc}"))
             continue
-        if proc.returncode not in (0, 1):
+        if proc.returncode not in ok_codes:
             warnings.append(
                 _warning("native-error", f"{tool} exited {proc.returncode}: {proc.stderr.strip()[:200]}")
             )
@@ -601,38 +677,36 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
     native-only finding becomes a new row re-classified through the same
     entry-point and safe-keep chain classify() uses, so exports/CLI
     entries/dynamic refs stay safe-kept regardless of which funnel spotted
-    them. Test-path findings are dropped, as classify() does — test defs are
-    harness code the runner invokes by name.
+    them. Test-path and excluded-dir findings are dropped, as the grep walk
+    drops them. Defs are matched by (path, symbol), never by name alone, so a
+    same-named def in another file can't lend its marker or export status.
     """
     entries = entries or EntryPoints()
     by_key = {(r["path"], r["line"], r["symbol"]): r for r in rows}
-    by_symbol: dict[str, dict] = {}
+    by_path_symbol: dict[tuple[str, str], dict] = {}
     for row in rows:
-        by_symbol.setdefault(row["symbol"], row)
-    record_defs: dict[str, tuple[DefHit, FileRecord]] = {}
+        by_path_symbol.setdefault((row["path"], row["symbol"]), row)
+    record_defs: dict[tuple[str, str], tuple[DefHit, FileRecord]] = {}
     for record in records:
         if TEST_PATH_RE.search(record.relpath):
             continue
         for hit in record.defs:
-            record_defs.setdefault(hit.name, (hit, record))
+            record_defs.setdefault((record.relpath, hit.name), (hit, record))
     dynamic_index: dict[str, set[str]] = {}
     for record in records:
         for name in record.dynamic:
             dynamic_index.setdefault(name, set()).add(record.relpath)
 
     for native in native_rows:
-        if TEST_PATH_RE.search(native["path"]):
+        path, symbol = native["path"].removeprefix("./"), native["symbol"]
+        if TEST_PATH_RE.search(path) or EXCLUDED_DIRS.intersection(Path(path).parts):
             continue
-        key = (native["path"], native["line"], native["symbol"])
-        existing = by_key.get(key)
+        key = (path, native["line"], symbol)
+        existing = by_key.get(key) or by_path_symbol.get((path, symbol))
         if existing is not None:
             existing["detected_by"] = native["detected_by"]
             continue
-        sibling = by_symbol.get(native["symbol"])
-        if sibling is not None:
-            sibling["detected_by"] = native["detected_by"]
-            continue
-        hit_record = record_defs.get(native["symbol"])
+        hit_record = record_defs.get((path, symbol))
         if hit_record is not None:
             hit, record = hit_record
             dyn_refs = dynamic_index.get(hit.name, set()) - {record.relpath}
@@ -640,22 +714,17 @@ def merge_native(rows: list[dict], native_rows: list[dict], records: list[FileRe
                 _entry_file_decision(hit, record, entries)
                 or _safe_keep_decision(hit, record, dyn_refs, entries.symbols)
             )
-            row = {
-                "symbol": native["symbol"], "kind": native["kind"], "path": native["path"],
-                "line": native["line"], "keep_class": keep_class, "keep_reason": keep_reason,
-                "note": hit.note, "detected_by": native["detected_by"],
-                "test_only": False, "references": [],
-            }
+            note = hit.note
         else:
-            row = {
-                "symbol": native["symbol"], "kind": native["kind"], "path": native["path"],
-                "line": native["line"], "keep_class": "candidate", "keep_reason": "",
-                "note": "", "detected_by": native["detected_by"], "test_only": False,
-                "references": [],
-            }
+            keep_class, keep_reason, note = "candidate", "", ""
+        row = {
+            "symbol": symbol, "kind": native["kind"], "path": path, "line": native["line"],
+            "keep_class": keep_class, "keep_reason": keep_reason, "note": note,
+            "detected_by": native["detected_by"], "test_only": False, "references": [],
+        }
         rows.append(row)
         by_key[key] = row
-        by_symbol.setdefault(native["symbol"], row)
+        by_path_symbol.setdefault((path, symbol), row)
     return rows
 
 
@@ -703,6 +772,8 @@ def lsp_verify(root: Path, rows: list[dict], warnings: list) -> tuple[list[dict]
                 _warning("lsp-error", f"lsp callers exited {proc.returncode}: {proc.stderr.strip()[:200]}")
             )
             return rows, False
+        if not proc.stdout.lstrip().startswith("{"):
+            continue  # an unresolved anchor prints plain text (exit 0): leave this row unverified
         try:
             payload = json.loads(proc.stdout)
             callers = payload.get("results", [])
@@ -731,7 +802,7 @@ def scan_root(root: str, funnel: str = "auto", max_files: int = DEFAULT_MAX_FILE
     rootp = Path(root).resolve()
     warnings: list[dict] = []
     files = walk_files(rootp, max_files, warnings)
-    records = [r for r in (parse_file(rootp, p) for p in files if p.suffix.lower() in SOURCE_EXTS) if r]
+    records = [r for r in (parse_file(rootp, p) for p in files) if r]
     entries = collect_entry_points(rootp, files)
     rows = classify(records, entries)
 

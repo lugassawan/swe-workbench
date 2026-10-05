@@ -46,7 +46,7 @@ Build a plain-prose prompt from the parsed flags:
 > "Time-box: `<time-box>`. Scope: `<scope>`. Depth: `<depth>`. Top-N: `<top-n>`.
 > Run a cold-start multi-domain audit of this codebase. Return findings in the full 11-field schema."
 
-Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box. When `dead-code` is in scope, the auditor runs `bin/swe-workbench-dead-code-scan` (via `Bash`) and translates each emitted candidate row into the 11-field finding schema — reference evidence from the row's `references` populates `reasoning_chain`; the auditor never reports a dead-code finding without that evidence.
+Pass this to the `swe-workbench:auditor` subagent. The agent is read-only and self-paces to the time-box. When `dead-code` is in scope, the auditor runs `bin/swe-workbench-dead-code-scan` (via `Bash`) and translates each emitted candidate row into the 11-field finding schema — a test-only row's `references` populate `reasoning_chain`; an unused row has none by construction, so its evidence is the envelope's own claim ("no references across N scanned files, funnel X"). The auditor never reports a dead-code finding without one or the other.
 
 Symbol-navigation hint: `Grep`/`Glob` locates an anchor, then `bin/swe-workbench-lsp` (via `Bash`; the subagent's `LSP` grant, if any, is main-loop-only and unreachable here) expands from it — one attempt only; on no servers or error (exit 3), state `LSP unavailable — falling back to Grep` once and use Grep for the rest of the run.
 
