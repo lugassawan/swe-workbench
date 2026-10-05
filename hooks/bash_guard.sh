@@ -135,11 +135,33 @@ if echo "$norm" | grep -Eq \
   exit 2
 fi
 
+# Shared quote- and escape-aware shell segmenter. `tab_mode` preserves literal
+# tabs for push matching and folds them for the pi detector.
+_segment_awk='
+  BEGIN { in_sq = 0; in_dq = 0 }
+  {
+    line = $0; n = length(line); out = ""
+    for (i = 1; i <= n; i++) {
+      c = substr(line, i, 1)
+      if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
+      if (c == "\\") { continue }
+      if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
+      if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
+      if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
+      if (c == "\t") { out = out (tab_mode == "space" ? " " : c); continue }
+      if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
+      out = out c
+    }
+    if (in_sq || in_dq) printf "%s ", out; else print out
+  }'
+
 # Classify each force-push segment independently so later `-f` values do
 # not affect earlier non-force pushes; inspect every shell-command segment.
 while IFS= read -r push_cmd; do
   push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
-  push_pattern='[[:space:]]*(rtk[[:space:]]+)?([^[:space:]]*/)?git([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+push([[:space:]]|$)'
+  assignment_prefix='([[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+)*'
+  wrapper_prefix='((sudo|env|time|nice|nohup|command|exec|xargs|([^[:space:]]*/)?rtk)[[:space:]]+|ssh[[:space:]]+[^[:space:]]+[[:space:]]+)?'
+  push_pattern="[[:space:]]*${assignment_prefix}${wrapper_prefix}([^[:space:]]*/)?git([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+push([[:space:]]|$)"
   if ! echo "$push_norm" | grep -Eq "^$push_pattern"; then
     # Keep the established fail-safe treatment of literal tab-prefixed git.
     if [[ "$push_cmd" != *$'\t'* ]] || ! echo "$push_norm" | grep -Eq "(^|[[:space:]])$push_pattern"; then
@@ -172,6 +194,12 @@ while IFS= read -r push_cmd; do
         continue
       fi
       if (( consume_next )); then             # swallow an unrecognized flag's separate-word value
+        case "$_t" in
+          --force|-f) has_force=1 ;;
+          --all) pushes_all_refs=1 ;;
+          --mirror) has_force=1; pushes_all_refs=1 ;;
+          -*) [[ "$_t" != --* && "$_t" == *f* ]] && has_force=1 ;;
+        esac
         consume_next=0
         continue
       fi
@@ -185,7 +213,15 @@ while IFS= read -r push_cmd; do
         --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
         --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
         -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
-        -*) consume_next=1 ;;                 # unrecognized flag — assume it takes a value
+        --*=*) ;;                             # attached long-option value
+        -*)
+          if [[ "$_t" != --* && "$_t" == *f* ]]; then
+            has_force=1                       # fail-safe short cluster containing -f
+          elif [[ "$_t" == -[[:alnum:]][[:alnum:]]* ]]; then
+            :                                 # attached short-option value
+          else
+            consume_next=1                   # unknown flag may take a separate-word value
+          fi ;;
         *:*) has_refspec=1 ;;                 # src:dst refspec
         *) if (( seen_positional )); then has_refspec=1; else seen_positional=1; fi ;;  # 1st bareword = remote
       esac
@@ -215,23 +251,7 @@ while IFS= read -r push_cmd; do
         ;;
     esac
   fi
-done < <(printf '%s' "$_bj" | awk '
-  BEGIN { in_sq = 0; in_dq = 0 }
-  {
-    line = $0; n = length(line); out = ""
-    for (i = 1; i <= n; i++) {
-      c = substr(line, i, 1)
-      if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
-      if (c == "\\") { continue }
-      if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
-      if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
-      if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
-      if (c == "\t") { out = out c; continue }
-      if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
-      out = out c
-    }
-    if (in_sq || in_dq) printf "%s ", out; else print out
-  }')
+done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk")
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -266,23 +286,7 @@ fi
 # filesystem; the -p/--print flag check stays case-sensitive.
 case "$norm" in
   [Pp][Ii]\ *|*\ [Pp][Ii]\ *|*/[Pp][Ii]\ *)
-    pi_seg=$(printf '%s' "$_bj" | awk '
-      BEGIN { in_sq = 0; in_dq = 0 }
-      {
-        line = $0; n = length(line); out = ""
-        for (i = 1; i <= n; i++) {
-          c = substr(line, i, 1)
-          if (c == "\\" && !in_sq) { i++; if (i <= n) out = out substr(line, i, 1); continue }
-          if (c == "\\") { continue }
-          if (c == "\x27" && !in_dq) { in_sq = !in_sq; continue }
-          if (c == "\"" && !in_sq)  { in_dq = !in_dq; continue }
-          if (c == "[" || c == "]" || c == "{" || c == "}") { continue }
-          if (c == "\t") { out = out " "; continue }
-          if (!in_sq && !in_dq && c ~ /[;|&`()]/) { out = out "\n"; continue }
-          out = out c
-        }
-        if (in_sq || in_dq) printf "%s ", out; else print out
-      }')
+    pi_seg=$(printf '%s' "$_bj" | awk -v tab_mode=space "$_segment_awk")
     if printf '%s\n' "$pi_seg" | grep -iE '(^|[[:space:]])([^[:space:]]*/)?pi[[:space:]]' \
        | grep -Eq '(^|[[:space:]])(-p|--print)([[:space:]]|=|$)'; then
       echo 'BLOCKED: nested non-interactive pi session (subagent recursion guard)' >&2

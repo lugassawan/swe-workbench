@@ -56,6 +56,16 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git -c x=y push --force origin main", True),
     ("git push --force --all origin", True),
     ("git push --mirror origin", True),
+    # Prefix and option spellings must not hide protected force pushes.
+    ("FOO=1 git push --force origin main", True),
+    ("sudo git push --force origin main", True),
+    ("/usr/local/bin/rtk git push --force origin main", True),
+    ('ssh host "git push --force origin main"', True),
+    ("xargs git push --force origin main", True),
+    ("git push -oX --force origin main", True),
+    ("git push --repo=up --force origin main", True),
+    ("git push --dry-run -fq origin main", True),
+    ("git push -forigin main", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),

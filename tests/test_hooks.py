@@ -182,6 +182,22 @@ class TestForcePushBlocker:
         'git push -o "x&&y" --force origin main',
         # Git global options may precede the push subcommand.
         "git -c x=y push --force origin main",
+        # Leading assignments and known wrappers must not hide git push.
+        "FOO=1 git push --force origin main",
+        "GIT_DIR=.git git push --force origin main",
+        "sudo git push --force origin main",
+        "time git push --force origin main",
+        "command git push --force origin main",
+        "/usr/local/bin/rtk git push --force origin main",
+        'ssh host "git push --force origin main"',
+        "xargs git push --force origin main",
+        # Attached option values and short clusters must not hide force.
+        "git push -oX --force origin main",
+        "git push -oci.skip --force origin main",
+        "git push -uorigin --force origin main",
+        "git push --repo=up --force origin main",
+        "git push --dry-run -fq origin main",
+        "git push -forigin main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)
@@ -240,8 +256,8 @@ class TestForcePushBlocker:
 # ──────────────────────────────────────────────
 
 class TestImplicitForcePushBlocker:
-    """git push --force/-f with NO explicit refspec, relying on
-    push.default/upstream, from a protected branch (issue #501 Block 2).
+    """Force push with no explicit refspec, relying on push.default or an
+    upstream, from a protected branch.
     """
 
     @pytest.mark.parametrize("branch", ["main", "master", "release/2025-01"])
@@ -279,9 +295,9 @@ class TestImplicitForcePushBlocker:
         assert "BLOCKED" in result.stderr
 
     def test_explicit_nonprotected_refspec_still_allowed(self, guard_script, repo_on):
-        """An explicit non-protected refspec must not regress — Block 1
-        already owns explicit protected refspecs, Block 2 only fires when
-        no refspec is present at all.
+        """An explicit non-protected refspec must not regress — the
+        protected-refspec scan owns explicit protected destinations, while
+        the implicit-branch heuristic applies only without a refspec.
         """
         repo = repo_on("main")
         result = run_guard(guard_script, "git push --force origin feat", cwd=str(repo))
@@ -316,8 +332,8 @@ class TestImplicitForcePushBlocker:
 
     def test_chained_nonforce_push_does_not_hide_forced_push(self, guard_script, repo_on):
         """An explicit, innocuous push chained BEFORE an implicit force-push
-        must not cause Block 2 to inspect the wrong invocation and miss the
-        dangerous one.
+        must not cause the implicit-branch heuristic to inspect the wrong
+        invocation and miss the dangerous one.
         """
         repo = repo_on("main")
         result = run_guard(
