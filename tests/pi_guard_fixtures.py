@@ -36,6 +36,8 @@ class GuardCase:
     expected: Verdict
     scene: bool = False
     expected_reason: str | None = None
+    # Which staged repo is the process/payload cwd for scene rows.
+    process_cwd_role: str = "protected"
 
 
 # Allow/block rows predating tri-state verdicts; guard_cases() lifts them into GuardCase
@@ -164,7 +166,7 @@ _LEGACY_ROWS: list[tuple[str, bool]] = [
 
 def guard_cases() -> list[GuardCase]:
     """Every differential fixture row, as frozen GuardCase records."""
-    return [GuardCase(command=cmd, expected="block" if blocked else "allow") for cmd, blocked in _LEGACY_ROWS]
+    return [GuardCase(command=cmd, expected="block" if blocked else "allow") for cmd, blocked in _LEGACY_ROWS] + _SCENE_ROWS
 
 
 def stage_guard_scene(base: Path) -> tuple[Path, Path]:
@@ -192,4 +194,95 @@ def stage_guard_scene(base: Path) -> tuple[Path, Path]:
         _git("commit", "-m", "init", cwd=repo)
         return repo
 
-    return _repo("protected", "main"), _repo("feature", "feat/work")
+    protected, feature = _repo("protected", "main"), _repo("feature", "feat/work")
+    # Attribution fixtures: a relative -C target inside the feature repo, and a symlink
+    # so git — not path-prefix matching — decides which repo a target resolves to.
+    (feature / "sub").mkdir()
+    (feature / "protlink").symlink_to(protected)
+    return protected, feature
+
+
+# CWD-attribution rows. Placeholders ({protected}/{feature}) format against
+# stage_guard_scene() at run time; expected_reason carries the same placeholders so both
+# suites assert full message parity, not just the verdict.
+_SCENE_ROWS: list[GuardCase] = [
+    GuardCase(
+        "cd {feature} && git push -f",
+        "warn",
+        scene=True,
+        expected_reason=(
+            "bash_guard: target repo resolved to {feature}; "
+            "protected-branch check ran there, not {protected}"
+        ),
+    ),
+    GuardCase("cd {protected} && git push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase(
+        "git -C {feature} push -f",
+        "warn",
+        scene=True,
+        expected_reason=(
+            "bash_guard: target repo resolved to {feature}; "
+            "protected-branch check ran there, not {protected}"
+        ),
+    ),
+    GuardCase("git -C {protected} push -f", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("cd $DEPLOY_DIR && git push -f", "block", scene=True),
+    GuardCase(
+        "cd $DEPLOY_DIR && git push -f",
+        "warn",
+        scene=True,
+        process_cwd_role="feature",
+        expected_reason=(
+            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "protected-branch check ran against {feature} only"
+        ),
+    ),
+    GuardCase(
+        "cd {feature} && cd {protected} && git push -f", "block", scene=True, process_cwd_role="feature"
+    ),
+    GuardCase("cd {feature}; git push -f", "block", scene=True),
+    GuardCase("git -C protlink push -f", "block", scene=True, process_cwd_role="feature"),
+    # A .. component is unresolvable → uncertain → legacy check decides (feature cwd →
+    # allow) with the attribution-uncertain warn riding along.
+    GuardCase(
+        "git -C sub/../sub push -f",
+        "warn",
+        scene=True,
+        process_cwd_role="feature",
+        expected_reason=(
+            "bash_guard: could not resolve effective directory (unresolvable cd); "
+            "protected-branch check ran against {feature} only"
+        ),
+    ),
+    # A resolvable subdir target IS a target ≠ base (same repo, different dir) — the
+    # re-attribution warn fires per the behavior matrix; same-repo noise suppression is
+    # deliberately not implemented.
+    GuardCase(
+        "git -C sub push -f",
+        "warn",
+        scene=True,
+        process_cwd_role="feature",
+        expected_reason=(
+            "bash_guard: target repo resolved to {feature}/sub; "
+            "protected-branch check ran there, not {feature}"
+        ),
+    ),
+    GuardCase(
+        "cd {feature} && git reset --hard",
+        "warn",
+        scene=True,
+        expected_reason=(
+            "bash_guard: target repo resolved to {feature}; "
+            "protected-branch check ran there, not {protected}"
+        ),
+    ),
+    GuardCase("cd {protected} && git reset --hard", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("git -C {protected} reset --hard", "block", scene=True, process_cwd_role="feature"),
+    GuardCase("cd {feature} && git push -f origin main", "block", scene=True),
+    GuardCase(
+        "cd {feature} && git push -f; cd {protected} && git push -f",
+        "block",
+        scene=True,
+        process_cwd_role="feature",
+    ),
+]

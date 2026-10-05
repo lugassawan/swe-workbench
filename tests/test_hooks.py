@@ -485,141 +485,6 @@ class TestImplicitForcePushBlocker:
         assert "BLOCKED" in result.stderr
 
 
-# ──────────────────────────────────────────────
-# CWD attribution — repo checks target the directory a cd / git -C resolves
-# to, not the hook process cwd
-# ──────────────────────────────────────────────
-
-class TestCwdAttribution:
-    """Authoritative attribution for the implicit-refspec force-push and
-    git reset --hard checks: a cd or git -C re-targets the repo the check
-    consults. Confident-resolution rows here; warn surfacing and the shared
-    differential promotion land with the tri-state verdict contract.
-    """
-
-    @pytest.fixture()
-    def scene(self, tmp_path):
-        return stage_guard_scene(tmp_path)
-
-    def _run(self, guard_script, command, *, process_cwd):
-        return run_guard(guard_script, command, cwd=str(process_cwd), payload_cwd=str(process_cwd))
-
-    def test_cd_to_feature_repo_unblocks_implicit_force_push(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"cd {feature} && git push -f", process_cwd=protected)
-        assert result.returncode == 0, (
-            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_cd_to_protected_repo_blocks_implicit_force_push_from_feature_cwd(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"cd {protected} && git push -f", process_cwd=feature)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_git_dash_c_feature_allows_from_protected_cwd(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"git -C {feature} push -f", process_cwd=protected)
-        assert result.returncode == 0, (
-            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_git_dash_c_protected_blocks_from_feature_cwd(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"git -C {protected} push -f", process_cwd=feature)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_unresolvable_cd_variable_falls_back_to_process_cwd_check(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, "cd $DEPLOY_DIR && git push -f", process_cwd=protected)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Uncertain attribution must keep the legacy check (protected cwd → block); "
-            f"got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_chained_cds_fold_in_order_later_target_wins(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(
-            guard_script, f"cd {feature} && cd {protected} && git push -f", process_cwd=feature
-        )
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED (later cd wins the fold), got exit {result.returncode}\n"
-            f"stderr: {result.stderr!r}"
-        )
-
-    def test_cd_then_semicolon_then_push_is_uncertain_not_resolved(self, guard_script, scene):
-        """`cd feature; git push -f` from protected: the push is NOT gated on the
-        cd succeeding (a failed cd leaves cwd unchanged and the push still runs),
-        so attribution is uncertain and the legacy process-cwd check decides."""
-        protected, feature = scene
-        result = self._run(guard_script, f"cd {feature}; git push -f", process_cwd=protected)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED (uncertain → legacy), got exit {result.returncode}\n"
-            f"stderr: {result.stderr!r}"
-        )
-
-    def test_symlinked_target_attributed_by_git_not_path_prefix(self, guard_script, scene):
-        protected, feature = scene
-        (feature / "protlink").symlink_to(protected)
-        result = self._run(guard_script, "git -C protlink push -f", process_cwd=feature)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED (git resolves the symlink to the protected repo), "
-            f"got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_dotdot_relative_git_dash_c_is_uncertain(self, guard_script, scene):
-        (scene[1] / "sub").mkdir()
-        result = self._run(guard_script, "git -C sub/../sub push -f", process_cwd=scene[1])
-        assert result.returncode == 0, (
-            f"Expected ALLOWED (uncertain → legacy → feature cwd), got exit "
-            f"{result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_plain_relative_git_dash_c_resolves(self, guard_script, scene):
-        """A plain relative -C target resolves against the current state; the
-        symlink row is the one that distinguishes resolution from the legacy
-        fallback, this one pins that resolution never over-blocks."""
-        (scene[1] / "sub").mkdir()
-        result = self._run(guard_script, "git -C sub push -f", process_cwd=scene[1])
-        assert result.returncode == 0, (
-            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_reset_hard_cd_to_feature_unblocks_from_protected(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"cd {feature} && git reset --hard", process_cwd=protected)
-        assert result.returncode == 0, (
-            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_reset_hard_cd_to_protected_blocks_from_feature(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"cd {protected} && git reset --hard", process_cwd=feature)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_reset_hard_git_dash_c_protected_blocks_from_feature(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(guard_script, f"git -C {protected} reset --hard", process_cwd=feature)
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-    def test_explicit_refspec_push_ignores_attribution(self, guard_script, scene):
-        protected, feature = scene
-        result = self._run(
-            guard_script, f"cd {feature} && git push -f origin main", process_cwd=protected
-        )
-        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"Expected BLOCKED (explicit protected refspec needs no attribution), "
-            f"got exit {result.returncode}\nstderr: {result.stderr!r}"
-        )
-
-
 class TestWarnVerdictWireContract:
     """The warn verdict rides exit-0 stdout as one line of Claude-Code-native
     JSON: permissionDecisionReason carries the semantic message Pi parses,
@@ -1093,17 +958,36 @@ class TestDifferentialFixtures:
                 assert case.expected_reason, f"warn row needs expected_reason: {case.command!r}"
             if "{protected}" in case.command or "{feature}" in case.command:
                 assert case.scene, f"placeholder row needs scene=True: {case.command!r}"
+            if case.scene:
+                assert case.process_cwd_role in ("protected", "feature"), case.command
 
     @pytest.mark.parametrize("case", guard_cases())
-    def test_direct_invocation_matches_expected_verdict(self, guard_script, case):
-        cmd = case.command
-        expect_blocked = case.expected == "block"
-        result = run_guard(guard_script, cmd)
-        if expect_blocked:
+    def test_direct_invocation_matches_expected_verdict(self, guard_script, case, tmp_path):
+        if case.scene:
+            protected, feature = stage_guard_scene(tmp_path)
+            paths = {"protected": str(protected), "feature": str(feature)}
+            cmd = case.command.format(**paths)
+            process_cwd = protected if case.process_cwd_role == "protected" else feature
+            expected_reason = (
+                case.expected_reason.format(**paths) if case.expected_reason else None
+            )
+            result = run_guard(guard_script, cmd, cwd=str(process_cwd), payload_cwd=str(process_cwd))
+        else:
+            cmd = case.command
+            expected_reason = case.expected_reason
+            result = run_guard(guard_script, cmd)
+        if case.expected == "block":
             assert result.returncode == 2 and "BLOCKED" in result.stderr, (
                 f"expected BLOCKED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
             )
+        elif case.expected == "warn":
+            assert result.returncode == 0, (
+                f"expected warn-allow for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
+            )
+            payload = json.loads(result.stdout.strip())
+            reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
+            assert reason == expected_reason, f"for {cmd!r}: {reason!r} != {expected_reason!r}"
         else:
-            assert result.returncode == 0 and result.stderr == "", (
+            assert result.returncode == 0 and result.stderr == "" and result.stdout == "", (
                 f"expected ALLOWED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
             )

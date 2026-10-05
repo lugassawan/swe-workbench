@@ -19,8 +19,8 @@ export interface GuardRunOptions {
   readonly interpreter: string;
   readonly scriptPath: string;
   readonly payload: Record<string, unknown>;
-  /** bash_guard.sh runs `git rev-parse --abbrev-ref HEAD` against this, not any `.cwd` in the
-   *  JSON payload. */
+  /** bash_guard.sh attributes its repo-sensitive checks via the payload's `.cwd` when
+   *  present (the harness session cwd); this spawn cwd is the fallback base dir. */
   readonly cwd: string;
   readonly pluginRoot: string;
   readonly signal: AbortSignal | undefined;

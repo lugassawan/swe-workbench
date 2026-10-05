@@ -1152,18 +1152,20 @@ const handlers = {};
 const stubPi = { on(event, handler) { handlers[event] = handler; }, sendMessage() {} };
 registerGuards(stubPi, config.root, {});
 
-const stubCtx = {
-  hasUI: true,
-  cwd: config.cwd,
-  signal: undefined,
-  ui: { notify() {} },
-  sessionManager: { getSessionId: () => "sess-differential" },
-};
-
 const results = [];
-for (const command of config.commands) {
-  const result = await handlers["tool_call"]({ type: "tool_call", toolCallId: "t", toolName: "bash", input: { command } }, stubCtx);
-  results.push(result ? { blocked: true, reason: result.reason } : { blocked: false });
+for (const c of config.cases) {
+  const notified = [];
+  const ctx = {
+    hasUI: true,
+    cwd: c.cwd,
+    signal: undefined,
+    ui: { notify: (msg, level) => notified.push({ msg, level }) },
+    sessionManager: { getSessionId: () => "sess-differential" },
+  };
+  const result = await handlers["tool_call"](
+    { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: c.command } }, ctx,
+  );
+  results.push({ blocked: result ? { reason: result.reason } : null, notified });
 }
 
 console.log(JSON.stringify(results));
@@ -1172,25 +1174,170 @@ console.log(JSON.stringify(results));
 
 @pytest.fixture(scope="module")
 def bash_fixtures_via_adapter(tmp_path_factory):
-    from pi_guard_fixtures import guard_cases
+    from pi_guard_fixtures import guard_cases, stage_guard_scene
 
-    config = {"root": str(ROOT), "cwd": str(ROOT), "commands": [case.command for case in guard_cases()]}
-    return _run_node(
+    protected, feature = stage_guard_scene(tmp_path_factory.mktemp("guard-scene"))
+    paths = {"protected": str(protected), "feature": str(feature)}
+    cases = [
+        {
+            "command": case.command.format(**paths) if case.scene else case.command,
+            "cwd": str(protected if case.process_cwd_role == "protected" else feature) if case.scene else str(ROOT),
+        }
+        for case in guard_cases()
+    ]
+    config = {"root": str(ROOT), "cases": cases}
+    results = _run_node(
         _BASH_FIXTURES_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-bash-fixtures-driver"
     )
+    return {"paths": paths, "results": results}
 
 
 @requires_node
 def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtures_via_adapter):
+    """Verdict AND message parity: the adapter must reproduce the direct-invocation
+    outcome for every shared fixture — block reasons via the block result, warn reasons
+    via the notify the adapter issues (the guard's own string, unmodified)."""
     from pi_guard_fixtures import guard_cases
 
     cases = guard_cases()
-    assert len(bash_fixtures_via_adapter) == len(cases)
+    results = bash_fixtures_via_adapter["results"]
+    paths = bash_fixtures_via_adapter["paths"]
+    assert len(results) == len(cases)
     mismatches = []
-    for case, result in zip(cases, bash_fixtures_via_adapter):
-        if result["blocked"] != (case.expected == "block"):
+    for case, result in zip(cases, results):
+        expected_blocked = case.expected == "block"
+        got_blocked = result["blocked"] is not None
+        if got_blocked != expected_blocked:
             mismatches.append(f"{case.command!r}: expected {case.expected}, adapter returned {result}")
-    assert not mismatches, "adapter verdict diverged from direct-invocation verdict:\n" + "\n".join(mismatches)
+            continue
+        if case.expected == "warn":
+            notified = result["notified"]
+            expected_reason = case.expected_reason.format(**paths)
+            if notified != [{"msg": expected_reason, "level": "warning"}]:
+                mismatches.append(
+                    f"{case.command!r}: expected warning notify {expected_reason!r}, got {notified}"
+                )
+        if case.expected in ("allow", "block") and result["notified"]:
+            mismatches.append(f"{case.command!r}: unexpected notify for {case.expected} row: {result['notified']}")
+    assert not mismatches, "adapter diverged from direct invocation:\n" + "\n".join(mismatches)
+
+
+# ---------------------------------------------------------------------------
+# Warn-verdict surfacing: bash_guard.sh's exit-0 stdout JSON becomes a visible,
+# non-blocking warning — ctx.ui.notify when a UI exists (TUI and RPC),
+# pi.sendMessage with display:true otherwise (non-interactive). Never blocks,
+# never throws on its own output shape.
+# ---------------------------------------------------------------------------
+
+_WARN_SURFACING_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+
+const handlers = {};
+const sentMessages = [];
+const notifyCalls = [];
+const stubPi = {
+  on(event, handler) { handlers[event] = handler; },
+  sendMessage(message, options) { sentMessages.push({ message, options }); },
+};
+registerGuards(stubPi, config.root, {
+  runGuard: async () => ({ code: config.code, stdout: config.stdout, stderr: config.stderr }),
+});
+const ctx = {
+  hasUI: config.hasUI,
+  cwd: config.cwd,
+  signal: undefined,
+  ui: { notify: (msg, level) => notifyCalls.push({ msg, level }) },
+  sessionManager: { getSessionId: () => "sess-warn-surfacing" },
+};
+const result = await handlers["tool_call"](
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "git push -f" } }, ctx,
+);
+console.log(JSON.stringify({ result: result ?? null, notifyCalls, sentMessages }));
+"""
+
+
+def _warn_stdout(reason: str) -> str:
+    return json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        },
+        "systemMessage": reason,
+    })
+
+
+def _run_warn_driver(tmp_path_factory, config):
+    config = {"root": str(ROOT), "cwd": str(ROOT), "code": 0, "stdout": "", "stderr": "", **config}
+    return _run_node(
+        _WARN_SURFACING_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-warn-surfacing-driver"
+    )
+
+
+@requires_node
+def test_warn_stdout_notifies_when_ui_available(tmp_path_factory):
+    out = _run_warn_driver(tmp_path_factory, {"hasUI": True, "stdout": _warn_stdout("R")})
+    assert out["result"] is None, "warn must never block"
+    assert out["notifyCalls"] == [{"msg": "R", "level": "warning"}]
+    assert out["sentMessages"] == []
+
+
+@requires_node
+def test_warn_stdout_sends_display_message_without_ui(tmp_path_factory):
+    out = _run_warn_driver(tmp_path_factory, {"hasUI": False, "stdout": _warn_stdout("R")})
+    assert out["result"] is None, "warn must never block"
+    assert out["notifyCalls"] == [], "no UI — notify must not be called"
+    assert len(out["sentMessages"]) == 1
+    sent = out["sentMessages"][0]
+    assert sent["message"]["customType"] == "swe-workbench:guard-warning"
+    assert sent["message"]["content"] == "R"
+    assert sent["message"]["display"] is True
+    assert "options" not in sent, "warn must not trigger or steer a turn"
+
+
+@requires_node
+def test_malformed_warn_stdout_is_silent_allow(tmp_path_factory):
+    out = _run_warn_driver(tmp_path_factory, {"hasUI": True, "stdout": "not json {{"})
+    assert out["result"] is None
+    assert out["notifyCalls"] == []
+    assert out["sentMessages"] == []
+
+
+@requires_node
+def test_empty_stdout_stays_silent_allow(tmp_path_factory):
+    out = _run_warn_driver(tmp_path_factory, {"hasUI": True, "stdout": ""})
+    assert out["result"] is None and out["notifyCalls"] == [] and out["sentMessages"] == []
+
+
+@requires_node
+def test_block_result_unchanged_by_warn_parsing(tmp_path_factory):
+    out = _run_warn_driver(
+        tmp_path_factory, {"hasUI": True, "code": 2, "stderr": "BLOCKED: test"}
+    )
+    assert out["result"] == {"block": True, "reason": "BLOCKED: test"}
+    assert out["notifyCalls"] == [] and out["sentMessages"] == []
+
+
+_BASH_PAYLOAD_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , modPath] = process.argv;
+const { bashPayload } = await import(pathToFileURL(modPath).href);
+console.log(JSON.stringify(bashPayload({ input: { command: "ls -la" } }, "/tmp/some-cwd")));
+"""
+
+
+@requires_node
+def test_bash_payload_carries_cwd(tmp_path_factory):
+    cc_payload_ts = ROOT / "pi" / "extensions" / "cc-payload.ts"
+    out = _run_node(
+        _BASH_PAYLOAD_DRIVER, [str(cc_payload_ts)], tmp_path_factory, label="pi-bash-payload-driver"
+    )
+    assert out == {"cwd": "/tmp/some-cwd", "tool_input": {"command": "ls -la"}}
 
 
 # ---------------------------------------------------------------------------

@@ -48,8 +48,8 @@ export const GUARD_DISPATCH: Record<"bash" | "write" | "edit", GuardSpec> = {
   },
 };
 
-export function bashPayload(event: BashToolCallEvent): Record<string, unknown> {
-  return { tool_input: { command: event.input.command } };
+export function bashPayload(event: BashToolCallEvent, cwd: string): Record<string, unknown> {
+  return { cwd, tool_input: { command: event.input.command } };
 }
 
 export function writePayload(event: WriteToolCallEvent): Record<string, unknown> {

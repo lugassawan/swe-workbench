@@ -40,6 +40,10 @@ interface HookSpecificOutput {
   hookSpecificOutput?: { additionalContext?: string };
 }
 
+interface PreToolUseHookOutput {
+  hookSpecificOutput?: { permissionDecisionReason?: unknown };
+}
+
 /** Parses a hint script's stdout envelope; absent/malformed/empty stdout is a silent no-op —
  *  these are advisory hooks, not guards, and never block or throw on their own output shape. */
 function parseAdditionalContext(stdout: string): string | undefined {
@@ -47,6 +51,21 @@ function parseAdditionalContext(stdout: string): string | undefined {
   if (!trimmed) return undefined;
   try {
     return (JSON.parse(trimmed) as HookSpecificOutput).hookSpecificOutput?.additionalContext;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parses bash_guard.sh's warn envelope (exit 0 + one line of CC-native stdout JSON).
+ *  Absent/malformed/empty stdout is a silent allow — a warn must never block or throw on
+ *  its own output shape. */
+function parseWarnReason(stdout: string): string | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed) return undefined;
+  try {
+    const reason = (JSON.parse(trimmed) as PreToolUseHookOutput).hookSpecificOutput
+      ?.permissionDecisionReason;
+    return typeof reason === "string" && reason ? reason : undefined;
   } catch {
     return undefined;
   }
@@ -99,6 +118,17 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
       return { block: true, reason: result.stderr.trim() || `${spec.scriptRelPath}: blocked` };
     }
     if (result.code === 0) {
+      // Non-blocking, visible warn: notify when a dialog-capable UI exists (TUI and RPC),
+      // else inject a display-only custom message so non-interactive modes still surface
+      // it. No deliverAs — a warn must never trigger or steer a turn.
+      const reason = parseWarnReason(result.stdout);
+      if (reason) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(reason, "warning");
+        } else {
+          pi.sendMessage({ customType: "swe-workbench:guard-warning", content: reason, display: true });
+        }
+      }
       return undefined;
     }
     return handleGuardFailure(
@@ -110,7 +140,7 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "bash") {
-      return checkGuard(GUARD_DISPATCH.bash, bashPayload(event as BashToolCallEvent), ctx);
+      return checkGuard(GUARD_DISPATCH.bash, bashPayload(event as BashToolCallEvent, ctx.cwd), ctx);
     }
     if (event.toolName === "write") {
       return checkGuard(GUARD_DISPATCH.write, writePayload(event as WriteToolCallEvent), ctx);
