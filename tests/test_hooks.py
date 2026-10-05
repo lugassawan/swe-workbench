@@ -182,22 +182,13 @@ class TestForcePushBlocker:
         'git push -o "x&&y" --force origin main',
         # Git global options may precede the push subcommand.
         "git -c x=y push --force origin main",
-        # Leading assignments and known wrappers must not hide git push.
-        "FOO=1 git push --force origin main",
+        # Direct-hook-only prefix and attached-option spellings; shared
+        # direct/Pi vectors belong in BASH_GUARD_FIXTURES.
         "GIT_DIR=.git git push --force origin main",
-        "sudo git push --force origin main",
         "time git push --force origin main",
         "command git push --force origin main",
-        "/usr/local/bin/rtk git push --force origin main",
-        'ssh host "git push --force origin main"',
-        "xargs git push --force origin main",
-        # Attached option values and short clusters must not hide force.
-        "git push -oX --force origin main",
         "git push -oci.skip --force origin main",
         "git push -uorigin --force origin main",
-        "git push --repo=up --force origin main",
-        "git push --dry-run -fq origin main",
-        "git push -forigin main",
     ])
     def test_blocked(self, guard_script, cmd):
         result = run_guard(guard_script, cmd)

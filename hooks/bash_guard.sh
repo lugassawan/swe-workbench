@@ -159,19 +159,30 @@ _segment_awk='
 # not affect earlier non-force pushes; inspect every shell-command segment.
 while IFS= read -r push_cmd; do
   push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
-  assignment_prefix='([[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+)*'
-  wrapper_prefix='((sudo|env|time|nice|nohup|command|exec|xargs|([^[:space:]]*/)?rtk)[[:space:]]+|ssh[[:space:]]+[^[:space:]]+[[:space:]]+)?'
-  push_pattern="[[:space:]]*${assignment_prefix}${wrapper_prefix}([^[:space:]]*/)?git([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+push([[:space:]]|$)"
-  if ! echo "$push_norm" | grep -Eq "^$push_pattern"; then
-    # Keep the established fail-safe treatment of literal tab-prefixed git.
-    if [[ "$push_cmd" != *$'\t'* ]] || ! echo "$push_norm" | grep -Eq "(^|[[:space:]])$push_pattern"; then
-      continue
-    fi
+  _toks=()
+  read -ra _toks <<<"$push_norm"
+  prefix_ok=1; prefix_args=0; found_git=0
+  if (( ${#_toks[@]} )); then                 # bash 3.2 + set -u rejects empty "${arr[@]}"
+  for _prefix in "${_toks[@]}"; do
+    case "$_prefix" in
+      git|*/git) found_git=1; break ;;
+      [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
+      sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|*/rtk)
+        prefix_args=1 ;;
+      '!'|if|while|until|do|then) ;;
+      -*) (( prefix_args )) || prefix_ok=0 ;;
+      *) (( prefix_args )) || prefix_ok=0 ;;
+    esac
+  done
+  fi
+  # Keep the established fail-safe treatment of literal tab-prefixed git.
+  [[ "$push_cmd" == *$'\t'* ]] && prefix_ok=1
+  if (( found_git == 0 || prefix_ok == 0 )); then
+    continue
   fi
 
   has_force=0; has_refspec=0; pushes_all_refs=0; seen_positional=0; consume_next=0
   seen_git=0; seen_push=0; global_value=0
-  read -ra _toks <<<"$push_norm"
   if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
     for _t in "${_toks[@]}"; do
       if (( seen_push == 0 )); then

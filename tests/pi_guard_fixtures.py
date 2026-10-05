@@ -66,6 +66,20 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git push --repo=up --force origin main", True),
     ("git push --dry-run -fq origin main", True),
     ("git push -forigin main", True),
+    # Wrapper arguments, interpreters, and shell control prefixes stay transparent.
+    ("env FOO=1 git push --force origin main", True),
+    ("sudo -u root git push --force origin main", True),
+    ("sudo FOO=1 git push --force origin main", True),
+    ("nice -n 5 git push --force origin main", True),
+    ("timeout 30 git push --force origin main", True),
+    ("watch -n1 git push --force origin main", True),
+    ("xargs -n1 git push --force origin main", True),
+    ("bash -c 'git push --force origin main'", True),
+    ('sh -c "git push --force origin main"', True),
+    ('ssh -p 2222 host "git push --force origin main"', True),
+    ("! git push --force origin main", True),
+    ("until git push --force origin main; do sleep 1; done", True),
+    ("FOO='a b' git push --force origin main", True),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
