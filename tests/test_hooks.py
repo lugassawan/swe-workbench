@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from conftest import _CLEAN_ENV
-from pi_guard_fixtures import BASH_GUARD_FIXTURES
+from pi_guard_fixtures import guard_cases
 
 GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
 
@@ -176,7 +176,7 @@ class TestForcePushBlocker:
         # that follows on the same physical line (issue #501 re-review finding)
         'git commit -m "line one\n# note" && git push --force origin main',
         # Direct-hook-only prefix and attached-option spellings; shared
-        # direct/Pi vectors belong in BASH_GUARD_FIXTURES.
+        # direct/Pi vectors belong in guard_cases().
         "GIT_DIR=.git git push --force origin main",
         "time git push --force origin main",
         "command git push --force origin main",
@@ -846,14 +846,32 @@ class TestSkillAutoloadHookWiring:
 
 # ──────────────────────────────────────────────
 # Differential acceptance criterion — direct-invocation half. tests/test_pi_extension.py
-# runs the SAME BASH_GUARD_FIXTURES set through pi/extensions/guards.ts and asserts an
+# runs the SAME guard_cases() set through pi/extensions/guards.ts and asserts an
 # identical verdict; a future guard-semantics change has to update pi_guard_fixtures.py and
 # both suites re-verify against it.
 # ──────────────────────────────────────────────
 
 class TestDifferentialFixtures:
-    @pytest.mark.parametrize("cmd,expect_blocked", BASH_GUARD_FIXTURES)
-    def test_direct_invocation_matches_expected_verdict(self, guard_script, cmd, expect_blocked):
+    def test_guard_case_contract(self):
+        """The shared fixture set is a list of frozen GuardCase rows: a Verdict literal
+        outcome, an optional staged-repo scene, and a pinned reason string on every
+        warn row (message parity is part of the differential criterion)."""
+        from pi_guard_fixtures import GuardCase, guard_cases
+
+        cases = guard_cases()
+        assert cases, "fixture set must not be empty"
+        assert all(isinstance(case, GuardCase) for case in cases)
+        for case in cases:
+            assert case.expected in ("allow", "warn", "block"), case.command
+            if case.expected == "warn":
+                assert case.expected_reason, f"warn row needs expected_reason: {case.command!r}"
+            if "{protected}" in case.command or "{feature}" in case.command:
+                assert case.scene, f"placeholder row needs scene=True: {case.command!r}"
+
+    @pytest.mark.parametrize("case", guard_cases())
+    def test_direct_invocation_matches_expected_verdict(self, guard_script, case):
+        cmd = case.command
+        expect_blocked = case.expected == "block"
         result = run_guard(guard_script, cmd)
         if expect_blocked:
             assert result.returncode == 2 and "BLOCKED" in result.stderr, (

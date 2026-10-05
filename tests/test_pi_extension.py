@@ -1136,9 +1136,9 @@ def test_skill_hint_two_sessions_share_no_adapter_level_dedup_state(tmp_path_fac
 
 # ---------------------------------------------------------------------------
 # Differential acceptance criterion — Pi-adapter half. tests/test_hooks.py runs the SAME
-# pi_guard_fixtures.BASH_GUARD_FIXTURES set by invoking hooks/bash_guard.sh directly; this
+# pi_guard_fixtures.guard_cases() set by invoking hooks/bash_guard.sh directly; this
 # drives the identical fixture set through pi/extensions/guards.ts and asserts an identical
-# block/allow verdict.
+# verdict.
 # ---------------------------------------------------------------------------
 
 _BASH_FIXTURES_DRIVER = """
@@ -1172,9 +1172,9 @@ console.log(JSON.stringify(results));
 
 @pytest.fixture(scope="module")
 def bash_fixtures_via_adapter(tmp_path_factory):
-    from pi_guard_fixtures import BASH_GUARD_FIXTURES
+    from pi_guard_fixtures import guard_cases
 
-    config = {"root": str(ROOT), "cwd": str(ROOT), "commands": [cmd for cmd, _ in BASH_GUARD_FIXTURES]}
+    config = {"root": str(ROOT), "cwd": str(ROOT), "commands": [case.command for case in guard_cases()]}
     return _run_node(
         _BASH_FIXTURES_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-bash-fixtures-driver"
     )
@@ -1182,13 +1182,14 @@ def bash_fixtures_via_adapter(tmp_path_factory):
 
 @requires_node
 def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtures_via_adapter):
-    from pi_guard_fixtures import BASH_GUARD_FIXTURES
+    from pi_guard_fixtures import guard_cases
 
-    assert len(bash_fixtures_via_adapter) == len(BASH_GUARD_FIXTURES)
+    cases = guard_cases()
+    assert len(bash_fixtures_via_adapter) == len(cases)
     mismatches = []
-    for (cmd, expect_blocked), result in zip(BASH_GUARD_FIXTURES, bash_fixtures_via_adapter):
-        if result["blocked"] != expect_blocked:
-            mismatches.append(f"{cmd!r}: expected blocked={expect_blocked}, adapter returned {result}")
+    for case, result in zip(cases, bash_fixtures_via_adapter):
+        if result["blocked"] != (case.expected == "block"):
+            mismatches.append(f"{case.command!r}: expected {case.expected}, adapter returned {result}")
     assert not mismatches, "adapter verdict diverged from direct-invocation verdict:\n" + "\n".join(mismatches)
 
 

@@ -9,11 +9,38 @@ tests/test_pi_extension.py (through pi/extensions/guards.ts) — a future change
 hooks/bash_guard.sh's semantics has to update the expectation here, and both suites re-verify
 against it, or CI fails on whichever one goes stale.
 
-Each entry is (command, expect_blocked). expect_blocked=True means exit 2 + "BLOCKED" in
-stderr directly, or {block: true} through the Pi adapter.
+Each entry is a GuardCase. expected="block" means exit 2 + "BLOCKED" in stderr directly, or
+{block: true} through the Pi adapter; expected="allow" means exit 0 with empty stdout (a
+plain allow is SILENT); expected="warn" means exit 0 with one line of stdout JSON whose
+permissionDecisionReason equals expected_reason — asserted on BOTH paths, so the
+differential criterion covers verdict and message parity. scene=True rows stage the
+two-repo attribution scene via stage_guard_scene() and format {protected}/{feature}
+placeholders at runtime.
 """
 
-BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
+from __future__ import annotations
+
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from conftest import _CLEAN_ENV
+
+Verdict = Literal["allow", "warn", "block"]
+
+
+@dataclass(frozen=True)
+class GuardCase:
+    command: str
+    expected: Verdict
+    scene: bool = False
+    expected_reason: str | None = None
+
+
+# Allow/block rows predating tri-state verdicts; guard_cases() lifts them into GuardCase
+# form. Kept as plain tuples so the historical row bytes stay reviewable.
+_LEGACY_ROWS: list[tuple[str, bool]] = [
     ("rm -rf /", True),
     ("rm -rf ~", True),
     ("rm -rf $HOME", True),
@@ -133,3 +160,36 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
         False,
     ),
 ]
+
+
+def guard_cases() -> list[GuardCase]:
+    """Every differential fixture row, as frozen GuardCase records."""
+    return [GuardCase(command=cmd, expected="block" if blocked else "allow") for cmd, blocked in _LEGACY_ROWS]
+
+
+def stage_guard_scene(base: Path) -> tuple[Path, Path]:
+    """Stage the attribution scene: protected/ on main and feature/ on feat/work.
+
+    Returns (protected_path, feature_path); the caller picks which one is the process
+    cwd / payload cwd for the row under test.
+    """
+    def _git(*args: str, cwd: Path) -> None:
+        subprocess.run(
+            ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
+            env=dict(_CLEAN_ENV),
+        )
+
+    def _repo(name: str, branch: str) -> Path:
+        repo = base / name
+        _git("init", "-b", branch, str(repo), cwd=base)
+        _git("config", "user.email", "test@example.com", cwd=repo)
+        _git("config", "user.name", "Test", cwd=repo)
+        no_hooks = base / ".nohooks"
+        no_hooks.mkdir(exist_ok=True)
+        _git("config", "core.hooksPath", str(no_hooks), cwd=repo)
+        (repo / "README.md").write_text("hello\n")
+        _git("add", "README.md", cwd=repo)
+        _git("commit", "-m", "init", cwd=repo)
+        return repo
+
+    return _repo("protected", "main"), _repo("feature", "feat/work")
