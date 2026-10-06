@@ -7,6 +7,8 @@ argument-hint: <design question> [--pr [N]] [--new-pr] [--grill | --standard]
 
 The user is asking: $ARGUMENTS
 
+If $ARGUMENTS contains `--pr` or `--new-pr`, skip the next two steps (ticket-context and interrogation mode) and go straight to **PR redesign** below.
+
 If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context` first and prepend its structured summary to the delegation context below. Skip if $ARGUMENTS is free-text with no recognizable ref. (Trigger patterns are defined in that skill's "When to invoke" section.)
 
 **Interrogation mode.** Before producing anything, resolve the mode:
@@ -18,7 +20,7 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
-**PR redesign (`--pr`).** If $ARGUMENTS contains `--new-pr` without `--pr`, print "`--new-pr` requires `--pr`" and stop. If it contains `--pr`, this paragraph takes precedence over the ticket-context and interrogation-mode steps above: run neither here, and skip the delegation below and the "Plan output" paragraph. The question is a request to re-plan an open PR's approach rather than a fresh design. Parse `--pr [N]`: N is the next token only when it matches `^#?[0-9]+$` (strip the `#`); otherwise it is absent and the current branch's PR is used after confirmation, and that token belongs to the reason. A `#N` operand of `--pr` is a PR number, not a ticket reference. Also parse `--new-pr`, any explicit `--grill`/`--standard` signal as `MODE`, and the remaining free text as `WHY`. Activate `swe-workbench:workflow-redesign` and pass it `PR_ARG`, `WHY`, `NEW_PR` and `MODE`. The skill owns the ownership gate, mode resolution (after that gate, so a refused PR never starts a grill loop), both approval gates and the whole rebuild lifecycle; run nothing else from this command.
+**PR redesign (`--pr`).** If $ARGUMENTS contains `--new-pr` without `--pr`, print "`--new-pr` requires `--pr`" and stop. If it contains `--pr`, the ticket-context and interrogation-mode steps above are skipped (see the `--pr` guard at the top): run neither here, and skip the delegation below and the "Plan output" paragraph. The question is a request to re-plan an open PR's approach rather than a fresh design. Parse `--pr [N]`: N is the next token only when it matches `^#?[0-9]+$` (strip the `#`); otherwise it is absent and the current branch's PR is used after confirmation, and that token belongs to the reason. A `#N` operand of `--pr` is a PR number, not a ticket reference. Also parse `--new-pr`, any explicit mode signal as `MODE` (the same ones the interrogation-mode step honors: `--grill`, "grill me", "grill-me mode", `--standard`, "standard", "quick" — strip it from `WHY`), and the remaining free text as `WHY`. Activate `swe-workbench:workflow-redesign` and pass it `PR_ARG`, `WHY`, `NEW_PR` and `MODE`. The skill owns the ownership gate, mode resolution (after that gate, so a refused PR never starts a grill loop), both approval gates and the whole rebuild lifecycle; run nothing else from this command.
 
 Otherwise, delegate to the `swe-workbench:senior-engineer` subagent. Its response must contain:
 

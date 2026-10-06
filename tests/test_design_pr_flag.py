@@ -292,9 +292,27 @@ def test_mode_is_resolved_after_the_ownership_gate_not_in_the_command():
     )
     command = DESIGN_CMD.read_text()
     para = command.split("**PR redesign (`--pr`).**")[1].split("Otherwise, delegate")[0]
-    assert "takes precedence over the ticket-context and interrogation-mode" in para
     assert "pass it `PR_ARG`, `WHY`, `NEW_PR` and `MODE`" in para
     assert "a PR number, not a ticket reference" in para
+    # Natural-language mode signals honored by the shared prelude must not leak into WHY.
+    for signal in (
+        '"grill me"',
+        '"grill-me mode"',
+        "`--standard`",
+        '"standard"',
+        '"quick"',
+    ):
+        assert signal in para, signal
+
+
+def test_pr_guard_precedes_the_ticket_context_and_mode_steps():
+    """The skip must be read before the steps it skips, not after them."""
+    text = DESIGN_CMD.read_text()
+    guard = "If $ARGUMENTS contains `--pr` or `--new-pr`, skip the next two steps"
+    assert _before(text, guard, "If $ARGUMENTS contains a ticket reference")
+    assert _before(text, guard, "**Interrogation mode.**")
+    # The marker must still be the first thing after the frontmatter.
+    assert text.split("---\n", 2)[2].lstrip().startswith("<!-- swb-phase: plan -->")
 
 
 def test_plan_overrides_embedded_branch_and_deliver_phases():
@@ -334,9 +352,10 @@ def test_new_pr_mode_binds_and_checks_the_worktree_before_reading_its_branch():
     assert check.index("WT=") < check.index('[ -d "$WT" ]') < check.index("NEW_BRANCH=")
 
 
-def test_sync_preview_flags_the_test_plan_for_the_user():
+def test_test_plan_question_is_asked_even_when_metadata_is_judged_aligned():
     text = _skill_text()
-    assert "preview also flags `## Test Plan`" in text
+    assert "Ask the `## Test Plan` question even when that reference judges" in text
+    assert "standalone question" in text
     assert "only on the user's say-so" in text
 
 
@@ -371,7 +390,7 @@ def test_supersede_close_comes_after_new_pr_verification():
 
 @pytest.fixture
 def cleanup_env(tmp_path):
-    """Run the real Phase 6 snippet with git and the worktree helper stubbed."""
+    """Run the real Phase G snippet with git and the worktree helper stubbed."""
     block = _bash_block(
         _skill_text(), "swe-workbench-address-feedback-worktree release"
     )
