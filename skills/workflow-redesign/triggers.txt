@@ -1,0 +1,4 @@
+redesign the approach of this open PR because it uses the wrong abstraction and compare alternatives before rebuilding
+the PR works but the approach is wrong so propose two or three alternative designs and rebuild after I approve one
+rethink this pull request design with the senior engineer and reimplement it as a replacement PR that supersedes the old one
+replace the approach of my open PR with a different architecture and keep the current approach if no alternative wins

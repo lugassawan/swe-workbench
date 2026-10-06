@@ -814,7 +814,7 @@ class TestCheckDescriptionBudget:
         # a regex/inequality check here would let a defeating widening slip
         # through unnoticed. See scripts/validate.py's constant comments for
         # where these numbers come from.
-        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20436
+        assert validate.SKILL_DESCRIPTION_BUDGET_CHARS == 20609
         assert validate.AGENT_DESCRIPTION_BUDGET_CHARS == 6087
         assert validate.PER_SKILL_DESCRIPTION_CAP_CHARS == 900
 
@@ -4039,6 +4039,11 @@ class TestPhase4DispatchesBothReviewers:
             "commands/extend.md",
             "**Phase 4 — Review**",
             "**Phase 5",
+        ),
+        (
+            "skills/workflow-redesign/SKILL.md",
+            "## Phase E — Implement → Verify → Review",
+            "## Phase F",
         ),
     ]
 
