@@ -197,7 +197,7 @@ estimated preload tokens. Worst offenders: `swe-workbench:senior-engineer` 90.8%
 
 ### Governance gap (recorded, not fixed)
 
-Track A's ratchets are live in `scripts/validate.py`: `SKILL_DESCRIPTION_BUDGET_CHARS = 20436`,
+Track A's ratchets are live in `scripts/validate.py`: `SKILL_DESCRIPTION_BUDGET_CHARS = 20609`,
 `AGENT_DESCRIPTION_BUDGET_CHARS = 6087`, `PER_SKILL_DESCRIPTION_CAP_CHARS = 900`, plus
 `dispatch-ledger.mjs --check` wired into CI. But `binScriptsSection` (303 tok) and
 `toolVocabSection` (892 tok) are bounded by nothing — no char or token assertion exists in

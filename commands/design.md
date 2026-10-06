@@ -1,6 +1,6 @@
 ---
 description: Consult the senior-engineer subagent for an architectural decision
-argument-hint: <design question> [--grill | --standard]
+argument-hint: <design question> [--pr [N]] [--new-pr] [--grill | --standard]
 ---
 
 <!-- swb-phase: plan -->
@@ -18,7 +18,9 @@ If $ARGUMENTS contains a ticket reference, invoke `swe-workbench:ticket-context`
 
 **Grill-me mode:** activate `swe-workbench:workflow-grill` and run its interrogation loop to completion (exit on shared understanding or when the user says "proceed"). Then thread the emitted `## Resolved decisions` block into the command's normal artifact/delegation step below — the same way a ticket-context summary is prepended — and continue as in standard mode.
 
-Delegate to the `swe-workbench:senior-engineer` subagent. Its response must contain:
+**PR redesign (`--pr`).** If $ARGUMENTS contains `--new-pr` without `--pr`, print "`--new-pr` requires `--pr`" and stop. If it contains `--pr`, the question is a request to re-plan an open PR's approach rather than a fresh design, so skip the delegation below and the "Plan output" paragraph. Parse `--pr [N]`: N is the next token only when it matches `^#?[0-9]+$` (strip the `#`); otherwise it is absent and the current branch's PR is used after confirmation, and that token belongs to the reason. A `#N` operand of `--pr` is a PR number, not a ticket reference — do not run ticket-context on it. Also parse `--new-pr` and the remaining free text as `WHY`. With the interrogation mode above resolved, activate `swe-workbench:workflow-redesign` and pass it `PR_ARG`, `WHY`, `NEW_PR` and any `## Resolved decisions` block. The skill owns the ownership gate, both approval gates and the whole rebuild lifecycle; run nothing else from this command.
+
+Otherwise, delegate to the `swe-workbench:senior-engineer` subagent. Its response must contain:
 
 1. **Problem restatement** — confirm the real question and surface implicit constraints (scale, team size, change frequency, latency budget, compliance).
 2. **Options** — 2–3 candidate approaches, each with sketch, strengths, weaknesses, and reversibility.

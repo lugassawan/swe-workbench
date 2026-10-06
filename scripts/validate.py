@@ -45,7 +45,7 @@ CAP_HEADROOM_WARN_FRACTION = 0.90
 # enough to cross either budget requires consciously raising the constant
 # here, with the reason recorded in that commit — that friction is the point,
 # it is what stands between the catalog and slow, unnoticed session-tax growth.
-SKILL_DESCRIPTION_BUDGET_CHARS = 20436
+SKILL_DESCRIPTION_BUDGET_CHARS = 20609
 AGENT_DESCRIPTION_BUDGET_CHARS = 6087
 
 # Per-skill soft ceiling, meaningfully tighter than PI_SKILL_DESCRIPTION_CAP

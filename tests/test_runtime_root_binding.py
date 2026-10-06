@@ -32,6 +32,7 @@ SKILLS_WITH_PREFLIGHT = [
     "workflow-audit-emit-issues",
     "workflow-cleanup-merged",
     "workflow-extend",
+    "workflow-redesign",
     "workflow-pr-review-post",
     "workflow-branch-sync",
 ]
