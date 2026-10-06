@@ -4042,8 +4042,8 @@ class TestPhase4DispatchesBothReviewers:
         ),
         (
             "skills/workflow-redesign/SKILL.md",
-            "## Phase 4 — Implement → Verify → Review",
-            "## Phase 5",
+            "## Phase E — Implement → Verify → Review",
+            "## Phase F",
         ),
     ]
 

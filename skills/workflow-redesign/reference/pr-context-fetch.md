@@ -29,16 +29,18 @@ Use `$PR`, never `$PR_ARG`, from here on. Without `N`, the PR found for the curr
 branch is shown (`#N — title`) and the user must reply `yes` before anything else runs.
 Any other reply stops the flow.
 
-### State and fork checks
+### State, fork and ownership gates
 
-- `state` must be `OPEN`. Drafts are allowed. `CLOSED` and `MERGED` stop the flow.
-- `isCrossRepository == true` is a fork PR. Refuse with: "Fork PRs are not supported by
-  `/swe-workbench:design --pr` yet — the head branch lives on the fork. Check the PR out
-  by hand and use `/swe-workbench:implement` for a replacement."
-
-### Ownership gate
+One executable block, so none of the checks can be skipped on their own. The PR must be
+`OPEN` (drafts are allowed; `CLOSED` and `MERGED` stop the flow) and must not be a fork PR
+(`isCrossRepository`): the head branch of a fork lives on the fork's remote, so `acquire`
+would find nothing on `origin`. A missing field fails the check, like any other doubt.
 
 ```bash
+printf '%s' "$PR_JSON" | jq -e '.state == "OPEN"' >/dev/null \
+  || { echo "redesign: PR #$PR is not OPEN — nothing to redesign." >&2; exit 1; }
+printf '%s' "$PR_JSON" | jq -e '.isCrossRepository == false' >/dev/null \
+  || { echo "Fork PRs are not supported by /swe-workbench:design --pr yet — the head branch lives on the fork. Check the PR out by hand and use /swe-workbench:implement for a replacement." >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "redesign: gh is not authenticated — run 'gh auth login' first." >&2; exit 1; }
 CURRENT_USER=$(gh api /user -q .login) || { echo "redesign: could not read the current gh user." >&2; exit 1; }
 PR_AUTHOR=$(printf '%s' "$PR_JSON" | jq -r '.author.login // empty')
@@ -48,8 +50,8 @@ PR_AUTHOR=$(printf '%s' "$PR_JSON" | jq -r '.author.login // empty')
 }
 ```
 
-Refuse, do not warn, in both modes. Every failure (unauthenticated, unreadable user, empty
-author, mismatch) refuses — the gate fails closed.
+Refuse, do not warn, in both modes. Every failure (not open, fork, unauthenticated,
+unreadable user, empty author, mismatch) refuses — the gate fails closed.
 
 ## Part 2 — Baseline for senior-engineer
 

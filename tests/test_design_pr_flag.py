@@ -180,11 +180,16 @@ def gate_env(tmp_path):
     return run
 
 
-MINE = '{"author":{"login":"me"}}'
+MINE = '{"state":"OPEN","isCrossRepository":false,"author":{"login":"me"}}'
 
 
-def test_ownership_gate_allows_the_author(gate_env):
+def test_gates_allow_an_open_own_non_fork_pr(gate_env):
     assert gate_env(author_json=MINE, GH_USER="me").returncode == 0
+
+
+def test_gates_allow_a_draft_pr(gate_env):
+    draft = '{"state":"OPEN","isDraft":true,"isCrossRepository":false,"author":{"login":"me"}}'
+    assert gate_env(author_json=draft, GH_USER="me").returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -194,8 +199,18 @@ def test_ownership_gate_allows_the_author(gate_env):
         {"author_json": MINE, "GH_USER": "me", "GH_AUTH_RC": "1"},
         {"author_json": MINE, "GH_USER": "me", "GH_USER_RC": "1"},
         {"author_json": MINE, "GH_USER": ""},
-        {"author_json": '{"author":null}', "GH_USER": "me"},
-        {"author_json": '{"author":{"login":null}}', "GH_USER": "null"},
+        {
+            "author_json": '{"state":"OPEN","isCrossRepository":false,"author":null}',
+            "GH_USER": "me",
+        },
+        {
+            "author_json": '{"state":"OPEN","isCrossRepository":false,"author":{"login":null}}',
+            "GH_USER": "null",
+        },
+        {"author_json": MINE.replace("OPEN", "MERGED"), "GH_USER": "me"},
+        {"author_json": MINE.replace("OPEN", "CLOSED"), "GH_USER": "me"},
+        {"author_json": MINE.replace("false", "true"), "GH_USER": "me"},
+        {"author_json": '{"author":{"login":"me"}}', "GH_USER": "me"},
     ],
     ids=[
         "mismatch",
@@ -204,19 +219,24 @@ def test_ownership_gate_allows_the_author(gate_env):
         "empty-user",
         "null-author",
         "null-login",
+        "merged",
+        "closed",
+        "fork",
+        "state-and-fork-fields-missing",
     ],
 )
-def test_ownership_gate_fails_closed(gate_env, case):
+def test_gates_fail_closed(gate_env, case):
     result = gate_env(**case)
     assert result.returncode != 0, result.stdout + result.stderr
 
 
-def test_open_check_and_fork_refusal_present():
-    text = _skill_bundle()
-    assert "`OPEN`" in text
-    assert "isCrossRepository" in text
-    assert "Fork PRs are not supported" in text
-    assert "must be digits" in text  # URLs / branch names are refused
+def test_fork_refusal_explains_itself(gate_env):
+    result = gate_env(author_json=MINE.replace("false", "true"), GH_USER="me")
+    assert "Fork PRs are not supported" in result.stderr
+
+
+def test_pr_number_argument_must_be_digits():
+    assert "must be digits" in FETCH_MD.read_text()  # URLs / branch names are refused
 
 
 def test_ownership_gate_runs_before_senior_engineer_dispatch():
@@ -235,23 +255,50 @@ def test_gates_come_before_worktree_acquire():
     for gate in ("**Gate 1.**", "**Gate 2.**"):
         assert text.index(gate) < acquire, f"{gate} must precede worktree acquire"
     assert _before(text, "**Gate 1.**", "**Gate 2.**")
-    gate2 = text.split("**Gate 2.**")[1].split("## Phase 3")[0]
+    gate2 = text.split("**Gate 2.**")[1].split("## Phase D")[0]
     assert "ExitPlanMode" in gate2
     # Fallback keeps the gate hard when ExitPlanMode is unavailable.
     assert "unavailable or errors" in gate2 and "fail closed" in gate2
 
 
 def test_gate1_fits_ask_user_question_option_cap():
-    gate1 = _skill_text().split("**Gate 1.**")[1].split("## Phase 2")[0]
+    gate1 = _skill_text().split("**Gate 1.**")[1].split("## Phase C")[0]
     assert "**Keep current approach**" in gate1
-    assert "at most 3" in gate1
-    max_alternatives = 3
-    assert max_alternatives + 1 <= ASK_USER_QUESTION_MAX_OPTIONS
+    # The bound comes from the skill text: N alternatives plus Keep must fit.
+    cap = re.search(r"allows at most (\d+) options", gate1)
+    alts = re.search(r"recommended first, at most (\d+)\)", gate1)
+    assert cap and alts, (
+        "Gate 1 must state both the option cap and the alternatives cap"
+    )
+    assert int(cap.group(1)) == ASK_USER_QUESTION_MAX_OPTIONS
+    assert int(alts.group(1)) + 1 <= int(cap.group(1))
     assert "No worktree is created, nothing is edited" in gate1
 
 
+def test_gate1_fails_closed_when_ask_user_question_is_unavailable():
+    gate1 = _skill_text().split("**Gate 1.**")[1].split("## Phase C")[0]
+    assert "unavailable or erroring" in gate1 and "treated as Keep" in gate1
+
+
+def test_mode_is_resolved_after_the_ownership_gate_not_in_the_command():
+    skill = _skill_text()
+    assert _before(
+        skill, "Run Part 1 of", "Resolve the interrogation mode now, after the gates"
+    )
+    assert _before(
+        skill,
+        "Resolve the interrogation mode now",
+        "Dispatch `swe-workbench:senior-engineer`",
+    )
+    command = DESIGN_CMD.read_text()
+    para = command.split("**PR redesign (`--pr`).**")[1].split("Otherwise, delegate")[0]
+    assert "takes precedence over the ticket-context and interrogation-mode" in para
+    assert "pass it `PR_ARG`, `WHY`, `NEW_PR` and `MODE`" in para
+    assert "a PR number, not a ticket reference" in para
+
+
 def test_plan_overrides_embedded_branch_and_deliver_phases():
-    plan = _skill_text().split("## Phase 2")[1].split("## Phase 3")[0]
+    plan = _skill_text().split("## Phase C")[1].split("## Phase D")[0]
     assert "never `gh pr create`" in plan
     assert "distinct from `$PR_BRANCH`" in plan
 
@@ -278,6 +325,28 @@ def test_new_pr_branch_must_differ_from_old_and_base_branch():
     assert '"$NEW_BRANCH" != "$BASE_BRANCH"' in check
     assert "do not resume an existing worktree or promote existing work" in text
     assert text.count("NEW_BRANCH") >= 4  # defined, checked, re-checked before push
+
+
+def test_new_pr_mode_binds_and_checks_the_worktree_before_reading_its_branch():
+    check = _bash_block(_skill_text(), "NEW_BRANCH=")
+    assert 'WT="<absolute worktree path reported by Mode B Phase 1>"' in check
+    assert '[ -d "$WT" ]' in check
+    assert check.index("WT=") < check.index('[ -d "$WT" ]') < check.index("NEW_BRANCH=")
+
+
+def test_sync_preview_flags_the_test_plan_for_the_user():
+    text = _skill_text()
+    assert "preview also flags `## Test Plan`" in text
+    assert "only on the user's say-so" in text
+
+
+def test_phases_use_letters_so_mode_b_numbers_stay_unambiguous():
+    text = _skill_text()
+    assert not re.search(r"^## Phase \d", text, re.MULTILINE)
+    letters = re.findall(r"^## Phase ([A-Z]) —", text, re.MULTILINE)
+    assert letters == list("ABCDEFG")
+    dev = (ROOT / "skills" / "workflow-development" / "SKILL.md").read_text()
+    assert "swe-workbench:workflow-redesign" in dev  # skip-phase-1 row
 
 
 def test_new_pr_creation_goes_through_commit_and_pr_and_carries_trailer():
