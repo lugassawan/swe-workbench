@@ -64,6 +64,59 @@ does, via the `--*-session-env` literal-argument form) remove that condition fro
 pipelines, but the guard's underlying false-positive rate on an unrecognized binary piped
 into another is upstream Claude Code's to fix.
 
+**RTK interaction — a Claude-only usability hook, not a fix.** Under RTK's global
+`rtk hook claude` PreToolUse hook, every `git …` is rewritten to `rtk git …`; once the session
+is isolated via `EnterWorktree`, Claude Code's guard refuses `rtk` as an opaque launcher with a
+git command among its operands. The harness's suggested next step ("run the plain command") is
+rewritten again, so retrying never converges. Measured against Claude Code 2.1.296 with RTK 0.51.0
+in throwaway repos (`scripts/rtk-worktree-matrix.sh` reproduces it):
+
+| Configuration | bare / `-C` / compound git | `rtk git` / `rtk proxy git` | `/usr/bin/git` |
+|---|---|---|---|
+| Claude Code + RTK (+ plugin) | refused | refused | allowed |
+| Claude Code only | allowed | refused | allowed |
+| Claude Code + plugin, no RTK | allowed | refused | allowed |
+
+RTK is the sole trigger; the plugin's own guards add nothing. A session *launched* inside a linked
+worktree is not isolated, so RTK-rewritten git runs there. A per-segment `RTK_DISABLED=1 git …`
+is allowed in every form (plain, `-C`, mutating, compound with the prefix on each git segment,
+`env RTK_DISABLED=1 git …`); `export RTK_DISABLED=1; git …` is still refused because the second
+segment is rewritten. RTK's `[hooks] exclude_commands = ["git"]` also works but gives up its git
+compression everywhere.
+
+`hooks/rtk_worktree_guard.sh` therefore stops the loop before it starts. After `EnterWorktree`
+it records a per-session marker (only when an `rtk hook claude` entry is configured); a Bash
+call whose cwd is inside the marked worktree is asked of `rtk rewrite` and **denied** when what
+will actually run is `rtk [proxy] git …`. The deny names one exact `RTK_DISABLED=1 git …` command
+that has itself been run back through the same check (class `containment`). No exact fix is
+offered when the original carries quotes, substitutions or a heredoc, sits behind a launcher
+wrapper (`time`, `command`, `exec`, `nice`, … — RTK splices `rtk` in after the wrapper, so a
+textual splice would not run), or the rendered fix cannot itself be decided on; the message is
+then a fixed instruction to run each git command as its own `RTK_DISABLED=1`-prefixed call
+(class `parse-complexity`). The tag names the failure class so containment and parse-complexity
+refusals are not conflated.
+
+Why deny rather than rewrite: PreToolUse `updatedInput` from separate hooks does not compose —
+the later hook would see, or overwrite, RTK's rewrite — while a deny always wins. Why decide on
+`rtk rewrite`'s result instead of the typed text: the same typed command is fine or refused
+depending on what RTK does to it (`/usr/bin/git`, `env RTK_DISABLED=1 git` untouched;
+`FOO=1 git` and `time git` rewritten), and RTK leaves commands with `$(…)` or heredocs alone.
+The exit code alone does not say whether anything changed: exit 3 and exit 0 both carry the
+rewritten command on stdout (0 when an allow rule such as `Bash(git *)` covers it), and exit 1
+means unchanged — so a user with that allow rule is still caught.
+
+The hook is fail-open (any uncertainty, a missing `rtk` or `jq`, a rewrite that hangs past
+~2s, or an unexpected exit code allows the call) and applies only to Claude Code; on Pi there
+is no `EnterWorktree` and no RTK hook, so it is an explicit N/A row in `HOOK_PI_STATUS`. The
+marker is only written when RTK would in fact rewrite git there, and markers whose worktree has
+vanished are pruned on the next enter. A SIGKILL of the hook itself can leak one in-flight
+`rtk rewrite` child and its temp file; any other exit path reaps both.
+
+The root fix is upstream and this hook should be deleted when it lands: Claude Code should
+unwrap known launchers when proving containment, or RTK should skip rewriting git inside an
+isolated session. `bin/swe-workbench-doctor` prints an advisory when the RTK hook and the
+rewrite are both present.
+
 ## 2. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
 
 Each harness owns one per-repo memory store and reads the other's read-only

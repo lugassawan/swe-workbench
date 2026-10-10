@@ -21,6 +21,8 @@ Applied to every entry in `hooks/hooks.json`, no `if` buys anything:
 | `worktree_permission_grant.sh` | `PreToolUse` / `Read\|Edit\|Write` | Worktree root is runtime-resolved, not a static path rule |
 | `secret_guard.py` | `PreToolUse` / `Write\|Edit` | Same as `worktree_permission_grant.sh` — no static pattern captures "contains a credential" |
 | `handoff_guard.py` | `PreToolUse` / `Bash\|Edit\|Write` | Lease ownership is runtime-resolved per worktree, not a static path/pattern rule |
+| `rtk_worktree_guard.sh` | `PreToolUse` / `Bash` | The decision depends on `rtk rewrite`'s runtime answer for the exact command and on a per-session marker; `Bash(git *)` would miss `ls && git status` and `FOO=1 git status` |
+| `rtk_worktree_guard.sh` | `PostToolUse` / `EnterWorktree\|ExitWorktree` | Marker bookkeeping on a tool-name matcher; there is no command to filter on |
 | `skill_autoload_hint.sh` | `PostToolUse` / `Read\|Edit\|Write` | Would need every extension enumerated; a miss silently loses the hint |
 | `skill_usage_flush.sh` | `SubagentStop` | No tool call to match against — inert at best, disabling at worst |
 | `workflow_resume_hint.sh` ×3 | `SessionStart` | Same — lifecycle events carry no tool call |
