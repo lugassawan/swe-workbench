@@ -343,6 +343,67 @@ class TestImplicitForcePushBlocker:
         )
         assert result.stderr == ""
 
+    @pytest.mark.parametrize("branch", ["main", "feature/x"])
+    @pytest.mark.parametrize("cmd", [
+        "git push --force origin $(git branch --show-current)",
+        "git push --force origin `git branch --show-current`",
+    ])
+    def test_dynamic_refspec_fails_closed(self, guard_script, repo_on, branch, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on(branch)))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git push --force-with-lease origin $(git branch --show-current)",
+        "git push --force-with-lease origin `git branch --show-current`",
+    ])
+    def test_dynamic_refspec_with_lease_stays_allowed(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    def test_shell_code_operand_is_rescanned(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script, "bash -c 'git push --force && cd x'", cwd=str(repo_on("main"))
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    def test_shell_code_operand_with_feature_refspec_stays_allowed(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script,
+            "bash -c 'git push --force origin feature/x && cd x'",
+            cwd=str(repo_on("main")),
+        )
+        assert result.returncode == 0, (
+            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    def test_quoted_push_prose_stays_allowed(self, guard_script):
+        result = run_guard(guard_script, 'echo "git push --force origin main && cd x"')
+        assert result.returncode == 0, (
+            f"Expected ALLOWED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    def test_nested_eval_force_push_stays_fail_closed(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script, "eval eval eval eval eval git push --force", cwd=str(repo_on("main"))
+        )
+        assert result.returncode == 2, (
+            f"Expected BLOCKED, got exit {result.returncode}\nstderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).

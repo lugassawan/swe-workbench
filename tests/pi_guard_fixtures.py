@@ -77,6 +77,17 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ('git -C "" push --force origin main', True),
     ("git -C '' push --force origin feature/x", False),
     ('git -C "" push --force origin feature/x', False),
+    # Dynamic destinations are never expanded to decide a destructive push policy.
+    ("git push --force origin $(git branch --show-current)", True),
+    ("git push --force origin `git branch --show-current`", True),
+    ("git push --force-with-lease origin $(git branch --show-current)", False),
+    ("git push --force-with-lease origin `git branch --show-current`", False),
+    ("bash -c 'git push --force origin main && cd x'", True),
+    ("bash -c 'git push --force origin feature/x && cd x'", False),
+    ('echo "git push --force origin main && cd x"', False),
+    ("eval 'git push --force origin main'", True),
+    ("su -c 'git push --force origin main'", True),
+    ('ssh host "git push --force origin main"', True),
     # Wrapper arguments, interpreters, and shell control prefixes stay transparent.
     ("env FOO=1 git push --force origin main", True),
     ("sudo -u root git push --force origin main", True),

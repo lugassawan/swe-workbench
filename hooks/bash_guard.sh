@@ -219,7 +219,51 @@ _push_token_awk='
         while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&]/) i++
         continue
       }
-      if (c ~ /[;|&`()]/) {
+      if (c == "$" && substr(line, i + 1, 1) == "(") {
+        emit_word()
+        subtext = ""; sub_depth = 1; sub_sq = 0; sub_dq = 0
+        i += 2
+        for (; i <= n; i++) {
+          sc = substr(line, i, 1)
+          if (sc == "\\" && !sub_sq) {
+            subtext = subtext sc
+            if (i < n) { i++; subtext = subtext substr(line, i, 1) }
+            continue
+          }
+          if (sc == "\047" && !sub_dq) { sub_sq = !sub_sq; subtext = subtext sc; continue }
+          if (sc == "\"" && !sub_sq) { sub_dq = !sub_dq; subtext = subtext sc; continue }
+          if (!sub_sq && !sub_dq && sc == "(") { sub_depth++; subtext = subtext sc; continue }
+          if (!sub_sq && !sub_dq && sc == ")") {
+            sub_depth--
+            if (sub_depth == 0) break
+            subtext = subtext sc
+            continue
+          }
+          subtext = subtext sc
+        }
+        if (sub_depth == 0) print "SUB\t" subtext
+        else print "MALFORMED"
+        continue
+      }
+      if (c == "`") {
+        emit_word()
+        subtext = ""
+        i++
+        for (; i <= n; i++) {
+          sc = substr(line, i, 1)
+          if (sc == "\\" && i < n) {
+            subtext = subtext sc
+            i++; subtext = subtext substr(line, i, 1)
+            continue
+          }
+          if (sc == "`") break
+          subtext = subtext sc
+        }
+        if (i <= n) print "SUB\t" subtext
+        else print "MALFORMED"
+        continue
+      }
+      if (c ~ /[;|&()]/) {
         emit_separator()
         continue
       }
@@ -241,7 +285,7 @@ _push_saw_tab=0
 _classify_force_push_segment() {
   local _prefix _t push_text
   local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
-  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0
+  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0
   local _consume_next=0 _seen_push=0 _global_value=0
 
   (( ${#_push_tokens[@]} )) || return
@@ -290,6 +334,7 @@ _classify_force_push_segment() {
       continue
     fi
     case "$_t" in
+      __SWB_DYNAMIC_SUBSTITUTION__) _has_dynamic=1 ;;
       --force|-f) _has_force=1 ;;
       --all) _pushes_all_refs=1 ;;
       --mirror) _has_force=1; _pushes_all_refs=1 ;;
@@ -314,6 +359,10 @@ _classify_force_push_segment() {
     printf 'BLOCK\tall-refs\n'
     return
   fi
+  if (( _has_dynamic )); then
+    printf 'BLOCK\tdynamic-destination\n'
+    return
+  fi
   push_text=$(printf ' %s' "${_push_tokens[@]}")
   if printf '%s\n' "$push_text" | grep -Eq \
     '(^|[[:space:]]|:)(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
@@ -323,8 +372,19 @@ _classify_force_push_segment() {
   (( _has_refspec )) || printf 'CHECK_CURRENT\n'
 }
 
+MAX_PUSH_SCAN_DEPTH=4
+
+_scan_nested_text() {
+  local _nested_text=$1 _nested_depth=$2
+  local -a _saved_tokens=("${_push_tokens[@]}")
+  local _saved_saw_tab=$_push_saw_tab
+  scan_force_push_text "$_nested_text" "$((_nested_depth + 1))"
+  _push_tokens=("${_saved_tokens[@]}")
+  _push_saw_tab=$_saved_saw_tab
+}
+
 _scan_known_wrapper_body() {
-  local _depth=$1 _i _body_index=-1 _token
+  local _depth=$1 _i _body_index=-1 _token _body=""
   (( ${#_push_tokens[@]} )) || return
 
   case "${_push_tokens[0]}" in
@@ -339,20 +399,37 @@ _scan_known_wrapper_body() {
     ssh)
       _body_index=$((${#_push_tokens[@]} - 1))
       ;;
+    eval)
+      _body_index=1
+      ;;
   esac
   (( _body_index >= 0 && _body_index < ${#_push_tokens[@]} )) || return
-  _token=${_push_tokens[_body_index]}
-  [[ "$_token" == *git[[:space:]]push* ]] || return
-  scan_force_push_text "$_token" "$((_depth + 1))"
+  for ((_i = _body_index; _i < ${#_push_tokens[@]}; _i++)); do
+    _body="$_body${_body:+ }${_push_tokens[_i]}"
+  done
+  [[ "$_body" == *git[[:space:]]push* ]] || return
+  _scan_nested_text "$_body" "$_depth"
 }
 
 scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value
+  if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
+    if printf '%s\n' "$_scan_text" | grep -Eq \
+      'git[[:space:]]+push([[:space:]].*)?([[:space:]]|^)(--force|-f)([[:space:]]|$)'; then
+      printf 'BLOCK\tindeterminate\n'
+    fi
+    return
+  fi
   _push_tokens=()
   _push_saw_tab=0
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
       WORD) _push_tokens+=("$_value") ;;
+      SUB)
+        _push_tokens+=("__SWB_DYNAMIC_SUBSTITUTION__")
+        _scan_nested_text "$_value" "$_scan_depth"
+        ;;
+      MALFORMED) _push_tokens+=("__SWB_DYNAMIC_SUBSTITUTION__") ;;
       TAB) _push_saw_tab=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
