@@ -453,6 +453,29 @@ def test_generated_batches_and_handled_replies_do_not_count_as_manual_replies():
     assert by_parent[33]["eligible"] is True
 
 
+def test_malformed_owner_batch_does_not_count_as_manual_reply():
+    """An owner-posted batch that later fails strict parsing (human edit, truncation)
+    must still count as automated origin — suppressing earlier third-party feedback
+    as a "manual reply" hides real items; re-surfacing them is the safe direction."""
+    malformed_batch = "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
+    comments = [
+        _pr_comment(45, "open feedback"),
+        {
+            **_pr_comment(46, malformed_batch),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[45]["eligible"] is True, (
+        "a malformed owner batch is still tool-origin — it must not suppress earlier "
+        "third-party feedback via the manual-reply heuristic"
+    )
+
+
 def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
     rows = prs.assign_finding_ids([
         {"severity": "High", "issue": f"finding {index}", "why": "why", "fix": "fix", "anchor": "pr-level"}

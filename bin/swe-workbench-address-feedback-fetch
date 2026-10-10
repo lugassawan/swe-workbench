@@ -187,7 +187,14 @@ def _is_bot_comment(comment: dict) -> bool:
 
 def _is_automated_owner_comment(comment: dict) -> bool:
     body = comment.get("body") or ""
-    return parse_review_finding_batch(comment) is not None or "<!-- swe-workbench:handled:" in body
+    # A batch-shaped comment that fails strict parsing (human edit, truncation) is
+    # still tool-origin: only owner comments reach this check, and counting it as a
+    # manual reply would hide earlier third-party feedback — re-surfacing is safe.
+    return (
+        parse_review_finding_batch(comment) is not None
+        or "<!-- swe-workbench:handled:" in body
+        or body.lstrip().startswith(REVIEW_BATCH_MARKER)
+    )
 
 
 def _is_handled(projection: dict, owner_comments: list[dict]) -> bool:
