@@ -1749,16 +1749,23 @@ def test_remark_embedded_in_any_text_field_is_rejected(field):
 
 @pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
 def test_reserved_review_marker_in_any_string_field_is_rejected(field):
-    problem = prs._finding_problem(_row(**{field: "x <!-- swe-workbench:review-finding:7 -->"}))
+    problem = prs._finding_problem(_row(**{field: "<!-- swe-workbench:review-finding:7 --> x"}))
     assert problem is not None and problem[0] == field and "reserved swe-workbench marker" in problem[1]
 
 
 @pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
-def test_handled_marker_in_any_string_field_is_rejected(field):
-    """A handled: marker in a caller field could suppress an unrelated comment's
-    triage items in a later address-feedback run — no plugin-owned marker belongs
-    in finding text, so the whole `<!-- swe-workbench:` prefix is reserved."""
-    problem = prs._finding_problem(_row(**{field: "x <!-- swe-workbench:handled:123 -->"}))
+def test_inline_plugin_marker_mention_in_string_field_is_allowed(field):
+    """The consumer honours markers only at a line start; prose/code-span mentions
+    are harmless and must not reject an otherwise valid review payload."""
+    problem = prs._finding_problem(_row(**{field: "mention <!-- swe-workbench:handled:123 --> safely"}))
+    assert problem is None
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
+def test_line_start_handled_marker_in_any_string_field_is_rejected(field):
+    """A line-start handled marker can satisfy the consumer's marker boundary and
+    suppress an unrelated item; harmless inline/code-span mentions are allowed."""
+    problem = prs._finding_problem(_row(**{field: "<!-- swe-workbench:handled:123 --> x"}))
     assert problem is not None and problem[0] == field and "reserved swe-workbench marker" in problem[1]
 
 
@@ -1911,6 +1918,41 @@ def test_post_pr_level_chunks_oversized_batches(tmp_path):
     for ids in chunks:
         assert ids == sorted(ids, key=int), "each chunk must be internally ascending"
     assert [int(i) for i in chunks[0] + chunks[1]] == list(range(1, 61)), "no row may be lost or duplicated"
+
+
+def test_post_pr_level_sorts_before_chunking_mixed_partition_rows(tmp_path):
+    """main() builds `pr_level_findings + demoted`, so positional chunking would
+    interleave ranges (46..55 then 1..45). Sort before slicing so every posted
+    comment is one contiguous ascending finding-ID run."""
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},  # empty diff: all inline rows demote
+            {"stdout": "", "exit": 0},  # pr comment — IDs 1..50
+            {"stdout": "", "exit": 0},  # pr comment — IDs 51..55
+            _repo_view_response(True),
+            _review_post_response(),  # N=0
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    rows = [
+        _row(issue=f"demoted {index}", line=index)
+        for index in range(1, 46)
+    ] + [
+        _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None)
+        for index in range(46, 56)
+    ]
+    findings = _write_findings(tmp_path, rows)
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+    calls = _gh_calls(state_dir)
+    chunks = [
+        [int(finding_id) for finding_id in re.findall(r"swe-workbench:review-finding:(\d+)", c["argv"][c["argv"].index("--body") + 1])]
+        for c in calls
+        if c["argv"][:2] == ["pr", "comment"]
+    ]
+    assert chunks == [list(range(1, 51)), list(range(51, 56))]
 
 
 def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):

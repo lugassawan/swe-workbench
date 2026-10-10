@@ -587,6 +587,11 @@ def test_address_feedback_skill_reply_body_embeds_handled_marker():
     )
 
 
+def test_address_feedback_skill_surfaces_malformed_marked_batches_as_legacy_items():
+    text = SKILL_MD.read_text()
+    assert "marked batch that fails strict parsing surfaces as one legacy item" in text
+
+
 def test_address_feedback_skill_thread_digest_strips_provenance_marker_line():
     """Generated thread comments open with a provenance-marker line — Phase 3 must
     strip it before severity parsing and digest quoting, or severity parses as

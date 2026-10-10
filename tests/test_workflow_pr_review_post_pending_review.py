@@ -57,6 +57,13 @@ def test_never_approve_on_self_review_documented():
     )
 
 
+def test_posting_core_documents_chunked_pr_level_batches_and_partial_counts():
+    text = _text()
+    assert re.search(r"one pr-level batch comment\s+per 50 findings", text)
+    assert re.search(r"failed chunk is dropped with a warning", text)
+    assert re.search(r"count reflects the chunks that posted", text)
+
+
 def test_posting_core_documents_address_feedback_provenance_markers():
     text = _text()
     assert "<!-- swe-workbench:review-findings -->" in text

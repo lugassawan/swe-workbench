@@ -200,13 +200,8 @@ def _is_batch_shaped(comment: dict) -> bool:
 
 def _is_automated_owner_comment(comment: dict) -> bool:
     body = comment.get("body") or ""
-    # Classification is deliberately broad and fail-safe: a tool reply whose
-    # marker is inline, CRLF-mangled, or over-long must still classify as
-    # automated — the opposite ruling counts it as a manual reply, which HIDES
-    # older items. The broad match's worst case (an attacker-quoted marker
-    # classifying a human reply as automated) only re-surfaces items — safe.
-    # Suppression (_is_handled) stays strictly whole-line; real GitHub comment
-    # IDs are 10 digits, so no digit bound appears here either.
+    # Broad on purpose: inline, CRLF, or over-long tool markers must classify
+    # automated; the opposite hides older items, while this only re-surfaces them.
     return (
         parse_review_finding_batch(comment) is not None
         or "<!-- swe-workbench:handled:" in body
@@ -248,10 +243,8 @@ def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -
         if batch is not None:
             candidates.extend(batch)
         elif _comment_login(comment) not in (author, me) or _is_batch_shaped(comment):
-            # Unmarked author/runner comments are excluded as self-noise, but a
-            # batch-shaped one that failed strict parsing (hand-crafted, truncated,
-            # or over the section cap) surfaces as a single legacy item — invisible
-            # exclusion with no transparency note is the fail-unsafe direction.
+            # Batch-shaped parse failures stay visible as one legacy item; hiding
+            # them would leave no triage entry or transparency note.
             candidates.append(project_legacy_pr_comment(comment))
 
     result = []

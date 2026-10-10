@@ -134,7 +134,7 @@ MAX_BATCH_ROWS = 50
 _PROVENANCE_MARKER_RE = re.compile(
     r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
 )
-_RESERVED_PLUGIN_MARKER = "<!-- swe-workbench:"
+_RESERVED_PLUGIN_MARKER_RE = re.compile(r"(?m)^[ \t\r]*<!-- swe-workbench:")
 
 
 def _strip_label(label_re: re.Pattern, text: str) -> str:
@@ -471,6 +471,9 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
 def post_pr_level(pr: str, findings: list[dict]) -> int:
     if not findings:
         return 0
+    # main() supplies pr-level rows before demoted inline rows; sort before
+    # slicing so each chunk is a contiguous ascending finding-ID range.
+    findings = sorted(findings, key=lambda finding: finding["_finding_id"])
     posted = 0
     for start in range(0, len(findings), MAX_BATCH_ROWS):
         chunk = findings[start : start + MAX_BATCH_ROWS]
@@ -691,7 +694,7 @@ def _finding_problem(row) -> tuple[str, str] | None:
             continue
         if REMARK_TEXT in row[name]:
             return name, "must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
-        if _RESERVED_PLUGIN_MARKER in row[name]:
+        if _RESERVED_PLUGIN_MARKER_RE.search(row[name]):
             return name, "must not embed a reserved swe-workbench marker"
     anchor = row.get("anchor")
     if anchor not in ("inline", "pr-level"):
