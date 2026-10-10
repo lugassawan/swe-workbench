@@ -90,7 +90,7 @@ This worktree is **disposable but sits on the PR branch itself** — Phase 4 com
 
 ### Phase 3 — Triage digest
 
-Read `$THREADS_PATH` and `$PR_COMMENTS_PATH` (`jq '[.[] | select(.eligible)]'` on each) and render only the `eligible == true` entries, one by one — the fetch command already applied the resolved/already-clarified exclusion for threads and the bot/owner/marker/manual-reply exclusion for PR comments, so Phase 3 never re-implements those rules itself.
+Read `$THREADS_PATH` and `$PR_COMMENTS_PATH` (`jq '[.[] | select(.eligible)]'` on each) and render only the `eligible == true` entries, one by one — the fetch command already applied the resolved/already-clarified exclusion for threads and the PR-comment exclusions for PR feedback (bots absolutely; unmarked author/runner comments; marker/manual-reply suppression — valid marked batches from the author/current runner are retained), so Phase 3 never re-implements those rules itself.
 
 If `$SKIPPED_THREADS_CLARIFIED` or `$SKIPPED_PR_COMMENTS` is non-zero, print transparency notes before the digest — this dedup is lossy by construction, so a transparency note replaces silently dropping:
 > "(N thread(s) skipped — already clarified.)"
@@ -108,7 +108,7 @@ Thread #ID — {path}:{line}  by @{author}  [{Severity if parseable}]
 [D]eferred — reply + resolve (acknowledged, not fixed now)
 [Q]uit — save progress and exit
 ```
-Parse severity from the comment's leading `**<Severity>**` headline (the layout `swe-workbench-pr-review-submit` renders) or a legacy `Severity: <level>` prefix in the comment body if present; otherwise label `Unknown`.
+Parse severity from the comment's leading `**<Severity>**` headline (the layout `swe-workbench-pr-review-submit` renders) or a legacy `Severity: <level>` prefix in the comment body if present; otherwise label `Unknown`. Generated thread comments open with a provenance-marker line (`<!-- swe-workbench:review-finding:N -->`) — strip that leading marker line from the body before severity parsing and before taking the 200-char digest quote, so the marker never leaks into the display or forces `Unknown`.
 
 Capture: `triage[<thread_id>] = A|C|D`.
 

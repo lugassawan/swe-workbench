@@ -577,12 +577,24 @@ def test_address_feedback_skill_phase5_dispatches_issue_kind():
 
 
 def test_address_feedback_skill_reply_body_embeds_handled_marker():
-    """Phase 5 PR-comment reply body must embed the swe-workbench:handled:{id} marker used for re-run dedup."""
+    """Phase 5 PR-comment reply body must embed the item's handled marker used for re-run dedup."""
     text = _skill_text_with_references()
     assert "swe-workbench:handled:" in text, (
-        "SKILL.md Phase 5 must compose the PR-comment reply body with a hidden "
-        "<!-- swe-workbench:handled:{comment.id} --> marker — Phase 1's dedup filter "
-        "matches on this marker to skip already-replied comments on re-runs"
+        "SKILL.md Phase 5 must compose the PR-comment reply body with the item's "
+        "hidden `.handled_marker` (generic `<!-- swe-workbench:handled:{parent_comment_id} -->` "
+        "or finding-specific `<!-- swe-workbench:handled:{parent_comment_id}:finding:{finding_id} -->`) "
+        "— Phase 1's dedup filter matches this marker to skip already-replied items on re-runs"
+    )
+
+
+def test_address_feedback_skill_thread_digest_strips_provenance_marker_line():
+    """Generated thread comments open with a provenance-marker line — Phase 3 must
+    strip it before severity parsing and digest quoting, or severity parses as
+    Unknown and the marker leaks into the 200-char quote."""
+    text = SKILL_MD.read_text()
+    assert "strip that leading marker line" in text, (
+        "SKILL.md Phase 3 must instruct stripping the leading provenance-marker line "
+        "from thread bodies before severity parsing and the 200-char digest quote"
     )
 
 
