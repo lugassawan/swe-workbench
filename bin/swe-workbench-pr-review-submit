@@ -125,6 +125,12 @@ _ANY_LABEL_RE = re.compile(_label_pattern("(?:why it matters|suggested fix)"), r
 # Leading `**Severity**[ · Category][ · `path:line`] — ` headline. The dash is optional so a
 # pre-template body like "**High** text" still loses its severity token.
 _HEADLINE_RE = re.compile(r"^\s*\*\*[^*\n]+\*\*(?:\s*·\s*[^·—\n]+)*(?:\s*—\s*)?")
+REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
+_REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
+_PROVENANCE_MARKER_RE = re.compile(
+    r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
+)
+_RESERVED_REVIEW_MARKER = "<!-- swe-workbench:review-"
 
 
 def _strip_label(label_re: re.Pattern, text: str) -> str:
@@ -151,6 +157,19 @@ def render_finding(row: dict, pr_level: bool) -> str:
     return f"{headline}\n\n{why}\n\n{fix}"
 
 
+def assign_finding_ids(findings: list[dict]) -> list[dict]:
+    return [{**finding, "_finding_id": index} for index, finding in enumerate(findings, start=1)]
+
+
+def render_marked_finding(row: dict, pr_level: bool) -> str:
+    return f"{_REVIEW_FINDING_MARKER_PREFIX}{row['_finding_id']} -->\n{render_finding(row, pr_level)}"
+
+
+def render_pr_level_batch(findings: list[dict]) -> str:
+    rendered = "\n\n---\n\n".join(render_marked_finding(finding, pr_level=True) for finding in findings)
+    return f"{REVIEW_BATCH_MARKER}\n\n{rendered}"
+
+
 def _clean_severity(severity: str) -> str:
     """A caller-supplied `**High**` must not render as `****High****`."""
     return severity.strip().strip("*").strip()
@@ -169,7 +188,8 @@ def dedup_text(text: str) -> str:
     severity/category/`path:line` prefix and both label forms. Without this every
     templated comment shares ~6 label tokens and unrelated findings false-dedup;
     it also maps pre-template run-on threads into the same token space."""
-    return _ANY_LABEL_RE.sub(" ", _HEADLINE_RE.sub("", text or "", count=1))
+    without_markers = _PROVENANCE_MARKER_RE.sub("", text or "")
+    return _ANY_LABEL_RE.sub(" ", _HEADLINE_RE.sub("", without_markers, count=1))
 
 
 def thread_matches(finding_path: str, finding_line: int, finding_body: str, thread: Thread) -> bool:
@@ -364,7 +384,7 @@ def dedup_and_react(threads: list[Thread], inline_findings: list[dict], current_
     survivors: list[dict] = []
     deduped = 0
     for finding in inline_findings:
-        rendered = render_finding(finding, pr_level=False)
+        rendered = render_marked_finding(finding, pr_level=False)
         match = next(
             (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
             None,
@@ -442,7 +462,7 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
 def post_pr_level(pr: str, findings: list[dict]) -> int:
     if not findings:
         return 0
-    body = "\n\n---\n\n".join(render_finding(f, pr_level=True) for f in findings)
+    body = render_pr_level_batch(findings)
     proc = _gh(["pr", "comment", str(pr), "--body", body])
     if proc.returncode == 0:
         return len(findings)
@@ -500,7 +520,7 @@ def _post_review(owner: str, repo: str, pr: str, head_sha: str, event: str, body
 def _inline_comment(finding: dict) -> dict:
     return {
         "path": finding["path"], "line": finding["line"], "side": "RIGHT",
-        "body": render_finding(finding, pr_level=False),
+        "body": render_marked_finding(finding, pr_level=False),
     }
 
 
@@ -655,8 +675,12 @@ def _finding_problem(row) -> tuple[str, str] | None:
         if _LINE_BREAK_RE.search(category.strip()):
             return "category", "must be a single line"
     for name in ("severity", "issue", "why", "fix", "category", "path"):
-        if isinstance(row.get(name), str) and REMARK_TEXT in row[name]:
+        if not isinstance(row.get(name), str):
+            continue
+        if REMARK_TEXT in row[name]:
             return name, "must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
+        if _RESERVED_REVIEW_MARKER in row[name]:
+            return name, "must not embed a reserved review marker"
     anchor = row.get("anchor")
     if anchor not in ("inline", "pr-level"):
         return "anchor", "must be 'inline' or 'pr-level'"
@@ -765,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     owner, repo = args.repo.split("/", 1)
+    findings = assign_finding_ids(findings)
     inline_findings, pr_level_findings = partition_findings(findings)
     script_dir = _script_dir()
 

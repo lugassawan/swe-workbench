@@ -798,8 +798,10 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     assert len(pr_comment_calls) == 1, "demoted findings must batch into exactly one gh pr comment call"
     body = pr_comment_calls[0]["argv"][pr_comment_calls[0]["argv"].index("--body") + 1]
     assert body == (
+        "<!-- swe-workbench:review-findings -->\n\n"
+        "<!-- swe-workbench:review-finding:1 -->\n"
         "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
-    ), "a demoted row must gain its path:line in the headline — inline rendering would lose the location"
+    ), "a demoted row must gain its path:line and retain its provenance marker"
 
 
 def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
@@ -864,6 +866,7 @@ def test_atomic_post_carries_candidate_count_in_body(tmp_path):
     payload = json.loads(post_call["stdin"])
     assert "Posted 1 inline comment(s)" in payload["body"], payload["body"]
     assert payload["comments"][0]["body"] == (
+        "<!-- swe-workbench:review-finding:1 -->\n"
         "**High** — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
     )
 
@@ -1152,7 +1155,9 @@ def test_body_with_quotes_backslash_and_leading_at_survives_byte_identical(tmp_p
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"])
     payload = json.loads(post_call["stdin"])
-    assert payload["comments"][0]["body"].startswith(f"**High** — {hazardous_body}\n\n")
+    assert payload["comments"][0]["body"].startswith(
+        f"<!-- swe-workbench:review-finding:1 -->\n**High** — {hazardous_body}\n\n"
+    )
 
 
 # ── Behavioral: blocking-thread gate ────────────────────────────────────────────
@@ -1517,6 +1522,45 @@ def test_render_inline_omits_location_even_when_path_and_line_present():
     assert "src.py" not in prs.render_finding(_row(), pr_level=False)
 
 
+def test_assign_finding_ids_precedes_partition_and_preserves_order():
+    findings = [
+        _row(issue="first", anchor="pr-level", path=None, line=None),
+        _row(issue="second"),
+        _row(issue="third", anchor="pr-level", path=None, line=None),
+    ]
+
+    assigned = prs.assign_finding_ids(findings)
+    inline, pr_level = prs.partition_findings(assigned)
+
+    assert [row["_finding_id"] for row in assigned] == [1, 2, 3]
+    assert [row["_finding_id"] for row in inline] == [2]
+    assert [row["_finding_id"] for row in pr_level] == [1, 3]
+
+
+def test_render_marked_finding_prefixes_exact_provenance_marker():
+    row = prs.assign_finding_ids([_row()])[0]
+
+    assert prs.render_marked_finding(row, pr_level=False) == (
+        "<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+    )
+
+
+def test_render_pr_level_batch_prefixes_batch_marker_and_preserves_separators():
+    rows = prs.assign_finding_ids([
+        _row(issue="first", anchor="pr-level", path=None, line=None),
+        _row(issue="second", anchor="pr-level", path=None, line=None),
+    ])
+
+    assert prs.render_pr_level_batch(rows) == (
+        "<!-- swe-workbench:review-findings -->\n\n"
+        "<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** — first\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n\n---\n\n"
+        "<!-- swe-workbench:review-finding:2 -->\n"
+        "**High** — second\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+    )
+
+
 def test_render_pr_level_with_path_and_line():
     row = _row(anchor="pr-level", path="a/b.go", line=7)
     assert prs.render_finding(row, pr_level=True).splitlines()[0] == "**High** · `a/b.go:7` — issue on line2"
@@ -1577,6 +1621,14 @@ def test_dedup_text_strips_headline_and_both_label_forms():
 
 def test_dedup_text_leaves_plain_text_untouched():
     assert prs.dedup_text("alpha bravo charlie") == "alpha bravo charlie"
+
+
+def test_dedup_text_strips_provenance_markers_for_legacy_thread_matching():
+    row = prs.assign_finding_ids([_row(issue="alpha", why="bravo", fix="charlie")])[0]
+    marked = prs.render_marked_finding(row, pr_level=False)
+    legacy = prs.render_finding(row, pr_level=False)
+
+    assert prs.dedup_text(marked) == prs.dedup_text(legacy)
 
 
 def test_label_tokens_alone_do_not_false_dedup_unrelated_findings():
@@ -1644,6 +1696,12 @@ def test_remark_embedded_in_any_text_field_is_rejected(field):
     assert problem is not None and problem[0] == field and "remark" in problem[1]
 
 
+@pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
+def test_reserved_review_marker_in_any_string_field_is_rejected(field):
+    problem = prs._finding_problem(_row(**{field: "x <!-- swe-workbench:review-finding:7 -->"}))
+    assert problem is not None and problem[0] == field and "reserved review marker" in problem[1]
+
+
 @pytest.mark.parametrize("field", ["severity", "issue", "category"])
 def test_newline_in_headline_field_is_rejected(field):
     problem = prs._finding_problem(_row(**{field: "a\nb"}))
@@ -1705,6 +1763,8 @@ def test_row_demoted_on_422_retry_renders_pr_level_with_location(tmp_path):
     pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
     body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
     assert body == (
+        "<!-- swe-workbench:review-findings -->\n\n"
+        "<!-- swe-workbench:review-finding:1 -->\n"
         "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
     )
 
@@ -1731,8 +1791,49 @@ def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):
     pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
     body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
     first, second = body.split("\n\n---\n\n")
-    assert first.startswith("**High** — first\n\n**Why it matters:**")
-    assert second.startswith("**High** · `pkg.lock` — second\n\n**Why it matters:**")
+    assert first.startswith(
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** — first\n\n**Why it matters:**"
+    )
+    assert second.startswith(
+        "<!-- swe-workbench:review-finding:2 -->\n**High** · `pkg.lock` — second\n\n**Why it matters:**"
+    )
+
+
+def test_pr_level_batch_preserves_original_ordinals_after_partition(tmp_path):
+    head = _init_repo(tmp_path)
+    pr_diff = (
+        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},
+            {"stdout": "", "exit": 0},  # pr-level batch
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue="inline", line=2),
+        _row(issue="second", anchor="pr-level", path=None, line=None),
+        _row(issue="third", anchor="pr-level", path=None, line=None),
+    ])
+
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+
+    assert result.returncode == 0, result.stderr
+    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    assert "<!-- swe-workbench:review-finding:2 -->" in body
+    assert "<!-- swe-workbench:review-finding:3 -->" in body
+    assert "<!-- swe-workbench:review-finding:1 -->" not in body
 
 
 def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_location(tmp_path):
@@ -1770,7 +1871,10 @@ def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_locati
     assert _data(result)["posted_pr_level"] == 1
     pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
     body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert body.startswith("**High** · Correctness · `src.py:2` — issue on line2\n\n")
+    assert body.startswith(
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** · Correctness · `src.py:2` — issue on line2\n\n"
+    )
 
 
 def test_render_puts_fence_led_fix_on_its_own_paragraph():
