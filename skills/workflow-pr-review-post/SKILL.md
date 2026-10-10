@@ -107,11 +107,11 @@ outdated-but-unresolved thread as needing manual re-verification, not as settled
 ## Step 5 — Address-feedback CTA (conditional)
 
 Call `AskUserQuestion` only when both `CURRENT_USER` and `AUTHOR_LOGIN` are non-empty,
-`CURRENT_USER == AUTHOR_LOGIN`, and the review produced something actionable — `.data.decision = COMMENT`,
+`CURRENT_USER == AUTHOR_LOGIN` (exact, case-sensitive string equality — the same predicate the core
+applies for its self-review clamp), and the review produced something actionable — `.data.decision = COMMENT`,
 OR `posted > 0`, OR `.data.deduped > 0` (`posted = .data.posted_inline + .data.posted_pr_level`,
 read from `$RESULT` at this point). Suppress silently when either identity is empty or when they differ;
-repository `OWNER` is not an identity input. Evaluate `.data.decision`, not `.data.event`, so a GitHub
-submission event cannot make a clean review actionable:
+repository `OWNER` is not an identity input. Evaluate `.data.decision`, not `.data.event`: under self-review `.data.event` is always `COMMENT`, so using it would make every clean review actionable:
 
 ```json
 {

@@ -10,6 +10,8 @@ specialist PR reviews all delegate to this one contract.
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
 
@@ -33,15 +35,17 @@ def test_cta_requires_known_matching_reviewer_and_pr_author():
     block = _suppression_block(POST_CORE_SKILL.read_text())
     assert "both `CURRENT_USER` and `AUTHOR_LOGIN` are non-empty" in block
     assert "`CURRENT_USER == AUTHOR_LOGIN`" in block
+    assert "exact, case-sensitive string equality" in block
     assert "Suppress silently when either identity is empty or when they differ" in block
     assert "repository `OWNER` is not an identity input" in block
     assert ".data.decision`, not `.data.event`" in block
+    assert "under self-review `.data.event` is always `COMMENT`" in block
 
 
-def test_cta_does_not_use_self_review_submission_state():
-    """CTA eligibility must not depend on the submission implementation flag."""
+def test_cta_does_not_restore_outcome_only_gate():
+    """The retired outcome-only rule must not contradict the identity gate."""
     block = _suppression_block(POST_CORE_SKILL.read_text())
-    assert "IS_SELF_REVIEW" not in block
+    assert "Identity does NOT gate" not in block
 
 
 def test_cta_outcome_axis_present():
@@ -81,14 +85,18 @@ def test_cta_uses_ask_user_question():
     )
 
 
-def test_consumers_delegate_cta_with_both_identities():
-    """All postable PR-review callers pass identity data to the shared CTA core."""
-    for path in (
-        ROOT / "skills" / "workflow-pr-review" / "SKILL.md",
-        ROOT / "commands" / "review.md",
-    ):
-        text = path.read_text()
-        assert "swe-workbench:workflow-pr-review-post" in text
-        assert "CURRENT_USER" in text
-        assert "AUTHOR_LOGIN" in text
-        assert "Want me to help address this feedback?" not in text
+@pytest.mark.parametrize(
+    ("path", "section"),
+    (
+        (ROOT / "skills" / "workflow-pr-review" / "SKILL.md", "### Step 6"),
+        (ROOT / "commands" / "review.md", "## Specialist post sub-flow"),
+    ),
+)
+def test_consumers_delegate_cta_with_both_identities(path: Path, section: str):
+    """Each caller passes both identities at its shared-core invocation site."""
+    text = path.read_text()
+    delegation = text.split(section, maxsplit=1)[1]
+    assert "swe-workbench:workflow-pr-review-post" in delegation
+    assert "CURRENT_USER" in delegation
+    assert "AUTHOR_LOGIN" in delegation
+    assert "Want me to help address this feedback?" not in delegation
