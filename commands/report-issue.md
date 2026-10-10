@@ -3,7 +3,13 @@ description: File a plugin bug or feature request directly into lugassawan/swe-w
 argument-hint: "[<one-line thought> — omit to draft from conversation/memory]"
 ---
 
-> **Override (this command only):** The `swe-workbench:product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/swe-workbench:report-issue`. You MUST pass `--repo lugassawan/swe-workbench` on every `gh` invocation in this flow. No other rule is changed.
+> **Override (this command only):** The `swe-workbench:product-manager` agent's default rules "Does not pass `--repo` explicitly to `gh issue create`" (Decision boundaries) and "Never pass `--repo`" (Mutation rules) are **suspended** for `/swe-workbench:report-issue`. Every `gh` command in this flow that targets a repository MUST name `lugassawan/swe-workbench` explicitly and never infer it from the working directory — but each command takes the target in its own shape:
+> - `gh issue …` and `gh label …`: `--repo lugassawan/swe-workbench`.
+> - `gh repo view`: the repo as a **positional** argument. It does not accept `--repo`.
+> - `gh api`: the literal `repos/lugassawan/swe-workbench/…` path — never `{owner}`/`{repo}` placeholders, which resolve from the working directory. It does not accept `--repo`.
+> - `gh auth status`: host-scoped, takes no repo.
+>
+> A command rejected with `unknown flag` means the command line is wrong — it is not a repo-access failure. No other rule is changed.
 
 The user wants to file a plugin issue: $ARGUMENTS
 
@@ -94,13 +100,13 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
    ```
    **Wait for `confirm`. Do NOT run `gh issue create` on this turn.** After `drop N` or `edit N`, re-print the updated preview and wait for `confirm` again — never file immediately after an edit. If `drop N` empties the pick set, exit cleanly with "No insights remain to file" instead of re-prompting for `confirm`.
 
-8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `swe-workbench-clean-state-files`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry.
+8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `swe-workbench-clean-state-files`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry. A `gh issue create` HTTP 403 / "Resource not accessible by personal access token" is reported as insufficient issue-write scope per delegation step 9 — never as the repo being inaccessible.
 
 **Edge cases:**
 - **No memory found, or the memory directory is missing:** fall back to the conversation-only signal from step 2; if that is also empty, exit cleanly exactly like Branch A step 4 ("No plugin-related thought found…").
 - **1–2 entries — too few entries to synthesize themes:** skip clustering and present each entry directly as its own insight; fewer than 5 is fine here — don't pad the digest to reach a minimum.
 - **Conversation-only signal:** if memory is empty but the conversation touches plugin themes, build insights from the conversation signal alone.
-- **`gh` unauthenticated:** print the same token-scope warning as delegation step 1, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
+- **`gh` unauthenticated (`failure_kind == unauthenticated`):** do not bail — print the `scope_status == "unknown"` warning from delegation step 1, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
 - **Out-of-range number or `none`:** re-prompt once; file nothing.
 
 **Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
@@ -112,9 +118,32 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 Delegate to the `swe-workbench:product-manager` subagent. Its response must deliver all of the following before any issue is filed:
 
-1. **Auth + repo check.** Set `repo="lugassawan/swe-workbench"`. Run `gh auth status` to check permissions — if the output indicates the token lacks repo/issue write scope, print a one-line warning:
-   > Warning: your gh token may lack issue-write scope on `lugassawan/swe-workbench`; filing may fail at confirm time.
-   …and continue. Then run `gh repo view --repo "$repo" --json nameWithOwner`. Surface the result in the preview as `Filing into: lugassawan/swe-workbench`. If `gh repo view` fails, bail with: "Repo access check failed: <reason>. Run `gh repo view --repo lugassawan/swe-workbench` to diagnose."
+1. **Auth + repo check.** Run the preflight runtime. It classifies `gh` auth, token scope, and repo access in one deterministic call — never hand-run the underlying `gh` auth or repo-view calls for this check, and never classify gh's stderr yourself:
+   ```bash
+   command -v swe-workbench-issue-preflight >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   PREFLIGHT=$(swe-workbench-issue-preflight lugassawan/swe-workbench | swe-workbench-result-check swb.issue-preflight/1) || exit 1
+   ```
+   Read the result with `printf '%s' "$PREFLIGHT" | jq -r '.status, .data.failure_kind, .data.reason, .data.name_with_owner, .data.scope_status'`, and print each `.warnings[]` whose `code` is `gh_below_minimum` as a one-line warning.
+
+   - **`.status == "failed"`:** bail with the message for `.data.failure_kind`, substituting `.data.reason` for `<reason>`:
+
+     | `failure_kind` | Bail message |
+     |---|---|
+     | `unsupported_flag` | "gh rejected a flag: <reason>. Your `gh` is older than 2.45.0 or this preflight is outdated — update `gh` and the swe-workbench plugin." |
+     | `unauthenticated` | "`gh` is not authenticated. Run `gh auth login`, then retry." |
+     | `repo_inaccessible` | "Repo access check failed: <reason>. Run `gh repo view lugassawan/swe-workbench` to diagnose." |
+     | `gh_missing` | "`gh` CLI not found on PATH. Install the GitHub CLI (2.45.0 or newer), then retry." |
+     | `unknown` | "Repo access check failed: <reason>. Run `gh repo view lugassawan/swe-workbench` to diagnose." |
+
+   - **`.status == "ok"`:** surface `.data.name_with_owner` in the preview as `Filing into: lugassawan/swe-workbench`. The token scope is a warning, never a bail — print one line and continue:
+
+     | Scope state | Warning |
+     |---|---|
+     | `scope_status == "insufficient"` | "Warning: your gh token has neither the `repo` nor the `public_repo` scope on `lugassawan/swe-workbench`; filing may fail at confirm time. Run `gh auth refresh -s public_repo` to add it." |
+     | `scope_status == "unknown"` | "Warning: your gh token may lack issue-write scope on `lugassawan/swe-workbench`; filing may fail at confirm time." |
 
 2. **Restatement.** One sentence in the user's domain language confirming the thought. If the thought is ambiguous, ask exactly one clarifying question before continuing.
 
@@ -124,7 +153,7 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    - **Acceptance criteria.** 2–4 bullets (Given/When/Then or simple bullets).
    - **Impact / Effort (RICE-lite).** `Impact: S/M/L` and `Effort: S/M/L`, one sentence each.
 
-4. **Template discovery.** Fetch templates via `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE --repo lugassawan/swe-workbench --jq '.[].name'` to list template file names (skip `config.yml`). For each `.md` template, fetch its body with `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE/<name> --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys; print(base64.b64decode(sys.stdin.read().strip()).decode())"`. Read the frontmatter and first ~20 body lines. Classify the thought into the closest-fit template with a one-sentence reason, or note "No issue templates found; using default body shape" when none exist.
+4. **Template discovery.** Fetch templates via `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE --jq '.[].name'` to list template file names (skip `config.yml`). For each `.md` template, fetch its body with `gh api repos/lugassawan/swe-workbench/contents/.github/ISSUE_TEMPLATE/<name> --jq '.content' | python3 -c "import base64,sys; print(base64.b64decode(sys.stdin.read().strip()).decode())"`. Read the frontmatter and first ~20 body lines. Classify the thought into the closest-fit template with a one-sentence reason, or note "No issue templates found; using default body shape" when none exist.
 
 5. **Label discovery.** Run `gh label list --repo lugassawan/swe-workbench --json name -q '.[].name'`. If the command fails or returns empty output, treat the label list as empty and proceed directly to step d (no match → omit `--label`). Otherwise select a label using this chain:
 
@@ -156,7 +185,7 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    - **Claude Code — plugin version:** list `~/.claude/plugins/cache/swe-workbench/swe-workbench/` version directories, sort semantically (`sort -V`), take the highest with `tail -1`, then read `plugin.json` from it: `ls ~/.claude/plugins/cache/swe-workbench/swe-workbench/ 2>/dev/null | sort -V | tail -1 | xargs -I{} python3 -c "import json; print(json.load(open('$HOME/.claude/plugins/cache/swe-workbench/swe-workbench/{}/.claude-plugin/plugin.json'))['version'])"`.
    - **Pi — CLI version:** `pi --version`.
    - **Pi — plugin version:** read `~/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json` directly: `python3 -c "import json; print(json.load(open('$HOME/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json'))['version'])" 2>/dev/null`.
-   - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --repo lugassawan/swe-workbench --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
+   - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
 
    **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
 
@@ -189,4 +218,9 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    ```
    When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 8). On failure, leave the files for retry.
+9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 8). On failure, leave the files for retry, and classify the failure from `gh`'s own output before reporting it:
+
+   | `gh issue create` failure | Report |
+   |---|---|
+   | HTTP 403, or "Resource not accessible by personal access token" | "Filing failed: your gh token has insufficient issue-write permission on `lugassawan/swe-workbench` — this is a token-scope problem, not a repo-access problem. Run `gh auth refresh -s public_repo`, or grant the fine-grained token Issues: write on that repo, then reply `confirm` again." |
+   | Anything else | The `gh` error verbatim, then "Reply `confirm` to retry." |

@@ -1,6 +1,7 @@
 """Shared test helpers — importable from test modules."""
 
 import json
+import re
 from pathlib import Path
 
 
@@ -27,6 +28,34 @@ def sentinel_block(text: str, fragment_name: str) -> str | None:
     if end_idx == -1:
         return None
     return text[start:end_idx]
+
+
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_GH_LINE_RE = re.compile(r"\bgh (?:issue|label|api|repo|auth|pr)\b[^\n]*")
+
+
+def gh_spans(text: str) -> list[str]:
+    """Return every `gh ...` command shape in markdown prose, verbatim and stripped.
+
+    Two sources: inline-code spans that start with `gh `, and gh invocations on lines
+    inside fenced blocks (a preview's `Command:` line, say). Descriptive mentions such as
+    `gh issue create` come back as short spans — callers filter on token count or flags.
+    """
+    spans: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            match = _GH_LINE_RE.search(line)
+            if match:
+                spans.append(match.group(0).rstrip())
+            continue
+        for code in _INLINE_CODE_RE.findall(line):
+            if code.strip().startswith("gh "):
+                spans.append(code.strip())
+    return spans
 
 
 def make_plugin_tree(
