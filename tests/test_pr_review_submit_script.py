@@ -1876,6 +1876,43 @@ def test_out_of_diff_demoted_row_keeps_batch_ascending_with_pr_level_row(tmp_pat
     assert "`src.py:999` — demoted inline finding" in first_section
 
 
+def test_post_pr_level_chunks_oversized_batches(tmp_path):
+    """The consumer rejects marked batches over its section cap — the producer
+    must chunk oversized pr-level payloads into per-batch-parseable comments,
+    each internally ascending."""
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},  # pr diff
+            {"stdout": "", "exit": 0},  # pr comment — chunk 1
+            {"stdout": "", "exit": 0},  # pr comment — chunk 2
+            _repo_view_response(True),
+            _review_post_response(),  # N=0
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    rows = [
+        _row(issue=f"finding {index}", anchor="pr-level", path=None, line=None)
+        for index in range(1, 61)
+    ]
+    findings = _write_findings(tmp_path, rows)
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 60
+    calls = _gh_calls(state_dir)
+    pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
+    assert len(pr_comment_calls) == 2, "60 rows at a 50-row cap must post exactly two batch comments"
+    chunks = [
+        re.findall(r"swe-workbench:review-finding:(\d+)", c["argv"][c["argv"].index("--body") + 1])
+        for c in pr_comment_calls
+    ]
+    assert [len(ids) for ids in chunks] == [50, 10]
+    for ids in chunks:
+        assert ids == sorted(ids, key=int), "each chunk must be internally ascending"
+    assert [int(i) for i in chunks[0] + chunks[1]] == list(range(1, 61)), "no row may be lost or duplicated"
+
+
 def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,

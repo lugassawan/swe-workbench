@@ -127,6 +127,10 @@ _ANY_LABEL_RE = re.compile(_label_pattern("(?:why it matters|suggested fix)"), r
 _HEADLINE_RE = re.compile(r"^\s*\*\*[^*\n]+\*\*(?:\s*·\s*[^·—\n]+)*(?:\s*—\s*)?")
 REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
 _REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
+# The consumer (swe-workbench-address-feedback-fetch) rejects any marked batch
+# with more sections than its MAX_BATCH_SECTIONS — chunk oversized payloads so
+# every posted batch stays parseable (parity-tested across the two scripts).
+MAX_BATCH_ROWS = 50
 _PROVENANCE_MARKER_RE = re.compile(
     r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
 )
@@ -467,15 +471,18 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
 def post_pr_level(pr: str, findings: list[dict]) -> int:
     if not findings:
         return 0
-    body = render_pr_level_batch(findings)
-    proc = _gh(["pr", "comment", str(pr), "--body", body])
-    if proc.returncode == 0:
-        return len(findings)
-    print(
-        f"[warn] gh pr comment failed — pr-level batch of {len(findings)} finding(s) NOT posted.",
-        file=sys.stderr,
-    )
-    return 0
+    posted = 0
+    for start in range(0, len(findings), MAX_BATCH_ROWS):
+        chunk = findings[start : start + MAX_BATCH_ROWS]
+        proc = _gh(["pr", "comment", str(pr), "--body", render_pr_level_batch(chunk)])
+        if proc.returncode != 0:
+            print(
+                f"[warn] gh pr comment failed — pr-level batch chunk of {len(chunk)} finding(s) NOT posted.",
+                file=sys.stderr,
+            )
+            continue
+        posted += len(chunk)
+    return posted
 
 
 # ── Step 4 — submit ─────────────────────────────────────────────────────────

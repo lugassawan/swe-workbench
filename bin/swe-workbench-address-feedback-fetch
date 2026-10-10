@@ -69,15 +69,9 @@ _BATCH_SEPARATOR = "\n\n---\n\n"
 # A batch beyond this many sections is malformed and degrades to a single legacy
 # item: projection is otherwise unbounded, and one ~65KB hostile comment could
 # flood triage with a thousand-plus items (per-comment rate limits bound comment
-# count, never section count). 50 stays far above any legitimate review batch.
+# count, never section count). 50 stays far above any legitimate review batch —
+# and the producer chunks at this same size (its MAX_BATCH_ROWS, parity-tested).
 MAX_BATCH_SECTIONS = 50
-# Any plugin handled marker, on its own line — detects tool-origin owner replies
-# without accepting markers quoted mid-line out of attacker-controlled text
-# (the reply template quotes an item's opening chars into a single-line
-# blockquote, so a whole-line anchor can never be satisfied by that quote).
-_HANDLED_MARKER_LINE_RE = re.compile(
-    r"(?m)^[ \t]*<!-- swe-workbench:handled:[1-9][0-9]{0,8}(?::finding:[1-9][0-9]{0,8})? -->[ \t]*$"
-)
 
 _THREADS_QUERY = """
 query($owner: String!, $repo: String!, $number: Int!, $after: String) {
@@ -200,23 +194,31 @@ def _is_bot_comment(comment: dict) -> bool:
     return user.get("type") == "Bot" or _comment_login(comment).endswith("[bot]")
 
 
+def _is_batch_shaped(comment: dict) -> bool:
+    return (comment.get("body") or "").lstrip().startswith(REVIEW_BATCH_MARKER)
+
+
 def _is_automated_owner_comment(comment: dict) -> bool:
     body = comment.get("body") or ""
-    # A batch-shaped comment that fails strict parsing (human edit, truncation) is
-    # still tool-origin: only owner comments reach this check, and counting it as a
-    # manual reply would hide earlier third-party feedback — re-surfacing is safe.
+    # Classification is deliberately broad and fail-safe: a tool reply whose
+    # marker is inline, CRLF-mangled, or over-long must still classify as
+    # automated — the opposite ruling counts it as a manual reply, which HIDES
+    # older items. The broad match's worst case (an attacker-quoted marker
+    # classifying a human reply as automated) only re-surfaces items — safe.
+    # Suppression (_is_handled) stays strictly whole-line; real GitHub comment
+    # IDs are 10 digits, so no digit bound appears here either.
     return (
         parse_review_finding_batch(comment) is not None
-        or _HANDLED_MARKER_LINE_RE.search(body) is not None
-        or body.lstrip().startswith(REVIEW_BATCH_MARKER)
+        or "<!-- swe-workbench:handled:" in body
+        or _is_batch_shaped(comment)
     )
 
 
 def _marker_on_own_line(marker: str, body: str) -> bool:
     """Markers count only on their own line — the reply template emits them that
     way, so this anchor cannot be satisfied by a marker quoted out of an item
-    body into a single-line blockquote."""
-    return re.search(rf"(?m)^[ \t]*{re.escape(marker)}[ \t]*$", body) is not None
+    body into a single-line blockquote. Tolerates CRLF line endings."""
+    return re.search(rf"(?m)^[ \t\r]*{re.escape(marker)}[ \t\r]*$", body) is not None
 
 
 def _is_handled(projection: dict, owner_comments: list[dict]) -> bool:
@@ -245,7 +247,11 @@ def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -
         batch = parse_review_finding_batch(comment)
         if batch is not None:
             candidates.extend(batch)
-        elif _comment_login(comment) not in (author, me):
+        elif _comment_login(comment) not in (author, me) or _is_batch_shaped(comment):
+            # Unmarked author/runner comments are excluded as self-noise, but a
+            # batch-shaped one that failed strict parsing (hand-crafted, truncated,
+            # or over the section cap) surfaces as a single legacy item — invisible
+            # exclusion with no transparency note is the fail-unsafe direction.
             candidates.append(project_legacy_pr_comment(comment))
 
     result = []

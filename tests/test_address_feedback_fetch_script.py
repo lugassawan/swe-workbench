@@ -379,7 +379,11 @@ def test_marked_third_party_batch_splits_while_unmarked_comment_stays_legacy():
     ]
 
 
-def test_malformed_excluded_batch_is_skipped_but_third_party_is_legacy():
+def test_malformed_batch_from_any_identity_surfaces_as_one_legacy_item():
+    """A batch-shaped comment that fails strict parsing stays VISIBLE as one
+    legacy item regardless of identity — invisible exclusion (the old author/
+    runner fail-closed rule) gave a truncated self-review batch no triage entry
+    and no transparency note, which is the fail-unsafe direction."""
     malformed = "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
     comments = [
         {**_pr_comment(26, malformed), "user": {"login": "pr-author", "type": "User"}},
@@ -388,7 +392,7 @@ def test_malformed_excluded_batch_is_skipped_but_third_party_is_legacy():
 
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
 
-    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(27, None)]
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(26, None), (27, None)]
 
 
 def test_bot_marked_batch_remains_excluded():
@@ -561,6 +565,90 @@ def test_over_cap_third_party_batch_degrades_to_one_legacy_item():
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
 
     assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(53, None)]
+
+
+def test_handled_markers_with_realistic_ten_digit_ids_stay_automated_and_suppress():
+    """Real GitHub issue-comment databaseIds are 10 digits — the tool's own
+    handled replies must classify as automated AND suppress their target for
+    both the legacy and the :finding: marker forms."""
+    comments = [
+        _pr_comment(6096635343, "feedback with a realistic id"),
+        _pr_comment(6096635344, "older neighbor"),
+        {
+            **_pr_comment(6096635345, "done\n\n<!-- swe-workbench:handled:6096635343 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[6096635343]["eligible"] is False, "the 10-digit handled marker must still suppress its target"
+    assert by_parent[6096635344]["eligible"] is True, "the reply must classify as automated, not a manual reply"
+
+    finding_form_reply = {
+        "id": 6096635346,
+        "user": {"login": "pr-author", "type": "User"},
+        "body": "done\n\n<!-- swe-workbench:handled:6096635343:finding:2 -->",
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    assert aff._is_automated_owner_comment(finding_form_reply) is True
+
+
+def test_inline_or_crlf_tool_reply_classifies_automated_not_manual():
+    """Classification must be fail-safe: a tool reply whose marker is inline or
+    CRLF-terminated is still tool-origin — classifying it manual would suppress
+    (hide) every older item, and re-surfacing is the safe direction."""
+    inline_reply = {
+        **_pr_comment(103, "done <!-- swe-workbench:handled:100 --> inline"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    comments = [
+        _pr_comment(100, "feedback A"),
+        _pr_comment(101, "feedback B"),
+        inline_reply,
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[101]["eligible"] is True, "an inline-marker tool reply must not count as a manual reply"
+    assert by_parent[100]["eligible"] is True, "suppression still requires the whole-line marker form"
+
+    crlf_reply = {
+        **_pr_comment(104, "done\r\n\r\n<!-- swe-workbench:handled:100 -->\r\n"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-03T00:00:00Z",
+    }
+    assert aff._is_automated_owner_comment(crlf_reply) is True
+    assert aff._marker_on_own_line("<!-- swe-workbench:handled:100 -->", crlf_reply["body"]) is True, (
+        "a CRLF-terminated marker line must still satisfy whole-line suppression"
+    )
+
+
+def test_over_cap_author_batch_surfaces_as_one_legacy_item():
+    """An over-cap marked batch from the PR author/runner must stay visible —
+    invisible exclusion with no transparency note is the fail-unsafe direction."""
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+    comments = [
+        {
+            **_pr_comment(54, over_cap),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(54, None)]
+
+
+def test_producer_and_consumer_batch_caps_agree():
+    """The producer chunks at the exact size the consumer rejects beyond — any
+    disagreement silently makes oversized self-review batches untriable."""
+    assert prs.MAX_BATCH_ROWS == aff.MAX_BATCH_SECTIONS
 
 
 def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
