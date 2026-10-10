@@ -137,6 +137,7 @@ fi
 
 # Shared quote- and escape-aware shell segmenter. `tab_mode` preserves literal
 # tabs for push matching and folds them for the pi detector.
+# shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _segment_awk='
   BEGIN { in_sq = 0; in_dq = 0 }
   {
@@ -157,6 +158,7 @@ _segment_awk='
 
 # Push-only lexer. It preserves empty quoted words and emits redirect syntax
 # separately, so only actual Git argv words reach the push classifier.
+# shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _push_token_awk='
   function emit_word() {
     if (!word_started) return
