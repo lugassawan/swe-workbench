@@ -49,8 +49,23 @@ VERSION_RE = re.compile(r"gh version (\d+)\.(\d+)\.(\d+)")
 UNKNOWN_FLAG_RE = re.compile(r"unknown (?:shorthand )?flag|unknown command", re.IGNORECASE)
 SCOPES_RE = re.compile(r"Token scopes:(.*)")
 AUTH_MARKER_RE = re.compile(r"gh auth login|HTTP 401|Bad credentials", re.IGNORECASE)
+# `gh auth status` failure text. gh 2.45.0 exits 0 even when a token failed validation,
+# so the exit code alone cannot be trusted; newer gh exits 1. A host that logged in
+# successfully alongside a failed one still leaves filing possible, so both must be absent.
+LOGIN_FAILED_RE = re.compile(r"Failed to log in|not logged into", re.IGNORECASE)
+LOGGED_IN_RE = re.compile(r"Logged in to", re.IGNORECASE)
 NOT_FOUND_RE = re.compile(r"Could not resolve to a Repository|HTTP 404|Not Found", re.IGNORECASE)
 REASON_MAX = 200
+
+# The exact gh argv this script runs. Module-level so tests/test_report_issue_gh_compat.py
+# can run the same argv against real gh binaries instead of a copy that could drift.
+VERSION_ARGS = ("--version",)
+AUTH_STATUS_ARGS = ("auth", "status")
+
+
+def repo_view_args(repo: str) -> tuple[str, ...]:
+    return ("repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+
 
 USAGE = "Usage: swe-workbench-issue-preflight <owner>/<repo>"
 
@@ -76,12 +91,15 @@ def run_gh(*args: str) -> Gh:
     return Gh(result.returncode, result.stdout, result.stderr)
 
 
-def first_line(text: str) -> str:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped[:REASON_MAX]
-    return ""
+def first_line(text: str, prefer: re.Pattern[str] | None = None) -> str:
+    """The first non-empty line, or — with `prefer` — the first line matching it. gh prints
+    a bare host header before its per-host failure line, which makes a poor reason."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if prefer is not None:
+        for line in lines:
+            if prefer.search(line):
+                return line[:REASON_MAX]
+    return lines[0][:REASON_MAX] if lines else ""
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -134,15 +152,15 @@ def build_envelope(repo: str) -> dict:
     }
     warnings: list[dict[str, str]] = []
 
-    def failed(kind: str, reason: str) -> dict:
+    def failed(kind: str, reason: str, prefer: re.Pattern[str] | None = None) -> dict:
         data["failure_kind"] = kind
-        data["reason"] = first_line(reason)
+        data["reason"] = first_line(reason, prefer)
         return {"schema": SCHEMA, "status": "failed", "data": data, "warnings": warnings}
 
     if shutil.which("gh") is None:
         return failed("gh_missing", "gh is not on PATH")
 
-    version = run_gh("--version")
+    version = run_gh(*VERSION_ARGS)
     if version.returncode == 127:
         return failed("gh_missing", version.combined)
     parsed = parse_version(version.combined)
@@ -157,15 +175,16 @@ def build_envelope(repo: str) -> dict:
                 )
             )
 
-    auth = run_gh("auth", "status")
+    auth = run_gh(*AUTH_STATUS_ARGS)
     # The flag check precedes the exit-code check: gh exits non-zero for an unknown flag
     # too, and that must never be reported as "not logged in".
     if UNKNOWN_FLAG_RE.search(auth.combined):
         return failed("unsupported_flag", auth.combined)
     if auth.returncode == 124:
         return failed("unknown", auth.combined)
-    if auth.returncode != 0:
-        return failed("unauthenticated", auth.combined)
+    login_failed = bool(LOGIN_FAILED_RE.search(auth.combined)) and not LOGGED_IN_RE.search(auth.combined)
+    if auth.returncode != 0 or login_failed:
+        return failed("unauthenticated", auth.combined, prefer=LOGIN_FAILED_RE)
 
     data["scope_status"] = scope_status(auth.combined)
     if data["scope_status"] == "insufficient":
@@ -185,7 +204,7 @@ def build_envelope(repo: str) -> dict:
             )
         )
 
-    view = run_gh("repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    view = run_gh(*repo_view_args(repo))
     if view.returncode == 0:
         data["name_with_owner"] = view.stdout.strip()
         return {"schema": SCHEMA, "status": "ok", "data": data, "warnings": warnings}

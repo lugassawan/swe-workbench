@@ -52,6 +52,21 @@ AUTH_NO_SCOPES_LINE = (
 AUTH_LOGGED_OUT = (
     "You are not logged into any GitHub hosts. To log in, run: gh auth login\n"
 )
+# gh 2.45.0 exits 0 from `auth status` even when the stored token failed validation;
+# newer gh exits 1. The failure text is the only signal that works on both.
+AUTH_INVALID_TOKEN = (
+    "github.com\n"
+    "  X Failed to log in to github.com account someone (keyring)\n"
+    "  - Active account: true\n"
+    "  - The token in keyring is invalid.\n"
+    "  - To re-authenticate, run: gh auth login -h github.com\n"
+)
+# One host valid, another stale: the valid host means filing can still work.
+AUTH_MIXED_HOSTS = AUTH_QUOTED + (
+    "ghe.example.com\n"
+    "  X Failed to log in to ghe.example.com account someone (keyring)\n"
+    "  - The token in keyring is invalid.\n"
+)
 
 
 def _make_gh_stub(
@@ -192,6 +207,24 @@ def test_auth_status_nonzero_is_unauthenticated(tmp_path):
     assert not any(line.startswith("repo view") for line in log.read_text().splitlines()), (
         "an unauthenticated gh must stop before the repo view call"
     )
+
+
+def test_exit_zero_with_failed_login_text_is_unauthenticated(tmp_path):
+    """gh 2.45.0 reports a failed token validation with exit 0."""
+    envelope, log = _preflight(tmp_path, auth=AUTH_INVALID_TOKEN, auth_rc=0)
+    assert envelope["status"] == "failed"
+    data = envelope["data"]
+    assert data["failure_kind"] == "unauthenticated"
+    assert data["reason"].startswith("X Failed to log in to github.com"), (
+        "the reason must be the failure line, not the host header gh prints first"
+    )
+    assert not any(line.startswith("repo view") for line in log.read_text().splitlines())
+
+
+def test_one_valid_host_among_failed_ones_is_not_unauthenticated(tmp_path):
+    envelope, _ = _preflight(tmp_path, auth=AUTH_MIXED_HOSTS, auth_rc=0)
+    assert envelope["status"] == "ok"
+    assert envelope["data"]["scope_status"] == "ok"
 
 
 def test_auth_status_unknown_flag_beats_auth_failure(tmp_path):
