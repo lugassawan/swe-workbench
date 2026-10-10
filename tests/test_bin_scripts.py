@@ -35,6 +35,7 @@ SCRIPTS = {
     "swe-workbench-fetch-pr": "bash",
     "swe-workbench-gh-timeout": "bash",
     "swe-workbench-handoff": "python3",
+    "swe-workbench-issue-preflight": "python3",
     "swe-workbench-lsp": "python3",
     "swe-workbench-memory": "python3",
     "swe-workbench-new-run-dir": "bash",
@@ -62,6 +63,7 @@ SIBLING_CALLERS = {
     "swe-workbench-address-feedback-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-dead-code-scan": ["swe-workbench-lsp"],
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
+    "swe-workbench-issue-preflight": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
     "swe-workbench-preflight-pr": [
         "swe-workbench-gh-timeout",

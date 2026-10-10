@@ -17,7 +17,7 @@ Every script documents itself: run `swe-workbench-<name> --help` for usage, argu
 — there is no separate script-by-script table here to keep in sync with the code as scripts change.
 The scripts in this directory that carry a `#!/usr/bin/env python3` shebang instead of
 `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
-`swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-lsp`,
+`swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-issue-preflight`, `swe-workbench-lsp`,
 `swe-workbench-memory`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
 `swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, and
@@ -47,8 +47,11 @@ both harnesses' store paths, scans record input for secrets, and flock-serialize
 Python's `json`/`re`/`fcntl`, where bash would need `jq` as a second escaping engine. Unlike
 `comment-scan` (advisory, correctly fails open), `preflight-commit`, `result-check`,
 `address-feedback-fetch`, and `pr-review-threads` fail closed: an error is a hard non-zero exit with
-nothing on stdout, never a silent "clean". Same bare-command convention applies; only the
-interpreter differs.
+nothing on stdout, never a silent "clean". `issue-preflight` classifies free-form `gh` stderr
+(unknown flag vs. logged out vs. repo not found, plus a token-scope read) into a closed
+`failure_kind` set so the calling prose never interprets gh's wording; bash would need a regex
+cascade over merged stdout+stderr and `jq` for the envelope. Same bare-command convention applies;
+only the interpreter differs.
 
 ## Result contract
 

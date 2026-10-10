@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Classify the gh auth + repo-access preflight for /swe-workbench:report-issue.
+
+Runs `gh --version`, `gh auth status` (host-scoped; it takes no repo), and
+`gh repo view <repo>` (the repo is positional), all through the sibling
+swe-workbench-gh-timeout, and prints one JSON envelope to stdout (schema
+`swb.issue-preflight/1`, see shared/docs/runtime-result-contract.md). The point is to
+move the classification of free-form gh stderr out of the calling prose: the caller
+reads `failure_kind` and `scope_status` instead of guessing from gh's wording.
+
+`data` fields (all strings):
+  repo             the repo argument, echoed
+  name_with_owner  gh's canonical nameWithOwner; empty on failure
+  failure_kind     "" when ok, else unsupported_flag | unauthenticated |
+                   repo_inaccessible | gh_missing | unknown
+  reason           first meaningful gh output line behind a failure; empty when ok
+  scope_status     ok | insufficient | unknown — the token's `repo`/`public_repo` scope
+  gh_version       parsed `gh --version` semver; empty when unparseable
+
+A token scope that is insufficient or unreadable is a WARNING (codes
+`insufficient_scope`, `scope_unknown`), not a failure: filing may still succeed, so the
+caller warns and continues. A gh older than MIN_GH_VERSION adds warning `gh_below_minimum`
+and is advisory only — gh's actual behaviour stays the authority.
+
+Exit codes: 0 an envelope was emitted (failures are in `status`) | 1 internal error,
+nothing on stdout | 2 bad invocation.
+
+Usage: swe-workbench-issue-preflight <owner>/<repo>
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+SCHEMA = "swb.issue-preflight/1"
+# The oldest gh this flow is verified against (Ubuntu 24.04 LTS ships 2.45.0). Keep the
+# README install line in step with this value.
+MIN_GH_VERSION = "2.45.0"
+
+# GitHub owners cannot start with '-', and a leading '-' would let the argument be parsed
+# as a gh flag instead of the repo positional. Repo names may legitimately start with '.'.
+REPO_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
+VERSION_RE = re.compile(r"gh version (\d+)\.(\d+)\.(\d+)")
+UNKNOWN_FLAG_RE = re.compile(r"unknown (?:shorthand )?flag|unknown command", re.IGNORECASE)
+SCOPES_RE = re.compile(r"Token scopes:(.*)")
+AUTH_MARKER_RE = re.compile(r"gh auth login|HTTP 401|Bad credentials", re.IGNORECASE)
+NOT_FOUND_RE = re.compile(r"Could not resolve to a Repository|HTTP 404|Not Found", re.IGNORECASE)
+REASON_MAX = 200
+
+USAGE = "Usage: swe-workbench-issue-preflight <owner>/<repo>"
+
+
+class Gh:
+    """One gh invocation through swe-workbench-gh-timeout. `combined` is stdout+stderr —
+    older gh prints `auth status` on stderr, so classification reads both."""
+
+    def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.combined = stdout + stderr
+
+
+def run_gh(*args: str) -> Gh:
+    timeout_wrapper = Path(__file__).resolve().parent / "swe-workbench-gh-timeout"
+    result = subprocess.run(
+        [str(timeout_wrapper), *args],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    return Gh(result.returncode, result.stdout, result.stderr)
+
+
+def first_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:REASON_MAX]
+    return ""
+
+
+def parse_version(text: str) -> tuple[int, int, int] | None:
+    match = VERSION_RE.search(text)
+    if not match:
+        return None
+    major, minor, patch = (int(g) for g in match.groups())
+    return major, minor, patch
+
+
+def below_minimum(version: tuple[int, int, int]) -> bool:
+    minimum = tuple(int(p) for p in MIN_GH_VERSION.split("."))
+    return version < minimum
+
+
+def scope_status(auth_output: str) -> str:
+    """`ok` when the token carries `repo` or `public_repo`, `insufficient` when a scopes line
+    is present without either, `unknown` when no scopes line is printed (fine-grained token,
+    GH_TOKEN). Scopes are matched as whole tokens: `admin:repo_hook` is not `repo`."""
+    match = SCOPES_RE.search(auth_output)
+    if not match:
+        return "unknown"
+    scopes = {s.strip().strip("'\"") for s in match.group(1).split(",")}
+    return "ok" if scopes & {"repo", "public_repo"} else "insufficient"
+
+
+def warning(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def classify_repo_view_failure(output: str) -> str:
+    # Order matters: the flag check wins over everything (gh exits non-zero for it too).
+    if UNKNOWN_FLAG_RE.search(output):
+        return "unsupported_flag"
+    if AUTH_MARKER_RE.search(output):
+        return "unauthenticated"
+    if NOT_FOUND_RE.search(output):
+        return "repo_inaccessible"
+    return "unknown"
+
+
+def build_envelope(repo: str) -> dict:
+    data = {
+        "repo": repo,
+        "name_with_owner": "",
+        "failure_kind": "",
+        "reason": "",
+        "scope_status": "unknown",
+        "gh_version": "",
+    }
+    warnings: list[dict[str, str]] = []
+
+    def failed(kind: str, reason: str) -> dict:
+        data["failure_kind"] = kind
+        data["reason"] = first_line(reason)
+        return {"schema": SCHEMA, "status": "failed", "data": data, "warnings": warnings}
+
+    if shutil.which("gh") is None:
+        return failed("gh_missing", "gh is not on PATH")
+
+    version = run_gh("--version")
+    if version.returncode == 127:
+        return failed("gh_missing", version.combined)
+    parsed = parse_version(version.combined)
+    if parsed is not None:
+        data["gh_version"] = ".".join(str(p) for p in parsed)
+        if below_minimum(parsed):
+            warnings.append(
+                warning(
+                    "gh_below_minimum",
+                    f"gh {data['gh_version']} is older than {MIN_GH_VERSION}, the oldest "
+                    "version this flow is verified against.",
+                )
+            )
+
+    auth = run_gh("auth", "status")
+    # The flag check precedes the exit-code check: gh exits non-zero for an unknown flag
+    # too, and that must never be reported as "not logged in".
+    if UNKNOWN_FLAG_RE.search(auth.combined):
+        return failed("unsupported_flag", auth.combined)
+    if auth.returncode == 124:
+        return failed("unknown", auth.combined)
+    if auth.returncode != 0:
+        return failed("unauthenticated", auth.combined)
+
+    data["scope_status"] = scope_status(auth.combined)
+    if data["scope_status"] == "insufficient":
+        warnings.append(
+            warning(
+                "insufficient_scope",
+                "The gh token's scopes include neither `repo` nor `public_repo`; "
+                "filing may fail at confirm time.",
+            )
+        )
+    elif data["scope_status"] == "unknown":
+        warnings.append(
+            warning(
+                "scope_unknown",
+                "gh did not report token scopes (fine-grained token or GH_TOKEN); "
+                "filing may fail at confirm time.",
+            )
+        )
+
+    view = run_gh("repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    if view.returncode == 0:
+        data["name_with_owner"] = view.stdout.strip()
+        return {"schema": SCHEMA, "status": "ok", "data": data, "warnings": warnings}
+    if view.returncode == 124:
+        return failed("unknown", view.combined)
+    return failed(classify_repo_view_failure(view.combined), view.combined)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    if len(argv) == 1 and argv[0] in ("--help", "-h"):
+        print(__doc__)
+        return 0
+
+    if len(argv) != 1 or not REPO_RE.match(argv[0]):
+        print(f"swe-workbench-issue-preflight: expected one <owner>/<repo> argument, got: {' '.join(argv) or '(none)'}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+
+    try:
+        envelope = build_envelope(argv[0])
+    except OSError as exc:
+        # The sibling wrapper missing or not executable — an internal fault, not a gh result.
+        print(f"swe-workbench-issue-preflight: {exc}", file=sys.stderr)
+        return 1
+
+    # ensure_ascii=True (the default) escapes non-ASCII to \uXXXX so stdout encoding can
+    # never raise on gh output containing arbitrary bytes.
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
