@@ -155,116 +155,241 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Classify each force-push segment independently so later `-f` values do
-# not affect earlier non-force pushes; inspect every shell-command segment.
-while IFS= read -r push_cmd; do
-  push_norm=$(printf '%s' "$push_cmd" | tr '()' '  ' | tr '\t`' '  ' | tr -d "'\"[]{}\\\\")
-  _toks=()
-  read -ra _toks <<<"$push_norm"
-  prefix_ok=1; prefix_args=0; found_git=0
-  if (( ${#_toks[@]} )); then                 # bash 3.2 + set -u rejects empty "${arr[@]}"
-  for _prefix in "${_toks[@]}"; do
+# Push-only lexer. It preserves empty quoted words and emits redirect syntax
+# separately, so only actual Git argv words reach the push classifier.
+_push_token_awk='
+  function emit_word() {
+    if (!word_started) return
+    if (redirect_target) redirect_target = 0
+    else print "WORD\t" word
+    word = ""; word_started = 0
+  }
+  function emit_separator() {
+    emit_word()
+    print "SEP"
+  }
+  function begin_redirect() {
+    if (word_started && word ~ /^[0-9]*$/) {
+      word = ""; word_started = 0
+    } else emit_word()
+    redirect_target = 1
+  }
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0 }
+  {
+    line = $0; n = length(line)
+    for (i = 1; i <= n; i++) {
+      c = substr(line, i, 1)
+      if (escaped) {
+        word = word c; word_started = 1; escaped = 0
+        continue
+      }
+      if (c == "\\" && !in_sq) {
+        escaped = 1; word_started = 1
+        continue
+      }
+      if (c == "\047" && !in_dq) {
+        in_sq = !in_sq; word_started = 1
+        continue
+      }
+      if (c == "\"") {
+        if (!in_sq) { in_dq = !in_dq; word_started = 1; continue }
+      }
+      if (c == "\\") continue
+      if (in_sq || in_dq) {
+        word = word c; word_started = 1
+        continue
+      }
+      if (c == "\t") {
+        print "TAB"
+        emit_word()
+        continue
+      }
+      if (c ~ /[[:space:]]/) {
+        emit_word()
+        continue
+      }
+      if (c == "&" && substr(line, i + 1, 1) == ">") {
+        begin_redirect()
+        i++
+        while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&]/) i++
+        continue
+      }
+      if (c == ">" || c == "<") {
+        begin_redirect()
+        while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&]/) i++
+        continue
+      }
+      if (c ~ /[;|&`()]/) {
+        emit_separator()
+        continue
+      }
+      if (c == "[" || c == "]" || c == "{" || c == "}") continue
+      word = word c; word_started = 1
+    }
+    if (in_sq || in_dq) {
+      word = word " "; word_started = 1
+    } else emit_separator()
+  }
+  END { emit_word() }
+'
+
+# The active segment is held in globals because Bash 3.2 has no namerefs.
+# `scan_force_push_text` resets them at every lexical separator.
+_push_tokens=()
+_push_saw_tab=0
+
+_classify_force_push_segment() {
+  local _prefix _t push_text
+  local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
+  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0
+  local _consume_next=0 _seen_push=0 _global_value=0
+
+  (( ${#_push_tokens[@]} )) || return
+  for _prefix in "${_push_tokens[@]}"; do
     case "$_prefix" in
-      git|*/git) found_git=1; break ;;
-      [[:alpha:]_][[:alnum:]_]*=*) prefix_args=1 ;;
-      # Transparent pass-through prefixes; additions require BASH_GUARD_FIXTURES coverage.
+      git|*/git) _found_git=1; break ;;
+      [[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
       sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
       docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
-        prefix_args=1 ;;
+        _prefix_args=1 ;;
       '!'|if|while|until|do|then) ;;
-      -*) (( prefix_args )) || prefix_ok=0 ;;
-      *) (( prefix_args )) || prefix_ok=0 ;;
+      -*) (( _prefix_args )) || _prefix_ok=0 ;;
+      *) (( _prefix_args )) || _prefix_ok=0 ;;
     esac
+    _i=$((_i + 1))
   done
-  fi
-  # Keep the established fail-safe treatment of literal tab-prefixed git.
-  [[ "$push_cmd" == *$'\t'* ]] && prefix_ok=1
-  if (( found_git == 0 || prefix_ok == 0 )); then
-    continue
-  fi
+  (( _push_saw_tab )) && _prefix_ok=1
+  (( _found_git && _prefix_ok )) || return
+  _git_index=$_i
 
-  has_force=0; has_refspec=0; pushes_all_refs=0; seen_positional=0; consume_next=0
-  seen_git=0; seen_push=0; global_value=0
-  if (( ${#_toks[@]} )); then                 # guard: bash 3.2 + set -u errors on empty "${arr[@]}"
-    for _t in "${_toks[@]}"; do
-      if (( seen_push == 0 )); then
-        if (( seen_git == 0 )); then
-          [[ "$_t" == git || "$_t" == */git ]] && seen_git=1
-          continue
-        fi
-        if (( global_value )); then
-          global_value=0
-          continue
-        fi
-        case "$_t" in
-          push) seen_push=1 ;;
-          -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
-            global_value=1 ;;
-          --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
-          -*) ;;
-          *) ;;
-        esac
-        continue
-      fi
-      if (( consume_next )); then             # swallow an unrecognized flag's separate-word value
-        case "$_t" in
-          --force|-f) has_force=1 ;;
-          --all) pushes_all_refs=1 ;;
-          --mirror) has_force=1; pushes_all_refs=1 ;;
-          -*) [[ "$_t" != --* && "$_t" == *f* ]] && has_force=1 ;;
-        esac
-        consume_next=0
+  for ((_i = _git_index; _i < ${#_push_tokens[@]}; _i++)); do
+    _t=${_push_tokens[_i]}
+    if (( _seen_push == 0 )); then
+      if (( _global_value )); then
+        _global_value=0
         continue
       fi
       case "$_t" in
-        --force|-f) has_force=1 ;;
-        --all) pushes_all_refs=1 ;;
-        --mirror) has_force=1; pushes_all_refs=1 ;;
-        # Known BOOLEAN-only push flags — safe to skip outright. An
-        # unrecognized `-*` flag is assumed to take a separate-word value and
-        # that value is consumed too, so it cannot be a remote or refspec.
-        --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
-        --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
-        -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
-        --*=*) ;;                             # attached long-option value
-        -*)
-          if [[ "$_t" != --* && "$_t" == *f* ]]; then
-            has_force=1                       # fail-safe short cluster containing -f
-          elif [[ "$_t" == -[[:alnum:]][[:alnum:]]* ]]; then
-            :                                 # attached short-option value
-          else
-            consume_next=1                   # unknown flag may take a separate-word value
-          fi ;;
-        *:*) has_refspec=1 ;;                 # src:dst refspec
-        *) if (( seen_positional )); then has_refspec=1; else seen_positional=1; fi ;;  # 1st bareword = remote
+        push) _seen_push=1 ;;
+        -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
+          _global_value=1 ;;
+        --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
+        -*) ;;
+        *) ;;
       esac
-    done
+      continue
+    fi
+    if (( _consume_next )); then
+      case "$_t" in
+        --force|-f) _has_force=1 ;;
+        --all) _pushes_all_refs=1 ;;
+        --mirror) _has_force=1; _pushes_all_refs=1 ;;
+        -*) [[ "$_t" != --* && "$_t" == *f* ]] && _has_force=1 ;;
+      esac
+      _consume_next=0
+      continue
+    fi
+    case "$_t" in
+      --force|-f) _has_force=1 ;;
+      --all) _pushes_all_refs=1 ;;
+      --mirror) _has_force=1; _pushes_all_refs=1 ;;
+      --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
+      --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
+      -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
+      --*=*) ;;
+      -*)
+        if [[ "$_t" != --* && "$_t" == *f* ]]; then
+          _has_force=1
+        elif [[ "$_t" == -[[:alnum:]][[:alnum:]]* ]]; then
+          :
+        else
+          _consume_next=1
+        fi ;;
+      *:*) _has_refspec=1 ;;
+      *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
+    esac
+  done
+  (( _has_force )) || return
+  if (( _pushes_all_refs )); then
+    printf 'BLOCK\tall-refs\n'
+    return
   fi
-  if (( has_force == 0 )); then
-    continue
-  fi
-
-  if (( pushes_all_refs )); then
-    echo 'BLOCKED: force push of all refs may update protected branches' >&2
-    exit 2
-  fi
-
-  if echo "$push_norm" | grep -Eq \
+  push_text=$(printf ' %s' "${_push_tokens[@]}")
+  if printf '%s\n' "$push_text" | grep -Eq \
     '(^|[[:space:]]|:)(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
-    echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2
-    exit 2
+    printf 'BLOCK\tprotected-ref\n'
+    return
   fi
+  (( _has_refspec )) || printf 'CHECK_CURRENT\n'
+}
 
-  if (( has_refspec == 0 )); then             # relies on push.default / upstream
-    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-    case "$branch" in
-      main|master|release/*)
-        echo "BLOCKED: force push of current protected branch '$branch' (implicit upstream)" >&2
-        exit 2
+_scan_known_wrapper_body() {
+  local _depth=$1 _i _body_index=-1 _token
+  (( ${#_push_tokens[@]} )) || return
+
+  case "${_push_tokens[0]}" in
+    bash|sh|zsh|dash|su)
+      for ((_i = 1; _i < ${#_push_tokens[@]}; _i++)); do
+        if [[ "${_push_tokens[_i]}" == -c ]]; then
+          _body_index=$((_i + 1))
+          break
+        fi
+      done
+      ;;
+    ssh)
+      _body_index=$((${#_push_tokens[@]} - 1))
+      ;;
+  esac
+  (( _body_index >= 0 && _body_index < ${#_push_tokens[@]} )) || return
+  _token=${_push_tokens[_body_index]}
+  [[ "$_token" == *git[[:space:]]push* ]] || return
+  scan_force_push_text "$_token" "$((_depth + 1))"
+}
+
+scan_force_push_text() {
+  local _scan_text=$1 _scan_depth=${2:-0} _kind _value
+  _push_tokens=()
+  _push_saw_tab=0
+  while IFS=$'\t' read -r _kind _value; do
+    case "$_kind" in
+      WORD) _push_tokens+=("$_value") ;;
+      TAB) _push_saw_tab=1 ;;
+      SEP)
+        _scan_known_wrapper_body "$_scan_depth"
+        _classify_force_push_segment
+        _push_tokens=()
+        _push_saw_tab=0
         ;;
     esac
-  fi
-done < <(printf '%s' "$_bj" | awk -v tab_mode=keep "$_segment_awk")
+  done < <(printf '%s' "$_scan_text" | awk "$_push_token_awk")
+  _scan_known_wrapper_body "$_scan_depth"
+  _classify_force_push_segment
+}
+
+while IFS=$'\t' read -r _policy _reason; do
+  case "$_policy" in
+    BLOCK)
+      case "$_reason" in
+        all-refs) echo 'BLOCKED: force push of all refs may update protected branches' >&2 ;;
+        *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
+      esac
+      exit 2
+      ;;
+    CHECK_CURRENT)
+      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+      case "$branch" in
+        main|master|release/*)
+          echo "BLOCKED: force push of current protected branch '$branch' (implicit upstream)" >&2
+          exit 2
+          ;;
+        '')
+          echo 'BLOCKED: unable to resolve branch for implicit force push' >&2
+          exit 2
+          ;;
+      esac
+      ;;
+  esac
+done < <(scan_force_push_text "$_bj")
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)

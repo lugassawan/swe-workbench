@@ -66,6 +66,17 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git push --repo=up --force origin main", True),
     ("git push --dry-run -fq origin main", True),
     ("git push -forigin main", True),
+    # Redirect syntax and empty global-option values must not alter Git argv classification.
+    ("git push --force origin main 2>&1", True),
+    ("git push --force origin main > /dev/null", True),
+    ("git push --force origin main >/dev/null", True),
+    ("git push --force origin feature/x 2>&1", False),
+    ("git push --force origin feature/x > /dev/null", False),
+    ("git push --force origin feature/x >/dev/null", False),
+    ("git -C '' push --force origin main", True),
+    ('git -C "" push --force origin main', True),
+    ("git -C '' push --force origin feature/x", False),
+    ('git -C "" push --force origin feature/x', False),
     # Wrapper arguments, interpreters, and shell control prefixes stay transparent.
     ("env FOO=1 git push --force origin main", True),
     ("sudo -u root git push --force origin main", True),

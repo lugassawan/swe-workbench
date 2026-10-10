@@ -290,6 +290,59 @@ class TestImplicitForcePushBlocker:
             f"stderr: {result.stderr!r}"
         )
 
+    @pytest.mark.parametrize("cmd", [
+        "git push origin --force 2>&1",
+        "git push --force origin > /dev/null",
+        "git push --force origin >/dev/null",
+        "git push --force origin 2>guard.log",
+        "git push --force origin &>guard.log",
+    ])
+    def test_redirect_syntax_does_not_hide_implicit_force_push(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git push --force origin feature/x 2>&1",
+        "git push --force origin feature/x > /dev/null",
+        "git push --force origin feature/x >/dev/null",
+        "git push --force origin feature/x 2>guard.log",
+        "git push --force origin feature/x &>guard.log",
+    ])
+    def test_redirected_explicit_feature_refspec_stays_allowed(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", ["git -C '' push --force", 'git -C "" push --force'])
+    def test_empty_git_global_option_value_does_not_hide_push(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 2, (
+            f"Expected BLOCKED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git -C '' push --force origin feature/x",
+        'git -C "" push --force origin feature/x',
+    ])
+    def test_empty_git_global_option_with_feature_refspec_stays_allowed(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0, (
+            f"Expected ALLOWED for {cmd!r}, got exit {result.returncode}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        assert result.stderr == ""
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).
