@@ -395,6 +395,15 @@ def test_malformed_batch_from_any_identity_surfaces_as_one_legacy_item():
     assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(26, None), (27, None)]
 
 
+def test_malformed_batch_legacy_projection_strips_leading_provenance_markers():
+    malformed = _review_finding_batch((2, "first body"), (3, ""))
+    result = aff.compute_pr_comment_eligibility([_pr_comment(28, malformed)], author="pr-author", me="runner")
+
+    assert len(result) == 1
+    assert result[0]["finding_id"] is None
+    assert result[0]["body"].startswith("first body")
+
+
 def test_bot_marked_batch_remains_excluded():
     comment = {
         **_pr_comment(28, _review_finding_batch((2, "bot finding"))),
@@ -492,6 +501,23 @@ def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
     assert [(item["finding_id"], item["body"].splitlines()[0]) for item in projections] == [
         (2, "**High** — finding 2"),
         (7, "**High** — finding 7"),
+    ]
+
+
+def test_allowed_inline_marker_mention_round_trips_without_hiding_third_party_feedback():
+    row = prs.assign_finding_ids([{
+        "severity": "Low", "issue": "owner finding",
+        "why": "mention <!-- swe-workbench:handled:123 --> safely", "fix": "fix",
+        "anchor": "pr-level",
+    }])[0]
+    assert prs._finding_problem(row) is None
+    owner_batch = {**_pr_comment(51, prs.render_pr_level_batch([row])), "user": {"login": "pr-author", "type": "User"}}
+    third_party = _pr_comment(52, "third-party feedback")
+
+    result = aff.compute_pr_comment_eligibility([third_party, owner_batch], author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"], item["eligible"]) for item in result] == [
+        (52, None, True), (51, 1, True),
     ]
 
 

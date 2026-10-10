@@ -805,6 +805,33 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     ), "a demoted row must gain its path:line and retain its provenance marker"
 
 
+def test_middle_pr_level_batch_failure_continues_and_counts_successful_chunks(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": "", "exit": 0},  # pr diff
+            {"stdout": "", "exit": 0},  # first 50-row chunk
+            {"stdout": "", "stderr": "gh: connection reset", "exit": 1},  # second chunk
+            {"stdout": "", "exit": 0},  # final one-row chunk
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None)
+        for index in range(101)
+    ])
+    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
+
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 51
+    assert _data(result)["submitted"] is True
+    assert "chunk of 50 finding(s) NOT posted" in result.stderr
+    assert len([call for call in _gh_calls(state_dir) if call["argv"][:2] == ["pr", "comment"]]) == 3
+
+
 def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
@@ -1763,10 +1790,14 @@ def test_inline_plugin_marker_mention_in_string_field_is_allowed(field):
 
 @pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
 def test_line_start_handled_marker_in_any_string_field_is_rejected(field):
-    """A line-start handled marker can satisfy the consumer's marker boundary and
-    suppress an unrelated item; harmless inline/code-span mentions are allowed."""
     problem = prs._finding_problem(_row(**{field: "<!-- swe-workbench:handled:123 --> x"}))
     assert problem is not None and problem[0] == field and "reserved swe-workbench marker" in problem[1]
+
+
+@pytest.mark.parametrize("prefix", ["x\n", "x\r\n", "x\n  ", "x\n\t", "x\n\n---\n\n", "x\r"])
+def test_body_field_marker_at_any_line_boundary_is_rejected(prefix):
+    problem = prs._finding_problem(_row(why=f"{prefix}<!-- swe-workbench:handled:123 -->"))
+    assert problem is not None and problem == ("why", "must not embed a reserved swe-workbench marker")
 
 
 @pytest.mark.parametrize("field", ["severity", "issue", "category"])

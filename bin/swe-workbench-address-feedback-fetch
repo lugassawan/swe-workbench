@@ -58,19 +58,14 @@ STATE_DIR = Path("/tmp/swe-workbench-address-feedback")
 
 REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
 _REVIEW_BATCH_LINE_RE = re.compile(r"(?m)^<!-- swe-workbench:review-findings -->$")
-# Finding IDs are 1-based ordinals the producer assigns; the {0,8} cap keeps int()
-# safe from hostile arbitrarily-long digit runs (Python's int/str conversion limit
-# raises ValueError past ~4300 digits, which would crash the whole fetch) while
-# staying far above any real finding count — a longer digit run simply parses as
-# a malformed batch and falls back to legacy one-comment handling.
+# Bound finding IDs before int conversion; oversized IDs fall back to legacy handling.
 _REVIEW_FINDING_LINE_RE = re.compile(r"\A<!-- swe-workbench:review-finding:([1-9][0-9]{0,8}) -->\n", re.DOTALL)
 _ANY_REVIEW_MARKER_LINE_RE = re.compile(r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]{0,8}) -->$")
+_LEADING_PROVENANCE_MARKER_RE = re.compile(
+    r"\A[ \t\r]*<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->[ \t]*\r?\n"
+)
 _BATCH_SEPARATOR = "\n\n---\n\n"
-# A batch beyond this many sections is malformed and degrades to a single legacy
-# item: projection is otherwise unbounded, and one ~65KB hostile comment could
-# flood triage with a thousand-plus items (per-comment rate limits bound comment
-# count, never section count). 50 stays far above any legitimate review batch —
-# and the producer chunks at this same size (its MAX_BATCH_ROWS, parity-tested).
+# Match the producer's batch cap to bound projected triage items.
 MAX_BATCH_SECTIONS = 50
 
 _THREADS_QUERY = """
@@ -173,11 +168,21 @@ def parse_review_finding_batch(comment: dict) -> list[dict] | None:
     return projections or None
 
 
+def _strip_leading_provenance_markers(body: str) -> str:
+    while marker := _LEADING_PROVENANCE_MARKER_RE.match(body):
+        body = body[marker.end():].lstrip("\r\n")
+    return body
+
+
 def project_legacy_pr_comment(comment: dict) -> dict:
-    """Add explicit triage identity to an unmarked PR-level comment."""
+    """Add explicit triage identity; hide marker-only batch prefixes in display text."""
     comment_id = comment["id"]
+    body = comment["body"]
+    if _is_batch_shaped(comment):
+        body = _strip_leading_provenance_markers(body)
     return {
         **comment,
+        "body": body,
         "parent_comment_id": comment_id,
         "finding_id": None,
         "triage_key": f"prcomment:{comment_id}",
@@ -228,9 +233,7 @@ def _is_handled(projection: dict, owner_comments: list[dict]) -> bool:
 def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -> list[dict]:
     """Project valid marked batches and keep legacy comments addressable on re-runs."""
     owner_comments = [comment for comment in comments if _comment_login(comment) in (author, me)]
-    # Parse each owner comment exactly once — recomputing automated-origin inside
-    # the candidate loop re-parsed every owner comment per candidate
-    # (O(candidates × owner comments)).
+    # Parse owner automation once rather than per candidate.
     owner_automated = [
         (owner_comment, _is_automated_owner_comment(owner_comment))
         for owner_comment in owner_comments
@@ -243,8 +246,7 @@ def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -
         if batch is not None:
             candidates.extend(batch)
         elif _comment_login(comment) not in (author, me) or _is_batch_shaped(comment):
-            # Batch-shaped parse failures stay visible as one legacy item; hiding
-            # them would leave no triage entry or transparency note.
+            # Keep malformed batches visible as one legacy triage item.
             candidates.append(project_legacy_pr_comment(comment))
 
     result = []

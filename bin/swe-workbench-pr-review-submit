@@ -127,14 +127,12 @@ _ANY_LABEL_RE = re.compile(_label_pattern("(?:why it matters|suggested fix)"), r
 _HEADLINE_RE = re.compile(r"^\s*\*\*[^*\n]+\*\*(?:\s*·\s*[^·—\n]+)*(?:\s*—\s*)?")
 REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
 _REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
-# The consumer (swe-workbench-address-feedback-fetch) rejects any marked batch
-# with more sections than its MAX_BATCH_SECTIONS — chunk oversized payloads so
-# every posted batch stays parseable (parity-tested across the two scripts).
+# Keep each post within the consumer's strict section cap.
 MAX_BATCH_ROWS = 50
 _PROVENANCE_MARKER_RE = re.compile(
     r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
 )
-_RESERVED_PLUGIN_MARKER_RE = re.compile(r"(?m)^[ \t\r]*<!-- swe-workbench:")
+_RESERVED_PLUGIN_MARKER_RE = re.compile(r"(?m)(?:^|(?<=\r))[ \t\r]*<!-- swe-workbench:")
 
 
 def _strip_label(label_re: re.Pattern, text: str) -> str:
@@ -170,10 +168,7 @@ def render_marked_finding(row: dict, pr_level: bool) -> str:
 
 
 def render_pr_level_batch(findings: list[dict]) -> str:
-    # Ascending finding-ID order is a consumer contract (parse_review_finding_batch
-    # requires strictly ascending IDs): main() concatenates `pr_level_findings +
-    # demoted`, so a lower-ID demoted inline row must sort ahead of original
-    # pr-level rows or the whole batch fails to parse downstream.
+    # The consumer requires strictly ascending finding IDs.
     ordered = sorted(findings, key=lambda finding: finding["_finding_id"])
     rendered = "\n\n---\n\n".join(render_marked_finding(finding, pr_level=True) for finding in ordered)
     return f"{REVIEW_BATCH_MARKER}\n\n{rendered}"
@@ -471,8 +466,7 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
 def post_pr_level(pr: str, findings: list[dict]) -> int:
     if not findings:
         return 0
-    # main() supplies pr-level rows before demoted inline rows; sort before
-    # slicing so each chunk is a contiguous ascending finding-ID range.
+    # Slice contiguous ascending finding-ID ranges.
     findings = sorted(findings, key=lambda finding: finding["_finding_id"])
     posted = 0
     for start in range(0, len(findings), MAX_BATCH_ROWS):
@@ -617,7 +611,7 @@ def submit_review(
             if proc.returncode == 0:
                 posted_inline += 1
             else:
-                demoted.append(f)  # never dropped silently — folds into one follow-up pr-level comment
+                demoted.append(f)  # Never drop it: fold into follow-up pr-level batch comment(s).
         if demoted:
             posted_pr_level += post_pr_level(pr, demoted)
         proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
