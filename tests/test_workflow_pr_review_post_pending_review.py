@@ -55,3 +55,11 @@ def test_never_approve_on_self_review_documented():
         "workflow-pr-review-post: must explicitly document that self-review "
         "never submits APPROVE"
     )
+
+
+def test_posting_core_documents_address_feedback_provenance_markers():
+    text = _text()
+    assert "<!-- swe-workbench:review-findings -->" in text
+    assert "<!-- swe-workbench:review-finding:<positive-integer> -->" in text
+    assert "address-feedback" in text
+    assert "Review summary bodies are not consumed by address-feedback." in text

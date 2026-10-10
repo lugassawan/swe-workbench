@@ -65,9 +65,12 @@ anchors against the PR diff — demoting out-of-diff/ambiguous rows into a singl
 comment rather than dropping them — applies the self-review + diff-scoping decision flip, and
 submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
 confirmed 422 (re-fetches HEAD via `headRefOid`, genuinely re-validates/demotes, retries once) and
-a per-comment fallback otherwise. The core never submits APPROVE on self-review — GitHub blocks a
-self-authored `APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of
-`$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
+a per-comment fallback otherwise. Every generated finding body carries a provenance marker: each
+PR-level batch begins `<!-- swe-workbench:review-findings -->`, and every generated finding begins
+`<!-- swe-workbench:review-finding:<positive-integer> -->`; address-feedback uses these markers to
+split a valid batch into finding-level triage items. Review summary bodies are not consumed by
+address-feedback. The core never submits APPROVE on self-review — GitHub blocks a self-authored
+`APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of `$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
 endpoint); the script confirms via a read-your-write check before conceding to the fallback. The
 core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark (appended to
 the byline on a confirmed-public repo only) — callers' own `BYLINE` stays identity-only and never
