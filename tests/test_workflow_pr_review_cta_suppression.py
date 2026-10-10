@@ -1,21 +1,16 @@
 # tests/test_workflow_pr_review_cta_suppression.py
 
-"""Pin the address-feedback CTA suppression contract for the shared PR-review
-posting core.
+"""Pin the address-feedback CTA eligibility contract for the shared posting core.
 
-Bug: IS_SELF_REVIEW caused the CTA to be silently dropped when the user ran
-/implement -> /review on their own PR, even when findings were posted. The fix
-removes the identity axis from the CTA gate -- only the outcome axis gates it.
-
-Since #499, the CTA lives in workflow-pr-review-post/SKILL.md (Step 5) --
-it used to be duplicated verbatim across workflow-pr-review's first-pass and
-followup modes (the latter was its own standalone skill until #565 folded it
-into workflow-pr-review as a mode); both now delegate to the shared core
-instead, so this contract is pinned once against the single source of truth.
+The CTA is offered only when the authenticated reviewer is the known PR author
+and the review produced an actionable outcome. General, followup, and
+specialist PR reviews all delegate to this one contract.
 """
 
 import re
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 POST_CORE_SKILL = ROOT / "skills" / "workflow-pr-review-post" / "SKILL.md"
@@ -35,27 +30,22 @@ def _suppression_block(text: str) -> str:
     return match.group(0)
 
 
-def test_cta_no_identity_suppression():
-    """The CTA suppression block must NOT gate on CURRENT_USER == AUTHOR_LOGIN."""
-    text = POST_CORE_SKILL.read_text()
-    block = _suppression_block(text)
-    assert "CURRENT_USER == AUTHOR_LOGIN" not in block, (
-        "workflow-pr-review-post/SKILL.md still suppresses the CTA based on author identity. "
-        "Remove the identity axis — suppression should be outcome-only."
-    )
+def test_cta_requires_known_matching_reviewer_and_pr_author():
+    """The CTA must require a known authenticated reviewer who authored the PR."""
+    block = _suppression_block(POST_CORE_SKILL.read_text())
+    assert "both `CURRENT_USER` and `AUTHOR_LOGIN` are non-empty" in block
+    assert "`CURRENT_USER == AUTHOR_LOGIN`" in block
+    assert "exact, case-sensitive string equality" in block
+    assert "Suppress silently when either identity is empty or when they differ" in block
+    assert "repository `OWNER` is not an identity input" in block
+    assert ".data.decision`, not `.data.event`" in block
+    assert "under self-review `.data.event` is always `COMMENT`" in block
 
 
-def test_cta_no_self_review_suppression():
-    """The CTA suppression block must NOT reference IS_SELF_REVIEW or self-review."""
-    text = POST_CORE_SKILL.read_text()
-    block = _suppression_block(text)
-    assert "IS_SELF_REVIEW" not in block, (
-        "CTA block must not gate on IS_SELF_REVIEW — outcome axis only. "
-        "IS_SELF_REVIEW belongs on the GitHub-submission gate, not the CTA."
-    )
-    assert not re.search(r"(?i)self.?review", block), (
-        "CTA block must not mention self-review as a suppression trigger."
-    )
+def test_cta_does_not_restore_outcome_only_gate():
+    """The retired outcome-only rule must not contradict the identity gate."""
+    block = _suppression_block(POST_CORE_SKILL.read_text())
+    assert "Identity does NOT gate" not in block
 
 
 def test_cta_outcome_axis_present():
@@ -95,22 +85,18 @@ def test_cta_uses_ask_user_question():
     )
 
 
-def test_consumers_delegate_cta_not_duplicate_it():
-    """workflow-pr-review (both first-pass and followup modes) must NOT re-duplicate
-    the CTA mechanism — it delegates to the core instead (issue #499).
-
-    Note: workflow-pr-review's own Step 5.5 (own-thread verification/override) calls
-    AskUserQuestion for an unrelated, differently-scoped prompt (open-thread override,
-    not the address-feedback CTA) — so this test pins the absence of the CTA's own
-    question text specifically, not a blanket ban on the AskUserQuestion tool name.
-    """
-    for skill_name in ("workflow-pr-review",):
-        text = (ROOT / "skills" / skill_name / "SKILL.md").read_text()
-        assert "swe-workbench:workflow-pr-review-post" in text, (
-            f"{skill_name}/SKILL.md must invoke swe-workbench:workflow-pr-review-post "
-            "instead of re-implementing the CTA/dedup/submit mechanism inline."
-        )
-        assert "Want me to help address this feedback?" not in text, (
-            f"{skill_name}/SKILL.md must not duplicate the CTA's AskUserQuestion block — "
-            "that mechanism now lives solely in workflow-pr-review-post/SKILL.md."
-        )
+@pytest.mark.parametrize(
+    ("path", "section"),
+    (
+        (ROOT / "skills" / "workflow-pr-review" / "SKILL.md", "### Step 6"),
+        (ROOT / "commands" / "review.md", "## Specialist post sub-flow"),
+    ),
+)
+def test_consumers_delegate_cta_with_both_identities(path: Path, section: str):
+    """Each caller passes both identities at its shared-core invocation site."""
+    text = path.read_text()
+    delegation = text.split(section, maxsplit=1)[1]
+    assert "swe-workbench:workflow-pr-review-post" in delegation
+    assert "CURRENT_USER" in delegation
+    assert "AUTHOR_LOGIN" in delegation
+    assert "Want me to help address this feedback?" not in delegation
