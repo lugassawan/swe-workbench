@@ -182,7 +182,30 @@ jobs:
       # makes their requires_pi_ai_catalog gate fail loudly (not skip) if this step is removed.
       - run: npm ci
       - run: pip install --require-hashes -r tests/requirements.lock
+      # Provisions the oldest gh the report-issue flow supports (MIN_GH_VERSION in
+      # bin/swe-workbench-issue-preflight; Ubuntu 24.04 LTS ships 2.45.0), so
+      # tests/test_report_issue_gh_compat.py runs the prose's gh commands against it as well
+      # as against the runner's current gh. Linux only: the macOS leg has no pinned minimum
+      # and runs the current gh alone. The SHA256 is copied from that release's
+      # gh_2.45.0_checksums.txt.
+      - name: Install pinned minimum gh
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          version=2.45.0
+          sha256=79e89a14af6fc69163aee00e764e86d5809d0c6c77e6f229aebe7a4ed115ee67
+          archive="gh_${version}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/cli/cli/releases/download/v${version}/${archive}"
+          echo "${sha256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gh-min"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/gh-min" --strip-components=1
+          echo "SWB_GH_MIN_BIN=$RUNNER_TEMP/gh-min/bin/gh" >> "$GITHUB_ENV"
+      # SWB_REQUIRE_GH_COMPAT=1 turns a missing gh binary into a failure instead of a skip,
+      # so the real-gh compatibility tests cannot silently stop running.
       - run: pytest tests/ -v
+        env:
+          SWB_REQUIRE_GH_COMPAT: '1'
 
   handoff-py39:
     name: "handoff:python3.9"
