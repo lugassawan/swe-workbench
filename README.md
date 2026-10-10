@@ -32,7 +32,7 @@ pi install git:github.com/lugassawan/swe-workbench
 
 This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/pi-port.md` for the Pi-specific rulings.
 
-The commands that talk to GitHub (`/swe-workbench:report-issue`, `/swe-workbench:capture`, the PR commands) shell out to the [GitHub CLI](https://cli.github.com/) — install **gh 2.45.0 or newer**.
+The GitHub-facing commands shell out to the [GitHub CLI](https://cli.github.com/). `/swe-workbench:report-issue` is verified against **gh 2.45.0 or newer**.
 
 ## What's inside
 

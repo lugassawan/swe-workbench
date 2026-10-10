@@ -1,21 +1,11 @@
 """Real-gh compatibility checks for /swe-workbench:report-issue.
 
-The PATH-stub tests in test_issue_preflight_script.py and the prose assertions in
-test_report_issue_command.py cannot prove that a real gh parses the flags the flow uses —
-a stub accepts anything. This file runs the commands against real gh binaries instead:
-
-  - the current gh on PATH, and
-  - the pinned minimum gh named by $SWB_GH_MIN_BIN (the version the README promises).
-
-Nothing here may reach GitHub or mutate anything. gh is run with no token, an empty
-config dir, an unresolvable host, and a dead proxy; gh rejects an unknown flag before it
-checks auth or touches the network, so "no unknown-flag error" is exactly the property
-under test. `gh issue create` and the other mutating commands are never executed — their
-flags are checked against that command's own `--help` output.
-
-A missing binary skips the test locally. With SWB_REQUIRE_GH_COMPAT=1 (set in CI) the
-current gh is required, and the minimum gh is required whenever SWB_GH_MIN_BIN is set —
-the Ubuntu leg provisions it, the macOS leg does not.
+Runs the prose's read-only gh commands and the preflight's own argv against the current gh
+and the pinned minimum ($SWB_GH_MIN_BIN), with no token, an unresolvable host and a dead
+proxy: gh rejects an unknown flag before it checks auth, so "no unknown-flag error" is the
+property. Mutating commands are never executed; their flags are checked against --help.
+A missing binary skips locally; SWB_REQUIRE_GH_COMPAT=1 and SWB_REQUIRE_GH_MIN=1 (CI) fail.
+The 401/404 wording needs network, so only the unknown-flag wording is canaried.
 """
 
 from __future__ import annotations
@@ -57,6 +47,8 @@ _UNKNOWN_FLAG_RE = re.compile(r"unknown (?:shorthand )?flag|unknown command", re
 # Commands safe to run with no token: read-only, and rejected at flag-parse or auth time.
 _EXECUTABLE = {("label", "list"), ("issue", "list"), ("api",), ("repo", "view"), ("auth", "status")}
 _FLAG_RE = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*|-[a-zA-Z])(?=[\s=\]]|$)")
+# `gh api` is read-only until one of these appears; such a span is help-checked, never run.
+_WRITE_FLAG_RE = re.compile(r"(?<![\w-])(-X|--method|-f|-F|--field|--raw-field|--input)(?![\w-])")
 
 
 def _load_script_module():
@@ -95,7 +87,9 @@ def _runnable(span: str) -> bool:
     """Executable commands with real arguments; a bare `gh repo view` would resolve its
     repo from cwd, and descriptive three-token mentions say nothing about flag shapes."""
     key = _command_key(span)
-    return key in _EXECUTABLE and (key == ("auth", "status") or len(span.split()) >= 4)
+    if key not in _EXECUTABLE or _WRITE_FLAG_RE.search(span):
+        return False
+    return key == ("auth", "status") or len(span.split()) >= 4
 
 
 def _argv_for(span: str) -> list[str]:
@@ -105,7 +99,7 @@ def _argv_for(span: str) -> list[str]:
 
 
 RUNNABLE_SPANS = sorted({s for s in _prose_spans() if _runnable(s)})
-MUTATING_SPANS = sorted({s for s in _prose_spans() if _command_key(s) not in _EXECUTABLE})
+MUTATING_SPANS = sorted({s for s in _prose_spans() if not _runnable(s)})
 
 
 @pytest.fixture(params=["current", "minimum"])
@@ -115,11 +109,13 @@ def gh_bin(request):
         path, required = shutil.which("gh"), require
     else:
         path = os.environ.get("SWB_GH_MIN_BIN")
-        required = require and bool(path)
+        # SWB_REQUIRE_GH_MIN holds the requirement apart from the provisioning step, so
+        # deleting that step fails the suite instead of silently dropping the minimum.
+        required = os.environ.get("SWB_REQUIRE_GH_MIN") == "1" or (require and bool(path))
     if not path or not os.access(path, os.X_OK):
         message = f"no {request.param} gh binary available (path={path!r})"
         if required:
-            pytest.fail(message + " — SWB_REQUIRE_GH_COMPAT=1 requires it")
+            pytest.fail(message + " — required by SWB_REQUIRE_GH_COMPAT / SWB_REQUIRE_GH_MIN")
         pytest.skip(message)
     return Path(path)
 
@@ -155,6 +151,13 @@ def _gh(gh_bin: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
 
 def _combined(result: subprocess.CompletedProcess) -> str:
     return result.stdout + result.stderr
+
+
+def test_no_runnable_span_can_mutate():
+    """Structural hermeticity: a span that writes (gh api -X POST, -f …) is help-checked,
+    never executed, even though `gh api` itself is a read-only command."""
+    for span in RUNNABLE_SPANS:
+        assert not _WRITE_FLAG_RE.search(span), f"a write-capable span must not be executed: {span!r}"
 
 
 def test_the_prose_yields_commands_to_check():

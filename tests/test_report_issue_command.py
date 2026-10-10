@@ -174,6 +174,36 @@ def test_report_issue_step1_scope_is_a_warning_with_three_states():
     assert "continue" in step1.lower(), "a scope warning must warn and continue, not bail"
 
 
+def test_report_issue_step1_carves_out_branch_b_unauthenticated():
+    """Branch B must keep rendering its digest when gh is unauthenticated, and the carve-out
+    must be stated where the bail is defined — not only in a Branch B edge case."""
+    text = REPORT_ISSUE_MD.read_text()
+    step1 = _delegation_step1_slice(text)
+    assert "Branch B only" in step1 and "do not bail" in step1, (
+        "step 1 must state the Branch B unauthenticated carve-out next to the bail table"
+    )
+    edge = next(
+        (line for line in _branch_b_slice(text).splitlines() if "`gh` unauthenticated" in line), ""
+    )
+    assert edge, "Branch B must keep its unauthenticated edge case"
+    assert "failure_kind == unauthenticated" in edge and "do not bail" in edge
+    assert 'scope_status == "unknown"' not in edge, (
+        "the edge case must not point at the ok-only scope-warning table, which never fires "
+        "for a failed envelope"
+    )
+
+
+def test_report_issue_remediations_do_not_overpromise():
+    """`gh auth refresh` cannot add a scope to an env-supplied token, and a 403 can be a
+    rate limit rather than a scope problem."""
+    text = REPORT_ISSUE_MD.read_text()
+    step1 = _delegation_step1_slice(text)
+    step9 = _delegation_step9_slice(text)
+    assert "GH_TOKEN" in step1, "the refresh remedy must cover an env-supplied token"
+    assert "GH_TOKEN" in step9
+    assert "rate limit" in step9.lower(), "step 9 must not report a rate-limit 403 as a scope problem"
+
+
 def test_report_issue_create_time_403_is_reported_as_scope_not_repo_inaccessible():
     """A fine-grained token passes the preflight, then 403s at gh issue create."""
     text = REPORT_ISSUE_MD.read_text()

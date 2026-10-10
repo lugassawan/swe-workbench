@@ -49,12 +49,12 @@ VERSION_RE = re.compile(r"gh version (\d+)\.(\d+)\.(\d+)")
 UNKNOWN_FLAG_RE = re.compile(r"unknown (?:shorthand )?flag|unknown command", re.IGNORECASE)
 SCOPES_RE = re.compile(r"Token scopes:(.*)")
 AUTH_MARKER_RE = re.compile(r"gh auth login|HTTP 401|Bad credentials", re.IGNORECASE)
-# `gh auth status` failure text. gh 2.45.0 exits 0 even when a token failed validation,
-# so the exit code alone cannot be trusted; newer gh exits 1. A host that logged in
-# successfully alongside a failed one still leaves filing possible, so both must be absent.
+# gh 2.45.0 exits 0 from `auth status` for a failed login while current gh exits 1, so the
+# exit code alone is not trusted; one host logged in is enough to go on to `repo view`.
 LOGIN_FAILED_RE = re.compile(r"Failed to log in|not logged into", re.IGNORECASE)
 LOGGED_IN_RE = re.compile(r"Logged in to", re.IGNORECASE)
-NOT_FOUND_RE = re.compile(r"Could not resolve to a Repository|HTTP 404|Not Found", re.IGNORECASE)
+LOGIN_TIMEOUT_RE = re.compile(r"Timeout trying to log in", re.IGNORECASE)
+NOT_FOUND_RE = re.compile(r"Could not resolve to a Repository|HTTP 404", re.IGNORECASE)
 REASON_MAX = 200
 
 # The exact gh argv this script runs. Module-level so tests/test_report_issue_gh_compat.py
@@ -182,9 +182,13 @@ def build_envelope(repo: str) -> dict:
         return failed("unsupported_flag", auth.combined)
     if auth.returncode == 124:
         return failed("unknown", auth.combined)
-    login_failed = bool(LOGIN_FAILED_RE.search(auth.combined)) and not LOGGED_IN_RE.search(auth.combined)
-    if auth.returncode != 0 or login_failed:
-        return failed("unauthenticated", auth.combined, prefer=LOGIN_FAILED_RE)
+    # `repo view` is the real arbiter, so a host that logged in must not be masked by a stale
+    # second host or account (current gh exits 1 for any of them).
+    if not LOGGED_IN_RE.search(auth.combined):
+        if LOGIN_TIMEOUT_RE.search(auth.combined):
+            return failed("unknown", auth.combined, prefer=LOGIN_TIMEOUT_RE)
+        if auth.returncode != 0 or LOGIN_FAILED_RE.search(auth.combined):
+            return failed("unauthenticated", auth.combined, prefer=LOGIN_FAILED_RE)
 
     data["scope_status"] = scope_status(auth.combined)
     if data["scope_status"] == "insufficient":
@@ -220,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         print(__doc__)
         return 0
 
-    if len(argv) != 1 or not REPO_RE.match(argv[0]):
+    if len(argv) != 1 or not REPO_RE.fullmatch(argv[0]):
         print(f"swe-workbench-issue-preflight: expected one <owner>/<repo> argument, got: {' '.join(argv) or '(none)'}", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
@@ -234,8 +238,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ensure_ascii=True (the default) escapes non-ASCII to \uXXXX so stdout encoding can
     # never raise on gh output containing arbitrary bytes.
-    json.dump(envelope, sys.stdout, ensure_ascii=True)
-    sys.stdout.write("\n")
+    sys.stdout.write(json.dumps(envelope, ensure_ascii=True) + "\n")
     return 0
 
 

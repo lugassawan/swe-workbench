@@ -100,13 +100,13 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
    ```
    **Wait for `confirm`. Do NOT run `gh issue create` on this turn.** After `drop N` or `edit N`, re-print the updated preview and wait for `confirm` again — never file immediately after an edit. If `drop N` empties the pick set, exit cleanly with "No insights remain to file" instead of re-prompting for `confirm`.
 
-8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `swe-workbench-clean-state-files`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry. A `gh issue create` HTTP 403 / "Resource not accessible by personal access token" is reported as insufficient issue-write scope per delegation step 9 — never as the repo being inaccessible.
+8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `swe-workbench-clean-state-files`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry. A `gh issue create` failure is reported per delegation step 9's create-time rows: HTTP 403 / "Resource not accessible by personal access token" is insufficient issue-write scope, never the repo being inaccessible.
 
 **Edge cases:**
 - **No memory found, or the memory directory is missing:** fall back to the conversation-only signal from step 2; if that is also empty, exit cleanly exactly like Branch A step 4 ("No plugin-related thought found…").
 - **1–2 entries — too few entries to synthesize themes:** skip clustering and present each entry directly as its own insight; fewer than 5 is fine here — don't pad the digest to reach a minimum.
 - **Conversation-only signal:** if memory is empty but the conversation touches plugin themes, build insights from the conversation signal alone.
-- **`gh` unauthenticated (`failure_kind == unauthenticated`):** do not bail — print the `scope_status == "unknown"` warning from delegation step 1, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
+- **`gh` unauthenticated (`failure_kind == unauthenticated`):** do not bail — apply the Branch B carve-out in delegation step 1: warn, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
 - **Out-of-range number or `none`:** re-prompt once; file nothing.
 
 **Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
@@ -138,11 +138,13 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
      | `gh_missing` | "`gh` CLI not found on PATH. Install the GitHub CLI (2.45.0 or newer), then retry." |
      | `unknown` | "Repo access check failed: <reason>. Run `gh repo view lugassawan/swe-workbench` to diagnose." |
 
+     Branch B only: on `unauthenticated`, do not bail — print "Warning: your gh token may lack issue-write scope on `lugassawan/swe-workbench`; filing may fail at confirm time.", still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
+
    - **`.status == "ok"`:** surface `.data.name_with_owner` in the preview as `Filing into: lugassawan/swe-workbench`. The token scope is a warning, never a bail — print one line and continue:
 
      | Scope state | Warning |
      |---|---|
-     | `scope_status == "insufficient"` | "Warning: your gh token has neither the `repo` nor the `public_repo` scope on `lugassawan/swe-workbench`; filing may fail at confirm time. Run `gh auth refresh -s public_repo` to add it." |
+     | `scope_status == "insufficient"` | "Warning: your gh token has neither the `repo` nor the `public_repo` scope on `lugassawan/swe-workbench`; filing may fail at confirm time. Run `gh auth refresh -s public_repo` to add it (if the token comes from `GH_TOKEN`/`GITHUB_TOKEN`, add the scope to that token instead)." |
      | `scope_status == "unknown"` | "Warning: your gh token may lack issue-write scope on `lugassawan/swe-workbench`; filing may fail at confirm time." |
 
 2. **Restatement.** One sentence in the user's domain language confirming the thought. If the thought is ambiguous, ask exactly one clarifying question before continuing.
@@ -222,5 +224,6 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
 
    | `gh issue create` failure | Report |
    |---|---|
-   | HTTP 403, or "Resource not accessible by personal access token" | "Filing failed: your gh token has insufficient issue-write permission on `lugassawan/swe-workbench` — this is a token-scope problem, not a repo-access problem. Run `gh auth refresh -s public_repo`, or grant the fine-grained token Issues: write on that repo, then reply `confirm` again." |
+   | Output says "Resource not accessible by personal access token", or an HTTP 403 that does not mention a rate limit | "Filing failed: your gh token has insufficient issue-write permission on `lugassawan/swe-workbench` — this is a token-scope problem, not a repo-access problem. Run `gh auth refresh -s public_repo` (if the token comes from `GH_TOKEN`/`GITHUB_TOKEN`, add the scope to that token instead), or grant the fine-grained token Issues: write on that repo, then reply `confirm` again." |
+   | HTTP 403 or 429 that mentions a rate limit | "GitHub rate-limited the request. Wait a few minutes, then reply `confirm` again." |
    | Anything else | The `gh` error verbatim, then "Reply `confirm` to retry." |

@@ -49,6 +49,8 @@ AUTH_NO_SCOPES_LINE = (
     "  - Active account: true\n"
     "  - Git operations protocol: https\n"
 )
+# Current gh reports a host it could not reach in time as an auth problem (exit 1).
+AUTH_TIMED_OUT = "github.com\n  X Timeout trying to log in to github.com account someone (keyring)\n"
 AUTH_LOGGED_OUT = (
     "You are not logged into any GitHub hosts. To log in, run: gh auth login\n"
 )
@@ -61,7 +63,8 @@ AUTH_INVALID_TOKEN = (
     "  - The token in keyring is invalid.\n"
     "  - To re-authenticate, run: gh auth login -h github.com\n"
 )
-# One host valid, another stale: the valid host means filing can still work.
+# One host valid, another stale: the valid host means filing can still work. gh 2.45.0
+# exits 0 for this; current gh exits 1 — the verdict must not depend on that.
 AUTH_MIXED_HOSTS = AUTH_QUOTED + (
     "ghe.example.com\n"
     "  X Failed to log in to ghe.example.com account someone (keyring)\n"
@@ -221,10 +224,18 @@ def test_exit_zero_with_failed_login_text_is_unauthenticated(tmp_path):
     assert not any(line.startswith("repo view") for line in log.read_text().splitlines())
 
 
-def test_one_valid_host_among_failed_ones_is_not_unauthenticated(tmp_path):
-    envelope, _ = _preflight(tmp_path, auth=AUTH_MIXED_HOSTS, auth_rc=0)
+@pytest.mark.parametrize("auth_rc", [0, 1], ids=["gh-2.45-exit-0", "current-gh-exit-1"])
+def test_one_valid_host_among_failed_ones_is_not_unauthenticated(tmp_path, auth_rc):
+    envelope, _ = _preflight(tmp_path, auth=AUTH_MIXED_HOSTS, auth_rc=auth_rc, auth_stream="stderr")
     assert envelope["status"] == "ok"
     assert envelope["data"]["scope_status"] == "ok"
+
+
+def test_gh_internal_login_timeout_is_unknown_not_unauthenticated(tmp_path):
+    envelope, _ = _preflight(tmp_path, auth=AUTH_TIMED_OUT, auth_rc=1, auth_stream="stderr")
+    assert envelope["status"] == "failed"
+    assert envelope["data"]["failure_kind"] == "unknown"
+    assert envelope["data"]["reason"].startswith("X Timeout trying to log in")
 
 
 def test_auth_status_unknown_flag_beats_auth_failure(tmp_path):
@@ -286,10 +297,11 @@ def test_repo_view_auth_markers_are_unauthenticated(tmp_path, repo_out):
     ("repo_out", "repo_rc"),
     [
         ("error connecting to api.github.com\n", 1),
+        ("jq: command not found\n", 127),
         ("Get \"https://api.github.com/graphql\": dial tcp: lookup api.github.com: Could not resolve host\n", 1),
         ("", 124),
     ],
-    ids=["network", "could-not-resolve-host", "timeout"],
+    ids=["network", "command-not-found", "could-not-resolve-host", "timeout"],
 )
 def test_repo_view_other_failures_are_unknown(tmp_path, repo_out, repo_rc):
     """Anything unrecognised — including a network error that merely says 'Could not
@@ -314,6 +326,12 @@ def test_gh_missing_is_gh_missing(tmp_path):
     assert envelope["status"] == "failed"
     assert envelope["data"]["failure_kind"] == "gh_missing"
     assert envelope["data"]["gh_version"] == ""
+
+
+def test_version_call_exit_127_is_gh_missing(tmp_path):
+    envelope, _ = _preflight(tmp_path, version="", version_rc=127)
+    assert envelope["status"] == "failed"
+    assert envelope["data"]["failure_kind"] == "gh_missing"
 
 
 def test_version_below_minimum_warns_but_still_runs(tmp_path):
@@ -365,8 +383,12 @@ def test_argv_log_pins_command_shapes(tmp_path):
         ["-x/y"],
         ["--repo", REPO],
         [REPO, "extra"],
+        [REPO + "\n"],
     ],
-    ids=["none", "no-slash", "three-parts", "space", "empty-repo", "empty-owner", "leading-dash", "flag", "extra-arg"],
+    ids=[
+        "none", "no-slash", "three-parts", "space", "empty-repo", "empty-owner",
+        "leading-dash", "flag", "extra-arg", "trailing-newline",
+    ],
 )
 def test_bad_or_missing_argument_exits_2_without_calling_gh(tmp_path, args):
     stub_dir = tmp_path / "stub"
@@ -376,6 +398,25 @@ def test_bad_or_missing_argument_exits_2_without_calling_gh(tmp_path, args):
     assert result.stdout == ""
     assert "Usage:" in result.stderr
     assert log.read_text() == "", "argument validation must happen before any gh call"
+
+
+def test_missing_gh_timeout_sibling_is_an_internal_error(tmp_path):
+    """The sibling wrapper unavailable is a fault of the install, not a gh verdict: exit 1,
+    nothing on stdout, so a caller's `|| exit 1` stops instead of reading a false envelope."""
+    isolated = tmp_path / "bin"
+    isolated.mkdir()
+    copy = isolated / SCRIPT.name
+    copy.write_text(SCRIPT.read_text())
+    stub_dir = tmp_path / "stub"
+    _make_gh_stub(stub_dir)
+    env = dict(_CLEAN_ENV)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
+    result = subprocess.run(
+        [sys.executable, str(copy), REPO], capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "swe-workbench-issue-preflight:" in result.stderr
 
 
 @pytest.mark.parametrize("flag", ["--help", "-h"])
