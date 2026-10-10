@@ -25,10 +25,13 @@ import tempfile
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+import pytest
+
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "bin" / "swe-workbench-address-feedback-fetch"
+PR_REVIEW_SUBMIT = ROOT / "bin" / "swe-workbench-pr-review-submit"
 SWEEP_RESIDUALS = ROOT / "bin" / "swe-workbench-sweep-residuals"
 STATE_DIR = Path("/tmp/swe-workbench-address-feedback")
 
@@ -43,6 +46,18 @@ def _load_module():
 
 
 aff = _load_module()
+
+
+def _load_pr_review_submit_module():
+    loader = SourceFileLoader("pr_review_submit_for_aff", str(PR_REVIEW_SUBMIT))
+    spec = importlib.util.spec_from_file_location("pr_review_submit_for_aff", PR_REVIEW_SUBMIT, loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pr_review_submit_for_aff"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+prs = _load_pr_review_submit_module()
 
 
 def _unique_n() -> str:
@@ -161,6 +176,55 @@ def test_thread_unresolved_other_reply_is_eligible():
     assert reason is None
 
 
+# ── Unit: marked review-finding batches ─────────────────────────────────────
+
+
+def _review_finding_batch(*sections: tuple[int, str]) -> str:
+    marked = [f"<!-- swe-workbench:review-finding:{finding_id} -->\n{body}" for finding_id, body in sections]
+    return "<!-- swe-workbench:review-findings -->\n\n" + "\n\n---\n\n".join(marked)
+
+
+def _pr_comment(comment_id: int, body: str) -> dict:
+    return {
+        "id": comment_id,
+        "user": {"login": "reviewer", "type": "User"},
+        "body": body,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_parse_review_finding_batch_projects_exact_bodies_and_keys():
+    comment = _pr_comment(42, _review_finding_batch((2, "first body"), (7, "second body")))
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first body", "second body"]
+    assert [
+        (projection["parent_comment_id"], projection["finding_id"], projection["triage_key"], projection["handled_marker"])
+        for projection in projections
+    ] == [
+        (42, 2, "prcomment:42:finding:2", "<!-- swe-workbench:handled:42:finding:2 -->"),
+        (42, 7, "prcomment:42:finding:7", "<!-- swe-workbench:handled:42:finding:7 -->"),
+    ]
+    assert all(projection["id"] == 42 for projection in projections)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<!-- swe-workbench:review-finding:2 -->\nnot a batch",
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\nbody",
+        _review_finding_batch((2, "first"), (2, "duplicate")),
+        _review_finding_batch((7, "first"), (2, "descending")),
+        "<!-- swe-workbench:review-findings -->\n\ntext <!-- swe-workbench:review-finding:2 -->",
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->",
+        _review_finding_batch((2, "first")) + "\n\n---\n\nleftover",
+    ],
+)
+def test_parse_review_finding_batch_rejects_malformed_input(body):
+    assert aff.parse_review_finding_batch(_pr_comment(42, body)) is None
+
+
 # ── Unit: compute_pr_comment_eligibility (ported jq-program fixtures) ────────
 
 
@@ -243,6 +307,137 @@ def test_pr_comments_own_marker_replies_excluded_from_manual_heuristic():
         "comment 9 must stay eligible — the only later owner comment is a marker-bearing "
         "tool reply for a different comment, which the manual-reply heuristic must ignore"
     )
+
+
+def test_marked_batches_from_author_and_runner_bypass_identity_exclusion():
+    comments = [
+        {
+            **_pr_comment(20, _review_finding_batch((2, "author finding"))),
+            "user": {"login": "pr-author", "type": "User"},
+        },
+        {
+            **_pr_comment(21, _review_finding_batch((3, "runner finding"))),
+            "user": {"login": "runner", "type": "User"},
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(20, 2), (21, 3)]
+    assert all(item["eligible"] is True for item in result)
+
+
+def test_unmarked_author_and_runner_comments_remain_absent():
+    comments = [
+        {**_pr_comment(22, "author note"), "user": {"login": "pr-author", "type": "User"}},
+        {**_pr_comment(23, "runner note"), "user": {"login": "runner", "type": "User"}},
+    ]
+
+    assert aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner") == []
+
+
+def test_marked_third_party_batch_splits_while_unmarked_comment_stays_legacy():
+    comments = [
+        _pr_comment(24, _review_finding_batch((2, "first"), (7, "second"))),
+        _pr_comment(25, "legacy"),
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"], item["triage_key"]) for item in result] == [
+        (24, 2, "prcomment:24:finding:2"),
+        (24, 7, "prcomment:24:finding:7"),
+        (25, None, "prcomment:25"),
+    ]
+
+
+def test_malformed_excluded_batch_is_skipped_but_third_party_is_legacy():
+    malformed = "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
+    comments = [
+        {**_pr_comment(26, malformed), "user": {"login": "pr-author", "type": "User"}},
+        _pr_comment(27, malformed),
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(27, None)]
+
+
+def test_bot_marked_batch_remains_excluded():
+    comment = {
+        **_pr_comment(28, _review_finding_batch((2, "bot finding"))),
+        "user": {"login": "review-bot", "type": "Bot"},
+    }
+
+    assert aff.compute_pr_comment_eligibility([comment], author="pr-author", me="runner") == []
+
+
+def test_specific_handled_marker_suppresses_only_matching_projected_finding():
+    comments = [
+        _pr_comment(29, _review_finding_batch((2, "first"), (7, "second"))),
+        {
+            **_pr_comment(30, "done <!-- swe-workbench:handled:29:finding:2 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_finding = {item["finding_id"]: item for item in result}
+
+    assert by_finding[2]["eligible"] is False
+    assert by_finding[7]["eligible"] is True
+
+
+def test_generic_handled_marker_suppresses_every_projected_finding():
+    comments = [
+        _pr_comment(31, _review_finding_batch((2, "first"), (7, "second"))),
+        {
+            **_pr_comment(32, "done <!-- swe-workbench:handled:31 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert all(item["eligible"] is False for item in result)
+
+
+def test_generated_batches_and_handled_replies_do_not_count_as_manual_replies():
+    comments = [
+        _pr_comment(33, "open feedback"),
+        {
+            **_pr_comment(34, _review_finding_batch((2, "automated finding"))),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+        {
+            **_pr_comment(35, "done <!-- swe-workbench:handled:34:finding:2 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-03T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[33]["eligible"] is True
+
+
+def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
+    rows = prs.assign_finding_ids([
+        {"severity": "High", "issue": f"finding {index}", "why": "why", "fix": "fix", "anchor": "pr-level"}
+        for index in range(1, 8)
+    ])
+    body = prs.render_pr_level_batch([rows[1], rows[6]])
+
+    projections = aff.parse_review_finding_batch(_pr_comment(36, body))
+
+    assert [(item["finding_id"], item["body"].splitlines()[0]) for item in projections] == [
+        (2, "**High** — finding 2"),
+        (7, "**High** — finding 7"),
+    ]
 
 
 # ── Behavioral: call-index-driven gh stub (mirrors test_pr_review_submit_script.py) ──
@@ -350,6 +545,31 @@ def _pr_comments_response(comments: list[dict]):
 
 
 class TestOpenPrFullFetch:
+    def test_pr_comment_counts_use_projected_findings(self, tmp_path):
+        pr = _unique_n()
+        comments = [
+            _pr_comment(37, _review_finding_batch((2, "first"), (7, "second"))),
+            {
+                **_pr_comment(38, "done <!-- swe-workbench:handled:37:finding:2 -->"),
+                "user": {"login": "pr-author", "type": "User"},
+                "created_at": "2026-01-02T00:00:00Z",
+            },
+        ]
+        responses = _preflight_responses(pr) + [
+            _ok("me\n"), _threads_page_response([]), _pr_comments_response(comments),
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json")
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["eligible_pr_comments"] == 1
+            assert envelope["data"]["skipped_pr_comments"] == 1
+            written = json.loads(Path(envelope["data"]["pr_comments_path"]).read_text())
+            assert [(item["finding_id"], item["eligible"]) for item in written] == [(2, False), (7, True)]
+        finally:
+            _cleanup_state_files(pr)
+
     def test_pagination_two_pages_of_threads(self, tmp_path):
         pr = _unique_n()
         page1 = _threads_page_response([_thread_node(id="T1")], has_next_page=True, end_cursor="CURSOR1")

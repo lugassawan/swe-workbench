@@ -56,6 +56,12 @@ from pathlib import Path
 
 STATE_DIR = Path("/tmp/swe-workbench-address-feedback")
 
+REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
+_REVIEW_BATCH_LINE_RE = re.compile(r"(?m)^<!-- swe-workbench:review-findings -->$")
+_REVIEW_FINDING_LINE_RE = re.compile(r"\A<!-- swe-workbench:review-finding:([1-9][0-9]*) -->\n", re.DOTALL)
+_ANY_REVIEW_MARKER_LINE_RE = re.compile(r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->$")
+_BATCH_SEPARATOR = "\n\n---\n\n"
+
 _THREADS_QUERY = """
 query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -95,32 +101,99 @@ def compute_thread_eligibility(node: dict, current_user: str) -> tuple[bool, str
     return True, None
 
 
+def parse_review_finding_batch(comment: dict) -> list[dict] | None:
+    """Return projections only for a complete producer-formatted finding batch."""
+    comment_id = comment.get("id")
+    body = comment.get("body")
+    if not isinstance(comment_id, int) or comment_id < 1 or not isinstance(body, str):
+        return None
+    normalized = body.lstrip()
+    if not normalized.startswith(REVIEW_BATCH_MARKER):
+        return None
+    if len(_REVIEW_BATCH_LINE_RE.findall(normalized)) != 1:
+        return None
+    remainder = normalized[len(REVIEW_BATCH_MARKER):]
+    if not remainder.startswith("\n\n"):
+        return None
+
+    projections: list[dict] = []
+    previous_id = 0
+    for section in remainder[2:].split(_BATCH_SEPARATOR):
+        marker = _REVIEW_FINDING_LINE_RE.match(section)
+        if marker is None:
+            return None
+        finding_id = int(marker.group(1))
+        finding_body = section[marker.end():].strip()
+        if finding_id <= previous_id or not finding_body or _ANY_REVIEW_MARKER_LINE_RE.search(finding_body):
+            return None
+        previous_id = finding_id
+        projections.append({
+            **comment,
+            "body": finding_body,
+            "parent_comment_id": comment_id,
+            "finding_id": finding_id,
+            "triage_key": f"prcomment:{comment_id}:finding:{finding_id}",
+            "handled_marker": f"<!-- swe-workbench:handled:{comment_id}:finding:{finding_id} -->",
+        })
+    return projections or None
+
+
+def project_legacy_pr_comment(comment: dict) -> dict:
+    """Add explicit triage identity to an unmarked PR-level comment."""
+    comment_id = comment["id"]
+    return {
+        **comment,
+        "parent_comment_id": comment_id,
+        "finding_id": None,
+        "triage_key": f"prcomment:{comment_id}",
+        "handled_marker": f"<!-- swe-workbench:handled:{comment_id} -->",
+    }
+
+
+def _comment_login(comment: dict) -> str:
+    return ((comment.get("user") or {}).get("login") or "")
+
+
+def _is_bot_comment(comment: dict) -> bool:
+    user = comment.get("user") or {}
+    return user.get("type") == "Bot" or _comment_login(comment).endswith("[bot]")
+
+
+def _is_automated_owner_comment(comment: dict) -> bool:
+    body = comment.get("body") or ""
+    return parse_review_finding_batch(comment) is not None or "<!-- swe-workbench:handled:" in body
+
+
+def _is_handled(projection: dict, owner_comments: list[dict]) -> bool:
+    generic_marker = f"<!-- swe-workbench:handled:{projection['parent_comment_id']} -->"
+    return any(
+        generic_marker in (owner_comment.get("body") or "")
+        or projection["handled_marker"] in (owner_comment.get("body") or "")
+        for owner_comment in owner_comments
+    )
+
+
 def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -> list[dict]:
-    """Direct python port of the jq program this replaces. Bot comments, `[bot]`-suffix
-    logins, and the author's/current runner's own comments are dropped entirely (never
-    appear in the result) — matching the jq program's first two `map(select(...))`
-    stages exactly, not just filtered-but-still-present. Each survivor gets `eligible`:
-    False when either (a) an owner comment carries a `swe-workbench:handled:{id} `
-    marker for it (trailing space anchors the match — a marker for id 1234 must not
-    dedup-suppress id 123, a numeric prefix), or (b) a marker-less owner comment was
-    posted after it (a manual reply)."""
-    owner_comments = [c for c in comments if ((c.get("user") or {}).get("login") or "") in (author, me)]
-    candidates = [
-        c
-        for c in comments
-        if ((c.get("user") or {}).get("type") or "") != "Bot"
-        and not ((c.get("user") or {}).get("login") or "").endswith("[bot]")
-        and ((c.get("user") or {}).get("login") or "") not in (author, me)
-    ]
+    """Project valid marked batches and keep legacy comments addressable on re-runs."""
+    owner_comments = [comment for comment in comments if _comment_login(comment) in (author, me)]
+    candidates: list[dict] = []
+    for comment in comments:
+        if _is_bot_comment(comment):
+            continue
+        batch = parse_review_finding_batch(comment)
+        if batch is not None:
+            candidates.extend(batch)
+        elif _comment_login(comment) not in (author, me):
+            candidates.append(project_legacy_pr_comment(comment))
+
     result = []
-    for c in candidates:
-        marker_text = f"swe-workbench:handled:{c.get('id')} "
-        marker = any(marker_text in (oc.get("body") or "") for oc in owner_comments)
-        manual = any(
-            "swe-workbench:handled" not in (oc.get("body") or "") and (oc.get("created_at") or "") > (c.get("created_at") or "")
-            for oc in owner_comments
+    for candidate in candidates:
+        manual_reply = any(
+            not _is_automated_owner_comment(owner_comment)
+            and (owner_comment.get("created_at") or "") > (candidate.get("created_at") or "")
+            for owner_comment in owner_comments
         )
-        result.append({**c, "eligible": not (marker or manual)})
+        result.append({**candidate, "eligible": not (_is_handled(candidate, owner_comments) or manual_reply)})
     return result
 
 
