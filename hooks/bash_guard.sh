@@ -156,8 +156,7 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Push-only lexer. It preserves empty quoted words and emits redirect syntax
-# separately, so only actual Git argv words reach the push classifier.
+# Push-only lexer preserves empty quoted words and separates redirection syntax from Git argv.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _push_token_awk='
   function emit_word() {
