@@ -133,7 +133,7 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
      | `failure_kind` | Bail message |
      |---|---|
      | `unsupported_flag` | "gh rejected a flag: <reason>. Your `gh` is older than 2.45.0 or this preflight is outdated — update `gh` and the swe-workbench plugin." |
-     | `unauthenticated` | "`gh` is not authenticated. Run `gh auth login`, then retry." |
+     | `unauthenticated` | "`gh` is not authenticated: <reason>. Run `gh auth login` (or fix `GH_TOKEN`/`GITHUB_TOKEN` if one of them supplies the token), then retry." |
      | `repo_inaccessible` | "Repo access check failed: <reason>. Run `gh repo view lugassawan/swe-workbench` to diagnose." |
      | `gh_missing` | "`gh` CLI not found on PATH. Install the GitHub CLI (2.45.0 or newer), then retry." |
      | `unknown` | "Repo access check failed: <reason>. Run `gh repo view lugassawan/swe-workbench` to diagnose." |

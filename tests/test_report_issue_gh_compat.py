@@ -187,18 +187,35 @@ def test_readme_states_the_declared_minimum_gh_version():
     )
 
 
-def test_preflight_end_to_end_reports_unauthenticated(gh_bin, gh_env):
-    """With no credentials the real gh's own not-logged-in output must classify as
-    unauthenticated — not unsupported_flag and not unknown."""
+def _preflight_envelope(env: dict) -> dict:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), REPO],
-        capture_output=True, text=True, env=gh_env, cwd=str(ROOT), timeout=120,
+        capture_output=True, text=True, env=env, cwd=str(ROOT), timeout=120,
     )
     assert result.returncode == 0, result.stderr
-    envelope = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def test_preflight_end_to_end_logged_out_is_unauthenticated(gh_bin, gh_env):
+    """No token and an empty config dir: the real gh's own not-logged-in output must
+    classify as unauthenticated. GH_HOST is dropped so gh reports 'not logged into any
+    GitHub hosts' rather than a failed login against an unresolvable host."""
+    env = {k: v for k, v in gh_env.items() if k != "GH_HOST"}
+    envelope = _preflight_envelope(env)
     assert envelope["status"] == "failed", envelope
     assert envelope["data"]["failure_kind"] == "unauthenticated", envelope
     assert envelope["data"]["gh_version"], "gh --version must parse on a real gh"
+
+
+def test_preflight_end_to_end_token_but_unreachable_github_is_unknown(gh_bin, gh_env):
+    """A token gh cannot validate because GitHub is unreachable reads 'Failed to log in'. That
+    must not be reported as unauthenticated: `repo view` shows the connectivity error."""
+    env = {k: v for k, v in gh_env.items() if k != "GH_HOST"}
+    env["GH_TOKEN"] = "swb-compat-placeholder-token"
+    envelope = _preflight_envelope(env)
+    assert envelope["status"] == "failed", envelope
+    assert envelope["data"]["failure_kind"] == "unknown", envelope
+    assert envelope["data"]["reason"], "the connectivity error must be surfaced as the reason"
 
 
 @pytest.mark.parametrize(

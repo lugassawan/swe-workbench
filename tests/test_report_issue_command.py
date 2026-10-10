@@ -1,11 +1,13 @@
 """Tests for /swe-workbench:report-issue command (Issue #226)."""
 
+import re
 from pathlib import Path
 
 from helpers import gh_spans
 
 ROOT = Path(__file__).parent.parent
 REPORT_ISSUE_MD = ROOT / "commands" / "report-issue.md"
+PREFLIGHT_SCRIPT = ROOT / "bin" / "swe-workbench-issue-preflight"
 
 
 def test_report_issue_has_required_frontmatter():
@@ -42,6 +44,20 @@ def _spans(*prefixes, min_tokens=1):
         if any(tuple(tokens[1:1 + len(p)]) == p for p in prefixes):
             found.append(span)
     return found
+
+
+def _min_gh_version():
+    """MIN_GH_VERSION as the script declares it — the one value every surface must match."""
+    match = re.search(r'^MIN_GH_VERSION = "([^"]+)"', PREFLIGHT_SCRIPT.read_text(), re.MULTILINE)
+    assert match, "bin/swe-workbench-issue-preflight must declare MIN_GH_VERSION"
+    return match.group(1)
+
+
+def _step1_row(kind):
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    return next(
+        (line.strip() for line in step1.splitlines() if line.strip().startswith(f"| `{kind}` |")), ""
+    )
 
 
 def _delegation_step1_slice(text):
@@ -157,10 +173,25 @@ def test_report_issue_step1_distinguishes_unsupported_flag_from_repo_inaccessibl
         (line.strip() for line in step1.splitlines() if line.strip().startswith("| `unsupported_flag` |")), ""
     )
     assert row, "step 1 must have an unsupported_flag row"
-    assert "2.45.0" in row, "the unsupported_flag row must name the minimum gh version"
+    assert _min_gh_version() in row, "the unsupported_flag row must name MIN_GH_VERSION"
     assert "Repo access check failed" not in row, (
         "an unsupported flag is a tooling problem, not a repo-access failure"
     )
+
+
+def test_report_issue_step1_gh_missing_row_names_the_declared_minimum():
+    row = _step1_row("gh_missing")
+    assert row, "step 1 must have a gh_missing row"
+    assert _min_gh_version() in row, "the gh_missing row must name MIN_GH_VERSION"
+
+
+def test_report_issue_step1_unauthenticated_row_shows_reason_and_token_hint():
+    """The preflight reports `unauthenticated` for a token gh could not validate, so the row
+    must show why, and `gh auth login` is no remedy for an env-supplied token."""
+    row = _step1_row("unauthenticated")
+    assert row, "step 1 must have an unauthenticated row"
+    assert "<reason>" in row, "the unauthenticated row must surface the gh reason"
+    assert "GH_TOKEN" in row, "the unauthenticated row must cover an env-supplied token"
 
 
 def test_report_issue_step1_scope_is_a_warning_with_three_states():

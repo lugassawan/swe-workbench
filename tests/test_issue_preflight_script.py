@@ -63,6 +63,14 @@ AUTH_INVALID_TOKEN = (
     "  - The token in keyring is invalid.\n"
     "  - To re-authenticate, run: gh auth login -h github.com\n"
 )
+# An env-supplied token gh could not validate — which is also what an offline machine or a
+# dead proxy produces, so this text alone cannot say the token is bad.
+AUTH_TOKEN_UNVERIFIED = (
+    "github.com\n"
+    "  X Failed to log in to github.com using token (GH_TOKEN)\n"
+    "  - Active account: true\n"
+    "  - The token in GH_TOKEN is invalid.\n"
+)
 # One host valid, another stale: the valid host means filing can still work. gh 2.45.0
 # exits 0 for this; current gh exits 1 — the verdict must not depend on that.
 AUTH_MIXED_HOSTS = AUTH_QUOTED + (
@@ -212,15 +220,47 @@ def test_auth_status_nonzero_is_unauthenticated(tmp_path):
     )
 
 
-def test_exit_zero_with_failed_login_text_is_unauthenticated(tmp_path):
-    """gh 2.45.0 reports a failed token validation with exit 0."""
-    envelope, log = _preflight(tmp_path, auth=AUTH_INVALID_TOKEN, auth_rc=0)
+def test_exit_zero_with_failed_login_text_is_confirmed_by_repo_view(tmp_path):
+    """gh 2.45.0 reports a failed token validation with exit 0; `repo view` then arbitrates."""
+    envelope, log = _preflight(
+        tmp_path, auth=AUTH_INVALID_TOKEN, auth_rc=0,
+        repo="HTTP 401: Bad credentials (https://api.github.com/graphql)\n", repo_rc=1,
+    )
     assert envelope["status"] == "failed"
     data = envelope["data"]
     assert data["failure_kind"] == "unauthenticated"
-    assert data["reason"].startswith("X Failed to log in to github.com"), (
-        "the reason must be the failure line, not the host header gh prints first"
+    assert data["reason"].startswith("HTTP 401"), "the confirming gh output is the reason"
+    assert any(line.startswith("repo view") for line in log.read_text().splitlines())
+
+
+def test_failed_login_does_not_decide_alone_when_repo_view_cannot_reach_github(tmp_path):
+    """An offline machine makes gh say the token is invalid. `repo view` shows the real
+    cause, so the user sees it instead of being sent to `gh auth login`."""
+    envelope, log = _preflight(
+        tmp_path, auth=AUTH_TOKEN_UNVERIFIED, auth_rc=1, auth_stream="stderr",
+        repo='Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: '
+             "connect: connection refused\n",
+        repo_rc=1,
     )
+    assert envelope["status"] == "failed"
+    data = envelope["data"]
+    assert data["failure_kind"] == "unknown"
+    assert "proxyconnect" in data["reason"]
+    assert any(line.startswith("repo view") for line in log.read_text().splitlines())
+
+
+def test_failed_login_with_empty_repo_view_output_falls_back_to_unauthenticated(tmp_path):
+    envelope, _ = _preflight(
+        tmp_path, auth=AUTH_TOKEN_UNVERIFIED, auth_rc=1, auth_stream="stderr", repo="", repo_rc=1,
+    )
+    assert envelope["status"] == "failed"
+    assert envelope["data"]["failure_kind"] == "unauthenticated"
+    assert envelope["data"]["reason"].startswith("X Failed to log in")
+
+
+def test_not_logged_into_any_host_still_stops_before_repo_view(tmp_path):
+    """No host at all is definitive; only an unverifiable token defers to `repo view`."""
+    _, log = _preflight(tmp_path, auth=AUTH_LOGGED_OUT, auth_rc=1, auth_stream="stderr")
     assert not any(line.startswith("repo view") for line in log.read_text().splitlines())
 
 

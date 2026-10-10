@@ -52,6 +52,8 @@ AUTH_MARKER_RE = re.compile(r"gh auth login|HTTP 401|Bad credentials", re.IGNORE
 # gh 2.45.0 exits 0 from `auth status` for a failed login while current gh exits 1, so the
 # exit code alone is not trusted; one host logged in is enough to go on to `repo view`.
 LOGIN_FAILED_RE = re.compile(r"Failed to log in|not logged into", re.IGNORECASE)
+NOT_LOGGED_IN_RE = re.compile(r"not logged into", re.IGNORECASE)
+TOKEN_UNVERIFIED_RE = re.compile(r"Failed to log in", re.IGNORECASE)
 LOGGED_IN_RE = re.compile(r"Logged in to", re.IGNORECASE)
 LOGIN_TIMEOUT_RE = re.compile(r"Timeout trying to log in", re.IGNORECASE)
 NOT_FOUND_RE = re.compile(r"Could not resolve to a Repository|HTTP 404", re.IGNORECASE)
@@ -184,10 +186,15 @@ def build_envelope(repo: str) -> dict:
         return failed("unknown", auth.combined)
     # `repo view` is the real arbiter, so a host that logged in must not be masked by a stale
     # second host or account (current gh exits 1 for any of them).
+    unverified_token = ""
     if not LOGGED_IN_RE.search(auth.combined):
         if LOGIN_TIMEOUT_RE.search(auth.combined):
             return failed("unknown", auth.combined, prefer=LOGIN_TIMEOUT_RE)
-        if auth.returncode != 0 or LOGIN_FAILED_RE.search(auth.combined):
+        if TOKEN_UNVERIFIED_RE.search(auth.combined) and not NOT_LOGGED_IN_RE.search(auth.combined):
+            # gh prints this for an offline machine as readily as for a bad token; `repo view`
+            # says which, so a connectivity error is not reported as a login problem.
+            unverified_token = auth.combined
+        elif auth.returncode != 0 or NOT_LOGGED_IN_RE.search(auth.combined):
             return failed("unauthenticated", auth.combined, prefer=LOGIN_FAILED_RE)
 
     data["scope_status"] = scope_status(auth.combined)
@@ -214,7 +221,10 @@ def build_envelope(repo: str) -> dict:
         return {"schema": SCHEMA, "status": "ok", "data": data, "warnings": warnings}
     if view.returncode == 124:
         return failed("unknown", view.combined)
-    return failed(classify_repo_view_failure(view.combined), view.combined)
+    kind = classify_repo_view_failure(view.combined)
+    if unverified_token and kind == "unknown" and not first_line(view.combined):
+        return failed("unauthenticated", unverified_token, prefer=LOGIN_FAILED_RE)
+    return failed(kind, view.combined)
 
 
 def main(argv: list[str] | None = None) -> int:
