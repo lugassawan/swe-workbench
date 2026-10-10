@@ -62,4 +62,4 @@ def test_posting_core_documents_address_feedback_provenance_markers():
     assert "<!-- swe-workbench:review-findings -->" in text
     assert "<!-- swe-workbench:review-finding:<positive-integer> -->" in text
     assert "address-feedback" in text
-    assert "Review summary bodies are not consumed by address-feedback." in text
+    assert re.search(r"Review summary bodies are not consumed by\s+address-feedback\.", text)
