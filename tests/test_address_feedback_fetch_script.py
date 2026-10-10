@@ -218,11 +218,39 @@ def test_parse_review_finding_batch_projects_exact_bodies_and_keys():
         _review_finding_batch((7, "first"), (2, "descending")),
         "<!-- swe-workbench:review-findings -->\n\ntext <!-- swe-workbench:review-finding:2 -->",
         "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->",
-        _review_finding_batch((2, "first")) + "\n\n---\n\nleftover",
     ],
 )
 def test_parse_review_finding_batch_rejects_malformed_input(body):
     assert aff.parse_review_finding_batch(_pr_comment(42, body)) is None
+
+
+def test_parse_review_finding_batch_rejects_oversized_finding_id():
+    """A hostile >9-digit marker must be malformed input, never an int() crash —
+    Python's int/str conversion limit raises ValueError past ~4300 digits, which
+    would otherwise abort the entire fetch. The digit run stays a string here so
+    the test itself never performs a bounded int conversion."""
+    body = _review_finding_batch(("9" * 4_301, "body"))
+
+    assert aff.parse_review_finding_batch(_pr_comment(42, body)) is None
+
+
+def test_parse_review_finding_batch_absorbs_trailing_separator_into_last_body():
+    """A trailing separator not followed by a marker is byte-identical to a
+    horizontal rule inside the last finding's body — the format cannot
+    distinguish them, so the text is absorbed rather than rejected."""
+    body = _review_finding_batch((2, "first")) + "\n\n---\n\nleftover"
+
+    projections = aff.parse_review_finding_batch(_pr_comment(42, body))
+
+    assert [projection["body"] for projection in projections] == ["first\n\n---\n\nleftover"]
+
+
+def test_parse_review_finding_batch_preserves_horizontal_rules_inside_a_finding():
+    comment = _pr_comment(42, _review_finding_batch((2, "first\n\n---\n\nstill first"), (7, "second")))
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first\n\n---\n\nstill first", "second"]
 
 
 # ── Unit: compute_pr_comment_eligibility (ported jq-program fixtures) ────────
@@ -438,6 +466,33 @@ def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
         (2, "**High** — finding 2"),
         (7, "**High** — finding 7"),
     ]
+
+
+def test_producer_rendered_horizontal_rules_round_trip_inside_findings():
+    """The producer's free-text fields may legitimately contain horizontal rules,
+    which are byte-identical to the batch separator — a rule inside (or ending) a
+    rendered finding must never split that finding off from its marker."""
+    rows = prs.assign_finding_ids([
+        {
+            "severity": "High", "issue": "interior rule",
+            "why": "before\n\n---\n\nafter", "fix": "fix-a", "anchor": "pr-level",
+        },
+        {
+            "severity": "Low", "issue": "trailing rule",
+            "why": "why-b", "fix": "ends with rule\n\n---", "anchor": "pr-level",
+        },
+        {
+            "severity": "Low", "issue": "third",
+            "why": "why-c", "fix": "fix-c", "anchor": "pr-level",
+        },
+    ])
+    body = prs.render_pr_level_batch(rows)
+
+    projections = aff.parse_review_finding_batch(_pr_comment(44, body))
+
+    assert [item["finding_id"] for item in projections] == [1, 2, 3]
+    assert projections[0]["body"].count("\n\n---\n\n") >= 1, "the interior rule must stay inside finding 1"
+    assert projections[1]["body"].endswith("---"), "finding 2's trailing rule must stay inside finding 2"
 
 
 # ── Behavioral: call-index-driven gh stub (mirrors test_pr_review_submit_script.py) ──
