@@ -169,9 +169,9 @@ def test_atomic_comments_body_survives_byte_identical_via_json_payload(tmp_path)
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "--input" in c["argv"] and "/reviews" in json.dumps(c["argv"]))
     payload = json.loads(post_call["stdin"])
-    assert payload["comments"][0]["body"] == _rendered(HAZARDOUS_BODY), (
-        "a body containing '\"'/'\\\\'/a leading '@' must survive byte-identical into the JSON payload"
-    )
+    assert payload["comments"][0]["body"] == (
+        f"<!-- swe-workbench:review-finding:1 -->\n{_rendered(HAZARDOUS_BODY)}"
+    ), "the provenance marker must precede an otherwise byte-identical JSON payload body"
 
 
 def test_atomic_reviews_post_uses_input_flag_not_f_F_for_body(tmp_path):
@@ -219,10 +219,11 @@ def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp
     assert result.returncode == 0, result.stderr
     calls = _gh_calls(state_dir)
     fallback_call = next(c for c in calls if c["argv"][0] == "api" and "/comments" in json.dumps(c["argv"]))
-    assert f"body={_rendered(HAZARDOUS_BODY)}" in fallback_call["argv"], (
+    marked_body = f"<!-- swe-workbench:review-finding:1 -->\n{_rendered(HAZARDOUS_BODY)}"
+    assert f"body={marked_body}" in fallback_call["argv"], (
         f"expected -f body=<raw> in the fallback per-comment POST argv, got: {fallback_call['argv']}"
     )
-    idx = fallback_call["argv"].index(f"body={_rendered(HAZARDOUS_BODY)}")
+    idx = fallback_call["argv"].index(f"body={marked_body}")
     assert fallback_call["argv"][idx - 1] == "-f", (
         "the fallback per-comment POST must use -f (raw string) for body, not -F "
         "(which @-expands a value starting with '@')"

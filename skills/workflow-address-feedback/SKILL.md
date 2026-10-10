@@ -53,7 +53,7 @@ ELIGIBLE_PR_COMMENTS=$(printf '%s' "$RESULT" | jq -r '.data.eligible_pr_comments
 SKIPPED_PR_COMMENTS=$(printf '%s' "$RESULT" | jq -r '.data.skipped_pr_comments')
 RUN_DIR=$(swe-workbench-new-run-dir address-feedback "$PR")
 ```
-`swe-workbench-address-feedback-fetch` handles `gh auth status`, fetches the PR JSON to `$JSON` (via `swe-workbench-preflight-pr`), and — when the PR is OPEN — paginates review threads and PR-level conversation comments, projecting `eligible`/`skip_reason` onto each entry (resolved/already-clarified for threads; bot/owner/marker/manual-reply exclusion for PR comments) before writing them to `$THREADS_PATH`/`$PR_COMMENTS_PATH`. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files above (including `$TRIAGE_PATH`, which is a cross-invocation resume point and must never move here). All four state paths are repo-scoped: the fetch resolves the owner-repo slug itself — explicit `--repo` when the invocation carried a full PR URL, else the checkout's origin remote, else legacy un-scoped names — so same-numbered PRs in different repositories never collide.
+`swe-workbench-address-feedback-fetch` handles `gh auth status`, fetches the PR JSON to `$JSON` (via `swe-workbench-preflight-pr`), and — when the PR is OPEN — paginates review threads and PR-level conversation comments, projecting `eligible`/`skip_reason` onto each entry. A valid generated PR batch becomes one projected PR feedback item per finding, each with `.parent_comment_id`, `.finding_id`, `.triage_key`, `.handled_marker`, and the extracted `.body`; unmarked third-party comments stay one legacy item, and a marked batch that fails strict parsing surfaces as one legacy item. Bot exclusion remains absolute; valid batches from the PR author/current runner are retained. It writes those projections to `$THREADS_PATH`/`$PR_COMMENTS_PATH`. The `[ "$STATE" = "OPEN" ]` gate runs immediately after the fetch and before `$RUN_DIR` is allocated, so a rejected PR reaps `$JSON` inline via `swe-workbench-clean-state-files` rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc bash artifacts, distinct from the deliberate PR-keyed state files above (including `$TRIAGE_PATH`, which is a cross-invocation resume point and must never move here). All four state paths are repo-scoped: the fetch resolves the owner-repo slug itself — explicit `--repo` when the invocation carried a full PR URL, else the checkout's origin remote, else legacy un-scoped names — so same-numbered PRs in different repositories never collide.
 
 If `CURRENT_USER != AUTHOR_LOGIN`, warn:
 > "You are not the PR author (PR author: @AUTHOR_LOGIN, you: @CURRENT_USER). Address-feedback flows are typically owner-side. Continue anyway? Reply `yes` to proceed."
@@ -61,7 +61,7 @@ If `CURRENT_USER != AUTHOR_LOGIN`, warn:
 Wait for confirmation before continuing. If the user declines, run **Phase 7 — Cleanup** and exit.
 
 If `$ELIGIBLE_THREADS` and `$ELIGIBLE_PR_COMMENTS` are both zero, nothing is left to triage — one merged check, replacing two separate early-exits the pre-runtime-command version had (this now runs before Phase 2 ever spins up a worktree, unlike before):
-- `$SKIPPED_THREADS_CLARIFIED` or `$SKIPPED_PR_COMMENTS` is non-zero: print "No new items to triage — N already clarified/handled." (`N` = their sum).
+- `$SKIPPED_THREADS_CLARIFIED` or `$SKIPPED_PR_COMMENTS` is non-zero: print "No new items to triage — N already clarified/handled." (`N` = their sum; PR counts are projected PR feedback items).
 - Otherwise, when some threads existed but were all resolved (nothing was skipped as already-clarified/-handled): print "No new items to triage."
 - Otherwise, when `$ELIGIBLE_PR_COMMENTS` is zero and no threads existed at all (`jq 'length' "$THREADS_PATH"` is zero): print "No open threads — nothing to address."
 
@@ -90,11 +90,11 @@ This worktree is **disposable but sits on the PR branch itself** — Phase 4 com
 
 ### Phase 3 — Triage digest
 
-Read `$THREADS_PATH` and `$PR_COMMENTS_PATH` (`jq '[.[] | select(.eligible)]'` on each) and render only the `eligible == true` entries, one by one — the fetch command already applied the resolved/already-clarified exclusion for threads and the bot/owner/marker/manual-reply exclusion for PR comments, so Phase 3 never re-implements those rules itself.
+Read `$THREADS_PATH` and `$PR_COMMENTS_PATH` (`jq '[.[] | select(.eligible)]'` on each) and render only the `eligible == true` entries, one by one — the fetch command already applied the resolved/already-clarified exclusion for threads and the PR-comment exclusions for PR feedback (bots absolutely; unmarked author/runner comments; marker/manual-reply suppression — valid marked batches from the author/current runner are retained), so Phase 3 never re-implements those rules itself.
 
 If `$SKIPPED_THREADS_CLARIFIED` or `$SKIPPED_PR_COMMENTS` is non-zero, print transparency notes before the digest — this dedup is lossy by construction, so a transparency note replaces silently dropping:
 > "(N thread(s) skipped — already clarified.)"
-> "(N PR comment(s) skipped — already handled.)"
+> "(N PR feedback item(s) skipped — already handled.)"
 
 For each remaining thread:
 ```
@@ -108,14 +108,14 @@ Thread #ID — {path}:{line}  by @{author}  [{Severity if parseable}]
 [D]eferred — reply + resolve (acknowledged, not fixed now)
 [Q]uit — save progress and exit
 ```
-Parse severity from the comment's leading `**<Severity>**` headline (the layout `swe-workbench-pr-review-submit` renders) or a legacy `Severity: <level>` prefix in the comment body if present; otherwise label `Unknown`.
+Parse severity from the comment's leading `**<Severity>**` headline (the layout `swe-workbench-pr-review-submit` renders) or a legacy `Severity: <level>` prefix in the comment body if present; otherwise label `Unknown`. Generated thread comments open with a provenance-marker line (`<!-- swe-workbench:review-finding:N -->`) — strip that leading marker line from the body before severity parsing and before taking the 200-char digest quote, so the marker never leaks into the display or forces `Unknown`.
 
 Capture: `triage[<thread_id>] = A|C|D`.
 
-For each remaining PR comment (no `path:line`, no resolve state), key as `triage["prcomment:<comment.id>"]` (namespaced against review-thread node IDs in the same flat map; carries the id needed for the Phase 5 marker; both key kinds round-trip through Q-quit save/resume unchanged):
+For each remaining projected PR feedback item (no `path:line`, no resolve state), key as `triage[.triage_key]` (already namespaced against review-thread node IDs; do not reconstruct or parse the key). Carry `.parent_comment_id`, `.finding_id`, and `.handled_marker` with that decision through Phase 5; both split and legacy items round-trip through Q-quit save/resume unchanged:
 ```
-PR comment by @{author}
-> {first 200 chars of comment body}
+PR feedback item by @{author}
+> {first 200 chars of extracted finding body}
 
 [A]ddressed — fix + commit + reply (PR comments have no thread to resolve)
 [C]larified — reply only
@@ -128,7 +128,7 @@ If the owner replies `Q` at any point in either loop, save triage state to `$TRI
 
 For each `ADDRESSED` review thread or PR comment (in order — both sources share this loop, since the commit step is source-agnostic):
 
-1. Show the finding and the relevant file/line context (PR comments have no `path:line`; show the comment body instead).
+1. Show the finding and the relevant file/line context (PR feedback items have no `path:line`; show their extracted `.body` instead).
 2. Ask the owner for the fix approach (free-text). If the comment already carries a suggested fix — a `**Suggested fix:**` paragraph (the layout `swe-workbench-pr-review-submit` renders; the fix is the rest of that paragraph — or, when a fenced block opens the value, the paragraph after the label — code fences included, up to the next label or the end of the comment) or a legacy `### Suggested fix` block — offer to apply it automatically via the Edit tool.
 3. Apply edits using the Edit tool.
 
@@ -142,7 +142,7 @@ FIX_SHA=$(git -C "$WT" rev-parse HEAD)
 
 ### Phase 5 — Reply + resolve
 
-For each **ADDRESSED**, **CLARIFIED**, or **DEFERRED** review thread, post a reply via REST then resolve via GraphQL `resolveReviewThread` by calling `swe-workbench-reply-and-resolve` with the triage-mapped args — all three dispositions now resolve the thread, since an open thread blocks `/swe-workbench:review`'s approval gate regardless of *why* it was left open. For each **ADDRESSED** or **CLARIFIED** PR comment, post a reply via REST — PR comments have no thread, so resolve is always suppressed and `KIND=issue` is passed explicitly, with a hidden `swe-workbench:handled:{id}` marker embedded in the reply body for Phase 1's re-run dedup; DEFERRED PR comments are skipped entirely, unchanged. Reply targets the thread root comment (`comments.nodes[0].databaseId`), never a subsequent reply. Full reply-body templates, exact invocation args, and the PR-comment quoting/escaping caveat live in `reference/resolve-review-threads.md`.
+For each **ADDRESSED**, **CLARIFIED**, or **DEFERRED** review thread, post a reply via REST then resolve via GraphQL `resolveReviewThread` by calling `swe-workbench-reply-and-resolve` with the triage-mapped args — all three dispositions now resolve the thread, since an open thread blocks `/swe-workbench:review`'s approval gate regardless of *why* it was left open. For each **ADDRESSED** or **CLARIFIED** PR feedback item, post a reply via REST — a new top-level conversation comment (`KIND=issue` with empty comment/thread ids; `.parent_comment_id` is identity context for the marker, not a REST reply target, since PR comments have no thread to reply into). Append the item's `.handled_marker` verbatim on its own line (whole-line anchoring is what the re-run dedup matches): split findings emit their finding-specific marker, while legacy items retain the generic marker for Phase 1's re-run dedup. DEFERRED PR feedback items are skipped entirely, unchanged. Reply targets the thread root comment (`comments.nodes[0].databaseId`), never a subsequent reply. Full reply-body templates, exact invocation args, and the PR-comment quoting/escaping caveat live in `reference/resolve-review-threads.md`.
 
 After all replies and resolutions land, emit the follow-up CTA:
 

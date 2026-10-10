@@ -25,10 +25,13 @@ import tempfile
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+import pytest
+
 from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "bin" / "swe-workbench-address-feedback-fetch"
+PR_REVIEW_SUBMIT = ROOT / "bin" / "swe-workbench-pr-review-submit"
 SWEEP_RESIDUALS = ROOT / "bin" / "swe-workbench-sweep-residuals"
 STATE_DIR = Path("/tmp/swe-workbench-address-feedback")
 
@@ -43,6 +46,18 @@ def _load_module():
 
 
 aff = _load_module()
+
+
+def _load_pr_review_submit_module():
+    loader = SourceFileLoader("pr_review_submit_for_aff", str(PR_REVIEW_SUBMIT))
+    spec = importlib.util.spec_from_file_location("pr_review_submit_for_aff", PR_REVIEW_SUBMIT, loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pr_review_submit_for_aff"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+prs = _load_pr_review_submit_module()
 
 
 def _unique_n() -> str:
@@ -161,6 +176,83 @@ def test_thread_unresolved_other_reply_is_eligible():
     assert reason is None
 
 
+# ── Unit: marked review-finding batches ─────────────────────────────────────
+
+
+def _review_finding_batch(*sections: tuple[int, str]) -> str:
+    marked = [f"<!-- swe-workbench:review-finding:{finding_id} -->\n{body}" for finding_id, body in sections]
+    return "<!-- swe-workbench:review-findings -->\n\n" + "\n\n---\n\n".join(marked)
+
+
+def _pr_comment(comment_id: int, body: str) -> dict:
+    return {
+        "id": comment_id,
+        "user": {"login": "reviewer", "type": "User"},
+        "body": body,
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_parse_review_finding_batch_projects_exact_bodies_and_keys():
+    comment = _pr_comment(42, _review_finding_batch((2, "first body"), (7, "second body")))
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first body", "second body"]
+    assert [
+        (projection["parent_comment_id"], projection["finding_id"], projection["triage_key"], projection["handled_marker"])
+        for projection in projections
+    ] == [
+        (42, 2, "prcomment:42:finding:2", "<!-- swe-workbench:handled:42:finding:2 -->"),
+        (42, 7, "prcomment:42:finding:7", "<!-- swe-workbench:handled:42:finding:7 -->"),
+    ]
+    assert all(projection["id"] == 42 for projection in projections)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<!-- swe-workbench:review-finding:2 -->\nnot a batch",
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\nbody",
+        _review_finding_batch((2, "first"), (2, "duplicate")),
+        _review_finding_batch((7, "first"), (2, "descending")),
+        "<!-- swe-workbench:review-findings -->\n\ntext <!-- swe-workbench:review-finding:2 -->",
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->",
+    ],
+)
+def test_parse_review_finding_batch_rejects_malformed_input(body):
+    assert aff.parse_review_finding_batch(_pr_comment(42, body)) is None
+
+
+def test_parse_review_finding_batch_rejects_oversized_finding_id():
+    """A hostile >9-digit marker must be malformed input, never an int() crash —
+    Python's int/str conversion limit raises ValueError past ~4300 digits, which
+    would otherwise abort the entire fetch. The digit run stays a string here so
+    the test itself never performs a bounded int conversion."""
+    body = _review_finding_batch(("9" * 4_301, "body"))
+
+    assert aff.parse_review_finding_batch(_pr_comment(42, body)) is None
+
+
+def test_parse_review_finding_batch_absorbs_trailing_separator_into_last_body():
+    """A trailing separator not followed by a marker is byte-identical to a
+    horizontal rule inside the last finding's body — the format cannot
+    distinguish them, so the text is absorbed rather than rejected."""
+    body = _review_finding_batch((2, "first")) + "\n\n---\n\nleftover"
+
+    projections = aff.parse_review_finding_batch(_pr_comment(42, body))
+
+    assert [projection["body"] for projection in projections] == ["first\n\n---\n\nleftover"]
+
+
+def test_parse_review_finding_batch_preserves_horizontal_rules_inside_a_finding():
+    comment = _pr_comment(42, _review_finding_batch((2, "first\n\n---\n\nstill first"), (7, "second")))
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first\n\n---\n\nstill first", "second"]
+
+
 # ── Unit: compute_pr_comment_eligibility (ported jq-program fixtures) ────────
 
 
@@ -182,7 +274,7 @@ def test_pr_comments_drops_current_user_on_non_author_run():
     must not resurface as a fresh triage candidate (duplicate-reply spam)."""
     comments = [
         {"id": 20, "user": {"login": "reviewer6", "type": "User"}, "body": "please fix V", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done <!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="maintainer-x")
     by_id = {c["id"]: c for c in result}
@@ -193,7 +285,7 @@ def test_pr_comments_drops_current_user_on_non_author_run():
 def test_pr_comments_marker_dedup():
     comments = [
         {"id": 5, "user": {"login": "reviewer2", "type": "User"}, "body": "please fix Y", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -205,7 +297,7 @@ def test_pr_comments_marker_match_is_anchored():
     numeric prefix) via an unanchored substring match."""
     comments = [
         {"id": 123, "user": {"login": "reviewer3", "type": "User"}, "body": "please fix Z", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -234,7 +326,7 @@ def test_pr_comments_own_marker_replies_excluded_from_manual_heuristic():
     comments = [
         {"id": 9, "user": {"login": "reviewer5", "type": "User"}, "body": "issue A", "created_at": "2026-01-01T00:00:00Z"},
         {"id": 10, "user": {"login": "reviewer5", "type": "User"}, "body": "issue B", "created_at": "2026-01-01T01:00:00Z"},
-        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -242,6 +334,373 @@ def test_pr_comments_own_marker_replies_excluded_from_manual_heuristic():
     assert by_id[9]["eligible"] is True, (
         "comment 9 must stay eligible — the only later owner comment is a marker-bearing "
         "tool reply for a different comment, which the manual-reply heuristic must ignore"
+    )
+
+
+def test_marked_batches_from_author_and_runner_bypass_identity_exclusion():
+    comments = [
+        {
+            **_pr_comment(20, _review_finding_batch((2, "author finding"))),
+            "user": {"login": "pr-author", "type": "User"},
+        },
+        {
+            **_pr_comment(21, _review_finding_batch((3, "runner finding"))),
+            "user": {"login": "runner", "type": "User"},
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(20, 2), (21, 3)]
+    assert all(item["eligible"] is True for item in result)
+
+
+def test_unmarked_author_and_runner_comments_remain_absent():
+    comments = [
+        {**_pr_comment(22, "author note"), "user": {"login": "pr-author", "type": "User"}},
+        {**_pr_comment(23, "runner note"), "user": {"login": "runner", "type": "User"}},
+    ]
+
+    assert aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner") == []
+
+
+def test_marked_third_party_batch_splits_while_unmarked_comment_stays_legacy():
+    comments = [
+        _pr_comment(24, _review_finding_batch((2, "first"), (7, "second"))),
+        _pr_comment(25, "legacy"),
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"], item["triage_key"]) for item in result] == [
+        (24, 2, "prcomment:24:finding:2"),
+        (24, 7, "prcomment:24:finding:7"),
+        (25, None, "prcomment:25"),
+    ]
+
+
+def test_malformed_batch_from_any_identity_surfaces_as_one_legacy_item():
+    """A batch-shaped comment that fails strict parsing stays VISIBLE as one
+    legacy item regardless of identity — invisible exclusion (the old author/
+    runner fail-closed rule) gave a truncated self-review batch no triage entry
+    and no transparency note, which is the fail-unsafe direction."""
+    malformed = "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
+    comments = [
+        {**_pr_comment(26, malformed), "user": {"login": "pr-author", "type": "User"}},
+        _pr_comment(27, malformed),
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(26, None), (27, None)]
+
+
+def test_malformed_batch_legacy_projection_strips_leading_provenance_markers():
+    malformed = _review_finding_batch((2, "first body"), (3, ""))
+    result = aff.compute_pr_comment_eligibility([_pr_comment(28, malformed)], author="pr-author", me="runner")
+
+    assert len(result) == 1
+    assert result[0]["finding_id"] is None
+    assert result[0]["body"].startswith("first body")
+
+
+def test_bot_marked_batch_remains_excluded():
+    comment = {
+        **_pr_comment(28, _review_finding_batch((2, "bot finding"))),
+        "user": {"login": "review-bot", "type": "Bot"},
+    }
+
+    assert aff.compute_pr_comment_eligibility([comment], author="pr-author", me="runner") == []
+
+
+def test_specific_handled_marker_suppresses_only_matching_projected_finding():
+    comments = [
+        _pr_comment(29, _review_finding_batch((2, "first"), (7, "second"))),
+        {
+            **_pr_comment(30, "done\n\n<!-- swe-workbench:handled:29:finding:2 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_finding = {item["finding_id"]: item for item in result}
+
+    assert by_finding[2]["eligible"] is False
+    assert by_finding[7]["eligible"] is True
+
+
+def test_generic_handled_marker_suppresses_every_projected_finding():
+    comments = [
+        _pr_comment(31, _review_finding_batch((2, "first"), (7, "second"))),
+        {
+            **_pr_comment(32, "done\n\n<!-- swe-workbench:handled:31 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert all(item["eligible"] is False for item in result)
+
+
+def test_generated_batches_and_handled_replies_do_not_count_as_manual_replies():
+    comments = [
+        _pr_comment(33, "open feedback"),
+        {
+            **_pr_comment(34, _review_finding_batch((2, "automated finding"))),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+        {
+            **_pr_comment(35, "done\n\n<!-- swe-workbench:handled:34:finding:2 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-03T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[33]["eligible"] is True
+
+
+def test_malformed_owner_batch_does_not_count_as_manual_reply():
+    """An owner-posted batch that later fails strict parsing (human edit, truncation)
+    must still count as automated origin — suppressing earlier third-party feedback
+    as a "manual reply" hides real items; re-surfacing them is the safe direction."""
+    malformed_batch = "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
+    comments = [
+        _pr_comment(45, "open feedback"),
+        {
+            **_pr_comment(46, malformed_batch),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[45]["eligible"] is True, (
+        "a malformed owner batch is still tool-origin — it must not suppress earlier "
+        "third-party feedback via the manual-reply heuristic"
+    )
+
+
+def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
+    rows = prs.assign_finding_ids([
+        {"severity": "High", "issue": f"finding {index}", "why": "why", "fix": "fix", "anchor": "pr-level"}
+        for index in range(1, 8)
+    ])
+    body = prs.render_pr_level_batch([rows[1], rows[6]])
+
+    projections = aff.parse_review_finding_batch(_pr_comment(36, body))
+
+    assert [(item["finding_id"], item["body"].splitlines()[0]) for item in projections] == [
+        (2, "**High** — finding 2"),
+        (7, "**High** — finding 7"),
+    ]
+
+
+def test_allowed_inline_marker_mention_round_trips_without_hiding_third_party_feedback():
+    row = prs.assign_finding_ids([{
+        "severity": "Low", "issue": "owner finding",
+        "why": "mention <!-- swe-workbench:handled:123 --> safely", "fix": "fix",
+        "anchor": "pr-level",
+    }])[0]
+    assert prs._finding_problem(row) is None
+    owner_batch = {**_pr_comment(51, prs.render_pr_level_batch([row])), "user": {"login": "pr-author", "type": "User"}}
+    third_party = _pr_comment(52, "third-party feedback")
+
+    result = aff.compute_pr_comment_eligibility([third_party, owner_batch], author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"], item["eligible"]) for item in result] == [
+        (52, None, True), (51, 1, True),
+    ]
+
+
+def test_producer_mixed_partition_batch_round_trips_in_ascending_order():
+    """main() posts `pr_level_findings + demoted` in that order — when a lower-ID
+    inline row is demoted next to an original higher-ID pr-level row, the batch
+    must still render in ascending finding-ID order or the strict consumer
+    rejects the whole batch (silent loss for author/runner batches)."""
+    rows = prs.assign_finding_ids([
+        {
+            "severity": "High", "issue": "demoted inline", "why": "w", "fix": "f",
+            "anchor": "inline", "path": "src.py", "line": 2,
+        },
+        {
+            "severity": "Low", "issue": "original pr-level", "why": "w", "fix": "f",
+            "anchor": "pr-level", "path": None, "line": None,
+        },
+    ])
+    _inline, pr_level = prs.partition_findings(rows)
+    demoted = [rows[0]]  # simulate the out-of-diff demotion of the inline row
+
+    body = prs.render_pr_level_batch(pr_level + demoted)  # main()'s concatenation order
+
+    projections = aff.parse_review_finding_batch(_pr_comment(50, body))
+
+    assert [projection["finding_id"] for projection in projections] == [1, 2]
+
+
+def test_producer_rendered_horizontal_rules_round_trip_inside_findings():
+    """The producer's free-text fields may legitimately contain horizontal rules,
+    which are byte-identical to the batch separator — a rule inside (or ending) a
+    rendered finding must never split that finding off from its marker."""
+    rows = prs.assign_finding_ids([
+        {
+            "severity": "High", "issue": "interior rule",
+            "why": "before\n\n---\n\nafter", "fix": "fix-a", "anchor": "pr-level",
+        },
+        {
+            "severity": "Low", "issue": "trailing rule",
+            "why": "why-b", "fix": "ends with rule\n\n---", "anchor": "pr-level",
+        },
+        {
+            "severity": "Low", "issue": "third",
+            "why": "why-c", "fix": "fix-c", "anchor": "pr-level",
+        },
+    ])
+    body = prs.render_pr_level_batch(rows)
+
+    projections = aff.parse_review_finding_batch(_pr_comment(44, body))
+
+    assert [item["finding_id"] for item in projections] == [1, 2, 3]
+    assert projections[0]["body"].count("\n\n---\n\n") >= 1, "the interior rule must stay inside finding 1"
+    assert projections[1]["body"].endswith("---"), "finding 2's trailing rule must stay inside finding 2"
+
+
+def test_parse_review_finding_batch_caps_section_count():
+    """A hostile ~65KB comment of tiny sections must not project a thousand-plus
+    triage items — beyond the cap the batch is malformed and degrades to a single
+    legacy item, restoring per-comment bounding."""
+    at_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 51)))
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+
+    assert len(aff.parse_review_finding_batch(_pr_comment(51, at_cap))) == 50
+    assert aff.parse_review_finding_batch(_pr_comment(52, over_cap)) is None
+
+
+def test_over_cap_third_party_batch_degrades_to_one_legacy_item():
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+    comments = [_pr_comment(53, over_cap)]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(53, None)]
+
+
+def test_handled_markers_with_realistic_ten_digit_ids_stay_automated_and_suppress():
+    """Real GitHub issue-comment databaseIds are 10 digits — the tool's own
+    handled replies must classify as automated AND suppress their target for
+    both the legacy and the :finding: marker forms."""
+    comments = [
+        _pr_comment(6096635343, "feedback with a realistic id"),
+        _pr_comment(6096635344, "older neighbor"),
+        {
+            **_pr_comment(6096635345, "done\n\n<!-- swe-workbench:handled:6096635343 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[6096635343]["eligible"] is False, "the 10-digit handled marker must still suppress its target"
+    assert by_parent[6096635344]["eligible"] is True, "the reply must classify as automated, not a manual reply"
+
+    finding_form_reply = {
+        "id": 6096635346,
+        "user": {"login": "pr-author", "type": "User"},
+        "body": "done\n\n<!-- swe-workbench:handled:6096635343:finding:2 -->",
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    assert aff._is_automated_owner_comment(finding_form_reply) is True
+
+
+def test_inline_or_crlf_tool_reply_classifies_automated_not_manual():
+    """Classification must be fail-safe: a tool reply whose marker is inline or
+    CRLF-terminated is still tool-origin — classifying it manual would suppress
+    (hide) every older item, and re-surfacing is the safe direction."""
+    inline_reply = {
+        **_pr_comment(103, "done <!-- swe-workbench:handled:100 --> inline"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    comments = [
+        _pr_comment(100, "feedback A"),
+        _pr_comment(101, "feedback B"),
+        inline_reply,
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[101]["eligible"] is True, "an inline-marker tool reply must not count as a manual reply"
+    assert by_parent[100]["eligible"] is True, "suppression still requires the whole-line marker form"
+
+    crlf_reply = {
+        **_pr_comment(104, "done\r\n\r\n<!-- swe-workbench:handled:100 -->\r\n"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-03T00:00:00Z",
+    }
+    assert aff._is_automated_owner_comment(crlf_reply) is True
+    assert aff._marker_on_own_line("<!-- swe-workbench:handled:100 -->", crlf_reply["body"]) is True, (
+        "a CRLF-terminated marker line must still satisfy whole-line suppression"
+    )
+
+
+def test_over_cap_author_batch_surfaces_as_one_legacy_item():
+    """An over-cap marked batch from the PR author/runner must stay visible —
+    invisible exclusion with no transparency note is the fail-unsafe direction."""
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+    comments = [
+        {
+            **_pr_comment(54, over_cap),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(54, None)]
+
+
+def test_producer_and_consumer_batch_caps_agree():
+    """The producer chunks at the exact size the consumer rejects beyond — any
+    disagreement silently makes oversized self-review batches untriable."""
+    assert prs.MAX_BATCH_ROWS == aff.MAX_BATCH_SECTIONS
+
+
+def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
+    """The reply template quotes the first ~100 chars of an item body into the
+    owner's own reply — a hostile comment whose opening text contains a handled
+    marker for ANOTHER comment must not get that marker quoted into a suppressing
+    position. Markers only count on their own line; a single-line blockquote can
+    never satisfy that."""
+    hostile_opening = "<!-- swe-workbench:handled:100 --> nailed you"
+    comments = [
+        _pr_comment(100, "legitimate feedback"),
+        _pr_comment(200, hostile_opening),
+        {
+            **_pr_comment(300, f"> {hostile_opening}\n\nAddressed.\n\n<!-- swe-workbench:handled:200 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[200]["eligible"] is False, "the reply's own-line marker handles comment 200"
+    assert by_parent[100]["eligible"] is True, (
+        "the marker quoted inside the blockquote is not on its own line and must not "
+        "suppress comment 100"
     )
 
 
@@ -350,6 +809,31 @@ def _pr_comments_response(comments: list[dict]):
 
 
 class TestOpenPrFullFetch:
+    def test_pr_comment_counts_use_projected_findings(self, tmp_path):
+        pr = _unique_n()
+        comments = [
+            _pr_comment(37, _review_finding_batch((2, "first"), (7, "second"))),
+            {
+                **_pr_comment(38, "done\n\n<!-- swe-workbench:handled:37:finding:2 -->"),
+                "user": {"login": "pr-author", "type": "User"},
+                "created_at": "2026-01-02T00:00:00Z",
+            },
+        ]
+        responses = _preflight_responses(pr) + [
+            _ok("me\n"), _threads_page_response([]), _pr_comments_response(comments),
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json")
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["eligible_pr_comments"] == 1
+            assert envelope["data"]["skipped_pr_comments"] == 1
+            written = json.loads(Path(envelope["data"]["pr_comments_path"]).read_text())
+            assert [(item["finding_id"], item["eligible"]) for item in written] == [(2, False), (7, True)]
+        finally:
+            _cleanup_state_files(pr)
+
     def test_pagination_two_pages_of_threads(self, tmp_path):
         pr = _unique_n()
         page1 = _threads_page_response([_thread_node(id="T1")], has_next_page=True, end_cursor="CURSOR1")

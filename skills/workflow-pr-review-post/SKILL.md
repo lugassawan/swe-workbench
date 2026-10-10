@@ -61,13 +61,16 @@ mechanism previously written out as bash+jq prose here: fetches existing review 
 (paginated), dedups inline findings against them (±5-line fuzzy match + Jaccard ≥ 0.4 overlap of
 the comment text with its headline and `Why it matters:`/`Suggested fix:` labels stripped, any
 author, unresolved only) with a 👍 reaction on match, pre-validates surviving inline
-anchors against the PR diff — demoting out-of-diff/ambiguous rows into a single pr-level batch
-comment rather than dropping them — applies the self-review + diff-scoping decision flip, and
+anchors against the PR diff — demoting out-of-diff/ambiguous rows into one pr-level batch comment
+per 50 findings rather than dropping them — applies the self-review + diff-scoping decision flip, and
 submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
 confirmed 422 (re-fetches HEAD via `headRefOid`, genuinely re-validates/demotes, retries once) and
-a per-comment fallback otherwise. The core never submits APPROVE on self-review — GitHub blocks a
-self-authored `APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of
-`$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
+a per-comment fallback otherwise. Every generated finding body carries a provenance marker: each
+PR-level batch begins `<!-- swe-workbench:review-findings -->`, and every generated finding begins
+`<!-- swe-workbench:review-finding:<positive-integer> -->`; address-feedback uses these markers to
+split a valid batch into finding-level triage items. Review summary bodies are not consumed by
+address-feedback. The core never submits APPROVE on self-review — GitHub blocks a self-authored
+`APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of `$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
 endpoint); the script confirms via a read-your-write check before conceding to the fallback. The
 core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark (appended to
 the byline on a confirmed-public repo only) — callers' own `BYLINE` stays identity-only and never
@@ -136,7 +139,7 @@ Substitute the real PR number for `<N>`. On `Yes — address feedback` → invok
 | A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | `.data.submitted = false` after a `422`-bearing response, `status: "partial"` | Demoted to the pr-level batch (never dropped); retried once against a re-fetched HEAD, then falls back to the per-comment path |
 | Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
 | Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
-| All findings dedup-matched, or the pr-level batch post fails | `.data.posted_inline = 0` and `.data.posted_pr_level = 0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed pr-level batch is logged, not retried |
+| All findings dedup-matched, or a pr-level batch chunk post fails | `.data.posted_inline = 0` and `.data.posted_pr_level = 0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed chunk is dropped with a warning and the count reflects the chunks that posted |
 | Unresolved, non-outdated review thread(s) exist from a prior review | `.data.blocked_by_unresolved > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design. Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`; or pass `APPROVE_OVER_OPEN_THREADS` to submit `APPROVE` anyway for a thread deliberately left open. |
 | Every submit path exhausted with nothing landed | `status: "partial"`, `.data.submitted = false` | The script still exits 0 (never aborts the caller's flow); treat every count in `.data` as best-effort rather than a confirmed post. |
 

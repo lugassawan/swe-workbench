@@ -542,13 +542,13 @@ def test_address_feedback_skill_early_exit_accounts_for_pr_comments():
 
 
 def test_address_feedback_skill_renders_pr_comment_block():
-    """Phase 3 must render a distinct 'PR comment by @{author}' block with an [A] menu that skips resolve."""
+    """Phase 3 must render a distinct PR-feedback block with an [A] menu that skips resolve."""
     text = SKILL_MD.read_text()
-    assert "PR comment by @{author}" in text, (
-        "SKILL.md Phase 3 must render PR-level comments in a distinct "
-        "'PR comment by @{author}' block (no path:line)"
+    assert "PR feedback item by @{author}" in text, (
+        "SKILL.md Phase 3 must render projected PR feedback in a distinct "
+        "'PR feedback item by @{author}' block (no path:line)"
     )
-    pr_block_idx = text.find("PR comment by @{author}")
+    pr_block_idx = text.find("PR feedback item by @{author}")
     assert pr_block_idx != -1
     following = text[pr_block_idx:pr_block_idx + 600]
     assert re.search(r"\[A\]ddressed.*no.*resolve|\[A\]ddressed.*no thread to resolve", following, re.IGNORECASE), (
@@ -558,11 +558,11 @@ def test_address_feedback_skill_renders_pr_comment_block():
 
 
 def test_address_feedback_skill_keys_pr_comments_namespaced():
-    """Phase 3 must key PR comments as triage["prcomment:<id>"], namespaced from thread node IDs."""
+    """Phase 3 must consume the projection's namespaced triage key directly."""
     text = SKILL_MD.read_text()
-    assert 'triage["prcomment:' in text, (
-        'SKILL.md Phase 3 must key PR comments as triage["prcomment:<comment.id>"] — '
-        "namespaced so they cannot collide with GraphQL review-thread node IDs in the same map"
+    assert "triage[.triage_key]" in text, (
+        "SKILL.md Phase 3 must key projected PR feedback via .triage_key — "
+        "the fetch projection owns namespace and composite-key construction"
     )
 
 
@@ -577,13 +577,45 @@ def test_address_feedback_skill_phase5_dispatches_issue_kind():
 
 
 def test_address_feedback_skill_reply_body_embeds_handled_marker():
-    """Phase 5 PR-comment reply body must embed the swe-workbench:handled:{id} marker used for re-run dedup."""
+    """Phase 5 PR-comment reply body must embed the item's handled marker used for re-run dedup."""
     text = _skill_text_with_references()
     assert "swe-workbench:handled:" in text, (
-        "SKILL.md Phase 5 must compose the PR-comment reply body with a hidden "
-        "<!-- swe-workbench:handled:{comment.id} --> marker — Phase 1's dedup filter "
-        "matches on this marker to skip already-replied comments on re-runs"
+        "SKILL.md Phase 5 must compose the PR-comment reply body with the item's "
+        "hidden `.handled_marker` (generic `<!-- swe-workbench:handled:{parent_comment_id} -->` "
+        "or finding-specific `<!-- swe-workbench:handled:{parent_comment_id}:finding:{finding_id} -->`) "
+        "— Phase 1's dedup filter matches this marker to skip already-replied items on re-runs"
     )
+
+
+def test_address_feedback_skill_surfaces_malformed_marked_batches_as_legacy_items():
+    text = SKILL_MD.read_text()
+    assert "marked batch that fails strict parsing surfaces as one legacy item" in text
+
+
+def test_address_feedback_skill_thread_digest_strips_provenance_marker_line():
+    """Generated thread comments open with a provenance-marker line — Phase 3 must
+    strip it before severity parsing and digest quoting, or severity parses as
+    Unknown and the marker leaks into the 200-char quote."""
+    text = SKILL_MD.read_text()
+    assert "strip that leading marker line" in text, (
+        "SKILL.md Phase 3 must instruct stripping the leading provenance-marker line "
+        "from thread bodies before severity parsing and the 200-char digest quote"
+    )
+
+
+def test_address_feedback_skill_uses_projected_pr_feedback_identity_fields():
+    """Phase 3 must consume the fetch projection instead of rebuilding PR-comment IDs."""
+    text = _skill_text_with_references()
+    for field in ('triage[.triage_key]', '.parent_comment_id', '.finding_id', '.handled_marker'):
+        assert field in text, f"address-feedback must consume projected {field} directly"
+    assert "projected PR feedback item" in text
+
+
+def test_address_feedback_skill_quotes_extracted_finding_body_and_counts_items():
+    """A split batch must be displayed and counted at finding, not parent-comment, granularity."""
+    text = SKILL_MD.read_text()
+    assert "{first 200 chars of extracted finding body}" in text
+    assert "PR feedback item(s) skipped" in text
 
 
 def test_address_feedback_skill_pr_comments_state_file_in_reap():
@@ -600,9 +632,9 @@ def test_address_feedback_skill_pr_comments_state_file_in_reap():
 def test_address_feedback_skill_pr_comment_skipped_transparency_note():
     """Phase 3 must emit a transparency note for PR comments skipped as already-handled."""
     text = SKILL_MD.read_text()
-    assert "PR comment(s) skipped" in text, (
+    assert "PR feedback item(s) skipped" in text, (
         "SKILL.md Phase 3 must emit a transparency note like "
-        "'(N PR comment(s) skipped — already handled.)' since the marker/manual-reply "
+        "'(N PR feedback item(s) skipped — already handled.)' since the marker/manual-reply "
         "dedup is lossy by construction"
     )
 
