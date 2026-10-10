@@ -166,7 +166,12 @@ def render_marked_finding(row: dict, pr_level: bool) -> str:
 
 
 def render_pr_level_batch(findings: list[dict]) -> str:
-    rendered = "\n\n---\n\n".join(render_marked_finding(finding, pr_level=True) for finding in findings)
+    # Ascending finding-ID order is a consumer contract (parse_review_finding_batch
+    # requires strictly ascending IDs): main() concatenates `pr_level_findings +
+    # demoted`, so a lower-ID demoted inline row must sort ahead of original
+    # pr-level rows or the whole batch fails to parse downstream.
+    ordered = sorted(findings, key=lambda finding: finding["_finding_id"])
+    rendered = "\n\n---\n\n".join(render_marked_finding(finding, pr_level=True) for finding in ordered)
     return f"{REVIEW_BATCH_MARKER}\n\n{rendered}"
 
 

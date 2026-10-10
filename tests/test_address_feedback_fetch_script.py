@@ -274,7 +274,7 @@ def test_pr_comments_drops_current_user_on_non_author_run():
     must not resurface as a fresh triage candidate (duplicate-reply spam)."""
     comments = [
         {"id": 20, "user": {"login": "reviewer6", "type": "User"}, "body": "please fix V", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done <!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 21, "user": {"login": "maintainer-x", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:20 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="maintainer-x")
     by_id = {c["id"]: c for c in result}
@@ -285,7 +285,7 @@ def test_pr_comments_drops_current_user_on_non_author_run():
 def test_pr_comments_marker_dedup():
     comments = [
         {"id": 5, "user": {"login": "reviewer2", "type": "User"}, "body": "please fix Y", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 6, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:5 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -297,7 +297,7 @@ def test_pr_comments_marker_match_is_anchored():
     numeric prefix) via an unanchored substring match."""
     comments = [
         {"id": 123, "user": {"login": "reviewer3", "type": "User"}, "body": "please fix Z", "created_at": "2026-01-01T00:00:00Z"},
-        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 999, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:1234 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -326,7 +326,7 @@ def test_pr_comments_own_marker_replies_excluded_from_manual_heuristic():
     comments = [
         {"id": 9, "user": {"login": "reviewer5", "type": "User"}, "body": "issue A", "created_at": "2026-01-01T00:00:00Z"},
         {"id": 10, "user": {"login": "reviewer5", "type": "User"}, "body": "issue B", "created_at": "2026-01-01T01:00:00Z"},
-        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done <!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
+        {"id": 11, "user": {"login": "pr-author", "type": "User"}, "body": "done\n\n<!-- swe-workbench:handled:10 -->", "created_at": "2026-01-02T00:00:00Z"},
     ]
     result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="pr-author")
     by_id = {c["id"]: c for c in result}
@@ -404,7 +404,7 @@ def test_specific_handled_marker_suppresses_only_matching_projected_finding():
     comments = [
         _pr_comment(29, _review_finding_batch((2, "first"), (7, "second"))),
         {
-            **_pr_comment(30, "done <!-- swe-workbench:handled:29:finding:2 -->"),
+            **_pr_comment(30, "done\n\n<!-- swe-workbench:handled:29:finding:2 -->"),
             "user": {"login": "pr-author", "type": "User"},
             "created_at": "2026-01-02T00:00:00Z",
         },
@@ -421,7 +421,7 @@ def test_generic_handled_marker_suppresses_every_projected_finding():
     comments = [
         _pr_comment(31, _review_finding_batch((2, "first"), (7, "second"))),
         {
-            **_pr_comment(32, "done <!-- swe-workbench:handled:31 -->"),
+            **_pr_comment(32, "done\n\n<!-- swe-workbench:handled:31 -->"),
             "user": {"login": "pr-author", "type": "User"},
             "created_at": "2026-01-02T00:00:00Z",
         },
@@ -441,7 +441,7 @@ def test_generated_batches_and_handled_replies_do_not_count_as_manual_replies():
             "created_at": "2026-01-02T00:00:00Z",
         },
         {
-            **_pr_comment(35, "done <!-- swe-workbench:handled:34:finding:2 -->"),
+            **_pr_comment(35, "done\n\n<!-- swe-workbench:handled:34:finding:2 -->"),
             "user": {"login": "pr-author", "type": "User"},
             "created_at": "2026-01-03T00:00:00Z",
         },
@@ -491,6 +491,31 @@ def test_producer_rendered_batch_round_trips_with_noncontiguous_ids():
     ]
 
 
+def test_producer_mixed_partition_batch_round_trips_in_ascending_order():
+    """main() posts `pr_level_findings + demoted` in that order — when a lower-ID
+    inline row is demoted next to an original higher-ID pr-level row, the batch
+    must still render in ascending finding-ID order or the strict consumer
+    rejects the whole batch (silent loss for author/runner batches)."""
+    rows = prs.assign_finding_ids([
+        {
+            "severity": "High", "issue": "demoted inline", "why": "w", "fix": "f",
+            "anchor": "inline", "path": "src.py", "line": 2,
+        },
+        {
+            "severity": "Low", "issue": "original pr-level", "why": "w", "fix": "f",
+            "anchor": "pr-level", "path": None, "line": None,
+        },
+    ])
+    _inline, pr_level = prs.partition_findings(rows)
+    demoted = [rows[0]]  # simulate the out-of-diff demotion of the inline row
+
+    body = prs.render_pr_level_batch(pr_level + demoted)  # main()'s concatenation order
+
+    projections = aff.parse_review_finding_batch(_pr_comment(50, body))
+
+    assert [projection["finding_id"] for projection in projections] == [1, 2]
+
+
 def test_producer_rendered_horizontal_rules_round_trip_inside_findings():
     """The producer's free-text fields may legitimately contain horizontal rules,
     which are byte-identical to the batch separator — a rule inside (or ending) a
@@ -516,6 +541,53 @@ def test_producer_rendered_horizontal_rules_round_trip_inside_findings():
     assert [item["finding_id"] for item in projections] == [1, 2, 3]
     assert projections[0]["body"].count("\n\n---\n\n") >= 1, "the interior rule must stay inside finding 1"
     assert projections[1]["body"].endswith("---"), "finding 2's trailing rule must stay inside finding 2"
+
+
+def test_parse_review_finding_batch_caps_section_count():
+    """A hostile ~65KB comment of tiny sections must not project a thousand-plus
+    triage items — beyond the cap the batch is malformed and degrades to a single
+    legacy item, restoring per-comment bounding."""
+    at_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 51)))
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+
+    assert len(aff.parse_review_finding_batch(_pr_comment(51, at_cap))) == 50
+    assert aff.parse_review_finding_batch(_pr_comment(52, over_cap)) is None
+
+
+def test_over_cap_third_party_batch_degrades_to_one_legacy_item():
+    over_cap = _review_finding_batch(*((index, f"body {index}") for index in range(1, 52)))
+    comments = [_pr_comment(53, over_cap)]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+
+    assert [(item["parent_comment_id"], item["finding_id"]) for item in result] == [(53, None)]
+
+
+def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
+    """The reply template quotes the first ~100 chars of an item body into the
+    owner's own reply — a hostile comment whose opening text contains a handled
+    marker for ANOTHER comment must not get that marker quoted into a suppressing
+    position. Markers only count on their own line; a single-line blockquote can
+    never satisfy that."""
+    hostile_opening = "<!-- swe-workbench:handled:100 --> nailed you"
+    comments = [
+        _pr_comment(100, "legitimate feedback"),
+        _pr_comment(200, hostile_opening),
+        {
+            **_pr_comment(300, f"> {hostile_opening}\n\nAddressed.\n\n<!-- swe-workbench:handled:200 -->"),
+            "user": {"login": "pr-author", "type": "User"},
+            "created_at": "2026-01-02T00:00:00Z",
+        },
+    ]
+
+    result = aff.compute_pr_comment_eligibility(comments, author="pr-author", me="runner")
+    by_parent = {item["parent_comment_id"]: item for item in result}
+
+    assert by_parent[200]["eligible"] is False, "the reply's own-line marker handles comment 200"
+    assert by_parent[100]["eligible"] is True, (
+        "the marker quoted inside the blockquote is not on its own line and must not "
+        "suppress comment 100"
+    )
 
 
 # ── Behavioral: call-index-driven gh stub (mirrors test_pr_review_submit_script.py) ──
@@ -628,7 +700,7 @@ class TestOpenPrFullFetch:
         comments = [
             _pr_comment(37, _review_finding_batch((2, "first"), (7, "second"))),
             {
-                **_pr_comment(38, "done <!-- swe-workbench:handled:37:finding:2 -->"),
+                **_pr_comment(38, "done\n\n<!-- swe-workbench:handled:37:finding:2 -->"),
                 "user": {"login": "pr-author", "type": "User"},
                 "created_at": "2026-01-02T00:00:00Z",
             },

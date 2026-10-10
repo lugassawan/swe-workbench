@@ -17,6 +17,7 @@ import importlib.util
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 from importlib.machinery import SourceFileLoader
@@ -1826,6 +1827,53 @@ def test_row_demoted_on_422_retry_renders_pr_level_with_location(tmp_path):
         "<!-- swe-workbench:review-finding:1 -->\n"
         "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
     )
+
+
+def test_out_of_diff_demoted_row_keeps_batch_ascending_with_pr_level_row(tmp_path):
+    """main() posts `pr_level_findings + demoted`: a lower-ID demoted inline row
+    must not render after a higher-ID original pr-level row — the consumer
+    requires strictly ascending IDs or rejects the whole batch."""
+    head = _init_repo(tmp_path)
+    pr_diff = (
+        "diff --git a/src.py b/src.py\n"
+        "index e69de29..1234567 100644\n"
+        "--- a/src.py\n"
+        "+++ b/src.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+line1\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},  # pr diff (line 999 not in it)
+            {"stdout": "", "exit": 0},  # pr comment (mixed batch, one call)
+            _repo_view_response(True),
+            _review_post_response(),  # N=0 (the only inline row was demoted)
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue="demoted inline finding", line=999),
+        _row(issue="original pr level", anchor="pr-level", path=None, line=None),
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 2
+    assert _data(result)["posted_inline"] == 0
+    calls = _gh_calls(state_dir)
+    pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
+    assert len(pr_comment_calls) == 1
+    body = pr_comment_calls[0]["argv"][pr_comment_calls[0]["argv"].index("--body") + 1]
+    assert re.findall(r"swe-workbench:review-finding:(\d+)", body) == ["1", "2"], (
+        "the batch must render in ascending finding-ID order regardless of the "
+        "pr_level+demoted concatenation order"
+    )
+    first_section = body.split("\n\n---\n\n")[0]
+    assert "`src.py:999` — demoted inline finding" in first_section
 
 
 def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):
