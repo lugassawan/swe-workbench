@@ -130,7 +130,7 @@ _REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
 _PROVENANCE_MARKER_RE = re.compile(
     r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
 )
-_RESERVED_REVIEW_MARKER = "<!-- swe-workbench:review-"
+_RESERVED_PLUGIN_MARKER = "<!-- swe-workbench:"
 
 
 def _strip_label(label_re: re.Pattern, text: str) -> str:
@@ -679,8 +679,8 @@ def _finding_problem(row) -> tuple[str, str] | None:
             continue
         if REMARK_TEXT in row[name]:
             return name, "must not embed the swe-workbench remark — the byline/remark is a review-level concern only"
-        if _RESERVED_REVIEW_MARKER in row[name]:
-            return name, "must not embed a reserved review marker"
+        if _RESERVED_PLUGIN_MARKER in row[name]:
+            return name, "must not embed a reserved swe-workbench marker"
     anchor = row.get("anchor")
     if anchor not in ("inline", "pr-level"):
         return "anchor", "must be 'inline' or 'pr-level'"

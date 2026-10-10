@@ -921,6 +921,56 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
     assert len(diff_calls) == 2, "the 422 retry must re-fetch the PR diff alongside HEAD, not reuse the stale one"
 
 
+def test_422_retry_demotes_one_of_two_findings_and_preserves_ordinals(tmp_path):
+    """Ordinal stability through 422 re-validation with a partial demotion: the
+    surviving inline row keeps ID 1 and the demoted row keeps ID 2 — no
+    renumbering of either after the partition moves between buckets."""
+    head = _init_repo(tmp_path)
+    hunk = (
+        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+    )
+    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    diff_after = hunk + "@@ -0,0 +1,2 @@\n+line1\n+line2\n"  # line 3 left the diff
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": diff_before, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
+            _review_post_response(),  # retry POST succeeds with the surviving row
+            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue="issue on line2", line=2),
+        _row(issue="issue on line3", line=3),
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_inline"] == 1
+    assert _data(result)["posted_pr_level"] == 1
+    calls = _gh_calls(state_dir)
+    post_calls = [c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"]]
+    retry_payload = json.loads(post_calls[-1]["stdin"])
+    assert len(retry_payload["comments"]) == 1
+    assert retry_payload["comments"][0]["body"].startswith("<!-- swe-workbench:review-finding:1 -->\n")
+    assert "review-finding:2" not in post_calls[-1]["stdin"]
+    pr_comment = next(c for c in calls if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    assert body.startswith(
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\n"
+        "**High** · `src.py:3` — issue on line3\n\n"
+    )
+    assert "review-finding:1" not in body
+
+
 def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
     """A refetch failure during the 422 retry is a degraded retry, not a foundational one —
     it must warn and fall back to the stale diff (PR #580 followup review fix) rather than
@@ -1699,7 +1749,16 @@ def test_remark_embedded_in_any_text_field_is_rejected(field):
 @pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
 def test_reserved_review_marker_in_any_string_field_is_rejected(field):
     problem = prs._finding_problem(_row(**{field: "x <!-- swe-workbench:review-finding:7 -->"}))
-    assert problem is not None and problem[0] == field and "reserved review marker" in problem[1]
+    assert problem is not None and problem[0] == field and "reserved swe-workbench marker" in problem[1]
+
+
+@pytest.mark.parametrize("field", ["severity", "issue", "why", "fix", "category", "path"])
+def test_handled_marker_in_any_string_field_is_rejected(field):
+    """A handled: marker in a caller field could suppress an unrelated comment's
+    triage items in a later address-feedback run — no plugin-owned marker belongs
+    in finding text, so the whole `<!-- swe-workbench:` prefix is reserved."""
+    problem = prs._finding_problem(_row(**{field: "x <!-- swe-workbench:handled:123 -->"}))
+    assert problem is not None and problem[0] == field and "reserved swe-workbench marker" in problem[1]
 
 
 @pytest.mark.parametrize("field", ["severity", "issue", "category"])
@@ -1875,6 +1934,58 @@ def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_locati
         "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:1 -->\n"
         "**High** · Correctness · `src.py:2` — issue on line2\n\n"
     )
+
+
+def test_fallback_demotes_one_of_two_findings_and_preserves_ordinals(tmp_path):
+    """Ordinal stability through the per-comment fallback with a partial failure:
+    the row whose individual POST fails demotes to pr-level keeping its original
+    ID, while the row that landed inline keeps its own — no renumbering."""
+    head = _init_repo(tmp_path)
+    pr_diff = (
+        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    )
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": pr_diff, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
+            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
+            {"stdout": "", "exit": 0},  # per-comment fallback POST for finding 1 succeeds
+            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST for finding 2 fails
+            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
+            _review_post_response(),  # final plain review submit
+        ],
+    )
+    responses_file = tmp_path / "gh_responses.json"
+    findings = _write_findings(tmp_path, [
+        _row(issue="issue on line2", line=2),
+        _row(issue="issue on line3", line=3),
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_inline"] == 1
+    assert _data(result)["posted_pr_level"] == 1
+    calls = _gh_calls(state_dir)
+    per_comment_posts = [c for c in calls if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
+    assert len(per_comment_posts) == 2
+    landed = next(a for a in per_comment_posts[0]["argv"] if a.startswith("body="))
+    assert landed.startswith("body=<!-- swe-workbench:review-finding:1 -->\n")
+    pr_comment = next(c for c in calls if c["argv"][:2] == ["pr", "comment"])
+    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
+    assert body.startswith(
+        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\n"
+        "**High** · `src.py:3` — issue on line3\n\n"
+    )
+    assert "review-finding:1" not in body
 
 
 def test_render_puts_fence_led_fix_on_its_own_paragraph():
