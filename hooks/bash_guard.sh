@@ -286,8 +286,8 @@ _push_saw_tab=0
 _classify_force_push_segment() {
   local _prefix _t push_text
   local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
-  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0
-  local _consume_next=0 _seen_push=0 _global_value=0
+  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
+  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _skip_dynamic=0
 
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
@@ -311,14 +311,19 @@ _classify_force_push_segment() {
     _t=${_push_tokens[_i]}
     if (( _seen_push == 0 )); then
       if (( _global_value )); then
+        (( _context_value && ${#_t} )) && _has_context=1
         _global_value=0
+        _context_value=0
         continue
       fi
       case "$_t" in
         push) _seen_push=1 ;;
-        -c|-C|--config|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
+        -c|--config|--config-env|--exec-path|--namespace)
           _global_value=1 ;;
-        --config=*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*|-c*|-C*) ;;
+        -C|--git-dir|--work-tree)
+          _global_value=1; _context_value=1 ;;
+        --git-dir=*|--work-tree=*|-C?*) _has_context=1 ;;
+        --config=*|--config-env=*|--exec-path=*|--namespace=*|-c*) ;;
         -*) ;;
         *) ;;
       esac
@@ -335,14 +340,15 @@ _classify_force_push_segment() {
       continue
     fi
     case "$_t" in
-      __SWB_DYNAMIC_SUBSTITUTION__) _has_dynamic=1 ;;
+      __SWB_DYNAMIC_SUBSTITUTION__)
+        if (( _skip_dynamic )); then _skip_dynamic=0; else _has_dynamic=1; fi ;;
       --force|-f) _has_force=1 ;;
       --all) _pushes_all_refs=1 ;;
       --mirror) _has_force=1; _pushes_all_refs=1 ;;
       --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
       --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
       -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
-      --*=*) ;;
+      --*=*) _skip_dynamic=1 ;;
       -*)
         if [[ "$_t" != --* && "$_t" == *f* ]]; then
           _has_force=1
@@ -360,7 +366,7 @@ _classify_force_push_segment() {
     printf 'BLOCK\tall-refs\n'
     return
   fi
-  if (( _has_dynamic )); then
+  if (( _has_dynamic || (_has_context && _has_refspec == 0) )); then
     printf 'BLOCK\tdynamic-destination\n'
     return
   fi
@@ -385,12 +391,16 @@ _scan_nested_text() {
 }
 
 _scan_known_wrapper_body() {
-  local _depth=$1 _i _body_index=-1 _token _body=""
+  local _depth=$1 _i _wrapper_index=-1 _body_index=-1 _token _body=""
   (( ${#_push_tokens[@]} )) || return
+  for ((_i = 0; _i < ${#_push_tokens[@]}; _i++)); do
+    case "${_push_tokens[_i]}" in bash|sh|zsh|dash|su|ssh|eval) _wrapper_index=$_i; break ;; esac
+  done
+  (( _wrapper_index >= 0 )) || return
 
-  case "${_push_tokens[0]}" in
+  case "${_push_tokens[_wrapper_index]}" in
     bash|sh|zsh|dash|su)
-      for ((_i = 1; _i < ${#_push_tokens[@]}; _i++)); do
+      for ((_i = _wrapper_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
         if [[ "${_push_tokens[_i]}" == -c ]]; then
           _body_index=$((_i + 1))
           break
@@ -398,16 +408,27 @@ _scan_known_wrapper_body() {
       done
       ;;
     ssh)
-      _body_index=$((${#_push_tokens[@]} - 1))
+      _i=$((_wrapper_index + 1))
+      while ((_i < ${#_push_tokens[@]})); do
+        case "${_push_tokens[_i]}" in
+          -p|-l|-i|-o|-F|-J|-S|-W) _i=$((_i + 2)) ;;
+          -*) _i=$((_i + 1)) ;;
+          *) _body_index=$((_i + 1)); break ;;
+        esac
+      done
       ;;
     eval)
-      _body_index=1
+      _body_index=$((_wrapper_index + 1))
       ;;
   esac
   (( _body_index >= 0 && _body_index < ${#_push_tokens[@]} )) || return
-  for ((_i = _body_index; _i < ${#_push_tokens[@]}; _i++)); do
-    _body="$_body${_body:+ }${_push_tokens[_i]}"
-  done
+  if [[ "${_push_tokens[_wrapper_index]}" == bash || "${_push_tokens[_wrapper_index]}" == sh || "${_push_tokens[_wrapper_index]}" == zsh || "${_push_tokens[_wrapper_index]}" == dash || "${_push_tokens[_wrapper_index]}" == su ]]; then
+    _body=${_push_tokens[_body_index]}
+  else
+    for ((_i = _body_index; _i < ${#_push_tokens[@]}; _i++)); do
+      _body="$_body${_body:+ }${_push_tokens[_i]}"
+    done
+  fi
   [[ "$_body" == *git[[:space:]]push* ]] || return
   _scan_nested_text "$_body" "$_depth"
 }
@@ -416,7 +437,7 @@ scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | grep -Eq \
-      'git[[:space:]]+push([[:space:]].*)?([[:space:]]|^)(--force|-f)([[:space:]]|$)'; then
+      'git[[:space:]]+push([[:space:]].*)?([[:space:]]|^)(--force|-[[:alnum:]]*f[[:alnum:]]*)([[:space:]]|$)'; then
       printf 'BLOCK\tindeterminate\n'
     fi
     return

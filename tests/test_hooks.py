@@ -404,6 +404,38 @@ class TestImplicitForcePushBlocker:
         )
         assert "BLOCKED" in result.stderr
 
+    @pytest.mark.parametrize("cmd", [
+        "git -C /tmp push --force",
+        "git --git-dir=/tmp/other.git push --force",
+        "git --work-tree=/tmp/other push --force",
+    ])
+    def test_nonempty_git_context_blocks_implicit_force_push(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "sudo bash -c 'git push --force origin main'",
+        "env bash -c 'git push --force origin main'",
+        "ssh host 'git push --force origin main' harmless",
+    ])
+    def test_transparent_prefix_and_ssh_arguments_do_not_hide_wrapper_push(self, guard_script, cmd):
+        result = run_guard(guard_script, cmd)
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_shell_wrapper_does_not_scan_zero_argument_as_code(self, guard_script):
+        result = run_guard(
+            guard_script, "bash -c 'echo ok' 'ignored; git push --force origin main'"
+        )
+        assert result.returncode == 0 and result.stderr == ""
+
+    def test_substitution_option_does_not_taint_explicit_feature_refspec(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script,
+            "git push --force --push-option=$(date) origin feature/x",
+            cwd=str(repo_on("main")),
+        )
+        assert result.returncode == 0 and result.stderr == ""
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).
