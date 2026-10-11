@@ -165,6 +165,10 @@ _push_token_awk='
     else print "WORD\t" word
     word = ""; word_started = 0
   }
+  function finish_subst() {
+    print "NEST\t" subtext
+    word = word dyn; word_started = 1
+  }
   function emit_separator() {
     emit_word()
     redirect_target = 0; here_string = 0
@@ -205,6 +209,7 @@ _push_token_awk='
       if (c == "\\") { word = word c; word_started = 1; continue }
       live_sub = !in_sq && (c == "`" || (c == "$" && substr(line, i + 1, 1) == "("))
       if ((in_sq || in_dq) && !live_sub) {
+        if (c == "\t") print "TAB"
         word = word c; word_started = 1
         continue
       }
@@ -235,7 +240,31 @@ _push_token_awk='
         i += 2
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
-          if (sc == "\n") sc = ";"
+          if (sc == "\n") {
+            sc = ";"
+            if (!sub_sq && !sub_dq && match(subtext, /(^|[;&|( \t])cat[ \t]+<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[^;]*$/)) {
+              hd = substr(subtext, RSTART, RLENGTH)
+              if (match(hd, /[\047"][A-Za-z_][A-Za-z0-9_]*[\047"]/)) {
+                delim = substr(hd, RSTART + 1, RLENGTH - 2)
+                strip_tabs = (hd ~ /<<-/)
+                bstart = i + 1; pos = bstart; found = 0
+                while (pos <= n) {
+                  nl = index(substr(line, pos), "\n")
+                  if (nl == 0) { ltxt = substr(line, pos) } else { ltxt = substr(line, pos, nl - 1) }
+                  cmp = ltxt
+                  if (strip_tabs) sub(/^\t+/, "", cmp)
+                  if (cmp == delim) { found = 1; break }
+                  if (nl == 0) break
+                  pos = pos + nl
+                }
+                hbody = substr(line, bstart, pos - bstart)
+                gsub(/\n/, "\001", hbody)
+                print "HERE\t" hbody
+                if (found) i = pos + length(ltxt) - 1
+                else i = n
+              }
+            }
+          }
           if (sc == "\\" && !sub_sq) {
             subtext = subtext sc
             if (i < n) { i++; subtext = subtext substr(line, i, 1) }
@@ -252,8 +281,7 @@ _push_token_awk='
           }
           subtext = subtext sc
         }
-        print "NEST\t" subtext
-        word = word dyn; word_started = 1
+        finish_subst()
         continue
       }
       if (c == "`") {
@@ -270,8 +298,7 @@ _push_token_awk='
           if (sc == "`") break
           subtext = subtext sc
         }
-        print "NEST\t" subtext
-        word = word dyn; word_started = 1
+        finish_subst()
         continue
       }
       if (c ~ /[;|&()]/) {
@@ -306,6 +333,22 @@ _is_wrapper_prefix() {
   return 1
 }
 
+# `git` only names the command when something git-like follows it; `-u git`, `-l git` and a
+# `.../git` path argument are values of a wrapper's own options.
+_is_git_continuation() {
+  case "$1" in
+    ''|-*) return 0 ;;
+    add|am|annotate|apply|archive|bisect|blame|branch|bundle|cat-file|checkout|cherry|cherry-pick|\
+    clean|clone|commit|config|credential|describe|diff|difftool|fast-export|fast-import|fetch|\
+    filter-branch|for-each-ref|format-patch|fsck|gc|grep|hash-object|help|init|log|ls-files|\
+    ls-remote|ls-tree|maintenance|merge|mergetool|mv|name-rev|notes|pull|push|range-diff|rebase|\
+    reflog|remote|repack|replace|request-pull|reset|restore|rev-list|rev-parse|revert|rm|\
+    send-email|shortlog|show|show-branch|sparse-checkout|stash|status|submodule|svn|switch|\
+    symbolic-ref|tag|update-ref|var|version|worktree) return 0 ;;
+  esac
+  return 1
+}
+
 _is_shell_interpreter() {
   case "$1" in bash|sh|zsh|dash|ksh|fish|su|eval|source|.) return 0 ;; esac
   return 1
@@ -321,8 +364,11 @@ _classify_force_push_segment() {
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
     if (( ${#_prefix} > 255 )); then _base=$_prefix; else _base=${_prefix##*/}; fi
+    [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     case "$_base" in
-      git) _found_git=1; break ;;
+      git)
+        if _is_git_continuation "${_push_tokens[_i + 1]-}"; then _found_git=1; break; fi
+        (( _prefix_args )) || _prefix_ok=0 ;;
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
       '!'|if|while|until|do|then|else) ;;
       "$_DYNAMIC_TOKEN") ;;
@@ -398,6 +444,7 @@ _classify_force_push_segment() {
         else
           _consume_next=1
         fi ;;
+      '{}'|HEAD|@) ;;
       *:*) _has_refspec=1 ;;
       *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
     esac
@@ -455,16 +502,28 @@ _scan_wrapper_operand() {
 # After a wrapper prefix every quoted string before the first `git` word is code (a shell's
 # `$0` args excepted); words after `git` are data unless git itself runs them.
 _scan_known_wrapper_body() {
-  local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _tok _base _body
-  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0
+  local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _m _tok _base _body _args
+  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_push_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
+    [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     _is_shell_interpreter "$_base" && _consumer=1
     (( _g < 0 )) || continue
+    _isgit=0
+    if [[ "$_base" == git ]] && _is_git_continuation "${_push_tokens[_i + 1]-}"; then _isgit=1; fi
     case "$_base" in
-      git) _g=$_i ;;
-      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*|'!'|if|while|until|do|then|else|"$_DYNAMIC_TOKEN") ;;
+      git)
+        if (( _isgit )); then
+          _g=$_i
+        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _push_saw_tab )); then
+          _g=$_n
+        fi ;;
+      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*)
+        # an assignment prefix unlocks everything after it, as in the flat scan
+        (( _p >= 0 )) || _p=$_i
+        _after=1 ;;
+      '!'|if|while|until|do|then|else|"$_DYNAMIC_TOKEN") ;;
       *)
         if _is_wrapper_prefix "$_base"; then
           (( _p >= 0 )) || _p=$_i
@@ -477,7 +536,8 @@ _scan_known_wrapper_body() {
   (( _g < _n )) || _g=-1
 
   # A body that was itself handed to a wrapper has no visible prefix, but is still all arguments.
-  if (( _p >= 0 || _NESTED_WRAPPER_BODY )); then
+  # A tab anywhere in the segment unlocked classification in the flat scan, quoted or not.
+  if (( _p >= 0 || _NESTED_WRAPPER_BODY || _push_saw_tab )); then
     _end=$(( _g >= 0 ? _g : _n ))
     for ((_i = (_p >= 0 ? _p : 0); _i < _end; _i++)); do
       _tok=${_push_tokens[_i]}
@@ -492,7 +552,15 @@ _scan_known_wrapper_body() {
               -c*|--command|-[!-]*c*)
                 for ((_k = _j + 1; _k < _n; _k++)); do
                   if _has_code_text "${_push_tokens[_k]}"; then
-                    _scan_wrapper_operand "${_push_tokens[_k]}" "$_depth"
+                    _body=${_push_tokens[_k]}
+                    _scan_wrapper_operand "$_body" "$_depth"
+                    # arguments after the script are $0 $1 ...; rescan them in place when it uses them
+                    case "$_body" in
+                      *\$[0-9@*]*|*\$\{[0-9@*]*)
+                        _args=""
+                        for ((_m = _k + 1; _m < _n; _m++)); do _args="$_args ${_push_tokens[_m]}"; done
+                        [[ -n "$_args" ]] && _scan_wrapper_operand "$_body$_args" "$_depth" ;;
+                    esac
                     break
                   fi
                 done
@@ -513,7 +581,8 @@ _scan_known_wrapper_body() {
       _tok=${_push_tokens[_i]}
       case "$_tok" in
         foreach|filter-branch|run|-x|--exec|--exec=*|--extcmd|--extcmd=*|--tree-filter|\
-        --index-filter|--msg-filter|--env-filter|--commit-filter|--parent-filter|--tag-name-filter)
+        --index-filter|--msg-filter|--env-filter|--commit-filter|--parent-filter|--tag-name-filter|\
+        --upload-pack|--upload-pack=*|--receive-pack|--receive-pack=*|-O?*|ext::*)
           _runner=1 ;;
       esac
       if [[ "$_prev" == -c || "$_tok" == -c?* ]] && _has_code_text "$_tok"; then
@@ -526,7 +595,8 @@ _scan_known_wrapper_body() {
       for ((_i = _g + 1; _i < _n; _i++)); do
         _tok=${_push_tokens[_i]}
         _has_code_text "$_tok" || continue
-        [[ "$_tok" == -*=* ]] && _tok=${_tok#*=}
+        if [[ "$_tok" == -O?* ]]; then _tok=${_tok#-O}
+        elif [[ "$_tok" == -*=* ]]; then _tok=${_tok#*=}; fi
         _scan_wrapper_operand "$_tok" "$_depth"
       done
     fi
