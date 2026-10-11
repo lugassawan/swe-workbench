@@ -32,6 +32,8 @@ If you have pre-existing hooks in `.git/hooks/` or a non-default repo-local `cor
 
 The pre-push gate is deliberately short. `git push` opens its SSH connection *before* running the hook and holds it idle while the hook runs; GitHub closes an idle SSH session after about 6 minutes, so a gate that long dies with exit 141 even though every test passed. Files the budget left out are named in the hook output and run in CI.
 
+The hook file is shared by every worktree through the main checkout, but `scripts/select-tests.sh` and `scripts/test-all.sh` come from each branch. A branch cut before they landed gets the hook without them: it says so, asks you to merge `main`, borrows the selector from the checkout the hook lives in when it can (otherwise it falls back to just the changed `tests/test_*.py` files), and runs the selected files directly with pytest. It reports "no tests cover this change" only when a working selector selected nothing, and says "could not tell what changed" for any ref it could not diff.
+
 `scripts/test-all.sh` is polite on a shared machine: workers are capped (`--workers N`, default 3), the run is `nice`d, and a machine-wide lock makes concurrent worktrees queue instead of multiplying workers. Parallelism needs `pip install pytest-xdist` (optional; without it the run is serial).
 
 ## Branch naming

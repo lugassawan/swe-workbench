@@ -144,6 +144,11 @@ class TestSelectTests:
         done = _select(repo, "--list-changed")
         assert sorted(done.stdout.split()) == ["notes.txt", "scripts/alpha.sh"]
 
+    def test_non_ascii_paths_are_listed_and_selected_unquoted(self, repo):
+        _commit(repo, "tests/test_café.py", text="# covers café\n")
+        assert _selected(repo) == ["tests/test_café.py"]
+        assert "tests/test_café.py" in _select(repo, "--list-changed").stdout.split("\n")
+
     def test_unknown_base_is_not_an_error(self, repo):
         _commit(repo, "scripts/alpha.sh")
         done = _select(repo, "--base", "f" * 40)
@@ -296,9 +301,11 @@ def hook_repo(repo):
 
 
 def _push(repo: Path, *lines: str, **env: str):
+    # nested pytest runs must not inherit an outer xdist worker's identity
+    base = {k: v for k, v in _CLEAN_ENV.items() if not k.startswith("PYTEST_XDIST")}
     return subprocess.run(
         ["bash", str(repo / ".githooks" / "pre-push")],
-        cwd=repo, env={**dict(_CLEAN_ENV), **env}, input="\n".join(lines) + "\n",
+        cwd=repo, env={**base, **env}, input="\n".join(lines) + "\n",
         capture_output=True, text=True, timeout=60,
     )  # fmt: skip
 
@@ -386,3 +393,174 @@ class TestPrePushWiring:
         body = PRE_PUSH.read_text(encoding="utf-8")
         assert "scripts/test-all.sh" in body and "--no-lock" in body
         assert 'pytest "$REPO_ROOT/tests/"' not in body
+
+
+PASSING_TEST = "def test_alpha():\n    assert True\n"
+FAILING_TEST = "def test_alpha():\n    assert False, 'edited test must run'\n"
+
+
+@pytest.fixture
+def old_branch(hook_repo):
+    """A branch cut before the helper scripts existed: the hook is shared, the scripts are not."""
+    for rel in ("scripts/select-tests.sh", "scripts/test-all.sh"):
+        _git(hook_repo, "rm", "-q", rel)
+    _git(hook_repo, "commit", "-q", "-m", "branch without the helpers")
+    return hook_repo
+
+
+class TestPrePushOnABranchWithoutTheHelpers:
+    """The hook comes from the main checkout; the scripts come from each branch."""
+
+    def test_it_says_so_and_how_to_fix_it(self, old_branch):
+        head = _commit(old_branch, "tests/test_alpha.py", text=PASSING_TEST)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "predates" in done.stdout
+        assert "merge main" in done.stdout
+        assert "select-tests.sh" not in done.stderr, "the raw missing-script error must not leak"
+
+    def test_the_changed_test_files_still_run_and_can_block_the_push(self, old_branch):
+        head = _commit(old_branch, "tests/test_alpha.py", text=FAILING_TEST)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode != 0
+        assert "edited test must run" in done.stdout
+
+    def test_a_passing_changed_test_is_run_not_skipped(self, old_branch):
+        head = _commit(old_branch, "tests/test_alpha.py", text=PASSING_TEST)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert "1 passed" in done.stdout
+
+    def test_it_never_claims_no_tests_cover_the_change(self, old_branch):
+        head = _commit(old_branch, "scripts/alpha.sh")
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "no tests cover this change" not in done.stdout
+        assert "predates" in done.stdout
+
+    def test_a_deleted_test_leaves_nothing_to_run_and_says_so(self, old_branch):
+        head = _commit(old_branch, "tests/test_alpha.py", delete=True)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "no changed test files to run" in done.stdout
+
+    def test_the_budget_applies_to_the_direct_run_too(self, old_branch):
+        _write(old_branch, "tests/test_beta.py", PASSING_TEST.replace("alpha", "beta"))
+        head = _commit(old_branch, "tests/test_alpha.py", text=PASSING_TEST)
+        done = _push(
+            old_branch,
+            f"refs/heads/feature {head} refs/heads/feature {ZERO}",
+            SWE_WORKBENCH_PREPUSH_BUDGET="0",
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "left to CI" in done.stdout
+        assert "tests/test_alpha.py" in done.stdout
+
+    def test_smaller_changed_files_run_before_larger_ones(self, old_branch):
+        _write(old_branch, "tests/test_beta.py", "def test_beta():\n    assert False, 'large'\n" + "# pad\n" * 300)
+        head = _commit(old_branch, "tests/test_alpha.py", text=PASSING_TEST)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        # the small passing file ran first; the large failing one then stopped the push
+        assert "1 passed" in done.stdout
+        assert done.returncode != 0
+
+    def test_non_ascii_test_file_names_are_still_run(self, old_branch):
+        head = _commit(old_branch, "tests/test_café.py", text=FAILING_TEST)
+        done = _push(old_branch, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode != 0, "a failing test with a non-ASCII name must not slip through"
+
+    def test_the_selector_is_borrowed_from_the_checkout_the_hook_lives_in(self, hook_repo, tmp_path):
+        # `hook_repo` plays the main checkout: it has the scripts. `old` is a branch cut
+        # before them, running the hook through the hooks-symlink like a real worktree.
+        old = tmp_path / "old"
+        old.mkdir()
+        _git(old, "init", "-q", "-b", "main")
+        _write(old, "scripts/alpha.sh", "#!/bin/bash\necho alpha\n")
+        _write(old, "scripts/validate.sh", "#!/bin/bash\nexit 0\n")
+        _write(old, "tests/test_alpha.py", PASSING_TEST + "# covers alpha.sh\n")
+        _git(old, "add", "-A")
+        _git(old, "commit", "-q", "-m", "base")
+        _git(old, "switch", "-q", "-c", "feature")
+        head = _commit(old, "scripts/alpha.sh")
+        link = old / ".git" / "hooks" / "pre-push"
+        link.symlink_to(hook_repo / ".githooks" / "pre-push")
+        done = subprocess.run(
+            ["bash", str(link)], cwd=old, env=dict(_CLEAN_ENV),
+            input=f"refs/heads/feature {head} refs/heads/feature {ZERO}\n",
+            capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "predates" in done.stdout and "merge main" in done.stdout
+        assert "1 passed" in done.stdout, "the source-only edit must still select its test"
+        assert "no changed test files" not in done.stdout
+
+
+class TestPrePushWhenTheSelectorBreaks:
+    def test_a_failing_selector_is_a_selection_failure_not_nothing_selected(self, hook_repo):
+        _write(hook_repo, "scripts/select-tests.sh", "#!/bin/bash\necho boom >&2\nexit 7\n")
+        head = _commit(hook_repo, "tests/test_alpha.py", text=FAILING_TEST)
+        done = _push(hook_repo, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert "selection failed" in done.stdout
+        assert "no tests cover this change" not in done.stdout
+        assert done.returncode != 0, "the changed test is still run directly and fails"
+        assert _runner_calls(hook_repo) == []
+
+    def test_an_unknown_remote_sha_falls_back_to_the_default_branch(self, hook_repo):
+        head = _commit(hook_repo, "scripts/alpha.sh")
+        done = _push(hook_repo, f"refs/heads/feature {head} refs/heads/feature {'f' * 40}")
+        assert done.returncode == 0, done.stderr
+        assert _runner_calls(hook_repo) == ["--no-lock tests/test_alpha.py"]
+
+    def test_nothing_selected_by_a_working_selector_still_says_so(self, hook_repo):
+        head = _commit(hook_repo, "notes.txt")
+        done = _push(hook_repo, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert "no tests cover this change" in done.stdout
+
+    def test_one_failing_selector_does_not_drop_the_other_refs_selection(self, hook_repo):
+        real = hook_repo / "scripts" / "real-select.sh"
+        shutil.copy(SELECT, real)
+        head_a = _commit(hook_repo, "tests/test_beta.py", text=PASSING_TEST.replace("alpha", "beta"))
+        head_b = _commit(hook_repo, "tests/test_alpha.py", text=PASSING_TEST)
+        _write(
+            hook_repo,
+            "scripts/select-tests.sh",
+            "#!/bin/bash\n"
+            f'case " $* " in *" --head {head_a} "*) echo boom >&2; exit 7 ;; esac\n'
+            'exec bash "$(dirname "$0")/real-select.sh" "$@"\n',
+        )
+        done = _push(
+            hook_repo,
+            f"refs/heads/a {head_a} refs/heads/a {ZERO}",
+            f"refs/heads/b {head_b} refs/heads/b {ZERO}",
+        )
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "selection failed" in done.stdout
+        assert "running 2 test file(s)" in done.stdout
+
+    def test_no_default_branch_to_compare_with_is_said_not_swallowed(self, hook_repo):
+        _git(hook_repo, "branch", "-D", "main")
+        head = _commit(hook_repo, "scripts/alpha.sh")
+        done = _push(hook_repo, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert done.returncode == 0, done.stderr
+        assert "could not tell what changed" in done.stdout
+        assert "no tests cover this change" not in done.stdout
+        assert _runner_calls(hook_repo) == []
+
+    def test_an_unknown_base_on_one_ref_is_reported_even_when_another_ref_ran(self, hook_repo):
+        known = _git(hook_repo, "rev-parse", "HEAD")
+        _git(hook_repo, "branch", "-D", "main")
+        head = _commit(hook_repo, "scripts/alpha.sh")
+        done = _push(
+            hook_repo,
+            f"refs/heads/new {head} refs/heads/new {ZERO}",
+            f"refs/heads/feature {head} refs/heads/feature {known}",
+        )
+        assert done.returncode == 0, done.stderr
+        assert "could not tell what changed for 1 ref" in done.stdout
+        assert _runner_calls(hook_repo) == ["--no-lock tests/test_alpha.py"]
+
+    def test_a_push_with_no_branch_updates_does_not_claim_coverage(self, hook_repo):
+        head = _git(hook_repo, "rev-parse", "HEAD")
+        done = _push(hook_repo, f"refs/tags/v1 {head} refs/tags/v1 {ZERO}")
+        assert done.returncode == 0, done.stderr
+        assert "no branch updates" in done.stdout
+        assert "no tests cover this change" not in done.stdout
