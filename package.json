@@ -12,6 +12,7 @@
   "files": [
     ".claude-plugin",
     "bin/swe-workbench-*",
+    "bin/swe_workbench_runtime",
     "bin/README.md",
     "skills",
     "commands",

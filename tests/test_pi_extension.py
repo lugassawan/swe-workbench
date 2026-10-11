@@ -19,6 +19,12 @@ from pathlib import Path
 import pytest
 
 from conftest import _CLEAN_ENV
+from test_cleanup_merged_runtime import (
+    _cleanup_execute_pipeline,
+    _execute_pipeline,
+    _prepare_linked_request,
+    _write_lease,
+)
 
 ROOT = Path(__file__).parent.parent
 PACKAGE_JSON = ROOT / "package.json"
@@ -49,7 +55,7 @@ SKILLS_DIR = ROOT / "skills"
 # not shrink, is what issue #700 targets.
 TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL = 3606
 TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL = 3526
-BIN_SCRIPTS_SECTION_CHAR_CAP = 1419  # +1 script row (swe-workbench-issue-preflight +33; the report-issue preflight is a runtime script, not prose) — measured, not estimated
+BIN_SCRIPTS_SECTION_CHAR_CAP = 1451  # +1 script row (swe-workbench-cleanup-merged +32) — measured, not estimated
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
 # file's own source — this file is not on secret_guard.py's allowlist (unlike
@@ -3943,17 +3949,21 @@ const { registerHandoff } = await import(pathToFileURL(handoffPath).href);
 
 const handlers = {};
 registerHandoff({ on(event, handler) { handlers[event] = handler; } }, config.root);
-const result = await handlers["tool_call"](
-  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "ls -la" } },
-  {
-    hasUI: true,
-    cwd: config.repo,
-    signal: undefined,
-    ui: { notify: () => {}, setStatus: () => {} },
-    sessionManager: { getSessionId: () => "pi-session-1" },
-  },
+const makeContext = () => ({
+  hasUI: true,
+  cwd: config.repo,
+  signal: undefined,
+  ui: { notify: () => {}, setStatus: () => {} },
+  sessionManager: { getSessionId: () => config.sessionId ?? "pi-session-1" },
+});
+const toolCall = (command) => handlers["tool_call"](
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command } },
+  makeContext(),
 );
-fs.writeFileSync(config.outPath, JSON.stringify(result));
+const result = config.commands
+  ? await Promise.all(config.commands.map(toolCall))
+  : await toolCall(config.command ?? "ls -la");
+fs.writeFileSync(config.outPath, JSON.stringify(result ?? null));
 console.log(JSON.stringify({ ok: true }));
 """
 
@@ -3974,6 +3984,82 @@ def test_handoff_missing_interpreter_fails_closed_with_runtime_requirement(tmp_p
     result = json.loads(out_path.read_text(encoding="utf-8"))
     assert result["block"] is True, "a missing interpreter must still fail closed"
     assert "Python 3.9" in result["reason"]
+
+
+def _run_pi_handoff_commands(tmp_path, tmp_path_factory, repo, state_dir, session_id, **config):
+    out_path = tmp_path / "pi-handoff-result.json"
+    _run_node(
+        _HANDOFF_SINGLE_CALL_DRIVER,
+        [
+            str(HANDOFF_TS),
+            json.dumps({"root": str(ROOT), "repo": str(repo), "outPath": str(out_path), "sessionId": session_id, **config}),
+        ],
+        tmp_path_factory,
+        label="pi-prepared-cleanup-guard",
+        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+    )
+    return json.loads(out_path.read_text(encoding="utf-8"))
+
+
+@requires_node
+def test_pi_foreign_primary_lease_allows_only_prepared_cleanup_and_completes_without_helper(tmp_path, tmp_path_factory):
+    primary, target, _, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path, "pi")
+    _write_lease(primary, handoff_dir, "foreign-session", "pi")
+
+    guard = _run_pi_handoff_commands(
+        tmp_path,
+        tmp_path_factory,
+        primary,
+        handoff_dir,
+        "cleanup-test-session",
+        command=_cleanup_execute_pipeline(request_id, "pi"),
+    )
+
+    assert guard is None
+    execution = _execute_pipeline(
+        primary, state_dir, handoff_dir, tmp_path / "cleanup-bin", response, request_id, "pi"
+    )
+    assert execution.returncode == 0, execution.stderr
+    assert not target.exists()
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "command",
+    [
+        "swe-workbench-cleanup-merged prepare --pr 12",
+        "swe-workbench-cleanup-merged execute --request 123 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID --extra | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --as pi --request 123e4567-e89b-12d3-a456-426614174000 --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.handoff/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 | cat",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 && true",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1; true",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 > /dev/null",
+        "swe-workbench-cleanup-merged execute --request $(printf 123e4567-e89b-12d3-a456-426614174000) --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "RUN=1 swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "printf '%s' 'swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1'",
+    ],
+)
+def test_handoff_blocks_prepared_cleanup_command_shape_near_misses(tmp_path, tmp_path_factory, command):
+    repo = _handoff_repo(tmp_path, "foreign")
+    state_dir = tmp_path / "state"
+    checkpoint_id = _handoff_create(repo, state_dir, "prepared-cleanup", "claude", "pi")
+    acquired = _handoff_runtime(
+        "resume", checkpoint_id, "--as", "pi", "--receiver-session", "foreign-session", cwd=repo, state_dir=state_dir
+    )
+    assert acquired.returncode == 0, acquired.stderr
+
+    results = _run_pi_handoff_commands(
+        tmp_path, tmp_path_factory, repo, state_dir, "cleanup-test-session", commands=[command]
+    )
+
+    assert results[0]["block"] is True
 
 
 @requires_node

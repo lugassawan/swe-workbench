@@ -45,7 +45,15 @@ Read `state == "MERGED"` **and** `mergedAt != null`. Abort with a clear message 
 
 **Never use `git branch --merged` as a merge check.** GitHub's default squash-merge strategy creates a new commit SHA on `main`; the original branch tip is not a merge ancestor of `main`, so `git branch --merged` silently lies. `gh` is the only oracle that does not lie.
 
-### Step 3 — Free Session, Anchor cwd, Sync Local Main
+### Step 3 — Classify the Primary Lease, Free Session, Anchor cwd, Sync Local Main
+
+**Preflight — classify the primary lease while the target is still live.** Before `ExitWorktree`, resolve the target with `git rev-parse --show-toplevel` and the primary from `git worktree list --porcelain` to canonical paths, then run exactly:
+
+```bash
+HANDOFFS=$(swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1) || exit 1
+```
+
+The primary is safe only when no row matches its canonical root, or its `owner_harness` and `receiver_session_ref` exactly match the current harness and session. A released, foreign-harness, foreign-session, malformed, or unreadable primary state is unsafe; the checked pipeline fails closed for unreadable state. Continue with **3a** only when safe. For an unsafe primary, follow [leased-anchor-cleanup.md](reference/leased-anchor-cleanup.md) instead; it completes the sealed target cleanup without changing the primary and ends this ordinary Steps 3–8 path.
 
 **3a. Free the session from any active worktree.**
 
@@ -201,6 +209,7 @@ Step 4 falls through three mutually exclusive strategies — rimba + post-merge 
 | Failure | Signal | Action |
 |---------|--------|--------|
 | PR not yet merged | `state != "MERGED"` or `mergedAt == null` | Abort. Print PR state and URL. Do not delete anything. |
+| Foreign or undecidable primary lease | Preflight row is released, foreign, malformed, or unreadable | Do not run ordinary sync/removal. Use the sealed route; preparation/execution failures stop and retry the same request ID. |
 | Uncommitted changes in worktree | `DIRTY > 0` | Abort. Re-run `git status --porcelain` to show files. Tell user to stash or commit first. |
 | Unpushed commits in worktree | `UNPUSHED > 0` | Abort. Re-run `git log @{upstream}..HEAD` to list commits. Tell user to push or discard first. |
 | cwd is inside the worktree | Path comparison | `cd` to the worktree root (`git rev-parse --show-toplevel`) before Batch B, or abort if not possible. |
@@ -230,6 +239,7 @@ case) — including the exact `git worktree prune` / `git -C <path> restore .` /
 |---------|-----|
 | Use `git branch --merged` to check if a PR is merged | Never. Squash-merges lie. Use `gh pr view --json state,mergedAt`. |
 | Use lowercase `git branch -d` | Always use `-D`. Squash-merged branches are not merge ancestors of `main`. |
+| Fall back to ordinary cleanup for a foreign primary lease | Never. The sealed route skips only main sync; it does not create a helper worktree or a fresh session. |
 | Force-delete a worktree with dirty state | Never. Batch A aborts before Batch B runs. |
 | Run cleanup from inside the worktree being deleted | Step 3 anchors cwd to $MAIN_REPO before the pull. If skipped, the rimba hook can delete the cwd mid-flight and strand subsequent commands with "fatal: not a git repository". |
 | Skip `ExitWorktree action=keep` in a session entered via `EnterWorktree` | Always call it as the first action of Step 3 when the tool is available. Without it, the harness session lock remains on the worktree when `git pull` fires the rimba hook — rimba's child process inherits a cwd that gets deleted mid-operation, leaving the branch undeleted and the session stranded at `$HOME`. If `ExitWorktree` reports a no-op — cd-fallback entry **or** compaction dropped tracking, not confirmed cd-entry — use the `cd`-to-main-root command in Step 3a instead. |

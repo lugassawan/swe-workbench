@@ -23,7 +23,7 @@
 #             improvised during review/implementation work). This one is deliberately NOT
 #             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
 #
-# Usage: swe-workbench-sweep-residuals <PR number> [--repo owner/repo] [--head-sha <sha>]
+# Usage: swe-workbench-sweep-residuals <PR number> [--repo owner/repo] [--head-sha <sha>] [--protect-worktree <canonical-path>]...
 # Stdout contract (always emitted, even on a non-integer arg or nothing found): one
 # JSON envelope, schema swb.sweep-residuals/1 (see shared/docs/runtime-result-contract.md):
 #   data.swept_worktrees      — count of ephemeral worktrees removed
@@ -125,6 +125,8 @@ emit_envelope() {
 N=""
 REPO_ARG=""
 HEAD_SHA=""
+PROTECTED_WORKTREES=()
+PROTECTION_EVIDENCE_INVALID=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)
@@ -135,6 +137,21 @@ while [ $# -gt 0 ]; do
     --head-sha)
       [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --head-sha requires a value" >&2; emit_envelope; exit 0; }
       HEAD_SHA="$2"
+      shift 2
+      ;;
+    --protect-worktree)
+      [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --protect-worktree requires a canonical path" >&2; PROTECTION_EVIDENCE_INVALID=1; shift; continue; }
+      candidate="$2"
+      canonical=""
+      if [[ "$candidate" = /* ]]; then
+        canonical=$(cd "$candidate" 2>/dev/null && pwd -P) || canonical=""
+      fi
+      if [ -z "$canonical" ] || [ "$candidate" != "$canonical" ]; then
+        echo "swe-workbench-sweep-residuals: invalid --protect-worktree evidence" >&2
+        PROTECTION_EVIDENCE_INVALID=1
+      else
+        PROTECTED_WORKTREES+=("$canonical")
+      fi
       shift 2
       ;;
     *)
@@ -166,8 +183,6 @@ esac
 SPECIALIST_MODES=(security accessibility dependency performance tests ux)
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || { emit_envelope; exit 0; }
-RIMBA=$("$SCRIPT_DIR/swe-workbench-skill-script" workflow-cleanup-merged resolve-rimba.sh 2>/dev/null) || RIMBA=""
-
 # ── Repo-scope resolution (see shared/docs/repo-scoped-ephemeral-state.md) ──
 # Explicit --repo wins (the PR record in hand); else the cwd's origin remote;
 # else the empty slug = unscoped mode (byte-for-byte legacy behavior).
@@ -463,9 +478,57 @@ if [ -n "${MAIN_REPO:-}" ]; then
     done
   fi
 
+  protected_worktree() {
+    local candidate="$1" protected
+    for protected in "${PROTECTED_WORKTREES[@]:-}"; do
+      [ "$candidate" = "$protected" ] && return 0
+    done
+    return 1
+  }
+
+  reap_unleased_worktree() {
+    local path="$1"
+    SWE_WORKBENCH_RUNTIME_DIR="$SCRIPT_DIR" python3 - "$path" <<'PY'
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.environ["SWE_WORKBENCH_RUNTIME_DIR"])
+from swe_workbench_runtime import handoff_state
+
+path = Path(sys.argv[1]).resolve()
+try:
+    repo_key, worktree_key = handoff_state.worktree_identity(path)
+    workspace = handoff_state.StatePaths.from_environment().workspace_directory(repo_key, worktree_key)
+    handoff_state.ensure_owner_directory(workspace)
+    with handoff_state.workspace_flock(workspace, "lease.lock"):
+        if handoff_state.load_lease(workspace) is not None:
+            raise SystemExit(10)
+        if subprocess.run(["git", "-C", str(path), "status", "--porcelain"], capture_output=True, text=True, check=False).stdout:
+            raise SystemExit(11)
+        status = subprocess.run(["git", "worktree", "remove", "--force", str(path)], check=False).returncode
+        if status != 0 and path.is_dir():
+            guard = str(Path(os.environ["SWE_WORKBENCH_RUNTIME_DIR"]) / "swe-workbench-clean-ephemeral")
+            status = subprocess.run([guard, str(path)], check=False).returncode
+        raise SystemExit(status)
+except handoff_state.HandoffStateError:
+    raise SystemExit(10)
+PY
+  }
+
   reap_one_worktree() {
-    local label="$1" path="$2" delete_branch="$3"
+    local label="$1" path="$2" delete_branch="$3" removal_status
     [ -n "$path" ] || return 0
+
+    if [ "$PROTECTION_EVIDENCE_INVALID" = "1" ]; then
+      RETAINED_ITEMS+=("$(_json_item "$path" "lease protection evidence unavailable")")
+      return 0
+    fi
+    if protected_worktree "$path"; then
+      RETAINED_ITEMS+=("$(_json_item "$path" "active handoff lease protects this worktree")")
+      return 0
+    fi
 
     # Interrupted flows are exactly when a worktree is most likely to hold
     # uncommitted, local-only work (e.g. a killed session mid-edit, before its
@@ -480,16 +543,22 @@ if [ -n "${MAIN_REPO:-}" ]; then
       fi
     fi
 
-    if [ -n "$RIMBA" ] && "$RIMBA" remove "$label" --force >/dev/null 2>&1; then
+    if reap_unleased_worktree "$path"; then
       :
     else
-      git worktree remove --force "$path" >/dev/null 2>&1 || true
-      if [ "$delete_branch" = "1" ]; then
-        git branch -D "$label" >/dev/null 2>&1 || true
+      removal_status=$?
+      if [ "$removal_status" = "10" ]; then
+        RETAINED_ITEMS+=("$(_json_item "$path" "active handoff lease protects this worktree")")
+        return 0
       fi
-      if [ -d "$path" ]; then
-        "$SCRIPT_DIR/swe-workbench-clean-ephemeral" "$path" >/dev/null 2>&1 || true
+      if [ "$removal_status" = "11" ]; then
+        RETAINED_ITEMS+=("$(_json_item "$path" "uncommitted changes")")
+        return 0
       fi
+    fi
+
+    if [ ! -d "$path" ] && [ "$delete_branch" = "1" ]; then
+      git branch -D "$label" >/dev/null 2>&1 || true
     fi
 
     if [ -d "$path" ]; then

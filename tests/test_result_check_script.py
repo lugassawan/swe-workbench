@@ -59,6 +59,17 @@ EXPECTED_REGISTRY = {
         "suspicious": "list[str]",
         "docs_only": "bool",
     },
+    "swb.cleanup-merged/1": {
+        "request_id": "str",
+        "phase": "str",
+        "completed": "bool",
+        "main_sync_skipped": "bool",
+        "worktree_removed": "bool",
+        "local_branch_deleted": "bool",
+        "remote_branch_deleted": "bool",
+        "residual_none": "bool",
+        "follow_up": "str",
+    },
     "swb.sweep-residuals/1": {
         "swept_worktrees": "int",
         "swept_state_files": "int",

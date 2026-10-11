@@ -26,13 +26,20 @@ Ownership is a **lease** on the worktree, keyed by repository and worktree:
 The **source harness must stop mutating after `create`** — this is enforced, not advisory:
 Claude's PreToolUse hook (`hooks/handoff_guard.py`) and Pi's native adapter
 (`pi/extensions/handoff.ts`) block `Bash`/`Edit`/`Write` (Pi: `bash`/`write`/`edit`) while a
-lease they do not own is in flight, allowing only the exact anchored lifecycle pipelines
-(resume/recover with a literal `--receiver-session-env`/`--source-stopped` and a
-`| swe-workbench-result-check swb.handoff/1` tail — every pipeline argument is a literal
-value, never a runtime `${VAR}` shell expansion). Blocking messages carry the exact receiver
+lease they do not own is in flight, allowing only exact anchored lifecycle pipelines and a prepared
+cleanup pipeline. Lifecycle commands use literal `--receiver-session-env`/`--source-stopped` arguments
+and a `| swe-workbench-result-check swb.handoff/1` tail; prepared cleanup uses only
+`execute --request <uuid> --as <harness> --session-ref-env <fixed-harness-env> |
+swe-workbench-result-check swb.cleanup-merged/1`. Every pipeline argument is literal, never a runtime
+`${VAR}` shell expansion. Blocking messages carry the exact receiver
 command and the leased worktree path, e.g. ``run `/handoff resume <id>` in the receiver``
 plus the worktree root the guard resolved the lease against — so a session that finds itself
 blocked can tell which worktree holds the lease even when it differs from its own.
+
+The cleanup exception validates only inert command shape. The prepared request and cleanup runtime
+validate sealed resource authority, so this pipeline cannot alter the foreign lease or choose a target
+after preparation; an alternate subcommand, argument order, shell construct, or unchecked output is
+not exempt.
 
 ## Routes
 

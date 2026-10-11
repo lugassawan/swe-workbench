@@ -21,6 +21,9 @@ SWEEP_SCRIPT = ROOT / "bin" / "swe-workbench-sweep-residuals"
 WORKTREE_REMOVAL_STRATEGIES_REF = (
     ROOT / "skills" / "workflow-cleanup-merged" / "reference" / "worktree-removal-strategies.md"
 )
+LEASED_ANCHOR_CLEANUP_REF = (
+    ROOT / "skills" / "workflow-cleanup-merged" / "reference" / "leased-anchor-cleanup.md"
+)
 
 
 def test_cleanup_merged_step3_calls_exit_worktree_before_cwd_anchor():
@@ -482,3 +485,89 @@ def test_session_scratch_cleanup_is_platform_neutral() -> None:
     assert "swept_session_files = 0" in section
     assert "CLAUDE_CODE_SESSION_ID" not in section
     assert "/tmp/claude-" not in section
+
+
+def _leased_anchor_route() -> str:
+    return LEASED_ANCHOR_CLEANUP_REF.read_text()
+
+
+def test_foreign_primary_lease_is_detected_before_exit_worktree() -> None:
+    skill = SKILL.read_text()
+    step3 = skill.split("### Step 3")[1].split("### Step 4")[0]
+    preflight = step3.split("**3a.")[0]
+
+    assert "swe-workbench-handoff list | swe-workbench-result-check swb.handoff/1" in preflight
+    assert "git worktree list --porcelain" in preflight
+    assert "canonical" in preflight.lower()
+    assert "foreign" in preflight.lower()
+    assert "leased-anchor-cleanup.md" in skill
+
+
+def test_foreign_lease_path_prepares_before_exit_and_executes_literal_request_after_exit() -> None:
+    route = _leased_anchor_route()
+    execute = (
+        "swe-workbench-cleanup-merged execute --request "
+        "123e4567-e89b-12d3-a456-426614174000 --as claude "
+        "--session-ref-env CLAUDE_CODE_SESSION_ID "
+        "| swe-workbench-result-check swb.cleanup-merged/1"
+    )
+
+    assert "printf '%s' \"$PREPARED\" | jq -r '.data.request_id'" in route
+    assert route.index("swe-workbench-cleanup-merged prepare") < route.index("ExitWorktree(action=keep)")
+    assert route.index("ExitWorktree(action=keep)") < route.index(execute)
+    assert "$REQUEST_ID" not in route
+    assert "$(" not in route[route.index("ExitWorktree(action=keep)"):]
+
+
+def test_foreign_lease_path_skips_only_main_sync_and_never_runs_ordinary_bash_after_exit() -> None:
+    route = _leased_anchor_route()
+    after_exit = route.split("ExitWorktree(action=keep)", 1)[1]
+
+    assert "main sync is intentionally skipped" in route
+    assert "do not issue another Bash call" in route
+    assert "git pull" not in after_exit
+    assert "rimba clean --merged" not in after_exit
+
+
+def test_foreign_lease_path_requires_no_helper_worktree_or_manual_fresh_session() -> None:
+    route = _leased_anchor_route()
+
+    assert "helper worktree" in route
+    assert "manual fresh session" in route
+    assert "git worktree add" not in route
+    assert "EnterWorktree" not in route
+
+
+def test_foreign_lease_path_reports_cleanup_counts_branches_and_sync_skip_reason() -> None:
+    route = _leased_anchor_route()
+    report = route.split("## Report")[1]
+
+    for field in (
+        "worktree_removed",
+        "residual_none",
+        "local_branch_deleted",
+        "remote_branch_deleted",
+        "main_sync_skipped",
+    ):
+        assert field in report
+    assert "sync skipped — foreign primary lease" in report
+
+
+def test_foreign_lease_path_resolves_deferred_follow_up_before_prepare() -> None:
+    route = _leased_anchor_route()
+    deferred = route.split("## Deferred-verification choice")[1].split("## Prepare")[0]
+
+    assert "file_issue" in deferred
+    assert "skip" in deferred
+    assert "Create a test branch" not in deferred
+
+
+def test_ordinary_unleased_cleanup_contract_is_preserved() -> None:
+    skill = SKILL.read_text()
+    ordinary = skill.split("**3a.")[1]
+
+    assert len(skill.splitlines()) <= 300
+    assert "git pull --ff-only origin \"$DEFAULT_BRANCH\"" in ordinary
+    assert "### Step 4 — Remove Worktree" in skill
+    assert "### Step 8 — Deferred-verification follow-up" in skill
+    assert "leased-anchor-cleanup.md" in skill
