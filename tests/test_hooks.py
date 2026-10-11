@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -996,6 +997,20 @@ class TestTypedLexerKeepsFlatScanCoverage:
     def test_all_refs_and_context_options_fail_closed(self, guard_script, repo_on, cmd):
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_large_wrapper_operand_scans_in_linear_time(self, guard_script, repo_on):
+        """bash 3.2's pattern substitution is superlinear in match count, so
+        converting quoted-newline markers there took minutes for a long
+        script operand; the hook must stay well inside its timeout.
+        """
+        body = "\n".join(["echo hello world; git status | grep foo"] * 600)
+        started = time.monotonic()
+        result = run_guard(
+            guard_script, f"sudo sh -c '{body}'", cwd=str(repo_on("feature"))
+        )
+        elapsed = time.monotonic() - started
+        assert result.returncode == 0 and result.stderr == ""
+        assert elapsed < 15, f"scan took {elapsed:.1f}s"
 
     def test_scanner_failure_fails_closed(self, guard_script, repo_on, tmp_path):
         """An internal scan error must block, not silently disable the guard."""

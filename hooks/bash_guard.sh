@@ -179,7 +179,7 @@ _push_token_awk='
   BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0; here_string = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
   END {
-    line = buf; n = length(line)
+    line = buf; gsub(/\001/, "\n", line); n = length(line)
     for (i = 1; i <= n; i++) {
       c = substr(line, i, 1)
       if (c == "\n") {
@@ -320,7 +320,7 @@ _classify_force_push_segment() {
 
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
-    _base=${_prefix##*/}
+    if (( ${#_prefix} > 255 )); then _base=$_prefix; else _base=${_prefix##*/}; fi
     case "$_base" in
       git) _found_git=1; break ;;
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
@@ -427,7 +427,7 @@ _classify_force_push_segment() {
 MAX_PUSH_SCAN_DEPTH=4
 
 _scan_nested_text() {
-  local _nested_text=${1//$'\001'/$'\n'} _nested_depth=$2
+  local _nested_text=$1 _nested_depth=$2
   # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
   local -a _saved_tokens=(${_push_tokens[@]+"${_push_tokens[@]}"})
   local -a _saved_here=(${_push_here[@]+"${_push_here[@]}"})
@@ -459,7 +459,7 @@ _scan_known_wrapper_body() {
   local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_push_tokens[_i]}
-    _base=${_tok##*/}
+    if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
     _is_shell_interpreter "$_base" && _consumer=1
     (( _g < 0 )) || continue
     case "$_base" in
@@ -481,7 +481,8 @@ _scan_known_wrapper_body() {
     _end=$(( _g >= 0 ? _g : _n ))
     for ((_i = (_p >= 0 ? _p : 0); _i < _end; _i++)); do
       _tok=${_push_tokens[_i]}
-      case "${_tok##*/}" in
+      if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
+      case "$_base" in
         bash|sh|zsh|dash|ksh|fish|su)
           for ((_j = _i + 1; _j < _n; _j++)); do
             case "${_push_tokens[_j]}" in
