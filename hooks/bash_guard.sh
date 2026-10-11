@@ -27,13 +27,13 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# --force-with-lease/--force-if-includes intentionally unblocked (#163); quote-stripping may
-# over-block a force-push within its command segment (accepted fail-safe); a remote literally
+# --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
+# (quoted text is literal, substitutions are scanned); a remote literally
 # named main/master over-blocks. The push-token scan trusts a small allowlist of known
 # BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
 # (assumes it takes a separate-word value, e.g. `-o ci.skip`) so an unknown flag's value can never
 # be miscounted as the remote/refspec (#501 senior-engineer consult); an unrecognized flag that
-# actually takes NO value will over-block by one token (fail-safe direction, not a bypass).
+# actually takes NO value over-blocks by one token and hides a dynamic word in that slot.
 # Quotes are stripped before matching (same fail-safe direction as the force-push over-block
 # above), so a `pi -p` mention inside an unrelated quoted string (e.g. a commit message) can
 # over-block too — accepted, not special-cased.
@@ -135,8 +135,8 @@ if echo "$norm" | grep -Eq \
   exit 2
 fi
 
-# Shared quote- and escape-aware shell segmenter. `tab_mode` preserves literal
-# tabs for push matching and folds them for the pi detector.
+# Quote- and escape-aware shell segmenter for the pi detector (the push scan has its own
+# lexer below). `tab_mode=space` folds literal tabs to spaces.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _segment_awk='
   BEGIN { in_sq = 0; in_dq = 0 }
@@ -161,12 +161,13 @@ _segment_awk='
 _push_token_awk='
   function emit_word() {
     if (!word_started) return
-    if (redirect_target) redirect_target = 0
+    if (redirect_target) { if (here_string) print "NEST\t" word; redirect_target = 0; here_string = 0 }
     else print "WORD\t" word
     word = ""; word_started = 0
   }
   function emit_separator() {
     emit_word()
+    redirect_target = 0; here_string = 0
     print "SEP"
   }
   function begin_redirect() {
@@ -175,11 +176,17 @@ _push_token_awk='
     } else emit_word()
     redirect_target = 1
   }
-  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0 }
-  {
-    line = $0; n = length(line)
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0; here_string = 0 }
+  { buf = (NR == 1) ? $0 : buf "\n" $0 }
+  END {
+    line = buf; n = length(line)
     for (i = 1; i <= n; i++) {
       c = substr(line, i, 1)
+      if (c == "\n") {
+        escaped = 0
+        if (in_sq || in_dq) { word = word " "; word_started = 1 } else emit_separator()
+        continue
+      }
       if (escaped) {
         word = word c; word_started = 1; escaped = 0
         continue
@@ -195,7 +202,7 @@ _push_token_awk='
       if (c == "\"") {
         if (!in_sq) { in_dq = !in_dq; word_started = 1; continue }
       }
-      if (c == "\\") continue
+      if (c == "\\") { word = word c; word_started = 1; continue }
       live_sub = !in_sq && (c == "`" || (c == "$" && substr(line, i + 1, 1) == "("))
       if ((in_sq || in_dq) && !live_sub) {
         word = word c; word_started = 1
@@ -217,8 +224,10 @@ _push_token_awk='
         continue
       }
       if (c == ">" || c == "<") {
+        if (substr(line, i + 1, 1) == "(") { emit_word(); continue }
+        if (c == "<" && substr(line, i, 3) == "<<<") here_string = 1
         begin_redirect()
-        while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&]/) i++
+        while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&|]/) i++
         continue
       }
       if (c == "$" && substr(line, i + 1, 1) == "(") {
@@ -226,6 +235,7 @@ _push_token_awk='
         i += 2
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
+          if (sc == "\n") sc = ";"
           if (sc == "\\" && !sub_sq) {
             subtext = subtext sc
             if (i < n) { i++; subtext = subtext substr(line, i, 1) }
@@ -242,7 +252,7 @@ _push_token_awk='
           }
           subtext = subtext sc
         }
-        if (sub_depth == 0) print "NEST\t" subtext
+        print "NEST\t" subtext
         word = word dyn; word_started = 1
         continue
       }
@@ -251,6 +261,7 @@ _push_token_awk='
         i++
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
+          if (sc == "\n") sc = ";"
           if (sc == "\\" && i < n) {
             subtext = subtext sc
             i++; subtext = subtext substr(line, i, 1)
@@ -259,7 +270,7 @@ _push_token_awk='
           if (sc == "`") break
           subtext = subtext sc
         }
-        if (i <= n) print "NEST\t" subtext
+        print "NEST\t" subtext
         word = word dyn; word_started = 1
         continue
       }
@@ -270,11 +281,9 @@ _push_token_awk='
       if (c == "[" || c == "]" || c == "{" || c == "}") continue
       word = word c; word_started = 1
     }
-    if (in_sq || in_dq) {
-      word = word " "; word_started = 1
-    } else emit_separator()
+    emit_separator()
+    print "EOS"
   }
-  END { emit_word() }
 '
 
 # The active segment is held in globals because Bash 3.2 has no namerefs.
@@ -299,6 +308,7 @@ _classify_force_push_segment() {
       docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
         _prefix_args=1 ;;
       '!'|if|while|until|do|then) ;;
+      "$_DYNAMIC_TOKEN") ;;
       -*) (( _prefix_args )) || _prefix_ok=0 ;;
       *) (( _prefix_args )) || _prefix_ok=0 ;;
     esac
@@ -351,11 +361,13 @@ _classify_force_push_segment() {
     [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
     case "$_t" in
       --force|-f) _has_force=1 ;;
-      --all) _pushes_all_refs=1 ;;
+      --all|--branches) _pushes_all_refs=1 ;;
       --mirror) _has_force=1; _pushes_all_refs=1 ;;
       --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
       --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
-      -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
+      -u|--set-upstream|-d|--delete|--signed|--no-signed|-n|--no-thin|--no-atomic|--verify|\
+      --no-force-with-lease|--no-force-if-includes|--no-recurse-submodules|-4|-6|--ipv4|--ipv6|\
+      --) ;;
       --*=*) ;;
       -*)
         if [[ "$_t" != --* && "$_t" == *f* ]]; then
@@ -404,52 +416,59 @@ _scan_nested_text() {
 }
 
 _scan_known_wrapper_body() {
-  local _depth=$1 _i _wrapper_index=-1 _body_index=-1 _token _body=""
-  (( ${#_push_tokens[@]} )) || return
-  for ((_i = 0; _i < ${#_push_tokens[@]}; _i++)); do
-    case "${_push_tokens[_i]}" in bash|sh|zsh|dash|su|ssh|eval) _wrapper_index=$_i; break ;; esac
+  local _depth=$1 _i _j _n=${#_push_tokens[@]} _body _has_body
+  (( _n )) || return
+  # Every wrapper in the segment is scanned: `env X=1 bash -lc '...'` carries two.
+  for ((_i = 0; _i < _n; _i++)); do
+    _body=""; _has_body=0
+    case "${_push_tokens[_i]}" in
+      bash|sh|zsh|dash|su)
+        # Only the operand after -c / a flag cluster ending in c is code; $0 and later args are not.
+        for ((_j = _i + 1; _j < _n; _j++)); do
+          case "${_push_tokens[_j]}" in
+            -c|-[[:alpha:]]*c)
+              _j=$((_j + 1))
+              [[ "${_push_tokens[_j]-}" == -- ]] && _j=$((_j + 1))
+              if (( _j < _n )); then _body=${_push_tokens[_j]}; _has_body=1; fi
+              break ;;
+          esac
+        done ;;
+      ssh)
+        _j=$((_i + 1))
+        while (( _j < _n )); do
+          case "${_push_tokens[_j]}" in
+            -p|-l|-i|-o|-F|-J|-S|-W) _j=$((_j + 2)) ;;
+            -*) _j=$((_j + 1)) ;;
+            *) _j=$((_j + 1)); break ;;
+          esac
+        done
+        for ((; _j < _n; _j++)); do _body="$_body${_body:+ }${_push_tokens[_j]}"; _has_body=1; done ;;
+      eval|watch)
+        for ((_j = _i + 1; _j < _n; _j++)); do _body="$_body${_body:+ }${_push_tokens[_j]}"; _has_body=1; done ;;
+      env)
+        for ((_j = _i + 1; _j < _n; _j++)); do
+          case "${_push_tokens[_j]}" in
+            -S|--split-string)
+              if (( _j + 1 < _n )); then _body=${_push_tokens[_j + 1]}; _has_body=1; fi
+              break ;;
+            --split-string=*) _body=${_push_tokens[_j]#*=}; _has_body=1; break ;;
+            -S?*) _body=${_push_tokens[_j]#-S}; _has_body=1; break ;;
+          esac
+        done ;;
+      script|flock)
+        for ((_j = _i + 1; _j + 1 < _n; _j++)); do
+          if [[ "${_push_tokens[_j]}" == -c ]]; then _body=${_push_tokens[_j + 1]}; _has_body=1; break; fi
+        done ;;
+    esac
+    (( _has_body )) && _scan_nested_text "$_body" "$_depth"
   done
-  (( _wrapper_index >= 0 )) || return
-
-  case "${_push_tokens[_wrapper_index]}" in
-    bash|sh|zsh|dash|su)
-      for ((_i = _wrapper_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
-        if [[ "${_push_tokens[_i]}" == -c ]]; then
-          _body_index=$((_i + 1))
-          break
-        fi
-      done
-      ;;
-    ssh)
-      _i=$((_wrapper_index + 1))
-      while ((_i < ${#_push_tokens[@]})); do
-        case "${_push_tokens[_i]}" in
-          -p|-l|-i|-o|-F|-J|-S|-W) _i=$((_i + 2)) ;;
-          -*) _i=$((_i + 1)) ;;
-          *) _body_index=$((_i + 1)); break ;;
-        esac
-      done
-      ;;
-    eval)
-      _body_index=$((_wrapper_index + 1))
-      ;;
-  esac
-  (( _body_index >= 0 && _body_index < ${#_push_tokens[@]} )) || return
-  if [[ "${_push_tokens[_wrapper_index]}" == bash || "${_push_tokens[_wrapper_index]}" == sh || "${_push_tokens[_wrapper_index]}" == zsh || "${_push_tokens[_wrapper_index]}" == dash || "${_push_tokens[_wrapper_index]}" == su ]]; then
-    _body=${_push_tokens[_body_index]}
-  else
-    for ((_i = _body_index; _i < ${#_push_tokens[@]}; _i++)); do
-      _body="$_body${_body:+ }${_push_tokens[_i]}"
-    done
-  fi
-  _scan_nested_text "$_body" "$_depth"
 }
 
 scan_force_push_text() {
-  local _scan_text=$1 _scan_depth=${2:-0} _kind _value
+  local _scan_text=$1 _scan_depth=${2:-0} _kind _value _lex_ok=0
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | tr -d "'\"" | grep -Eq \
-      'git[[:space:]]+push([[:space:]].*)?([[:space:]]|^)(--force|-[[:alnum:]]*f[[:alnum:]]*)([[:space:]]|$)'; then
+      'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:]]|$)'; then
       printf 'BLOCK\tindeterminate\n'
     fi
     return
@@ -461,6 +480,7 @@ scan_force_push_text() {
       WORD) _push_tokens+=("$_value") ;;
       NEST) _scan_nested_text "$_value" "$_scan_depth" ;;
       TAB) _push_saw_tab=1 ;;
+      EOS) _lex_ok=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
         _classify_force_push_segment
@@ -471,13 +491,18 @@ scan_force_push_text() {
   done < <(printf '%s' "$_scan_text" | awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
   _classify_force_push_segment
+  (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'
 }
 
+# The scanner ends with DONE; a missing sentinel means it died mid-scan, which must not read as "clean".
+_scan_done=0
 while IFS=$'\t' read -r _policy _reason; do
   case "$_policy" in
+    DONE) _scan_done=1 ;;
     BLOCK)
       case "$_reason" in
         all-refs) echo 'BLOCKED: force push of all refs may update protected branches' >&2 ;;
+        scan-failed) echo 'BLOCKED: force-push scan did not complete (internal error)' >&2 ;;
         *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
       esac
       exit 2
@@ -496,7 +521,11 @@ while IFS=$'\t' read -r _policy _reason; do
       esac
       ;;
   esac
-done < <(scan_force_push_text "$_bj")
+done < <(scan_force_push_text "$_bj"; printf 'DONE\n')
+if (( ! _scan_done )); then
+  echo 'BLOCKED: force-push scan did not complete (internal error)' >&2
+  exit 2
+fi
 
 if echo "$norm" | grep -Eq 'git[[:space:]]+reset[[:space:]]+--hard'; then
   branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)

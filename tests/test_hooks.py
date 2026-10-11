@@ -410,7 +410,10 @@ class TestImplicitForcePushBlocker:
         "git --work-tree=/tmp/other push --force",
     ])
     def test_nonempty_git_context_blocks_implicit_force_push(self, guard_script, repo_on, cmd):
-        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        """Run from a non-protected branch: the hook's cwd cannot be attributed
+        to the target repo, so only the context-option rule can block this.
+        """
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
     @pytest.mark.parametrize("cmd", [
@@ -759,6 +762,131 @@ def repo_on(tmp_path):
         )
         return repo_dir
     return _make
+
+
+class TestTypedLexerKeepsFlatScanCoverage:
+    """Shapes the earlier flat tokenizer blocked, which the typed push lexer
+    must keep blocking. Each of these executes a force push to a protected ref.
+    """
+
+    @pytest.mark.parametrize("cmd", [
+        "cat <(git push --force origin main)",
+        "true >(git push --force origin main)",
+        "diff <(git push --force origin main) /dev/null",
+    ], ids=["procsub-in", "procsub-out", "procsub-operand"])
+    def test_process_substitution_body_is_scanned(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -lc 'git push --force origin main'",
+        "sh -ec 'git push --force origin main'",
+        "bash -ic 'git push --force origin main'",
+        'zsh -xc "git push --force origin main"',
+        "bash -c -- 'git push --force origin main'",
+        "sudo bash -lc 'git push --force origin main'",
+        "timeout 5 bash -lc 'git push --force origin main'",
+        "env -S 'git push --force origin main'",
+    ])
+    def test_shell_string_operand_is_scanned(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "out=$(git push --force origin main |\n tail -1)",
+        "x=$(git push --force origin main\n)",
+        "for b in a; do out=$(git push --force origin main\n); done",
+        'echo "$(\ngit push --force origin main\n)"',
+    ], ids=["pipe-continues", "closer-on-next-line", "loop-body", "double-quoted"])
+    def test_multiline_substitution_body_is_scanned(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -c 'echo \\\"hi; git push --force origin main'",
+        "bash -c 'printf \"%s\\n\" \"a\\\"b\"; git push --force origin main'",
+    ], ids=["odd-escaped-quote", "balanced-escaped-quote"])
+    def test_backslash_inside_single_quotes_is_literal(self, guard_script, repo_on, cmd):
+        """Dropping the backslash flips quote parity when the body is re-lexed."""
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<< 'git push --force origin main'",
+        'sh <<< "git push --force origin main"',
+    ])
+    def test_here_string_operand_is_scanned(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "$(true) git push --force origin main",
+        "`true` git push --force origin main",
+    ])
+    def test_leading_substitution_does_not_hide_git(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "echo $(echo $(echo $(echo $(git -C /tmp push -f origin main))))",
+        "echo $(echo $(echo $(echo $(git push --mirror))))",
+    ])
+    def test_depth_bound_fallback_fails_closed(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_depth_bound_fallback_leaves_nonforce_push_allowed(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script,
+            "echo $(echo $(echo $(echo $(git push origin feature/x))))",
+            cwd=str(repo_on("feature")),
+        )
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "git push --force -- $(echo origin main)",
+        "git push --force --no-thin $(echo origin main)",
+        "git push --force -4 $(echo origin main)",
+    ])
+    def test_boolean_flag_does_not_consume_dynamic_destination(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_redirect_with_pipe_operator_is_syntax_not_argv(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script, "git push --force origin >| /dev/null main", cwd=str(repo_on("feature"))
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -lc 'echo ok'",
+        "git commit -m 'document git push --force origin main'",
+        "bash -c 'echo ok' 'ignored; git push --force origin main'",
+        "env GIT_TRACE=1 git push -u origin feature/x",
+        "cat <(echo hi) /dev/null",
+    ])
+    def test_wrapper_and_substitution_scans_do_not_over_block(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    def test_scanner_failure_fails_closed(self, guard_script, repo_on, tmp_path):
+        """An internal scan error must block, not silently disable the guard."""
+        real_awk = shutil.which("awk")
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir()
+        shim = shim_dir / "awk"
+        shim.write_text(
+            '#!/bin/sh\ncase "$*" in *redirect_target*) exit 1 ;; esac\n'
+            f'exec {real_awk} "$@"\n'
+        )
+        shim.chmod(0o755)
+        env = {"PATH": f"{shim_dir}:{os.environ['PATH']}"}
+        result = run_guard(
+            guard_script, "git push origin feature/x", cwd=str(repo_on("feature")), env=env
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
 
 
 class TestHardResetBlocker:
