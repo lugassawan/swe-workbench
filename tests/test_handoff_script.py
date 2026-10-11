@@ -1,5 +1,6 @@
 """Behavior tests for the cross-harness handoff runtime."""
 
+import fcntl
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import shlex
 import stat
 import subprocess
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -1953,6 +1955,54 @@ def test_close_accepts_a_session_ref_env_name(tmp_path):
 
     assert closed.returncode == 0, closed.stderr
     assert not list(state_dir.glob("workspaces/*/*/lease.json"))
+
+
+def test_create_revalidates_worktree_registration_after_waiting_for_lease_lock(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _initialize_repo(repo)
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--detach", str(linked)],
+        check=True,
+        env=dict(_CLEAN_ENV),
+    )
+    state_dir = tmp_path / "state"
+    repo_key = hashlib.sha256(str((repo / ".git").resolve()).encode()).hexdigest()
+    worktree_key = hashlib.sha256(str(linked.resolve()).encode()).hexdigest()
+    workspace = state_dir / "workspaces" / repo_key / worktree_key
+    workspace.mkdir(parents=True)
+
+    lock_descriptor = os.open(workspace / "lease.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+    try:
+        process = subprocess.Popen(
+            [str(SCRIPT), "create"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=linked,
+            env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
+        )
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(_create_input("removed-while-waiting")))
+        process.stdin.close()
+        process.stdin = None
+        time.sleep(0.1)
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "remove", "--force", str(linked)],
+            check=True,
+            env=dict(_CLEAN_ENV),
+        )
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        os.close(lock_descriptor)
+
+    stdout, stderr = process.communicate(timeout=10)
+    assert process.returncode != 0, stdout
+    assert "could not execute git" in stderr or "registered live worktree" in stderr
+    assert not (workspace / "lease.json").exists()
 
 
 def test_handoff_script_avoids_post_3_9_datetime_imports():

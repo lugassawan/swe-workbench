@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from swe_workbench_runtime import handoff_state
+
 SCHEMA = "swb.handoff/1"
 SCHEMA_VERSION = 1
 STATE_DIRECTORY_NAME = Path("swe-workbench") / "handoff" / "v1"
@@ -764,6 +766,7 @@ def create_checkpoint() -> Envelope:
         write_atomic(checkpoint_path, canonical_json(checkpoint))
         write_atomic(workspace_directory / "latest", f"{checkpoint['checkpoint_id']}\n")
         with workspace_flock(workspace_directory, "lease.lock"):
+            require_registered_worktree(workspace.worktree_root, workspace.repo_key)
             lease = load_lease(workspace_directory)
             write_lease(
                 workspace_directory,
@@ -1037,6 +1040,7 @@ def resume_checkpoint(
         )
     degraded = checkpoint.get("recovery_quality") == "degraded"
     with workspace_flock(workspace_directory, "lease.lock"):
+        require_registered_worktree(workspace.worktree_root, workspace.repo_key)
         lease = load_lease(workspace_directory)
         if lease is not None and lease["checkpoint_id"] != checkpoint_id:
             raise InputError(
@@ -1213,6 +1217,7 @@ def recover_checkpoint(source_harness: str, source_stopped: bool, source_session
         write_atomic(salvage_path, canonical_json(salvage))
         write_atomic(workspace_directory / "latest", f"{salvage['checkpoint_id']}\n")
         with workspace_flock(workspace_directory, "lease.lock"):
+            require_registered_worktree(workspace.worktree_root, workspace.repo_key)
             lease = load_lease(workspace_directory)
             write_lease(
                 workspace_directory,
@@ -1492,6 +1497,21 @@ def run_cleanup(paths: StatePaths) -> None:
             repository_directory.rmdir()
     if workspaces_root.is_dir() and not any(workspaces_root.iterdir()):
         workspaces_root.rmdir()
+
+
+# Handoff lifecycle and cleanup commands use one state/locking authority. These aliases
+# keep this executable's public command contract stable while preventing a second lease parser.
+StorageError = handoff_state.HandoffStateError
+StatePaths = handoff_state.StatePaths
+clean_git_environment = handoff_state.clean_git_environment
+ensure_owner_directory = handoff_state.ensure_owner_directory
+fsync_directory = handoff_state.fsync_directory
+load_lease = handoff_state.load_lease
+sha256_text = handoff_state.sha256_text
+valid_session_ref = handoff_state.valid_session_ref
+workspace_flock = handoff_state.workspace_flock
+write_atomic = handoff_state.write_atomic
+require_registered_worktree = handoff_state.require_registered_worktree
 
 
 def build_parser() -> argparse.ArgumentParser:
