@@ -2,6 +2,10 @@
 
 Full detail for `SKILL.md` Step 4's `## Worktree Removal Strategies` — the three mutually exclusive removal paths. Execute the first strategy whose preconditions hold. Fall through to the next if preconditions fail.
 
+## Foreign primary lease boundary
+
+These strategies apply only to the ordinary safe-primary path. When Step 3 classifies the primary lease as foreign or undecidable, use [leased-anchor-cleanup.md](leased-anchor-cleanup.md): primary sync is intentionally skipped, the sealed request fails closed, and retries retain the same request ID. Never use bulk cleanup or a helper session on that route.
+
 ## rimba + post-merge hook (fast path)
 
 **Preconditions — both must hold:**
