@@ -498,6 +498,52 @@ class TestImplicitForcePushBlocker:
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 0 and result.stderr == ""
 
+    @pytest.mark.parametrize("cmd", [
+        "git push -f origin +main",
+        "git push origin +main",
+        "git push origin +refs/heads/main",
+        "git push origin HEAD:+main",
+        "git push --force-with-lease origin +main",
+    ])
+    def test_plus_refspec_is_a_force_push_to_protected_ref(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git push $(echo --force) origin main",
+        'git push "$(echo -f)" origin main',
+        "git push -$(echo f) origin main",
+        "git push --forc$(echo e) origin main",
+        "git push `echo -f` origin main",
+    ])
+    def test_dynamic_force_flag_fails_closed_for_protected_ref(self, guard_script, repo_on, cmd):
+        """A substitution can expand to the force flag itself, so a push whose
+        flags are indeterminate must not be treated as non-force.
+        """
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_dynamic_force_flag_fails_closed_for_implicit_protected_branch(
+        self, guard_script, repo_on
+    ):
+        result = run_guard(guard_script, "git push -$(echo f)", cwd=str(repo_on("main")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("branch,cmd", [
+        ("feature", "git push origin +feature/x"),
+        ("feature", 'git push origin "$(git rev-parse HEAD)":main'),
+        ("main", 'git push origin "$(git branch --show-current)"'),
+        ("main", 'git push -u origin "$(git branch --show-current)"'),
+        ("main", 'git push -f -o "$(date)" origin feature/x'),
+        ("main", 'git push --push-option="$(date)" origin main'),
+        ("feature", "git push -$(echo f)"),
+    ])
+    def test_dynamic_and_plus_shapes_do_not_over_block(
+        self, guard_script, repo_on, branch, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on(branch)))
+        assert result.returncode == 0 and result.stderr == ""
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).

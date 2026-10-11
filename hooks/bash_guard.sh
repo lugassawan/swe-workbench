@@ -287,7 +287,8 @@ _classify_force_push_segment() {
   local _prefix _t push_text
   local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
   local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
-  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0
+  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _dynamic_flag_candidate=0
+  local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
 
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
@@ -339,7 +340,15 @@ _classify_force_push_segment() {
       _consume_next=0
       continue
     fi
-    [[ "$_t" != -* && "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _has_dynamic=1
+    if [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]]; then
+      if [[ "$_t" != -* ]]; then
+        _has_dynamic=1
+        [[ "$_t" == "$_DYNAMIC_TOKEN" ]] && _dynamic_flag_candidate=1
+      elif [[ "${_t%%=*}" == *"$_DYNAMIC_TOKEN"* ]]; then
+        _has_force=1
+      fi
+    fi
+    [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
     case "$_t" in
       --force|-f) _has_force=1 ;;
       --all) _pushes_all_refs=1 ;;
@@ -360,6 +369,12 @@ _classify_force_push_segment() {
       *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
     esac
   done
+  push_text=$(printf ' %s' "${_push_tokens[@]}")
+  # A bare substitution may expand to the force flag; it only matters next to a literal protected ref.
+  if (( ! _has_force && _dynamic_flag_candidate )) \
+     && printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
+    _has_force=1
+  fi
   (( _has_force )) || return
   if (( _pushes_all_refs )); then
     printf 'BLOCK\tall-refs\n'
@@ -369,9 +384,7 @@ _classify_force_push_segment() {
     printf 'BLOCK\tdynamic-destination\n'
     return
   fi
-  push_text=$(printf ' %s' "${_push_tokens[@]}")
-  if printf '%s\n' "$push_text" | grep -Eq \
-    '(^|[[:space:]]|:)(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'; then
+  if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
     printf 'BLOCK\tprotected-ref\n'
     return
   fi
