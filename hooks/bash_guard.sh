@@ -4,6 +4,8 @@
 # Blocks:
 #   - rm -rf against /, /*, ~, $HOME, /Users[/<user>], /home[/<user>]
 #   - git push --force / -f to main/master/release/*
+#   - a force push with a dynamic destination or flag, a target in another repository (-C,
+#     --git-dir, --work-tree), or nesting too deep to scan, on any branch
 #   - git reset --hard on main/master/release/*
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
@@ -27,6 +29,8 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
+# Accepted gaps: brace expansion, glob refspecs and unique-prefix long options; a bare substitution
+# that is the force flag with an implicit destination; function/coproc NAME bodies; unlisted wrappers.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
 # (quoted text is literal, substitutions are scanned); a remote literally
 # named main/master over-blocks. The push-token scan trusts a small allowlist of known
@@ -194,15 +198,19 @@ _push_token_awk='
     } else emit_word()
     redirect_target = 1
   }
-  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0; here_string = 0 }
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
   END {
     line = buf; gsub(/\001/, "\n", line); n = length(line)
     for (i = 1; i <= n; i++) {
       c = substr(line, i, 1)
+      if (hd_nl > 0 && i > hd_nl) hd_nl = 0
       if (c == "\n") {
         escaped = 0
-        if (in_sq || in_dq) { word = word "\001"; word_started = 1 } else emit_separator()
+        if (in_sq || in_dq) { word = word "\001"; word_started = 1 } else {
+          emit_separator()
+          if (hd_nl > 0 && i == hd_nl) { i = hd_to; hd_nl = 0 }
+        }
         continue
       }
       if (escaped) {
@@ -245,6 +253,45 @@ _push_token_awk='
       if (c == ">" || c == "<") {
         if (substr(line, i + 1, 1) == "(") { emit_word(); continue }
         if (c == "<" && substr(line, i, 3) == "<<<") here_string = 1
+        if (c == "<" && substr(line, i, 2) == "<<" && substr(line, i, 3) != "<<<" && hd_nl == 0) {
+          # a quoted-delimiter heredoc whose start line ends there (a pipe or && would let the
+          # body reach another consumer) is data: skip it so its quotes cannot desync the lexer
+          hj = i + 2; hstrip = 0
+          if (substr(line, hj, 1) == "-") { hstrip = 1; hj++ }
+          while (substr(line, hj, 1) ~ /[ \t]/) hj++
+          hq = substr(line, hj, 1); hid = ""; hend = 0
+          if ((hq == "\047" || hq == "\"") && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
+            hid = substr(line, hj + 1, RLENGTH)
+            hend = hj + 1 + RLENGTH
+            if (substr(line, hend, 1) != hq) hid = ""; else hend++
+          } else if (hq == "\\" && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
+            hid = substr(line, hj + 1, RLENGTH)
+            hend = hj + 1 + RLENGTH
+          }
+          if (hid != "") {
+            hnl = index(substr(line, hend), "\n")
+            if (hnl > 0 && substr(line, hend, hnl - 1) ~ /^[ \t]*([0-9]*>>?[ \t]*[^ \t|&;<>()`$]+)?[ \t]*$/) {
+              hnlpos = hend + hnl - 1
+              hbs = hnlpos + 1; hp = hbs; hfound = 0
+              while (hp <= n) {
+                hx = index(substr(line, hp), "\n")
+                if (hx == 0) { hl = substr(line, hp) } else { hl = substr(line, hp, hx - 1) }
+                hcmp = hl
+                if (hstrip) sub(/^\t+/, "", hcmp)
+                if (hcmp == hid) { hfound = 1; break }
+                if (hx == 0) break
+                hp = hp + hx
+              }
+              if (hfound) {
+                hb = substr(line, hbs, hp - hbs)
+                gsub(/\n/, "\001", hb)
+                print "HERE\t" hb
+                hd_nl = hnlpos
+                hd_to = hp + length(hl) - 1
+              }
+            }
+          }
+        }
         begin_redirect()
         while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&|]/) i++
         continue
@@ -275,11 +322,12 @@ _push_token_awk='
                   if (nl == 0) break
                   pos = pos + nl
                 }
-                hbody = substr(line, bstart, pos - bstart)
-                gsub(/\n/, "\001", hbody)
-                print "HERE\t" hbody
-                if (found) i = pos + length(ltxt) - 1
-                else i = n
+                if (found) {
+                  hbody = substr(line, bstart, pos - bstart)
+                  gsub(/\n/, "\001", hbody)
+                  print "HERE\t" hbody
+                  i = pos + length(ltxt) - 1
+                }
               }
             }
           }
@@ -346,7 +394,7 @@ _NESTED_WRAPPER_BODY=0
 _is_wrapper_prefix() {
   case "$1" in
     sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|ksh|fish|eval|\
-    rtk|docker|podman|kubectl|su|setsid|stdbuf|flock|script|find) return 0 ;;
+    rtk|docker|podman|kubectl|su|setsid|stdbuf|flock|script) return 0 ;;
   esac
   return 1
 }
@@ -377,7 +425,8 @@ _classify_force_push_segment() {
   local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
   local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
   local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _dynamic_flag_candidate=0
-  local _consume_flag="" _glued_flag_candidate=0
+  local _consume_flag="" _glued_flag_candidate=0 _skip_tok=0 _tail=""
+  local _flag_cluster_re='^[A-Za-z]*f[A-Za-z]*$'
   local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
 
   (( ${#_push_tokens[@]} )) || return
@@ -391,6 +440,7 @@ _classify_force_push_segment() {
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
       '!'|if|while|until|do|then|else|elif|coproc) ;;
       "$_DYNAMIC_TOKEN") ;;
+      -exec|-execdir|-ok|-okdir) _prefix_ok=1; _prefix_args=0 ;;
       *)
         if _is_wrapper_prefix "$_base"; then
           _prefix_args=1
@@ -435,7 +485,7 @@ _classify_force_push_segment() {
       esac
       # a value-taking flag may carry a substitution; any other flag's slot is the destination
       case "$_consume_flag" in
-        -o|--push-option|--repo|--receive-pack|--exec|--recurse-submodules|--signed) ;;
+        -o|--push-option|--repo|--receive-pack|--exec|--recurse-submodules) ;;
         *) [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _has_dynamic=1 ;;
       esac
       _consume_next=0
@@ -445,13 +495,18 @@ _classify_force_push_segment() {
       if [[ "$_t" != -* ]]; then
         _has_dynamic=1
         if [[ "$_t" == "$_DYNAMIC_TOKEN"* && "$_t" != *:* ]]; then
-          _dynamic_flag_candidate=1
-          [[ "$_t" != "$_DYNAMIC_TOKEN" ]] && _glued_flag_candidate=1
+          _tail=${_t#"$_DYNAMIC_TOKEN"}
+          if [[ -z "$_tail" || "$_tail" == *"$_DYNAMIC_TOKEN"* || "--force" == *"$_tail" \
+                || "--mirror" == *"$_tail" ]] || [[ "$_tail" =~ $_flag_cluster_re ]]; then
+            _dynamic_flag_candidate=1
+            if [[ -n "$_tail" ]]; then _glued_flag_candidate=1; _skip_tok=1; fi
+          fi
         fi
       elif [[ "${_t%%=*}" == *"$_DYNAMIC_TOKEN"* ]]; then
         _has_force=1
       fi
     fi
+    if (( _skip_tok )); then _skip_tok=0; continue; fi
     [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
     case "$_t" in
       --force|-f) _has_force=1 ;;
@@ -473,17 +528,17 @@ _classify_force_push_segment() {
         fi ;;
       '{}'|HEAD|@) ;;
       *:*) _has_refspec=1 ;;
-      "$_DYNAMIC_TOKEN"?*) ;;
       *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
     esac
   done
   push_text=$(printf ' %s' "${_push_tokens[@]}")
-  # A bare substitution may expand to the force flag; it only matters next to a literal protected ref.
+  # A substitution-led word that can finish a force flag counts next to a literal protected ref;
+  # a glued one with no refspec checks the current branch (a bare one is a normal push).
   if (( ! _has_force && _dynamic_flag_candidate )); then
     if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
       _has_force=1
     elif (( _glued_flag_candidate && ! _has_refspec )); then
-      printf 'CHECK_CURRENT\n'
+      printf 'CHECK_CURRENT_MAYBE\n'
       return
     fi
   fi
@@ -539,12 +594,15 @@ _scan_wrapper_operand() {
 # `$0` args excepted); words after `git` are data unless git itself runs them.
 _scan_known_wrapper_body() {
   local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _m _tok _base _body _args
-  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit
+  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit _cmdword=0
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_push_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     _is_shell_interpreter "$_base" && _consumer=1
+    case "$_tok" in
+      -exec|-execdir|-ok|-okdir) _p=-1; _g=-1; _after=0; continue ;;
+    esac
     (( _g < 0 )) || continue
     _isgit=0
     if [[ "$_base" == git ]] && _is_git_continuation "${_push_tokens[_i + 1]-}"; then _isgit=1; fi
@@ -570,6 +628,13 @@ _scan_known_wrapper_body() {
     esac
   done
   (( _g < _n )) || _g=-1
+  for ((_i = 0; _i < _n; _i++)); do
+    case "${_push_tokens[_i]}" in
+      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;;
+      "$_DYNAMIC_TOKEN") _cmdword=1 ;;
+    esac
+    break
+  done
 
   # A body that was itself handed to a wrapper has no visible prefix, but is still all arguments.
   # A tab anywhere in the segment, quoted or not, also makes the segment a wrapper call.
@@ -639,11 +704,11 @@ _scan_known_wrapper_body() {
   fi
 
   for _body in ${_push_subs[@]+"${_push_subs[@]}"}; do
-    if (( _p >= 0 )); then _scan_wrapper_operand "$_body" "$_depth"
+    if (( _p >= 0 || _cmdword )); then _scan_wrapper_operand "$_body" "$_depth"
     else _scan_nested_text "$_body" "$_depth"; fi
   done
   # A here-string is code only for a shell or a wrapper running one; `cat <<< 'text'` is data.
-  if (( _p >= 0 || _consumer )); then
+  if (( _p >= 0 || _consumer || _cmdword )); then
     for _body in ${_push_here[@]+"${_push_here[@]}"}; do
       _scan_wrapper_operand "$_body" "$_depth"
     done
@@ -700,6 +765,15 @@ while IFS=$'\t' read -r _policy _reason; do
         *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
       esac
       exit 2
+      ;;
+    CHECK_CURRENT_MAYBE)
+      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+      case "$branch" in
+        main|master|release/*)
+          echo "BLOCKED: this may be a force push of current protected branch '$branch' (a substitution can spell the force flag; spell it literally or use --force-with-lease)" >&2
+          exit 2
+          ;;
+      esac
       ;;
     CHECK_CURRENT)
       branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)

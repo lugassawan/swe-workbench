@@ -1100,7 +1100,7 @@ class TestWrapperAndSubstitutionCoverage:
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
-    # Behaviours a mutation run showed could be reverted with the suite staying green.
+    # Behaviours that no other test in this class pins.
     @pytest.mark.parametrize("cmd", [
         "git push &>/dev/null --force origin main",
         "echo `echo a\ngit push --force origin main`",
@@ -1155,7 +1155,7 @@ class TestWrapperAndSubstitutionCoverage:
 
 
 class TestSubstitutionAndFlagHardening:
-    """Review findings on the push lexer: heredoc skip, depth cap, dynamic flags and slots."""
+    """Heredoc skip, depth-cap fallback, dynamic flags and consumed slots in the push lexer."""
 
     @pytest.mark.parametrize("cmd", [
         "git commit -m \"$(cat <<'EOT' | sh -s\ngit push --force origin main\nEOT\n)\"",
@@ -1275,6 +1275,115 @@ class TestSubstitutionAndFlagHardening:
             guard_script, cmd, cwd=str(repo_on("feature")),
             env={"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
         )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+
+class TestHeredocAndCandidateEdges:
+    """Heredoc delimiter handling, dynamic-flag candidates and find -exec boundaries."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git commit -m \"$(cat <<'EOF'\nbody\nEOF \n)\" && git push --force origin main",
+        "git commit -m \"$(cat <<'EOF'\nbody\n)\" && git push --force origin main",
+    ], ids=["trailing-space-delimiter", "missing-delimiter"])
+    def test_unmatched_heredoc_delimiter_leaves_the_rest_as_code(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_terminated_heredoc_substitution_without_a_push_stays_allowed(
+        self, guard_script, repo_on
+    ):
+        cmd = "git commit -m \"$(cat <<'EOF'\nbody\nEOF\n)\" && git status"
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "git commit -F - <<'EOF'\nfix: don't crash\nEOF\ngit push --force origin main",
+        "git commit -F - <<'EOF'\nit's fine\nEOF\ngit push -f origin main",
+        "cat > notes.txt <<'EOF'\ndon't\nEOF\ngit push --force origin main",
+    ], ids=["commit-file", "apostrophe-again", "redirect-before"])
+    def test_apostrophe_in_quoted_top_level_heredoc_does_not_hide_a_later_push(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "cat <<'EOF'\ngit push --force origin main\nEOF",
+        "git commit -F - <<'EOF'\nnote: git push --force origin main\nEOF",
+    ], ids=["cat-body", "commit-body"])
+    def test_quoted_top_level_heredoc_body_is_data_for_a_plain_consumer(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "bash <<'EOF'\ngit push --force origin main\nEOF",
+        "cat <<'EOF' | sh\ngit push --force origin main\nEOF",
+        "ssh host <<'EOF'\ngit push --force origin main\nEOF",
+        "bash <<'EOF' && echo done\ngit push --force origin main\nEOF",
+    ], ids=["shell-consumer", "piped-to-shell", "wrapper-consumer", "owner-before-and"])
+    def test_quoted_top_level_heredoc_feeding_a_shell_is_code(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        'git push origin "$(date +%F)-snapshot"',
+        'git push --force-with-lease origin "$(date +%F)-x"',
+        'git push origin "$(git rev-parse --short HEAD)-backup"',
+    ])
+    def test_substitution_led_word_that_cannot_finish_a_flag_is_not_a_force_candidate(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "git push $(echo -)f origin main",
+        "git push $(echo --)force origin main",
+        "git push $(echo --)orce origin main",
+        "git push $(echo -)uf origin main",
+    ])
+    def test_substitution_led_word_that_can_finish_a_flag_is_still_a_candidate(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_glued_candidate_block_says_it_may_be_a_force_push(self, guard_script, repo_on):
+        result = run_guard(guard_script, "git push $(echo -)f origin", cwd=str(repo_on("main")))
+        assert result.returncode == 2
+        assert "may be a force push" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "find . -name '*.md' -exec grep -ln 'git push --force' {} +",
+        "find docs -type f -execdir grep -l 'git push --force origin main' {} \\;",
+        "find . -ok grep 'git push --force' {} \\;",
+    ], ids=["exec-grep", "execdir-grep", "ok-grep"])
+    def test_find_exec_of_a_search_is_data(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "find . -maxdepth 0 -exec git push --force origin main \\;",
+        "find . -maxdepth 0 -execdir git push -f origin main {} +",
+        "find . -maxdepth 0 -exec sh -c 'git push --force origin main' \\;",
+        "find . -name '*.md' -ok git push --force origin main \\;",
+    ], ids=["exec-git", "execdir-git", "exec-sh-c", "ok-git"])
+    def test_find_exec_of_a_push_is_code(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "$(cat <<'EOT'\ngit push --force origin main\nEOT\n)",
+        "X=1 $(cat <<'EOT'\ngit push --force origin main\nEOT\n)",
+    ], ids=["command-word", "after-assignment"])
+    def test_substitution_used_as_the_command_word_runs_its_output(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
 
