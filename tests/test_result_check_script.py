@@ -156,6 +156,14 @@ EXPECTED_REGISTRY = {
         "justified_count": "int",
         "candidates": "list[candidate]",
     },
+    "swb.issue-preflight/1": {
+        "repo": "str",
+        "name_with_owner": "str",
+        "failure_kind": "str",
+        "reason": "str",
+        "scope_status": "str",
+        "gh_version": "str",
+    },
 }
 
 

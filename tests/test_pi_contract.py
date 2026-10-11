@@ -1688,6 +1688,7 @@ HOOK_PI_STATUS = {
     "memory_hint.sh": "wired",
     "skill_autoload_hint.sh": "wired",
     "worktree_permission_grant.sh": "n/a",
+    "rtk_worktree_guard.sh": "n/a",
     "skill_usage_record.sh": "n/a",
     "skill_usage_flush.sh": "n/a",
 }
@@ -1707,6 +1708,15 @@ def test_worktree_permission_grant_is_explicitly_not_applicable():
         "worktree_permission_grant.sh's PreToolUse permissionDecision output has no target on "
         "Pi (README.md: 'No permission popups') — this must stay an explicit N/A, not silently "
         "absent from the inventory"
+    )
+
+
+def test_rtk_worktree_guard_is_explicitly_not_applicable():
+    assert HOOK_PI_STATUS["rtk_worktree_guard.sh"] == "n/a", (
+        "rtk_worktree_guard.sh works around Claude Code's compiled-in worktree guard refusing "
+        "RTK-rewritten `rtk git` after EnterWorktree. Pi has no EnterWorktree tool and RTK ships "
+        "no Pi hook, so neither half of the interaction exists there (docs/cross-harness.md §1). "
+        "This must stay an explicit N/A row, not silently absent from the inventory"
     )
 
 

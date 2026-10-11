@@ -32,6 +32,8 @@ pi install git:github.com/lugassawan/swe-workbench
 
 This loads the same `skills/`, `commands/`, and `agents/` trees Claude Code uses, via the runtime adapter in `pi/extensions/`. See `docs/pi-port.md` for the Pi-specific rulings.
 
+The GitHub-facing commands shell out to the [GitHub CLI](https://cli.github.com/). `/swe-workbench:report-issue` is verified against **gh 2.45.0 or newer**.
+
 ## What's inside
 
 - **Commands** — `/swe-workbench:review`, `/swe-workbench:design`, `/swe-workbench:architect`, `/swe-workbench:document`, `/swe-workbench:refactor`, `/swe-workbench:migrate`, `/swe-workbench:debug`, `/swe-workbench:implement`, `/swe-workbench:hotfix`, `/swe-workbench:extend`, `/swe-workbench:test`, `/swe-workbench:security-review`, `/swe-workbench:capture`, `/swe-workbench:report-issue`, `/swe-workbench:cleanup-merged`, `/swe-workbench:sync`, `/swe-workbench:address-feedback`, `/swe-workbench:audit-codebase`, `/swe-workbench:codebase-knowledge`, `/swe-workbench:doctor`, `/swe-workbench:converge`, `/swe-workbench:handoff` — see [docs/catalog.md](docs/catalog.md).

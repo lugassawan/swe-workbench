@@ -60,13 +60,37 @@ def _load_pr_review_submit_module():
 prs = _load_pr_review_submit_module()
 
 
+_ISSUED_PR_NUMBERS: list[str] = []
+
+
 def _unique_n() -> str:
-    return str(20_000_000 + int.from_bytes(os.urandom(3), "big"))
+    number = str(20_000_000 + int.from_bytes(os.urandom(3), "big"))
+    _ISSUED_PR_NUMBERS.append(number)
+    return number
 
 
-def _cleanup_state_files(pr: str) -> None:
-    for suffix in (".json", "-threads.json", "-pr-comments.json", "-triage.json"):
-        (STATE_DIR / f"{pr}{suffix}").unlink(missing_ok=True)
+def _cleanup_state_files(pr: str, scope: str | None = None) -> None:
+    """Remove the un-scoped state files for `pr`, and — when the test passed --repo — the
+    repo-scoped spelling too (`scope` is the slug prefix, e.g. `7-octocat-widgets`)."""
+    prefixes = [str(pr)] if scope is None else [str(pr), f"{scope}-{pr}"]
+    for prefix in prefixes:
+        for suffix in (".json", "-threads.json", "-pr-comments.json", "-triage.json"):
+            (STATE_DIR / f"{prefix}{suffix}").unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_state_files():
+    """These tests write the real /tmp state dir under a random PR number, and the script
+    names the files by repo slug when --repo is passed. Fail on any file a test leaves for
+    a number it was issued, so a cleanup that misses a spelling shows up here and not as
+    debris in /tmp (the files are reaped first, so a failing run leaves none behind)."""
+    issued_before = len(_ISSUED_PR_NUMBERS)
+    yield
+    leaked = [p for n in _ISSUED_PR_NUMBERS[issued_before:] for p in STATE_DIR.glob(f"*{n}*")]
+    names = sorted(p.name for p in leaked)
+    for path in leaked:
+        path.unlink(missing_ok=True)
+    assert not names, f"test left state files in {STATE_DIR}: {names}"
 
 
 # ── Existence / syntax ───────────────────────────────────────────────────────
@@ -1153,8 +1177,7 @@ class TestRepoScopedState:
             envelope = json.loads(result.stdout)
             assert envelope["data"]["resume_available"] is True
         finally:
-            _cleanup_state_files(pr)
-            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            _cleanup_state_files(pr, scope="7-octocat-widgets")
 
     def test_resume_skips_legacy_triage_from_a_different_repo(self, tmp_path):
         """A legacy <N>-triage.json left by an UNRELATED repository's
@@ -1178,8 +1201,7 @@ class TestRepoScopedState:
             assert envelope["data"]["resume_available"] is False
             assert envelope["data"]["resume_triage_path"] == ""
         finally:
-            _cleanup_state_files(pr)
-            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            _cleanup_state_files(pr, scope="7-octocat-widgets")
 
     def test_resume_skips_legacy_triage_with_no_paired_preflight(self, tmp_path):
         """A legacy <N>-triage.json with no paired <N>.json preflight snapshot
@@ -1200,8 +1222,7 @@ class TestRepoScopedState:
             assert envelope["data"]["resume_available"] is False
             assert envelope["data"]["resume_triage_path"] == ""
         finally:
-            _cleanup_state_files(pr)
-            (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+            _cleanup_state_files(pr, scope="7-octocat-widgets")
 
 
 def test_envelope_exposes_triage_path(tmp_path):
@@ -1218,8 +1239,7 @@ def test_envelope_exposes_triage_path(tmp_path):
         envelope = json.loads(result.stdout)
         assert envelope["data"]["triage_path"] == f"/tmp/swe-workbench-address-feedback/7-octocat-widgets-{pr}-triage.json"
     finally:
-        _cleanup_state_files(pr)
-        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+        _cleanup_state_files(pr, scope="7-octocat-widgets")
 
 
 def test_resume_triage_path_points_at_existing_file(tmp_path):
@@ -1245,5 +1265,4 @@ def test_resume_triage_path_points_at_existing_file(tmp_path):
         assert envelope["data"]["resume_triage_path"] == str(legacy)
         assert Path(envelope["data"]["resume_triage_path"]).exists()
     finally:
-        _cleanup_state_files(pr)
-        (STATE_DIR / f"7-octocat-widgets-{pr}-triage.json").unlink(missing_ok=True)
+        _cleanup_state_files(pr, scope="7-octocat-widgets")

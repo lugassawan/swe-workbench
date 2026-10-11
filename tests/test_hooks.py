@@ -1184,7 +1184,7 @@ class TestShortCircuit:
 
 
 # ──────────────────────────────────────────────
-# pre-push hook — unchanged
+# pre-push hook — validate + the covering tests (behaviour: test_test_selection_scripts.py)
 # ──────────────────────────────────────────────
 
 class TestPrePushHook:
@@ -1196,11 +1196,17 @@ class TestPrePushHook:
         content = self.PRE_PUSH.read_text(encoding="utf-8")
         assert "validate.sh" in content, "pre-push hook must invoke validate.sh"
 
-    def test_pre_push_runs_pytest(self):
+    def test_pre_push_still_requires_pytest_and_names_the_tests_dir(self):
         content = self.PRE_PUSH.read_text(encoding="utf-8")
-        assert "pytest" in content and "tests/" in content, (
-            "pre-push hook must invoke pytest against the tests/ directory"
+        assert "import pytest" in content and "tests/" in content, (
+            "pre-push hook must keep failing fast when pytest is missing"
         )
+
+    def test_pre_push_runs_the_selected_tests_through_the_runner(self):
+        content = self.PRE_PUSH.read_text(encoding="utf-8")
+        assert "scripts/select-tests.sh" in content
+        assert "scripts/test-all.sh" in content
+        assert "SWE_WORKBENCH_PREPUSH_BUDGET" in content
 
 
 # ──────────────────────────────────────────────

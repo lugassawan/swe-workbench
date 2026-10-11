@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Pre-push hook: validate plugin files and run tests before pushing to remote.
+# Pre-push gate: validate the plugin, then run only the tests that cover what is being pushed.
+# Kept short on purpose: git holds the connection idle while this runs and GitHub drops it
+# after ~6 minutes. The full suite is CI's job (pr.yml), or on demand via scripts/test-all.sh.
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 bash "$REPO_ROOT/scripts/validate.sh"
@@ -13,4 +15,66 @@ if ! python3 -c 'import pytest' 2>/dev/null; then
   echo "pre-push: ERROR — pytest not installed. Run: pip install -r tests/requirements.txt" >&2
   exit 1
 fi
-python3 -m pytest "$REPO_ROOT/tests/" -q
+
+zero=0000000000000000000000000000000000000000
+selected=""
+changed=""
+
+collect() { # <remote sha, or $zero for a new branch> <local sha>
+  local args=(--head "$2") out
+  [ "$1" = "$zero" ] || args+=(--base "$1")
+  out=$("$REPO_ROOT/scripts/select-tests.sh" "${args[@]}") || out=""
+  selected="${selected}"$'\n'"${out}"
+  out=$("$REPO_ROOT/scripts/select-tests.sh" "${args[@]}" --list-changed 2>/dev/null) || out=""
+  changed="${changed}"$'\n'"${out}"
+}
+
+if [ -t 0 ]; then
+  collect "$zero" "$(git rev-parse HEAD)" # run by hand: compare HEAD with the default branch
+else
+  while read -r local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" != "$zero" ] || continue # deleting a ref
+    case "$local_ref" in refs/heads/*) ;; *) continue ;; esac # tags carry no new code
+    collect "$remote_sha" "$local_sha"
+  done
+fi
+
+if command -v shellcheck >/dev/null 2>&1; then
+  shell_files=()
+  while IFS= read -r f; do
+    [ -f "$REPO_ROOT/$f" ] || continue
+    case "$f" in *.sh | .githooks/*) shell_files+=("$REPO_ROOT/$f") ;; esac
+  done < <(printf '%s\n' "$changed" | sed '/^$/d' | sort -u)
+  if [ "${#shell_files[@]}" -gt 0 ]; then
+    shellcheck -S warning "${shell_files[@]}"
+  fi
+fi
+
+test_files=()
+while IFS= read -r f; do
+  [ -n "$f" ] && test_files+=("$f")
+done < <(printf '%s\n' "$selected" | sed '/^$/d' | sort -u)
+
+if [ "${#test_files[@]}" -eq 0 ]; then
+  echo "pre-push: no tests cover this change — CI runs the full suite"
+  exit 0
+fi
+
+# Smallest files first, and no new file is started once the budget is spent: the gate's
+# length is bounded however broad the change. Skipped files are named; CI runs them.
+budget="${SWE_WORKBENCH_PREPUSH_BUDGET:-150}"
+echo "pre-push: running ${#test_files[@]} covering test file(s), ${budget}s budget; CI runs the full suite"
+cd "$REPO_ROOT"
+started=$(date +%s)
+skipped=()
+while IFS= read -r f; do
+  if [ $(($(date +%s) - started)) -ge "$budget" ]; then
+    skipped+=("$f")
+    continue
+  fi
+  "$REPO_ROOT/scripts/test-all.sh" --no-lock "$f" || exit $?
+done < <(ls -rS "${test_files[@]}")
+
+if [ "${#skipped[@]}" -gt 0 ]; then
+  echo "pre-push: budget spent — left to CI: ${skipped[*]}"
+fi

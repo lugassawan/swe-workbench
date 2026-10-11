@@ -20,8 +20,10 @@ permission *for*.
 
 Recorded as an explicit `"n/a"` row in `tests/test_pi_contract.py`'s `HOOK_PI_STATUS` inventory
 — as are `skill_usage_record.sh`/`skill_usage_flush.sh` (§4 records why their concept, runtime
-Skill invocation by a dispatched subagent, has no Pi counterpart either). `"n/a"` never
-graduates to `"wired"`.
+Skill invocation by a dispatched subagent, has no Pi counterpart either) and
+`rtk_worktree_guard.sh` (§2: Pi has no `EnterWorktree`, and RTK ships no Pi hook, so neither half
+of the Claude Code x RTK interaction it works around exists on Pi; the ruling is in
+`docs/cross-harness.md` §1). `"n/a"` never graduates to `"wired"`.
 
 ## 2. `EnterWorktree`/`ExitWorktree` have no Pi equivalent — documented N/A, not deferred
 

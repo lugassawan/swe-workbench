@@ -1,9 +1,13 @@
 """Tests for /swe-workbench:report-issue command (Issue #226)."""
 
+import re
 from pathlib import Path
+
+from helpers import gh_spans
 
 ROOT = Path(__file__).parent.parent
 REPORT_ISSUE_MD = ROOT / "commands" / "report-issue.md"
+PREFLIGHT_SCRIPT = ROOT / "bin" / "swe-workbench-issue-preflight"
 
 
 def test_report_issue_has_required_frontmatter():
@@ -25,24 +29,226 @@ def test_report_issue_hardcodes_target_repo():
     )
 
 
-def test_report_issue_passes_repo_flag_to_gh():
-    """commands/report-issue.md must pass --repo lugassawan/swe-workbench to every gh invocation."""
+REPO = "lugassawan/swe-workbench"
+FAILURE_KINDS = ("unsupported_flag", "unauthenticated", "repo_inaccessible", "gh_missing", "unknown")
+
+
+def _spans(*prefixes, min_tokens=1):
+    """gh spans from the prose whose leading tokens match one of `prefixes` (each a tuple
+    like ("issue", "create")), skipping descriptive mentions shorter than `min_tokens`."""
+    found = []
+    for span in gh_spans(REPORT_ISSUE_MD.read_text()):
+        tokens = span.split()
+        if len(tokens) < min_tokens:
+            continue
+        if any(tuple(tokens[1:1 + len(p)]) == p for p in prefixes):
+            found.append(span)
+    return found
+
+
+def _min_gh_version():
+    """MIN_GH_VERSION as the script declares it — the one value every surface must match."""
+    match = re.search(r'^MIN_GH_VERSION = "([^"]+)"', PREFLIGHT_SCRIPT.read_text(), re.MULTILINE)
+    assert match, "bin/swe-workbench-issue-preflight must declare MIN_GH_VERSION"
+    return match.group(1)
+
+
+def _step1_row(kind):
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    return next(
+        (line.strip() for line in step1.splitlines() if line.strip().startswith(f"| `{kind}` |")), ""
+    )
+
+
+def _delegation_step1_slice(text):
+    start = text.find("1. **Auth + repo check.**")
+    assert start != -1, "commands/report-issue.md must keep the delegation 'Auth + repo check' step"
+    end = text.find("2. **Restatement.**", start)
+    assert end != -1, "commands/report-issue.md must keep the delegation 'Restatement' step"
+    return text[start:end]
+
+
+def _delegation_step9_slice(text):
+    start = text.find("9. **File on confirm.**")
+    assert start != -1, "commands/report-issue.md must keep delegation step 9 'File on confirm'"
+    return text[start:]
+
+
+def test_report_issue_gh_issue_and_label_commands_name_the_repo_with_flag():
+    """`gh issue` / `gh label` take --repo; every one with arguments must carry it."""
+    spans = _spans(("issue", "create"), ("issue", "list"), ("label", "list"), min_tokens=4)
+    assert len(spans) >= 5, (
+        "expected the issue create (x5 shapes), issue list, and label list command lines to "
+        f"be parsed from the prose — found {len(spans)}: {spans}"
+    )
+    for span in spans:
+        assert f"--repo {REPO}" in span, (
+            f"every gh issue/label command must pass '--repo {REPO}' explicitly: {span!r}"
+        )
+
+
+def test_report_issue_gh_api_commands_use_literal_repo_path_and_no_repo_flag():
+    """`gh api` has no --repo flag; the literal repos/<owner>/<repo>/ path is what scopes it."""
+    spans = _spans(("api",), min_tokens=3)
+    assert len(spans) >= 3, (
+        "expected the two template-discovery calls and the version fallback to be parsed "
+        f"from the prose — found {len(spans)}: {spans}"
+    )
+    for span in spans:
+        assert "--repo" not in span, f"gh api does not accept --repo: {span!r}"
+        assert f"repos/{REPO}/" in span, (
+            f"gh api must hit the literal repos/{REPO}/ path, never infer the repo: {span!r}"
+        )
+
+
+def test_report_issue_gh_repo_view_takes_the_repo_positionally():
+    """`gh repo view` takes the repo as a positional argument; --repo is an unknown flag."""
+    spans = _spans(("repo", "view"), min_tokens=4)
+    assert spans, "the bail hint must show a `gh repo view <repo>` diagnose command"
+    for span in spans:
+        assert "--repo" not in span, f"gh repo view does not accept --repo: {span!r}"
+        assert span.split()[3] == REPO, (
+            f"gh repo view must name {REPO} as its positional argument: {span!r}"
+        )
+
+
+def test_report_issue_gh_commands_have_no_placeholder_repo_templating():
+    """{owner}/{repo} placeholders resolve from cwd, which is exactly what this flow forbids."""
+    for span in gh_spans(REPORT_ISSUE_MD.read_text()):
+        assert "{owner}" not in span and "{repo}" not in span, (
+            f"gh commands must name {REPO} literally, not via placeholders: {span!r}"
+        )
+
+
+def test_report_issue_override_names_the_target_per_command_shape():
+    """The override must say how each command shape names the target — not just '--repo
+    everywhere' — and that gh auth status takes no repo."""
     text = REPORT_ISSUE_MD.read_text()
-    repo_flag = "--repo lugassawan/swe-workbench"
-    count = text.count(repo_flag)
-    assert count >= 6, (
-        f"commands/report-issue.md must include '{repo_flag}' at least 6 times "
-        f"(issue create, issue list, label list, repo view, template discovery, version fallback) — found {count}"
+    end = text.find("The user wants to file a plugin issue")
+    assert end != -1
+    override = text[:end]
+    assert "`gh repo view`" in override and "positional" in override, (
+        "the override must say gh repo view takes the repo positionally"
     )
-    assert "gh issue create" in text, (
-        "commands/report-issue.md must include a gh issue create call"
+    assert "`gh api`" in override and f"repos/{REPO}/" in override, (
+        "the override must say gh api is scoped by the literal repos/<owner>/<repo>/ path"
     )
-    assert "gh issue list" in text, (
-        "commands/report-issue.md must include a gh issue list call for duplicate scan"
+    assert "`gh auth status`" in override and "host-scoped" in override, (
+        "the override must say gh auth status is host-scoped and takes no repo"
     )
-    assert "gh label list" in text, (
-        "commands/report-issue.md must include a gh label list call for label discovery"
+    assert "every `gh` invocation" not in override, (
+        "the blanket 'pass --repo on every gh invocation' wording is the bug — gone"
     )
+
+
+def test_report_issue_step1_uses_the_issue_preflight_runtime():
+    """Delegation step 1 must classify via the runtime, not hand-run gh auth status."""
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    assert "command -v swe-workbench-issue-preflight" in step1, (
+        "step 1 must guard the runtime with a command -v preflight"
+    )
+    assert (
+        f"swe-workbench-issue-preflight {REPO} | swe-workbench-result-check swb.issue-preflight/1"
+        in step1
+    ), "step 1 must pipe the preflight through swe-workbench-result-check swb.issue-preflight/1"
+    assert "|| exit 1" in step1
+    for span in gh_spans(step1):
+        assert span.split()[1:3] not in (["auth", "status"],), (
+            f"step 1 must not hand-run gh auth status: {span!r}"
+        )
+
+
+def test_report_issue_step1_failure_kind_table_names_every_kind():
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    for kind in FAILURE_KINDS:
+        assert f"| `{kind}` |" in step1, (
+            f"step 1 must map failure_kind `{kind}` to a user-facing message in its table"
+        )
+
+
+def test_report_issue_step1_distinguishes_unsupported_flag_from_repo_inaccessible():
+    """An unknown-flag rejection must never be reported as 'repo access failed'."""
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    row = next(
+        (line.strip() for line in step1.splitlines() if line.strip().startswith("| `unsupported_flag` |")), ""
+    )
+    assert row, "step 1 must have an unsupported_flag row"
+    assert _min_gh_version() in row, "the unsupported_flag row must name MIN_GH_VERSION"
+    assert "Repo access check failed" not in row, (
+        "an unsupported flag is a tooling problem, not a repo-access failure"
+    )
+
+
+def test_report_issue_step1_gh_missing_row_names_the_declared_minimum():
+    row = _step1_row("gh_missing")
+    assert row, "step 1 must have a gh_missing row"
+    assert _min_gh_version() in row, "the gh_missing row must name MIN_GH_VERSION"
+
+
+def test_report_issue_step1_unauthenticated_row_shows_reason_and_token_hint():
+    """The preflight reports `unauthenticated` for a token gh could not validate, so the row
+    must show why, and `gh auth login` is no remedy for an env-supplied token."""
+    row = _step1_row("unauthenticated")
+    assert row, "step 1 must have an unauthenticated row"
+    assert "<reason>" in row, "the unauthenticated row must surface the gh reason"
+    assert "GH_TOKEN" in row, "the unauthenticated row must cover an env-supplied token"
+
+
+def test_report_issue_step1_scope_is_a_warning_with_three_states():
+    step1 = _delegation_step1_slice(REPORT_ISSUE_MD.read_text())
+    assert '`scope_status == "insufficient"`' in step1
+    assert '`scope_status == "unknown"`' in step1
+    assert "gh auth refresh -s public_repo" in step1, (
+        "the insufficient-scope warning must name the command that adds the scope"
+    )
+    assert "lack issue-write scope" in step1, "the unknown-scope warning text must be preserved"
+    assert "continue" in step1.lower(), "a scope warning must warn and continue, not bail"
+
+
+def test_report_issue_step1_carves_out_branch_b_unauthenticated():
+    """Branch B must keep rendering its digest when gh is unauthenticated, and the carve-out
+    must be stated where the bail is defined — not only in a Branch B edge case."""
+    text = REPORT_ISSUE_MD.read_text()
+    step1 = _delegation_step1_slice(text)
+    assert "Branch B only" in step1 and "do not bail" in step1, (
+        "step 1 must state the Branch B unauthenticated carve-out next to the bail table"
+    )
+    edge = next(
+        (line for line in _branch_b_slice(text).splitlines() if "`gh` unauthenticated" in line), ""
+    )
+    assert edge, "Branch B must keep its unauthenticated edge case"
+    assert "failure_kind == unauthenticated" in edge and "do not bail" in edge
+    assert 'scope_status == "unknown"' not in edge, (
+        "the edge case must not point at the ok-only scope-warning table, which never fires "
+        "for a failed envelope"
+    )
+
+
+def test_report_issue_remediations_do_not_overpromise():
+    """`gh auth refresh` cannot add a scope to an env-supplied token, and a 403 can be a
+    rate limit rather than a scope problem."""
+    text = REPORT_ISSUE_MD.read_text()
+    step1 = _delegation_step1_slice(text)
+    step9 = _delegation_step9_slice(text)
+    assert "GH_TOKEN" in step1, "the refresh remedy must cover an env-supplied token"
+    assert "GH_TOKEN" in step9
+    assert "rate limit" in step9.lower(), "step 9 must not report a rate-limit 403 as a scope problem"
+
+
+def test_report_issue_create_time_403_is_reported_as_scope_not_repo_inaccessible():
+    """A fine-grained token passes the preflight, then 403s at gh issue create."""
+    text = REPORT_ISSUE_MD.read_text()
+    step9 = _delegation_step9_slice(text)
+    branch_b_step8 = _branch_b_slice(text)
+    for label, block in (("delegation step 9", step9), ("Branch B step 8", branch_b_step8)):
+        assert "403" in block, f"{label} must handle a create-time HTTP 403"
+        assert "Resource not accessible by personal access token" in block, (
+            f"{label} must recognise the fine-grained-token 403 message"
+        )
+    assert "insufficient" in step9 and "issue-write" in step9, (
+        "step 9 must report a create-time 403 as insufficient issue-write scope"
+    )
+    assert "retry" in step9.lower(), "step 9 must keep the temp files for retry on a 403"
 
 
 def test_report_issue_documents_product_manager_override():
