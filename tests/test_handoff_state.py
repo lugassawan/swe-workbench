@@ -53,6 +53,7 @@ def test_shared_load_lease_rejects_malformed_or_unreadable_state(tmp_path: Path)
     workspace.mkdir()
     lease = workspace / "lease.json"
     lease.write_text(json.dumps({"schema_version": 1, "owner_harness": "claude"}))
+    lease.chmod(0o600)
 
     with pytest.raises(handoff_state.HandoffStateError, match="malformed"):
         handoff_state.load_lease(workspace)

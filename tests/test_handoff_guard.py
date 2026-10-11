@@ -110,6 +110,21 @@ def test_allows_all_tools_when_no_handoff_state_exists(tmp_path):
         assert result.stderr == ""
 
 
+def test_guard_fails_closed_for_dangling_lease_evidence(tmp_path):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    _create(repo, state_dir, target="pi")
+    lease = next(state_dir.rglob("lease.json"))
+    lease.unlink()
+    lease.symlink_to(lease.with_name("missing-lease"))
+
+    result = _run_hook(_payload(repo, "Bash"), state_dir=state_dir)
+
+    assert result.returncode != 0
+    assert "unreadable or corrupt" in result.stderr
+
+
 def test_blocks_mutating_tools_under_a_released_lease(tmp_path):
     repo = tmp_path / "repo"
     _initialize_repo(repo)
