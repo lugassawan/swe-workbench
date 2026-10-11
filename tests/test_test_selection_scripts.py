@@ -44,7 +44,7 @@ def repo(tmp_path):
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
     _write(root, "scripts/alpha.sh", "#!/bin/bash\necho alpha\n")
-    _write(root, "tests/test_alpha.py", "# covers alpha.sh\n")
+    _write(root, "tests/test_alpha.py", "def test_alpha():\n    assert True  # covers alpha.sh\n")
     _write(root, "bin/beta-tool", "#!/bin/bash\n")
     _write(root, "tests/test_beta.py", "# covers beta-tool\n")
     _write(root, "skills/gamma/SKILL.md", "# gamma\n")
@@ -519,7 +519,9 @@ class TestPrePushWhenTheSelectorBreaks:
         real = hook_repo / "scripts" / "real-select.sh"
         shutil.copy(SELECT, real)
         head_a = _commit(hook_repo, "tests/test_beta.py", text=PASSING_TEST.replace("alpha", "beta"))
-        head_b = _commit(hook_repo, "tests/test_alpha.py", text=PASSING_TEST)
+        # a source-only edit: test_alpha.py reaches the run only through ref b's selector, so
+        # dropping that selection (instead of keeping it) would leave just test_beta.py
+        head_b = _commit(hook_repo, "scripts/alpha.sh")
         _write(
             hook_repo,
             "scripts/select-tests.sh",
@@ -535,6 +537,17 @@ class TestPrePushWhenTheSelectorBreaks:
         assert done.returncode == 0, done.stdout + done.stderr
         assert "selection failed" in done.stdout
         assert "running 2 test file(s)" in done.stdout
+
+    def test_a_failing_selector_is_not_hidden_by_a_missing_runner(self, hook_repo):
+        # the common old-branch state: the runner predates the branch, a selector is present
+        _git(hook_repo, "rm", "-q", "scripts/test-all.sh")
+        _write(hook_repo, "scripts/select-tests.sh", "#!/bin/bash\necho boom >&2\nexit 7\n")
+        head = _commit(hook_repo, "tests/test_alpha.py", text=FAILING_TEST)
+        done = _push(hook_repo, f"refs/heads/feature {head} refs/heads/feature {ZERO}")
+        assert "predates scripts/test-all.sh" in done.stdout
+        assert "selection failed" in done.stdout
+        assert done.returncode != 0, "the changed failing test must still run and block the push"
+        assert "edited test must run" in done.stdout
 
     def test_no_default_branch_to_compare_with_is_said_not_swallowed(self, hook_repo):
         _git(hook_repo, "branch", "-D", "main")

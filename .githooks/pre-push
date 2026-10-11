@@ -112,13 +112,17 @@ if [ "$have_select" -eq 0 ]; then
   echo "pre-push: this branch predates scripts/select-tests.sh and scripts/test-all.sh — merge main to get the bounded gate; running only the changed test files for now"
   direct=1
   selected=$(changed_tests)
-elif [ "$have_runner" -eq 0 ]; then
-  echo "pre-push: this branch predates scripts/test-all.sh — merge main to get the capped runner; running the selected test files directly for now"
-  direct=1
-elif [ "$selector_failed" -eq 1 ]; then
-  echo "pre-push: test selection failed — running the selected and the changed test files directly"
-  direct=1
-  selected="${selected}"$'\n'"$(changed_tests)"
+else
+  # independent conditions: a missing runner must not hide a failing selector
+  if [ "$have_runner" -eq 0 ]; then
+    echo "pre-push: this branch predates scripts/test-all.sh — merge main to get the capped runner; running the selected test files directly for now"
+    direct=1
+  fi
+  if [ "$selector_failed" -eq 1 ]; then
+    echo "pre-push: test selection failed — running the selected and the changed test files directly"
+    direct=1
+    selected="${selected}"$'\n'"$(changed_tests)"
+  fi
 fi
 
 test_files=()
