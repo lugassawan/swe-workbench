@@ -19,6 +19,7 @@ import textwrap
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -49,7 +50,7 @@ SETTINGS_WITH_RTK = {
 # mode) rc 0 + text when every segment is allowed. test_stub_matches_real_rtk_rewrite pins it.
 _STUB_SOURCE = textwrap.dedent(
     '''\
-    #!{python}
+    #!{python} -S
     import os
     import re
     import sys
@@ -183,15 +184,49 @@ def _git(args, cwd, env):
     )
 
 
+def _write_stub(directory: Path) -> Path:
+    stub = directory / "rtk"
+    stub.write_text(_STUB_SOURCE.replace("{python}", sys.executable), encoding="utf-8")
+    stub.chmod(0o755)
+    return stub
+
+
+@pytest.fixture(scope="module")
+def git_fixture(tmp_path_factory):
+    """One repo with a linked worktree per module: building it per test dominated the
+    runtime. Tests only read it; what they write into it is removed by Sandbox.cleanup."""
+    base = tmp_path_factory.mktemp("rtk-git")
+    repo, wt, home = base / "repo", base / "work" / "wt", base / "home"
+    home.mkdir()
+    genv = {**dict(_CLEAN_ENV), "HOME": str(home)}
+    repo.mkdir()
+    _git(["init", "-q"], repo, genv)
+    _git(["commit", "-q", "--allow-empty", "-m", "init"], repo, genv)
+    wt.parent.mkdir()
+    _git(["worktree", "add", "-q", "-b", "wt-branch", str(wt)], repo, genv)
+    yield SimpleNamespace(repo=repo, wt=wt)
+    for cmd in (["worktree", "remove", "--force", str(wt)], ["worktree", "prune"]):
+        subprocess.run(["git", *cmd], cwd=repo, env=genv, capture_output=True)
+
+
+@pytest.fixture
+def stub_only(tmp_path):
+    """Just the stub and a HOME, for tests that never run the hook."""
+    bin_dir, home = tmp_path / "stub-bin", tmp_path / "home"
+    bin_dir.mkdir()
+    (home / ".claude").mkdir(parents=True)
+    return SimpleNamespace(stub=_write_stub(bin_dir), home=home, base=tmp_path)
+
+
 class Sandbox:
-    def __init__(self, base: Path):
+    def __init__(self, base: Path, repo: Path, wt: Path):
         self.base = base
         self.home = base / "home"
         self.tmpdir = base / "tmp"
         self.stub_bin = base / "stub-bin"
         self.tool_bin = base / "tool-bin"
-        self.repo = base / "repo"
-        self.wt = base / "work" / "wt"
+        self.repo = repo
+        self.wt = wt
         self.elsewhere = base / "elsewhere"
         self.session = "sess-" + uuid.uuid4().hex[:8]
         for d in (self.home / ".claude", self.tmpdir, self.stub_bin, self.tool_bin, self.elsewhere):
@@ -200,26 +235,17 @@ class Sandbox:
             real = shutil.which(name)
             if real:
                 (self.tool_bin / name).symlink_to(real)
-        stub = self.stub_bin / "rtk"
-        stub.write_text(_STUB_SOURCE.replace("{python}", sys.executable), encoding="utf-8")
-        stub.chmod(0o755)
-        self.stub = stub
-        genv = {**dict(_CLEAN_ENV), "HOME": str(self.home)}
-        self.repo.mkdir()
-        _git(["init", "-q"], self.repo, genv)
-        _git(["commit", "-q", "--allow-empty", "-m", "init"], self.repo, genv)
-        self.wt.parent.mkdir()
-        _git(["worktree", "add", "-q", "-b", "wt-branch", str(self.wt)], self.repo, genv)
-        self._genv = genv
+        self.stub = _write_stub(self.stub_bin)
 
-    def teardown(self):
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(self.wt)],
-            cwd=self.repo, env=self._genv, capture_output=True,
-        )  # fmt: skip
-        subprocess.run(
-            ["git", "worktree", "prune"], cwd=self.repo, env=self._genv, capture_output=True
-        )
+    def cleanup(self):
+        """Undo what a test wrote into the shared repo/worktree."""
+        for leftover in (
+            self.repo / ".claude",
+            self.wt / ".claude",
+            self.wt / "sub",
+            Path(str(self.wt) + "-other"),
+        ):
+            shutil.rmtree(leftover, ignore_errors=True)
 
     @property
     def marker_dir(self) -> Path:
@@ -299,45 +325,58 @@ class Sandbox:
             p["agent_id"] = agent
         return p
 
-    def isolate(self, agent=None):
-        """Configure RTK's hook, then deliver EnterWorktree so a marker exists."""
+    def isolate(self, agent=None, *, via_hook=False):
+        """Configure RTK's hook and make the session isolated. The marker is written
+        directly (fast) unless via_hook, which delivers a real EnterWorktree; the enter
+        path has dedicated tests, so tests of the Bash path need not pay for it."""
         self.write_settings()
-        r = self.run(self.enter_payload(agent=agent))
-        assert r.returncode == 0, r.stderr
-        return r
+        if via_hook:
+            r = self.run(self.enter_payload(agent=agent))
+            assert r.returncode == 0, r.stderr
+            return r
+        self.marker_dir.mkdir(mode=0o700, exist_ok=True)
+        self.marker(agent).write_text(str(self.wt.resolve()) + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
 
 @pytest.fixture
-def sandbox(tmp_path):
-    box = Sandbox(tmp_path)
+def sandbox(tmp_path, git_fixture):
+    box = Sandbox(tmp_path, git_fixture.repo, git_fixture.wt)
     try:
         yield box
     finally:
-        box.teardown()
+        box.cleanup()
 
 
 @pytest.fixture(autouse=True)
-def _no_residue(tmp_path):
-    """Nothing a test did may be visible in the real temp dirs or the real repository's
-    worktree registry. Entries are matched by pointing under this test's tmp_path, so
-    unrelated live sessions entering or leaving worktrees cannot fail an unrelated test."""
+def _no_marker_residue(tmp_path_factory):
+    """No marker in the real temp dirs may point under this pytest session's temp root.
+    Matching by that root means unrelated live sessions cannot fail an unrelated test."""
     yield
-    base = str(tmp_path.resolve())
+    session_root = str(tmp_path_factory.getbasetemp().resolve())
     leaked = []
     for d in {Path("/tmp"), Path(os.environ.get("TMPDIR") or "/tmp")}:
         for marker_dir in d.glob("swe_wb_rtk_worktree*"):
             for marker in marker_dir.glob("*") if marker_dir.is_dir() else [marker_dir]:
                 try:
-                    if marker.read_text().startswith(base):
+                    if marker.read_text().startswith(session_root):
                         leaked.append(str(marker))
                 except OSError:
                     pass
+    assert leaked == [], f"test leaked a marker into a real temp dir: {leaked}"
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _no_worktree_residue(tmp_path_factory):
+    """No test module may register a worktree on the real repository."""
+    yield
+    session_root = str(tmp_path_factory.getbasetemp().resolve())
     listing = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
         cwd=ROOT, env=dict(_CLEAN_ENV), capture_output=True, text=True,
     ).stdout  # fmt: skip
-    leaked += [ln for ln in listing.splitlines() if ln.startswith("worktree ") and base in ln]
-    assert leaked == [], f"test leaked state outside tmp_path: {leaked}"
+    leaked = [ln for ln in listing.splitlines() if ln.startswith("worktree ") and session_root in ln]
+    assert leaked == [], f"module registered a worktree on the real repository: {leaked}"
 
 
 def _fix_from(stderr: str) -> str:
@@ -629,7 +668,7 @@ class TestScoping:
         sandbox.marker_dir.mkdir()
         racing = sandbox.marker_dir / "racing-session"
         racing.write_text("")
-        sandbox.isolate()
+        sandbox.isolate(via_hook=True)
         assert racing.exists()
 
     def test_subagent_without_its_own_marker_inherits_the_session_marker(self, sandbox):
@@ -666,7 +705,7 @@ class TestScoping:
         assert not sandbox.marker().exists()
 
     def test_marker_dir_is_private(self, sandbox):
-        sandbox.isolate()
+        sandbox.isolate(via_hook=True)
         assert stat.S_IMODE(sandbox.marker_dir.stat().st_mode) == 0o700
         assert [p.name for p in sandbox.marker_dir.iterdir()] == [sandbox.session]
 
@@ -726,7 +765,7 @@ class TestScoping:
         assert not sandbox.marker().exists()
 
     def test_enter_with_rtk_hook_writes_marker_and_context(self, sandbox):
-        r = sandbox.isolate()
+        r = sandbox.isolate(via_hook=True)
         assert sandbox.marker().read_text().strip() == str(sandbox.wt.resolve())
         ctx = json.loads(r.stdout)["hookSpecificOutput"]
         assert ctx["hookEventName"] == "PostToolUse"
@@ -768,7 +807,7 @@ class TestScoping:
         assert sandbox.marker().exists()
 
     def test_reentering_the_same_worktree_does_not_repeat_the_context(self, sandbox):
-        first = sandbox.isolate()
+        first = sandbox.isolate(via_hook=True)
         assert first.stdout != ""
         again = sandbox.run(sandbox.enter_payload())
         assert again.returncode == 0
@@ -783,7 +822,7 @@ class TestScoping:
         stale.write_text(str(sandbox.base / "gone" / "wt") + "\n")
         live = sandbox.marker_dir / "live-session"
         live.write_text(str(sandbox.wt.resolve()) + "\n")
-        sandbox.isolate()
+        sandbox.isolate(via_hook=True)
         assert not stale.exists()
         assert live.exists()
         assert sandbox.marker().exists()
@@ -812,7 +851,7 @@ class TestScoping:
         assert r.returncode == 0
 
     def test_agent_id_gets_its_own_marker_key(self, sandbox):
-        sandbox.isolate(agent="agent7")
+        sandbox.isolate(agent="agent7", via_hook=True)
         assert sandbox.marker(agent="agent7").exists()
         assert not sandbox.marker().exists()
         mine = sandbox.run(sandbox.bash_payload("git status", agent="agent7"))
@@ -986,11 +1025,11 @@ class TestContractPin:
         json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"],
         ids=lambda c: f"{'allow:' if c['allow_rule'] else ''}{c['cmd']!r}",
     )
-    def test_stub_reproduces_the_recorded_rtk_rewrite(self, sandbox, case):
+    def test_stub_reproduces_the_recorded_rtk_rewrite(self, stub_only, case):
         # Runs everywhere (CI has no rtk): the stub every hook test leans on is held to
         # answers recorded from the real binary.
         extra = {"RTK_STUB_ALLOW_RULE": "1"} if case["allow_rule"] else {}
-        got = self._run_rewrite(sandbox.stub, case["cmd"], sandbox.home, sandbox.base, False, extra)
+        got = self._run_rewrite(stub_only.stub, case["cmd"], stub_only.home, stub_only.base, False, extra)
         assert got == {"rc": case["rc"], "stdout": case["stdout"]}
 
     @pytest.mark.skipif(REAL_RTK is None, reason="real rtk not installed")
@@ -999,8 +1038,10 @@ class TestContractPin:
         json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"],
         ids=lambda c: f"{'allow:' if c['allow_rule'] else ''}{c['cmd']!r}",
     )
-    def test_recorded_rewrite_still_matches_real_rtk(self, sandbox, case):
-        got = self._run_rewrite(REAL_RTK, case["cmd"], sandbox.home, sandbox.base, case["allow_rule"])
+    def test_recorded_rewrite_still_matches_real_rtk(self, stub_only, case):
+        got = self._run_rewrite(
+            REAL_RTK, case["cmd"], stub_only.home, stub_only.base, case["allow_rule"]
+        )
         assert got == {"rc": case["rc"], "stdout": case["stdout"]}, (
             "real rtk no longer answers as recorded; re-record with "
             "RTK_GOLDEN_REGEN=1 and re-check the hook's assumptions"
@@ -1008,14 +1049,14 @@ class TestContractPin:
 
     @pytest.mark.skipif(REAL_RTK is None, reason="real rtk not installed")
     @pytest.mark.skipif(not os.environ.get("RTK_GOLDEN_REGEN"), reason="set RTK_GOLDEN_REGEN=1")
-    def test_regenerate_golden(self, sandbox):
+    def test_regenerate_golden(self, stub_only):
         version = subprocess.run(
             [str(REAL_RTK), "--version"], env=dict(_CLEAN_ENV), capture_output=True, text=True
         ).stdout.strip()
         cases = []
         for allow_rule, cmds in ((False, self.FIXTURES), (True, self.ALLOW_RULE_FIXTURES)):
             for cmd in cmds:
-                got = self._run_rewrite(REAL_RTK, cmd, sandbox.home, sandbox.base, allow_rule)
+                got = self._run_rewrite(REAL_RTK, cmd, stub_only.home, stub_only.base, allow_rule)
                 cases.append({"cmd": cmd, "allow_rule": allow_rule, **got})
         GOLDEN.parent.mkdir(exist_ok=True)
         payload = {"rtk_version": version, "cases": cases}

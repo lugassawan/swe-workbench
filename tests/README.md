@@ -8,6 +8,10 @@ pip install -r tests/requirements.txt
 pytest tests/ -v
 ```
 
+On a machine shared with other sessions, prefer `scripts/test-all.sh`: it caps workers, runs
+`nice`d and queues behind other runs (`pip install pytest-xdist` to parallelise). The pre-push
+hook runs only the test files covering your change; CI runs everything.
+
 ## What is covered
 
 | File | Covers |

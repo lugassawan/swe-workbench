@@ -22,6 +22,18 @@ If you have pre-existing hooks in `.git/hooks/` or a non-default repo-local `cor
 
 > **Note:** If a new hook is added to `.githooks/`, re-run `./scripts/setup.sh` to install its symlink. Re-running on an already-configured repo is safe — no warnings are emitted to stderr.
 
+## What runs where
+
+| Where | What | Time |
+|---|---|---|
+| `pre-push` | `scripts/validate.sh`, shellcheck on the changed shell files, then only the test files that mention what changed (`scripts/select-tests.sh`), smallest first | bounded by a 150s budget (`SWE_WORKBENCH_PREPUSH_BUDGET`) |
+| CI (`pr.yml`) | the **full** suite on ubuntu and macOS, plus validate, shellcheck, typecheck, lockfiles, links | the merge gate |
+| `scripts/test-all.sh` | the full suite (or the paths you pass) on demand | ~2.5 min with 3 workers, ~6.5 min serial |
+
+The pre-push gate is deliberately short. `git push` opens its SSH connection *before* running the hook and holds it idle while the hook runs; GitHub closes an idle SSH session after about 6 minutes, so a gate that long dies with exit 141 even though every test passed. Files the budget left out are named in the hook output and run in CI.
+
+`scripts/test-all.sh` is polite on a shared machine: workers are capped (`--workers N`, default 3), the run is `nice`d, and a machine-wide lock makes concurrent worktrees queue instead of multiplying workers. Parallelism needs `pip install pytest-xdist` (optional; without it the run is serial).
+
 ## Branch naming
 
 The `pre-commit` hook blocks direct commits to `main` and `master`. Always work on a feature branch:
