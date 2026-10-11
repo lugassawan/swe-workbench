@@ -17,16 +17,63 @@ if ! python3 -c 'import pytest' 2>/dev/null; then
 fi
 
 zero=0000000000000000000000000000000000000000
+SELECT="$REPO_ROOT/scripts/select-tests.sh"
+RUNNER="$REPO_ROOT/scripts/test-all.sh"
+
+# This hook is shared through the main checkout; the scripts belong to each branch. A branch
+# cut before they landed borrows the selector from the checkout the hook lives in.
+if [ ! -f "$SELECT" ]; then
+  hook_src=$(readlink "$0" 2>/dev/null || true)
+  case "$hook_src" in '' | /*) ;; *) hook_src="$(dirname "$0")/$hook_src" ;; esac
+  if [ -n "$hook_src" ] && [ -f "$(dirname "$hook_src")/../scripts/select-tests.sh" ]; then
+    SELECT="$(dirname "$hook_src")/../scripts/select-tests.sh"
+  fi
+fi
+have_select=0
+[ -f "$SELECT" ] && have_select=1
+have_runner=0
+[ -f "$RUNNER" ] && have_runner=1
+
 selected=""
 changed=""
+refs_seen=0
+unknown_refs=0
+selector_failed=0
+
+base_for() { # <remote sha, or $zero for a new branch> <local sha>; prints a usable base
+  local base="$1"
+  if [ "$base" = "$zero" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+    base=$(git merge-base "$2" origin/main 2>/dev/null || git merge-base "$2" main 2>/dev/null || true)
+  fi
+  printf '%s' "$base"
+}
 
 collect() { # <remote sha, or $zero for a new branch> <local sha>
-  local args=(--head "$2") out
-  [ "$1" = "$zero" ] || args+=(--base "$1")
-  out=$("$REPO_ROOT/scripts/select-tests.sh" "${args[@]}") || out=""
-  selected="${selected}"$'\n'"${out}"
-  out=$("$REPO_ROOT/scripts/select-tests.sh" "${args[@]}" --list-changed 2>/dev/null) || out=""
+  local base out ok=0
+  refs_seen=$((refs_seen + 1))
+  base=$(base_for "$1" "$2")
+  if [ -z "$base" ]; then
+    unknown_refs=$((unknown_refs + 1))
+    return 0
+  fi
+  # one definition of "what changed" when the selector works; plain git when it does not
+  if [ "$have_select" -eq 1 ]; then
+    out=$(bash "$SELECT" --base "$base" --head "$2" --list-changed 2>/dev/null) && ok=1
+  fi
+  if [ "$ok" -eq 0 ]; then
+    out=$(git -c core.quotePath=false diff --name-only "$base" "$2" 2>/dev/null) && ok=1
+  fi
+  if [ "$ok" -eq 0 ]; then
+    unknown_refs=$((unknown_refs + 1))
+    return 0
+  fi
   changed="${changed}"$'\n'"${out}"
+  [ "$have_select" -eq 1 ] || return 0
+  if out=$(bash "$SELECT" --base "$base" --head "$2"); then
+    selected="${selected}"$'\n'"${out}"
+  else
+    selector_failed=1
+  fi
 }
 
 if [ -t 0 ]; then
@@ -37,6 +84,14 @@ else
     case "$local_ref" in refs/heads/*) ;; *) continue ;; esac # tags carry no new code
     collect "$remote_sha" "$local_sha"
   done
+fi
+
+if [ "$refs_seen" -eq 0 ]; then
+  echo "pre-push: no branch updates to check"
+  exit 0
+fi
+if [ "$unknown_refs" -gt 0 ]; then
+  echo "pre-push: could not tell what changed for ${unknown_refs} ref(s) — CI runs the full suite for those"
 fi
 
 if command -v shellcheck >/dev/null 2>&1; then
@@ -50,20 +105,54 @@ if command -v shellcheck >/dev/null 2>&1; then
   fi
 fi
 
+# Say what is missing, and fall back to running test files directly with pytest.
+direct=0
+changed_tests() { printf '%s\n' "$changed" | grep -E '^tests/test_[^/]+\.py$' || true; }
+if [ "$have_select" -eq 0 ]; then
+  echo "pre-push: this branch predates scripts/select-tests.sh and scripts/test-all.sh — merge main to get the bounded gate; running only the changed test files for now"
+  direct=1
+  selected=$(changed_tests)
+else
+  # independent conditions: a missing runner must not hide a failing selector
+  if [ "$have_runner" -eq 0 ]; then
+    echo "pre-push: this branch predates scripts/test-all.sh — merge main to get the capped runner; running the selected test files directly for now"
+    direct=1
+  fi
+  if [ "$selector_failed" -eq 1 ]; then
+    echo "pre-push: test selection failed — running the selected and the changed test files directly"
+    direct=1
+    selected="${selected}"$'\n'"$(changed_tests)"
+  fi
+fi
+
 test_files=()
 while IFS= read -r f; do
-  [ -n "$f" ] && test_files+=("$f")
+  [ -n "$f" ] && [ -f "$REPO_ROOT/$f" ] && test_files+=("$f")
 done < <(printf '%s\n' "$selected" | sed '/^$/d' | sort -u)
 
 if [ "${#test_files[@]}" -eq 0 ]; then
-  echo "pre-push: no tests cover this change — CI runs the full suite"
+  if [ "$unknown_refs" -gt 0 ]; then
+    exit 0 # already said what could not be checked
+  elif [ "$direct" -eq 1 ]; then
+    echo "pre-push: no changed test files to run — CI runs the full suite"
+  else
+    echo "pre-push: no tests cover this change — CI runs the full suite"
+  fi
   exit 0
 fi
+
+run_file() {
+  if [ "$direct" -eq 1 ]; then
+    python3 -m pytest -q "$1"
+  else
+    bash "$RUNNER" --no-lock "$1"
+  fi
+}
 
 # Smallest files first, and no new file is started once the budget is spent: the gate's
 # length is bounded however broad the change. Skipped files are named; CI runs them.
 budget="${SWE_WORKBENCH_PREPUSH_BUDGET:-150}"
-echo "pre-push: running ${#test_files[@]} covering test file(s), ${budget}s budget; CI runs the full suite"
+echo "pre-push: running ${#test_files[@]} test file(s), ${budget}s budget; CI runs the full suite"
 cd "$REPO_ROOT"
 started=$(date +%s)
 skipped=()
@@ -72,7 +161,7 @@ while IFS= read -r f; do
     skipped+=("$f")
     continue
   fi
-  "$REPO_ROOT/scripts/test-all.sh" --no-lock "$f" || exit $?
+  run_file "$f" || exit $?
 done < <(ls -rS "${test_files[@]}")
 
 if [ "${#skipped[@]}" -gt 0 ]; then

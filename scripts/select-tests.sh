@@ -42,7 +42,7 @@ if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
   exit 0
 fi
 
-changed=$(git diff --name-only "$base" "$head")
+changed=$(git -c core.quotePath=false diff --name-only "$base" "$head")
 if [ "$list_changed" -eq 1 ]; then
   printf '%s\n' "$changed"
   exit 0
