@@ -76,9 +76,7 @@ SIBLING_CALLERS = {
     "swe-workbench-pr-review-worktree": ["swe-workbench-skill-script", "swe-workbench-clean-ephemeral", "swe-workbench-repo-scope"],
     "swe-workbench-reply-and-resolve": ["swe-workbench-gh-timeout"],
     "swe-workbench-sweep-residuals": [
-        "swe-workbench-skill-script",
         "swe-workbench-clean-state-files",
-        "swe-workbench-clean-ephemeral",
         "swe-workbench-reap-run-dir",
         "swe-workbench-reap-session-scratch",
         "swe-workbench-repo-scope",
