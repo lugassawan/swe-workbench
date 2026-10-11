@@ -1582,7 +1582,7 @@ def main(argv: list[str] | None = None) -> int:
             return exit_code
         else:
             status_segment()
-    except HandoffError as error:
+    except (HandoffError, handoff_state.HandoffStateError) as error:
         print(f"swe-workbench-handoff: {error}", file=sys.stderr)
         return 1
     return 0
