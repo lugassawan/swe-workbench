@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import uuid
@@ -21,6 +22,7 @@ HARNESSES = ("claude", "pi")
 SESSION_ENV_NAMES = {"claude": "CLAUDE_CODE_SESSION_ID", "pi": "PI_SESSION_ID"}
 FOLLOW_UP_CHOICES = ("not_required", "file_issue", "skip")
 REQUEST_VERSION = 1
+REPLAY_WINDOW = timedelta(hours=24)
 
 
 class CleanupError(Exception):
@@ -253,6 +255,440 @@ def prepare_request(pr_number: int, repo: str, as_harness: str, session_env: str
     )
 
 
+def git_result(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run Git without raising for an expected absent reference."""
+
+    try:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env=handoff_state.clean_git_environment(),
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CleanupError(f"could not execute git: {error}") from error
+
+
+def parse_timestamp(value: object, field: str) -> datetime:
+    """Parse a required UTC timestamp from persisted request state."""
+
+    if not isinstance(value, str):
+        raise CleanupError(f"cleanup request {field} is invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise CleanupError(f"cleanup request {field} is invalid") from error
+    if parsed.tzinfo is None:
+        raise CleanupError(f"cleanup request {field} is invalid")
+    return parsed.astimezone(timezone.utc)
+
+
+def request_directory(paths: RequestPaths) -> Path:
+    """Return the trusted prepared-request directory."""
+
+    directory = paths.root / "requests"
+    try:
+        metadata = directory.lstat()
+    except OSError as error:
+        raise CleanupError("cleanup request directory is unavailable") from error
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise CleanupError("cleanup request directory is not owner-only")
+    return directory
+
+
+def canonical_request_id(request_id: str) -> str:
+    """Validate a request ID without accessing cleanup state."""
+
+    try:
+        parsed = uuid.UUID(request_id)
+    except (AttributeError, ValueError) as error:
+        raise CleanupError("--request must be a canonical UUID") from error
+    if str(parsed) != request_id:
+        raise CleanupError("--request must be a canonical UUID")
+    return request_id
+
+
+def request_path_for(directory: Path, request_id: str) -> Path:
+    """Resolve a previously validated request ID under the trusted directory."""
+
+    return directory / f"{canonical_request_id(request_id)}.json"
+
+
+def load_owner_request(path: Path) -> dict[str, object]:
+    """Load one regular, owner-only request file without following links."""
+
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise CleanupError("cleanup request does not exist") from error
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise CleanupError("cleanup request is not an owner-only regular file")
+    try:
+        request = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CleanupError(f"cleanup request is unreadable: {error}") from error
+    if not isinstance(request, dict):
+        raise CleanupError("cleanup request is malformed")
+    return request
+
+
+def require_request_string(request: dict[str, object], field: str) -> str:
+    """Return a non-empty persisted string field."""
+
+    value = request.get(field)
+    if not isinstance(value, str) or not value:
+        raise CleanupError(f"cleanup request {field} is invalid")
+    return value
+
+
+def validate_request(request: dict[str, object], request_id: str) -> None:
+    """Validate the sealed request before using any cleanup authority."""
+
+    if request.get("version") != REQUEST_VERSION or request.get("request_id") != request_id:
+        raise CleanupError("cleanup request identity is invalid")
+    if request.get("status") not in {"prepared", "running", "completed"}:
+        raise CleanupError("cleanup request status is invalid")
+    created_at = parse_timestamp(request.get("created_at"), "created_at")
+    expires_at = parse_timestamp(request.get("expires_at"), "expires_at")
+    if expires_at <= created_at:
+        raise CleanupError("cleanup request expiry is invalid")
+    if request.get("harness") not in HARNESSES:
+        raise CleanupError("cleanup request harness is invalid")
+    session_digest = require_request_string(request, "session_sha256")
+    if len(session_digest) != 64 or any(character not in "0123456789abcdef" for character in session_digest):
+        raise CleanupError("cleanup request session digest is invalid")
+    repo = require_request_string(request, "repo")
+    if repo.count("/") != 1:
+        raise CleanupError("cleanup request repository is invalid")
+    for field in ("repo_key", "worktree_key"):
+        value = require_request_string(request, field)
+        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+            raise CleanupError(f"cleanup request {field} is invalid")
+    head_sha = require_request_string(request, "head_sha")
+    if len(head_sha) not in {40, 64} or any(character not in "0123456789abcdef" for character in head_sha):
+        raise CleanupError("cleanup request head_sha is invalid")
+    worktree_root = require_request_string(request, "worktree_root")
+    if not Path(worktree_root).is_absolute() or str(Path(worktree_root).resolve()) != worktree_root:
+        raise CleanupError("cleanup request worktree_root is invalid")
+    pr_number = request.get("pr_number")
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
+        raise CleanupError("cleanup request pr_number is invalid")
+    expected_url = f"https://github.com/{repo}/pull/{pr_number}"
+    if request.get("pr_url") != expected_url:
+        raise CleanupError("cleanup request PR URL is invalid")
+    for field in ("head_ref", "base_ref", "follow_up"):
+        require_request_string(request, field)
+    if request["follow_up"] not in FOLLOW_UP_CHOICES:
+        raise CleanupError("cleanup request follow_up is invalid")
+    progress = request.get("progress")
+    required_progress = {
+        "worktree_removed",
+        "residuals_swept",
+        "local_branch_deleted",
+        "remote_branch_deleted",
+    }
+    if not isinstance(progress, dict) or set(progress) != required_progress or any(
+        not isinstance(value, bool) for value in progress.values()
+    ):
+        raise CleanupError("cleanup request progress is invalid")
+    if request["status"] == "completed" and not all(progress.values()):
+        raise CleanupError("completed cleanup request has incomplete progress")
+
+
+def prune_expired_requests(directory: Path, request_path: Path) -> None:
+    """Remove only valid owner-only requests beyond the replay window."""
+
+    cutoff = now() - REPLAY_WINDOW
+    for candidate in directory.glob("*.json"):
+        if candidate == request_path:
+            continue
+        try:
+            metadata = candidate.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+                continue
+            request = json.loads(candidate.read_text(encoding="utf-8"))
+            created_at = parse_timestamp(request.get("created_at"), "created_at") if isinstance(request, dict) else None
+        except (OSError, json.JSONDecodeError, CleanupError):
+            continue
+        if created_at is not None and created_at < cutoff:
+            candidate.unlink(missing_ok=True)
+
+
+def authorize_request(request: dict[str, object], as_harness: str, session_env: str) -> Path:
+    """Authorize the caller against sealed session and repository identity."""
+
+    session = resolve_session(as_harness, session_env)
+    if request["harness"] != as_harness:
+        raise CleanupError("cleanup request harness does not match --as")
+    if hashlib.sha256(session.encode()).hexdigest() != request["session_sha256"]:
+        raise CleanupError("cleanup request session does not match")
+    current_root, repo_key, _, _, _ = current_workspace()
+    if repo_key != request["repo_key"]:
+        raise CleanupError("cleanup request belongs to a different repository")
+    created_at = parse_timestamp(request["created_at"], "created_at")
+    if request["status"] == "prepared":
+        if now() > parse_timestamp(request["expires_at"], "expires_at"):
+            raise CleanupError("prepared cleanup request has expired")
+    elif now() > created_at + REPLAY_WINDOW:
+        raise CleanupError("cleanup request replay window has expired")
+    return current_root
+
+
+def validate_sealed_pull_request(request: dict[str, object], cwd: Path) -> None:
+    """Re-query GitHub and require every sealed PR identity field to match."""
+
+    response = pull_request(int(request["pr_number"]), str(request["repo"]), cwd)
+    head_ref, head_sha, base_ref, _ = require_merged_pr(response, int(request["pr_number"]), str(request["repo"]))
+    if (
+        response.get("url") != request["pr_url"]
+        or head_ref != request["head_ref"]
+        or head_sha != request["head_sha"]
+        or base_ref != request["base_ref"]
+    ):
+        raise CleanupError("pull request facts no longer match the sealed cleanup request")
+
+
+def registered_target_roots(cwd: Path, repo_key: str) -> set[Path]:
+    """Return registered targets while translating shared-state errors."""
+
+    try:
+        return handoff_state.registered_worktree_roots(cwd, repo_key)
+    except handoff_state.HandoffStateError as error:
+        raise CleanupError(str(error)) from error
+
+
+def revalidate_target(request: dict[str, object], target: Path) -> None:
+    """Require the still-live target to remain sealed, clean, and pushed."""
+
+    if git_text(["rev-parse", "--abbrev-ref", "HEAD"], target) != request["head_ref"]:
+        raise CleanupError("target worktree is no longer on the sealed pull request head")
+    if git_text(["rev-parse", "HEAD"], target) != request["head_sha"]:
+        raise CleanupError("target worktree head no longer matches the sealed pull request")
+    require_clean_pushed_target(target)
+
+
+def journal_request(path: Path, request: dict[str, object]) -> None:
+    """Durably record one cleanup lifecycle transition."""
+
+    try:
+        handoff_state.write_atomic(path, canonical_json(request))
+    except handoff_state.HandoffStateError as error:
+        raise CleanupError(str(error)) from error
+
+
+def remove_target_worktree(request: dict[str, object], request_path: Path, cwd: Path) -> None:
+    """Remove only the sealed target while holding its shared lease lock."""
+
+    target = Path(str(request["worktree_root"]))
+    state_paths = handoff_state.StatePaths.from_environment()
+    workspace = state_paths.workspace_directory(str(request["repo_key"]), str(request["worktree_key"]))
+    try:
+        handoff_state.ensure_owner_directory(workspace)
+        with handoff_state.workspace_flock(workspace, "lease.lock"):
+            lease = handoff_state.load_lease(workspace)
+            if lease is not None:
+                raise CleanupError("target worktree has an active handoff lease")
+            registered = registered_target_roots(cwd, str(request["repo_key"]))
+            if target not in registered:
+                if request["status"] == "prepared":
+                    raise CleanupError("target worktree is no longer a registered live worktree")
+                request["progress"]["worktree_removed"] = True
+                journal_request(request_path, request)
+                return
+            revalidate_target(request, target)
+            request["status"] = "running"
+            journal_request(request_path, request)
+            git_text(["worktree", "remove", str(target)], cwd)
+            if target.exists() or target in registered_target_roots(cwd, str(request["repo_key"])):
+                raise CleanupError("target worktree removal was not verified")
+            request["progress"]["worktree_removed"] = True
+            journal_request(request_path, request)
+    except handoff_state.HandoffStateError as error:
+        raise CleanupError(str(error)) from error
+
+
+def protected_worktrees(cwd: Path, repo_key: str) -> list[Path]:
+    """Return all leased or unreadable-evidence worktrees for residual protection."""
+
+    protected: list[Path] = []
+    state_paths = handoff_state.StatePaths.from_environment()
+    for root in registered_target_roots(cwd, repo_key):
+        _, worktree_key = handoff_state.worktree_identity(root)
+        try:
+            lease = handoff_state.load_lease(state_paths.workspace_directory(repo_key, worktree_key))
+        except handoff_state.HandoffStateError:
+            protected.append(root)
+            continue
+        if lease is not None:
+            protected.append(root)
+    return sorted(set(protected))
+
+
+def checked_sweep_result(output: str) -> dict[str, object]:
+    """Parse the residual sweeper's fixed result contract."""
+
+    try:
+        envelope = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise CleanupError(f"residual sweep returned invalid JSON: {error}") from error
+    if not isinstance(envelope, dict) or envelope.get("schema") != "swb.sweep-residuals/1":
+        raise CleanupError("residual sweep returned an invalid result schema")
+    if envelope.get("status") not in {"ok", "partial"} or not isinstance(envelope.get("data"), dict):
+        raise CleanupError("residual sweep returned an invalid result")
+    if not isinstance(envelope["data"].get("residual_none"), bool):
+        raise CleanupError("residual sweep result is incomplete")
+    return envelope
+
+
+def sweep_residuals(request: dict[str, object], cwd: Path) -> dict[str, object]:
+    """Sweep PR residuals while forwarding lease protections to the sweeper."""
+
+    script = Path(__file__).with_name("swe-workbench-sweep-residuals")
+    arguments = [
+        str(script),
+        str(request["pr_number"]),
+        "--repo",
+        str(request["repo"]),
+        "--head-sha",
+        str(request["head_sha"]),
+    ]
+    for root in protected_worktrees(cwd, str(request["repo_key"])):
+        arguments.extend(["--protect-worktree", str(root)])
+    return checked_sweep_result(run(arguments, cwd))
+
+
+def local_branch_exists(cwd: Path, branch: str) -> bool:
+    """Return whether the sealed local branch ref still exists."""
+
+    return git_result(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd).returncode == 0
+
+
+def remote_branch_exists(cwd: Path, branch: str) -> bool:
+    """Return whether the remote still advertises the sealed branch ref."""
+
+    result = git_result(["ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"], cwd)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 2:
+        return False
+    raise CleanupError(result.stderr.strip() or "could not query remote branch")
+
+
+def delete_branches(request: dict[str, object], request_path: Path, cwd: Path) -> None:
+    """Delete sealed local and remote branches after removal verification."""
+
+    progress = request["progress"]
+    branch = str(request["head_ref"])
+    if not progress["local_branch_deleted"]:
+        request["status"] = "running"
+        journal_request(request_path, request)
+        if local_branch_exists(cwd, branch):
+            git_text(["branch", "-D", branch], cwd)
+        if local_branch_exists(cwd, branch):
+            raise CleanupError("sealed local branch deletion was not verified")
+        progress["local_branch_deleted"] = True
+        journal_request(request_path, request)
+    if not progress["remote_branch_deleted"]:
+        request["status"] = "running"
+        journal_request(request_path, request)
+        if remote_branch_exists(cwd, branch):
+            git_text(["push", "origin", "--delete", branch], cwd)
+        if remote_branch_exists(cwd, branch):
+            raise CleanupError("sealed remote branch deletion was not verified")
+        progress["remote_branch_deleted"] = True
+        journal_request(request_path, request)
+
+
+def complete_follow_up(request: dict[str, object], cwd: Path) -> None:
+    """Record the sealed follow-up choice and file only the fixed issue shape."""
+
+    if request.get("follow_up_done") is True:
+        return
+    if request["follow_up"] == "file_issue":
+        try:
+            result = subprocess.run(
+                ["gh", "label", "list", "--repo", str(request["repo"]), "--json", "name", "-q", ".[].name"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            available_labels = result.stdout.splitlines() if result.returncode == 0 else []
+        except (OSError, subprocess.TimeoutExpired):
+            available_labels = []
+        label = next((item for item in available_labels if "test" in item.lower() or "tech-debt" in item.lower()), None)
+        title = f"Backfill regression test — merged PR #{request['pr_number']}"
+        body = (
+            f"## Backfill regression test — merged PR #{request['pr_number']}\n\n"
+            f"Add a regression test for the merged `{request['head_ref']}` change.\n"
+        )
+        arguments = ["gh", "issue", "create", "--repo", str(request["repo"]), "--title", title, "--body", body]
+        if label:
+            arguments.extend(["--label", label])
+        run(arguments, cwd)
+    request["follow_up_done"] = True
+
+
+def result_envelope(request: dict[str, object]) -> Envelope:
+    """Render the stable execute response from its persisted journal."""
+
+    progress = request["progress"]
+    residual_none = request.get("residual_none", False)
+    residual_status = request.get("residual_status", "ok")
+    if not isinstance(residual_none, bool) or residual_status not in {"ok", "partial"}:
+        raise CleanupError("cleanup request residual result is invalid")
+    data: dict[str, object] = {
+        "request_id": request["request_id"],
+        "phase": request["status"],
+        "completed": request["status"] == "completed",
+        "main_sync_skipped": True,
+        "worktree_removed": progress["worktree_removed"],
+        "local_branch_deleted": progress["local_branch_deleted"],
+        "remote_branch_deleted": progress["remote_branch_deleted"],
+        "residual_none": residual_none,
+        "follow_up": request["follow_up"],
+    }
+    return Envelope(residual_status, data, [])
+
+
+def execute_request(request_id: str, as_harness: str, session_env: str) -> Envelope:
+    """Execute one sealed request exactly once, with bounded same-session replay."""
+
+    request_id = canonical_request_id(request_id)
+    paths = RequestPaths.from_environment()
+    directory = request_directory(paths)
+    path = request_path_for(directory, request_id)
+    try:
+        with handoff_state.workspace_flock(directory, f"{request_id}.lock"):
+            request = load_owner_request(path)
+            validate_request(request, request_id)
+            prune_expired_requests(directory, path)
+            cwd = authorize_request(request, as_harness, session_env)
+            validate_sealed_pull_request(request, cwd)
+            if request["status"] == "completed":
+                return result_envelope(request)
+            remove_target_worktree(request, path, cwd)
+            if not request["progress"]["residuals_swept"]:
+                request["status"] = "running"
+                journal_request(path, request)
+                residuals = sweep_residuals(request, cwd)
+                request["residual_none"] = residuals["data"]["residual_none"]
+                request["residual_status"] = residuals["status"]
+                request["progress"]["residuals_swept"] = True
+                journal_request(path, request)
+            delete_branches(request, path, cwd)
+            complete_follow_up(request, cwd)
+            request["status"] = "completed"
+            journal_request(path, request)
+            return result_envelope(request)
+    except handoff_state.HandoffStateError as error:
+        raise CleanupError(str(error)) from error
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the strict two-phase command interface."""
 
@@ -272,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run a cleanup preparation command."""
+    """Run a cleanup preparation or execution command."""
 
     args = build_parser().parse_args(argv)
     try:
@@ -281,7 +717,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise CleanupError("--pr must be positive and --repo must be owner/repository")
             write_envelope(prepare_request(args.pr, args.repo, args.as_harness, args.session_ref_env, args.deferred_follow_up))
             return 0
-        raise CleanupError("execute is not implemented until the sealed executor is installed")
+        write_envelope(execute_request(args.request, args.as_harness, args.session_ref_env))
+        return 0
     except CleanupError as error:
         print(f"swe-workbench-cleanup-merged: {error}", file=sys.stderr)
         return 1

@@ -1303,3 +1303,52 @@ class TestInvalidRepoFailsClosed:
             f.unlink(missing_ok=True)
             shutil.rmtree(run_dir, ignore_errors=True)
             diff_file.unlink(missing_ok=True)
+
+
+def test_protected_leased_worktree_is_retained_while_safe_residual_is_removed(tmp_path):
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    protected = tmp_path / "protected" / f"pr-review-{n}"
+    safe = tmp_path / "safe" / f"pr-followup-{n}"
+    protected.parent.mkdir()
+    safe.parent.mkdir()
+    _run("git", "worktree", "add", "-b", f"pr-review-{n}", str(protected), cwd=repo)
+    _run("git", "worktree", "add", "-b", f"pr-followup-{n}", str(safe), cwd=repo)
+
+    try:
+        result = _run_script(
+            repo,
+            n,
+            _scoped_env(tmp_path),
+            "--protect-worktree",
+            str(protected.resolve()),
+        )
+
+        _assert_contract(result, "1", "0", "0", retained_wt="1")
+        payload = json.loads(result.stdout)
+        assert protected.exists()
+        assert not safe.exists()
+        assert payload["data"]["retained_worktrees"] == [
+            {"path": str(protected.resolve()), "reason": "active handoff lease protects this worktree"}
+        ]
+    finally:
+        _cleanup_worktree(repo, protected, f"pr-review-{n}")
+        _cleanup_worktree(repo, safe, f"pr-followup-{n}")
+
+
+def test_malformed_or_unreadable_protection_evidence_fails_closed(tmp_path):
+    repo = _build_repo(tmp_path)
+    n = _unique_n()
+    residual = tmp_path / "residual" / f"pr-review-{n}"
+    residual.parent.mkdir()
+    _run("git", "worktree", "add", "-b", f"pr-review-{n}", str(residual), cwd=repo)
+
+    try:
+        result = _run_script(repo, n, _scoped_env(tmp_path), "--protect-worktree", "relative-path")
+
+        _assert_contract(result, "0", "0", "0", retained_wt="1")
+        retained = json.loads(result.stdout)["data"]["retained_worktrees"]
+        assert residual.exists()
+        assert retained == [{"path": str(residual.resolve()), "reason": "lease protection evidence unavailable"}]
+    finally:
+        _cleanup_worktree(repo, residual, f"pr-review-{n}")

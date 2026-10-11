@@ -23,7 +23,7 @@
 #             improvised during review/implementation work). This one is deliberately NOT
 #             <N>-keyed — it is scoped by session id, not by PR number — see SKILL.md Step 5.
 #
-# Usage: swe-workbench-sweep-residuals <PR number> [--repo owner/repo] [--head-sha <sha>]
+# Usage: swe-workbench-sweep-residuals <PR number> [--repo owner/repo] [--head-sha <sha>] [--protect-worktree <canonical-path>]...
 # Stdout contract (always emitted, even on a non-integer arg or nothing found): one
 # JSON envelope, schema swb.sweep-residuals/1 (see shared/docs/runtime-result-contract.md):
 #   data.swept_worktrees      — count of ephemeral worktrees removed
@@ -125,6 +125,8 @@ emit_envelope() {
 N=""
 REPO_ARG=""
 HEAD_SHA=""
+PROTECTED_WORKTREES=()
+PROTECTION_EVIDENCE_INVALID=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)
@@ -135,6 +137,21 @@ while [ $# -gt 0 ]; do
     --head-sha)
       [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --head-sha requires a value" >&2; emit_envelope; exit 0; }
       HEAD_SHA="$2"
+      shift 2
+      ;;
+    --protect-worktree)
+      [ $# -ge 2 ] || { echo "swe-workbench-sweep-residuals: --protect-worktree requires a canonical path" >&2; PROTECTION_EVIDENCE_INVALID=1; shift; continue; }
+      candidate="$2"
+      canonical=""
+      if [[ "$candidate" = /* ]]; then
+        canonical=$(cd "$candidate" 2>/dev/null && pwd -P) || canonical=""
+      fi
+      if [ -z "$canonical" ] || [ "$candidate" != "$canonical" ]; then
+        echo "swe-workbench-sweep-residuals: invalid --protect-worktree evidence" >&2
+        PROTECTION_EVIDENCE_INVALID=1
+      else
+        PROTECTED_WORKTREES+=("$canonical")
+      fi
       shift 2
       ;;
     *)
@@ -463,9 +480,26 @@ if [ -n "${MAIN_REPO:-}" ]; then
     done
   fi
 
+  protected_worktree() {
+    local candidate="$1" protected
+    for protected in "${PROTECTED_WORKTREES[@]:-}"; do
+      [ "$candidate" = "$protected" ] && return 0
+    done
+    return 1
+  }
+
   reap_one_worktree() {
     local label="$1" path="$2" delete_branch="$3"
     [ -n "$path" ] || return 0
+
+    if [ "$PROTECTION_EVIDENCE_INVALID" = "1" ]; then
+      RETAINED_ITEMS+=("$(_json_item "$path" "lease protection evidence unavailable")")
+      return 0
+    fi
+    if protected_worktree "$path"; then
+      RETAINED_ITEMS+=("$(_json_item "$path" "active handoff lease protects this worktree")")
+      return 0
+    fi
 
     # Interrupted flows are exactly when a worktree is most likely to hold
     # uncommitted, local-only work (e.g. a killed session mid-edit, before its
