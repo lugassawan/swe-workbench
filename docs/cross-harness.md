@@ -64,6 +64,74 @@ does, via the `--*-session-env` literal-argument form) remove that condition fro
 pipelines, but the guard's underlying false-positive rate on an unrecognized binary piped
 into another is upstream Claude Code's to fix.
 
+**RTK interaction — a Claude-only usability hook, not a fix.** Under RTK's global
+`rtk hook claude` PreToolUse hook, every `git …` is rewritten to `rtk git …`; once the session
+is isolated via `EnterWorktree`, Claude Code's guard refuses `rtk` as an opaque launcher with a
+git command among its operands. The harness's suggested next step ("run the plain command") is
+rewritten again, so retrying never converges. Measured against Claude Code 2.1.296 with RTK 0.51.0
+in throwaway repos (`scripts/rtk-worktree-matrix.sh` reproduces it):
+
+| Configuration | bare / `-C` / compound git | `rtk git` / `rtk proxy git` | `/usr/bin/git` |
+|---|---|---|---|
+| Claude Code + RTK (+ plugin) | refused | refused | allowed |
+| Claude Code only | allowed | refused | allowed |
+| Claude Code + plugin, no RTK | allowed | refused | allowed |
+
+RTK is the sole trigger; the plugin's own guards add nothing. A session *launched* inside a linked
+worktree is not isolated, so RTK-rewritten git runs there. A per-segment `RTK_DISABLED=1 git …`
+is allowed in every form (plain, `-C`, mutating, compound with the prefix on each git segment,
+`env RTK_DISABLED=1 git …`); `export RTK_DISABLED=1; git …` is still refused because the second
+segment is rewritten. RTK's `[hooks] exclude_commands = ["git"]` also works but gives up its git
+compression everywhere.
+
+`hooks/rtk_worktree_guard.sh` therefore stops the loop before it starts. After `EnterWorktree`
+it records a per-session marker (only when an `rtk hook claude` entry is configured); a Bash
+call whose cwd is inside the marked worktree is asked of `rtk rewrite` and **denied** when what
+will actually run is `rtk [proxy] git …`. The deny names one of three failure classes, so they are
+not conflated in logs or transcripts:
+
+- `containment` — one exact command to run: the **typed** command with `RTK_DISABLED=1` spliced
+  in at each git position (quotes, comments and continuations honoured, other segments left as
+  the model wrote them), after that fix has itself been run back through the same check.
+- `parse-complexity` — the command uses a substitution, backticks or a heredoc, so it cannot be
+  rendered safely; a fixed instruction to run each git command as its own
+  `RTK_DISABLED=1`-prefixed call.
+- `no-exact-fix` — it sits behind a launcher wrapper (`time`, `command`, `timeout`, … — RTK
+  splices `rtk` in after the wrapper, so a textual splice would not run), or the rendered fix
+  could not be decided on; the same fixed instruction, without the wrapper.
+
+Why deny rather than rewrite: PreToolUse `updatedInput` from separate hooks does not compose —
+the later hook would see, or overwrite, RTK's rewrite — while a deny always wins. Why decide on
+`rtk rewrite`'s result instead of the typed text: the same typed command is fine or refused
+depending on what RTK does to it (`/usr/bin/git`, `env RTK_DISABLED=1 git` untouched;
+`FOO=1 git` and `time git` rewritten), and RTK leaves commands with `$(…)` or heredocs alone.
+The exit code alone does not say whether anything changed: exit 3 and exit 0 both carry the
+rewritten command on stdout (0 when an allow rule such as `Bash(git *)` covers it), and exit 1
+means unchanged — so a user with that allow rule is still caught.
+
+The hook is fail-open (any uncertainty, a missing `rtk` or `jq`, a rewrite that hangs past
+~2s, or an unexpected exit code allows the call) and applies only to Claude Code; on Pi there
+is no `EnterWorktree` and no RTK hook, so it is an explicit N/A row in `HOOK_PI_STATUS`.
+
+Operational details: settings are read from `${CLAUDE_CONFIG_DIR:-~/.claude}` and the worktree's
+and main checkout's `.claude/settings*.json`. The marker is only written when RTK would in fact
+rewrite git there, lives in a private (0700, owner-checked, never symlinked) directory under
+`$TMPDIR`, and is not re-seeded after a resume that follows a temp purge — the hook then simply
+stops until the next `EnterWorktree`. A subagent without a marker of its own inherits the
+session's (scoped by cwd); the matrix's subagent cells record whether Claude Code's guard
+applies to them. Markers whose worktree has vanished are pruned on the next enter. A SIGKILL of
+the hook itself can leak one in-flight `rtk rewrite` child and its temp file; any other exit
+path reaps both. `SWE_WORKBENCH_RTK_WORKTREE_GUARD=0` switches the hook off entirely.
+
+What this hook cannot do: the originating report's acceptance criteria 2 and 3 (authorization
+decided on the resolved executable; equal decisions for equal targets) are properties of Claude
+Code's guard, not something a plugin hook can provide — it only stops the loop from repeating.
+The root fix is upstream and this hook should be deleted when it lands: Claude Code should
+unwrap known launchers when proving containment, or RTK should skip rewriting git inside an
+isolated session. No upstream issue is filed yet, so there is nothing to link here; the PR that
+introduced the hook tracks that follow-up. `bin/swe-workbench-doctor` prints an advisory when
+the RTK hook and the rewrite are both present.
+
 ## 2. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
 
 Each harness owns one per-repo memory store and reads the other's read-only

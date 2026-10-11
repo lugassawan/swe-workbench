@@ -224,3 +224,28 @@ def test_handoff_guard_registered_after_secret_guard_for_mutating_tools():
     )
     handoff_entry = next(entry for entry in pre_tool_use if "handoff_guard.py" in str(entry))
     assert handoff_entry["matcher"] == "Bash|Edit|Write"
+
+
+def test_rtk_worktree_guard_registered_for_worktree_lifecycle_and_bash():
+    """The RTK-aware worktree guard needs both halves: PostToolUse on
+    EnterWorktree|ExitWorktree to keep its per-session marker, and a PreToolUse
+    Bash entry. It is listed after bash_guard.sh by convention (the safety control
+    first); matching hooks run in parallel, so the order is not a gating guarantee."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    expected = {
+        "type": "command",
+        "command": 'bash "${CLAUDE_PLUGIN_ROOT}"/hooks/rtk_worktree_guard.sh',
+    }
+
+    post = [e for e in data["hooks"]["PostToolUse"] if expected in e.get("hooks", [])]
+    assert [e["matcher"] for e in post] == ["EnterWorktree|ExitWorktree"], (
+        f"expected exactly one PostToolUse entry matching EnterWorktree|ExitWorktree, got: {post!r}"
+    )
+
+    pre = data["hooks"]["PreToolUse"]
+    guard_entries = [(i, e) for i, e in enumerate(pre) if expected in e.get("hooks", [])]
+    assert [e["matcher"] for _, e in guard_entries] == ["Bash"]
+    bash_guard_index = next(
+        i for i, e in enumerate(pre) if any("bash_guard.sh" in h["command"] for h in e["hooks"])
+    )
+    assert guard_entries[0][0] > bash_guard_index

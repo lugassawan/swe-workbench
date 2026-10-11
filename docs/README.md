@@ -22,6 +22,6 @@ allowlist. This directory is repo-governance only and never ships.
 - [pi-port.md](pi-port.md) — the Pi Coding Agent port: what has no Pi equivalent and why, and the framing decisions and rejected alternatives behind the whole port.
 - [task-dispatch.md](task-dispatch.md) — the `task` first-party subagent dispatcher: why it isn't a `pi-subagents` fork, its recursion guards, and the model-dispatch policy.
 - [runtime-envelope.md](runtime-envelope.md) — rejected alternatives behind the standard runtime result envelope.
-- [cross-harness.md](cross-harness.md) — cross-harness rulings: handoff ownership (`handoff_guard.py` native mirror) and the per-repo memory stores.
+- [cross-harness.md](cross-harness.md) — cross-harness rulings: handoff ownership (`handoff_guard.py` native mirror), the harness worktree-isolation guard x RTK interaction (`rtk_worktree_guard.sh`), and the per-repo memory stores.
 - [pi-plan-mode.md](pi-plan-mode.md) — plan on Sol, execute on Terra: the Pi adapter's plan/execute phase split — marker-declared entry, the submit_plan approval flip, the user-global plans dir, and what was excluded.
 - [shared-agent-blocks.md](shared-agent-blocks.md) — why `@path` includes don't expand in agent/skill/command bodies, and the sentinel-delimited inlined-block mechanism (with `sync-shared-blocks.py`) that replaced them.
