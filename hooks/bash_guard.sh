@@ -156,10 +156,7 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Push-only lexer preserves empty quoted words, separates redirection syntax from Git argv, and
-# keeps a substitution inside the shell word it is glued to (`--opt=$(x)y` is one word) and
-# treats one inside double quotes as live (only single quotes make it literal); the
-# substitution body is emitted separately as NEST for recursive scanning.
+# Push-only lexer: redirects are syntax; empty quoted words and live substitutions stay in their word.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _push_token_awk='
   function emit_word() {
