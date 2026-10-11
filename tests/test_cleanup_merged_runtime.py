@@ -51,13 +51,19 @@ def _merged_response(head_sha: str) -> dict[str, object]:
     }
 
 
+def _session_environment(harness: str) -> str:
+    return {"claude": "CLAUDE_CODE_SESSION_ID", "pi": "PI_SESSION_ID"}[harness]
+
+
 def _prepare(
     repo: Path,
     state_dir: Path,
     fake_bin: Path,
     response: dict[str, object],
     handoff_dir: Path | None = None,
+    harness: str = "claude",
 ) -> subprocess.CompletedProcess[str]:
+    session_env = _session_environment(harness)
     return subprocess.run(
         [
             str(SCRIPT),
@@ -67,9 +73,9 @@ def _prepare(
             "--repo",
             "example/repository",
             "--as",
-            "claude",
+            harness,
             "--session-ref-env",
-            "CLAUDE_CODE_SESSION_ID",
+            session_env,
             "--deferred-follow-up",
             "not_required",
         ],
@@ -79,7 +85,7 @@ def _prepare(
         env={
             **_CLEAN_ENV,
             **_fake_gh(fake_bin, response),
-            "CLAUDE_CODE_SESSION_ID": "cleanup-test-session",
+            session_env: "cleanup-test-session",
             "SWE_WORKBENCH_CLEANUP_STATE_DIR": str(state_dir),
             **({"SWE_WORKBENCH_HANDOFF_STATE_DIR": str(handoff_dir)} if handoff_dir else {}),
         },
@@ -207,7 +213,7 @@ def _request_path(state_dir: Path, request_id: str) -> Path:
     return state_dir / "requests" / f"{request_id}.json"
 
 
-def _write_lease(root: Path, handoff_dir: Path, session: str) -> Path:
+def _write_lease(root: Path, handoff_dir: Path, session: str, owner_harness: str = "claude") -> Path:
     repo_key, worktree_key = handoff_state.worktree_identity(root)
     workspace = handoff_state.StatePaths(handoff_dir).workspace_directory(repo_key, worktree_key)
     handoff_state.ensure_owner_directory(workspace)
@@ -217,7 +223,7 @@ def _write_lease(root: Path, handoff_dir: Path, session: str) -> Path:
         json.dumps(
             {
                 "schema_version": 1,
-                "owner_harness": "claude",
+                "owner_harness": owner_harness,
                 "epoch": 1,
                 "checkpoint_id": "checkpoint",
                 "receiver_session_ref": session,
@@ -225,6 +231,14 @@ def _write_lease(root: Path, handoff_dir: Path, session: str) -> Path:
         ),
     )
     return lease_path
+
+
+def _cleanup_execute_pipeline(request_id: str, harness: str) -> str:
+    return (
+        f'swe-workbench-cleanup-merged execute --request "{request_id}" --as {harness} '
+        f'--session-ref-env {_session_environment(harness)} '
+        "| swe-workbench-result-check swb.cleanup-merged/1"
+    )
 
 
 def _execute(
@@ -235,7 +249,9 @@ def _execute(
     response: dict[str, object],
     request_id: str,
     environment: dict[str, str] | None = None,
+    harness: str = "claude",
 ) -> subprocess.CompletedProcess[str]:
+    session_env = _session_environment(harness)
     return subprocess.run(
         [
             str(SCRIPT),
@@ -243,9 +259,9 @@ def _execute(
             "--request",
             request_id,
             "--as",
-            "claude",
+            harness,
             "--session-ref-env",
-            "CLAUDE_CODE_SESSION_ID",
+            session_env,
         ],
         cwd=primary,
         capture_output=True,
@@ -253,7 +269,7 @@ def _execute(
         env={
             **_CLEAN_ENV,
             **_fake_gh(fake_bin, response),
-            "CLAUDE_CODE_SESSION_ID": "cleanup-test-session",
+            session_env: "cleanup-test-session",
             "SWE_WORKBENCH_CLEANUP_STATE_DIR": str(state_dir),
             "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(handoff_dir),
             **(environment or {}),
@@ -261,15 +277,42 @@ def _execute(
     )
 
 
+def _execute_pipeline(
+    primary: Path,
+    state_dir: Path,
+    handoff_dir: Path,
+    fake_bin: Path,
+    response: dict[str, object],
+    request_id: str,
+    harness: str,
+) -> subprocess.CompletedProcess[str]:
+    session_env = _session_environment(harness)
+    environment = {
+        **_CLEAN_ENV,
+        **_fake_gh(fake_bin, response),
+        session_env: "cleanup-test-session",
+        "SWE_WORKBENCH_CLEANUP_STATE_DIR": str(state_dir),
+        "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(handoff_dir),
+    }
+    environment["PATH"] = f"{ROOT / 'bin'}{os.pathsep}{environment['PATH']}"
+    return subprocess.run(
+        ["bash", "-o", "pipefail", "-c", _cleanup_execute_pipeline(request_id, harness)],
+        cwd=primary,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+
 def _prepare_linked_request(
-    tmp_path: Path,
+    tmp_path: Path, harness: str = "claude"
 ) -> tuple[Path, Path, Path, Path, Path, dict[str, object], str]:
     primary, target, remote = _initialize_linked_repo(tmp_path)
     head_sha = _run_git(target, "rev-parse", "HEAD").stdout.strip()
     state_dir = tmp_path / "cleanup-state"
     handoff_dir = tmp_path / "handoff-state"
     response = _merged_response(head_sha)
-    prepared = _prepare(target, state_dir, tmp_path / "fake-bin", response, handoff_dir)
+    prepared = _prepare(target, state_dir, tmp_path / "fake-bin", response, handoff_dir, harness)
     assert prepared.returncode == 0, prepared.stderr
     return primary, target, remote, state_dir, handoff_dir, response, json.loads(prepared.stdout)["data"]["request_id"]
 
@@ -287,11 +330,14 @@ def _remote_branch_exists(remote: Path, branch: str) -> bool:
     ).returncode == 0
 
 
-def test_execute_completes_with_foreign_primary_lease_and_no_helper_worktree(tmp_path: Path) -> None:
-    primary, target, remote, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path)
-    _write_lease(primary, handoff_dir, "foreign-session")
+@pytest.mark.parametrize("harness", ["claude", "pi"])
+def test_execute_completes_with_foreign_primary_lease_and_no_helper_worktree(
+    tmp_path: Path, harness: str
+) -> None:
+    primary, target, remote, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path, harness)
+    _write_lease(primary, handoff_dir, "foreign-session", harness)
 
-    result = _execute(primary, state_dir, handoff_dir, tmp_path / "fake-bin", response, request_id)
+    result = _execute(primary, state_dir, handoff_dir, tmp_path / "fake-bin", response, request_id, harness=harness)
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)

@@ -5,7 +5,15 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from conftest import _CLEAN_ENV
+from test_cleanup_merged_runtime import (
+    _cleanup_execute_pipeline,
+    _execute_pipeline,
+    _prepare_linked_request,
+    _write_lease,
+)
 
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "hooks" / "handoff_guard.py"
@@ -365,6 +373,62 @@ def test_allows_close_pipeline_for_the_bound_owner_session(tmp_path):
     result = _run_hook(payload, state_dir=state_dir)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_foreign_primary_lease_allows_only_prepared_cleanup_and_completes_without_helper(tmp_path):
+    primary, target, _, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path)
+    _write_lease(primary, handoff_dir, "foreign-session")
+    payload = _payload(primary, "Bash", session_id="cleanup-test-session")
+    payload["tool_input"] = {"command": _cleanup_execute_pipeline(request_id, "claude")}
+
+    guard = _run_hook(payload, state_dir=handoff_dir)
+
+    assert guard.returncode == 0, guard.stderr
+    execution = _execute_pipeline(
+        primary, state_dir, handoff_dir, tmp_path / "cleanup-bin", response, request_id, "claude"
+    )
+    assert execution.returncode == 0, execution.stderr
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "swe-workbench-cleanup-merged prepare --pr 12",
+        "swe-workbench-cleanup-merged execute --request 123 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as pi --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env PI_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID --extra | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --as claude --request 123e4567-e89b-12d3-a456-426614174000 --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.handoff/1",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 | cat",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 && true",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1; true",
+        "swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1 > /dev/null",
+        "swe-workbench-cleanup-merged execute --request $(printf 123e4567-e89b-12d3-a456-426614174000) --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "RUN=1 swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1",
+        "printf '%s' 'swe-workbench-cleanup-merged execute --request 123e4567-e89b-12d3-a456-426614174000 --as claude --session-ref-env CLAUDE_CODE_SESSION_ID | swe-workbench-result-check swb.cleanup-merged/1'",
+    ],
+)
+def test_blocks_prepared_cleanup_command_shape_near_misses(tmp_path, command):
+    repo = tmp_path / "repo"
+    _initialize_repo(repo)
+    state_dir = tmp_path / "state"
+    checkpoint_id = _create(repo, state_dir, target="claude", source="pi")
+    acquired = _runtime(
+        "resume", checkpoint_id, "--as", "claude", "--receiver-session", "foreign-session", cwd=repo, state_dir=state_dir
+    )
+    assert acquired.returncode == 0, acquired.stderr
+    payload = _payload(repo, "Bash", session_id="cleanup-test-session")
+    payload["tool_input"] = {"command": command}
+
+    result = _run_hook(payload, state_dir=state_dir)
+
+    assert result.returncode == 2
+    assert "BLOCKED:" in result.stderr
 
 
 def test_rejects_lifecycle_pipeline_with_a_shell_suffix(tmp_path):

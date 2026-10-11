@@ -28,6 +28,16 @@ Applied to every entry in `hooks/hooks.json`, no `if` buys anything:
 | `workflow_resume_hint.sh` ×3 | `SessionStart` | Same — lifecycle events carry no tool call |
 | `memory_hint.sh` ×3 | `SessionStart` | Same — lifecycle events carry no tool call |
 
+## Prepared cleanup capability
+
+When a foreign receiver owns the primary-worktree lease, the handoff adapters recognize only
+`swe-workbench-cleanup-merged execute --request <uuid> --as <harness>
+--session-ref-env <fixed-harness-env> | swe-workbench-result-check swb.cleanup-merged/1`.
+This is an inert command-shape check, not cleanup authorization: the prepared request and runtime
+revalidate the sealed target and resource authority. The command cannot change the foreign lease or
+select a target after preparation; flags, reordered arguments, shell operators, substitutions,
+redirections, and unchecked output remain subject to the ordinary handoff decision.
+
 **Ruling: no `hooks.json` entry may carry an `if` key**, enforced by
 `scripts/validate.py:check_hooks_json()`. This is strictly stronger than the two security
 controls (`bash_guard.sh`, `secret_guard.py`) that originally motivated the question — every entry

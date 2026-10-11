@@ -22,6 +22,7 @@ _RUNTIME_NAME = "swe-workbench-handoff"
 _TIMEOUT_SECONDS = 10
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _CHECKED_PIPE = r"\| swe-workbench-result-check swb\.handoff/1"
+_CLEANUP_CHECKED_PIPE = r"\| swe-workbench-result-check swb\.cleanup-merged/1"
 _CLAUDE_SESSION_ARGUMENT = re.escape(
     '"${CLAUDE_CODE_SESSION_ID:?missing CLAUDE_CODE_SESSION_ID}"'
 )
@@ -29,7 +30,12 @@ _CLAUDE_SESSION_ENV_ARGUMENT = re.escape("CLAUDE_CODE_SESSION_ID")
 _ABANDON_COMMAND = re.compile(
     rf'^swe-workbench-handoff abandon "?{_UUID}"? --source-stopped {_CHECKED_PIPE}$'
 )
+_CLEANUP_EXECUTE_COMMAND = re.compile(
+    rf'^swe-workbench-cleanup-merged execute --request "?{_UUID}"? --as "?claude"? '
+    rf'--session-ref-env {_CLAUDE_SESSION_ENV_ARGUMENT} {_CLEANUP_CHECKED_PIPE}$'
+)
 _CONTROL_COMMANDS = (
+    _CLEANUP_EXECUTE_COMMAND,
     re.compile(
         rf'^swe-workbench-handoff resume "?{_UUID}"? --as "?claude"? '
         rf'--receiver-session {_CLAUDE_SESSION_ARGUMENT} '
