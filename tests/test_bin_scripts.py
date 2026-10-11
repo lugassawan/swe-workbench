@@ -28,6 +28,7 @@ SCRIPTS = {
     "swe-workbench-apply-conflict-resolution": "bash",
     "swe-workbench-clean-ephemeral": "bash",
     "swe-workbench-clean-state-files": "bash",
+    "swe-workbench-cleanup-merged": "python3",
     "swe-workbench-comment-scan": "python3",
     "swe-workbench-dead-code-scan": "python3",
     "swe-workbench-diff-line-lookup": "bash",

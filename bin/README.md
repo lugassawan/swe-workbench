@@ -17,7 +17,7 @@ Every script documents itself: run `swe-workbench-<name> --help` for usage, argu
 — there is no separate script-by-script table here to keep in sync with the code as scripts change.
 The scripts in this directory that carry a `#!/usr/bin/env python3` shebang instead of
 `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
-`swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-issue-preflight`, `swe-workbench-lsp`,
+`swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-cleanup-merged`, `swe-workbench-issue-preflight`, `swe-workbench-lsp`,
 `swe-workbench-memory`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
 `swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, and

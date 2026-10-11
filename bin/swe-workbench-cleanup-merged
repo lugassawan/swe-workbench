@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Prepare a sealed cleanup request for a merged pull request."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from swe_workbench_runtime import handoff_state
+
+SCHEMA = "swb.cleanup-merged/1"
+HARNESSES = ("claude", "pi")
+SESSION_ENV_NAMES = {"claude": "CLAUDE_CODE_SESSION_ID", "pi": "PI_SESSION_ID"}
+FOLLOW_UP_CHOICES = ("not_required", "file_issue", "skip")
+REQUEST_VERSION = 1
+
+
+class CleanupError(Exception):
+    """Raise when a sealed cleanup request cannot be safely prepared."""
+
+
+@dataclass(frozen=True)
+class RequestPaths:
+    """Locate owner-only prepared cleanup requests."""
+
+    root: Path
+
+    @classmethod
+    def from_environment(cls) -> RequestPaths:
+        override = os.environ.get("SWE_WORKBENCH_CLEANUP_STATE_DIR")
+        if override:
+            return cls(Path(override).expanduser())
+        xdg_state_home = os.environ.get("XDG_STATE_HOME")
+        state_home = Path(xdg_state_home).expanduser() if xdg_state_home else Path.home() / ".local" / "state"
+        return cls(state_home / "swe-workbench" / "cleanup-merged" / "v1")
+
+    def request_path(self, request_id: str) -> Path:
+        return self.root / "requests" / f"{request_id}.json"
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """Represent a checked runtime result."""
+
+    status: str
+    data: dict[str, object]
+    warnings: list[dict[str, str]]
+    schema: str = SCHEMA
+
+
+def write_envelope(envelope: Envelope) -> None:
+    """Write one JSON envelope to stdout."""
+
+    print(json.dumps(asdict(envelope), sort_keys=True))
+
+
+def canonical_json(value: object) -> str:
+    """Encode state deterministically."""
+
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def now() -> datetime:
+    """Return the current UTC time."""
+
+    return datetime.now(timezone.utc)
+
+
+def iso_time(value: datetime) -> str:
+    """Render a UTC timestamp in the persisted request format."""
+
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def run(arguments: list[str], cwd: Path) -> str:
+    """Run a non-shell command and return stdout or raise a cleanup error."""
+
+    try:
+        result = subprocess.run(arguments, cwd=cwd, capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CleanupError(f"could not execute {arguments[0]}: {error}") from error
+    if result.returncode != 0:
+        raise CleanupError(result.stderr.strip() or f"{' '.join(arguments)} failed")
+    return result.stdout.strip()
+
+
+def git_text(arguments: list[str], cwd: Path) -> str:
+    """Run Git without inherited worktree overrides."""
+
+    environment = handoff_state.clean_git_environment()
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CleanupError(f"could not execute git: {error}") from error
+    if result.returncode != 0:
+        raise CleanupError(result.stderr.strip() or f"git {' '.join(arguments)} failed")
+    return result.stdout.strip()
+
+
+def resolve_session(as_harness: str, env_name: str) -> str:
+    """Resolve only the harness-approved session environment variable."""
+
+    expected = SESSION_ENV_NAMES[as_harness]
+    if env_name != expected:
+        raise CleanupError(f"--session-ref-env must be {expected!r} for --as {as_harness}")
+    value = os.environ.get(env_name)
+    if not handoff_state.valid_session_ref(value):
+        raise CleanupError(f"missing or invalid {env_name}")
+    return value
+
+
+def current_workspace() -> tuple[Path, str, str, str, str]:
+    """Return current worktree root and its immutable Git identity."""
+
+    cwd = Path.cwd().resolve()
+    root = Path(git_text(["rev-parse", "--show-toplevel"], cwd)).resolve()
+    repo_key, worktree_key = handoff_state.worktree_identity(root)
+    return root, repo_key, worktree_key, git_text(["rev-parse", "--abbrev-ref", "HEAD"], root), git_text(["rev-parse", "HEAD"], root)
+
+
+def pull_request(pr_number: int, repo: str, cwd: Path) -> dict[str, object]:
+    """Fetch merged PR facts from GitHub's authoritative CLI response."""
+
+    output = run(
+        [
+            "gh",
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "state,mergedAt,url,headRefName,headRefOid,baseRefName,body",
+        ],
+        cwd,
+    )
+    try:
+        response = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise CleanupError(f"gh pr view returned invalid JSON: {error}") from error
+    if not isinstance(response, dict):
+        raise CleanupError("gh pr view returned an invalid PR record")
+    return response
+
+
+def require_merged_pr(response: dict[str, object], pr_number: int, repo: str) -> tuple[str, str, str, str]:
+    """Validate sealed GitHub PR identity facts."""
+
+    expected_url = f"https://github.com/{repo}/pull/{pr_number}"
+    state = response.get("state")
+    merged_at = response.get("mergedAt")
+    url = response.get("url")
+    head_ref = response.get("headRefName")
+    head_sha = response.get("headRefOid")
+    base_ref = response.get("baseRefName")
+    if state != "MERGED" or not isinstance(merged_at, str) or not merged_at:
+        raise CleanupError("pull request is not merged")
+    if url != expected_url:
+        raise CleanupError("pull request URL does not match --repo and --pr")
+    if not all(isinstance(value, str) and value for value in (head_ref, head_sha, base_ref)):
+        raise CleanupError("pull request head or base identity is incomplete")
+    return head_ref, head_sha, base_ref, str(response.get("body", ""))
+
+
+def require_clean_pushed_target(root: Path) -> None:
+    """Reject dirty or unpushed targets before sealing cleanup authority."""
+
+    if git_text(["status", "--porcelain"], root):
+        raise CleanupError("target worktree has uncommitted changes")
+    if git_text(["rev-list", "@{upstream}..HEAD"], root):
+        raise CleanupError("target worktree has unpushed commits")
+
+
+def prepare_request(pr_number: int, repo: str, as_harness: str, session_env: str, follow_up: str) -> Envelope:
+    """Seal validated merged-cleanup authority for the current target worktree."""
+
+    session = resolve_session(as_harness, session_env)
+    root, repo_key, worktree_key, branch, head_sha = current_workspace()
+    response = pull_request(pr_number, repo, root)
+    head_ref, pr_head_sha, base_ref, _ = require_merged_pr(response, pr_number, repo)
+    if branch != head_ref or head_sha != pr_head_sha:
+        raise CleanupError("current worktree is not the pull request head")
+    handoff_paths = handoff_state.StatePaths.from_environment()
+    if handoff_state.load_lease(handoff_paths.workspace_directory(repo_key, worktree_key)) is not None:
+        raise CleanupError("target worktree has an active handoff lease")
+    require_clean_pushed_target(root)
+
+    created_at = now()
+    request_id = str(uuid.uuid4())
+    request = {
+        "version": REQUEST_VERSION,
+        "request_id": request_id,
+        "status": "prepared",
+        "created_at": iso_time(created_at),
+        "expires_at": iso_time(created_at + timedelta(minutes=15)),
+        "harness": as_harness,
+        "session_sha256": hashlib.sha256(session.encode()).hexdigest(),
+        "repo": repo,
+        "repo_key": repo_key,
+        "worktree_key": worktree_key,
+        "worktree_root": str(root),
+        "pr_number": pr_number,
+        "pr_url": response["url"],
+        "head_ref": head_ref,
+        "head_sha": pr_head_sha,
+        "base_ref": base_ref,
+        "follow_up": follow_up,
+        "progress": {
+            "worktree_removed": False,
+            "residuals_swept": False,
+            "local_branch_deleted": False,
+            "remote_branch_deleted": False,
+        },
+    }
+    paths = RequestPaths.from_environment()
+    requests_directory = paths.root / "requests"
+    handoff_state.ensure_owner_directory(paths.root)
+    handoff_state.ensure_owner_directory(requests_directory)
+    try:
+        handoff_state.write_atomic(paths.request_path(request_id), canonical_json(request))
+    except handoff_state.HandoffStateError as error:
+        raise CleanupError(str(error)) from error
+    return Envelope(
+        "ok",
+        {
+            "request_id": request_id,
+            "phase": "prepared",
+            "completed": False,
+            "main_sync_skipped": True,
+            "worktree_removed": False,
+            "local_branch_deleted": False,
+            "remote_branch_deleted": False,
+            "residual_none": False,
+            "follow_up": follow_up,
+        },
+        [],
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the strict two-phase command interface."""
+
+    parser = argparse.ArgumentParser(prog="swe-workbench-cleanup-merged")
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    prepare = subcommands.add_parser("prepare", help="seal merged-cleanup authority for the current worktree")
+    prepare.add_argument("--pr", type=int, required=True)
+    prepare.add_argument("--repo", required=True)
+    prepare.add_argument("--as", dest="as_harness", required=True, choices=HARNESSES)
+    prepare.add_argument("--session-ref-env", required=True)
+    prepare.add_argument("--deferred-follow-up", required=True, choices=FOLLOW_UP_CHOICES)
+    execute = subcommands.add_parser("execute", help="execute a previously prepared cleanup request")
+    execute.add_argument("--request", required=True)
+    execute.add_argument("--as", dest="as_harness", required=True, choices=HARNESSES)
+    execute.add_argument("--session-ref-env", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a cleanup preparation command."""
+
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "prepare":
+            if args.pr <= 0 or "/" not in args.repo or args.repo.count("/") != 1:
+                raise CleanupError("--pr must be positive and --repo must be owner/repository")
+            write_envelope(prepare_request(args.pr, args.repo, args.as_harness, args.session_ref_env, args.deferred_follow_up))
+            return 0
+        raise CleanupError("execute is not implemented until the sealed executor is installed")
+    except CleanupError as error:
+        print(f"swe-workbench-cleanup-merged: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
