@@ -157,7 +157,8 @@ _segment_awk='
   }'
 
 # Push-only lexer preserves empty quoted words, separates redirection syntax from Git argv, and
-# keeps a substitution inside the shell word it is glued to (`--opt=$(x)y` is one word); the
+# keeps a substitution inside the shell word it is glued to (`--opt=$(x)y` is one word) and
+# treats one inside double quotes as live (only single quotes make it literal); the
 # substitution body is emitted separately as NEST for recursive scanning.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _push_token_awk='
@@ -198,7 +199,8 @@ _push_token_awk='
         if (!in_sq) { in_dq = !in_dq; word_started = 1; continue }
       }
       if (c == "\\") continue
-      if (in_sq || in_dq) {
+      live_sub = !in_sq && (c == "`" || (c == "$" && substr(line, i + 1, 1) == "("))
+      if ((in_sq || in_dq) && !live_sub) {
         word = word c; word_started = 1
         continue
       }

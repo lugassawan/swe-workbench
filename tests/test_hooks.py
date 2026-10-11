@@ -471,6 +471,33 @@ class TestImplicitForcePushBlocker:
         )
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
+    @pytest.mark.parametrize("cmd", [
+        'git push --force origin "$(echo main)"',
+        'git push --force origin "feature/$(date)"',
+        'git push --force origin "`echo main`"',
+        'git push --force origin "$(echo "main")"',
+        'echo "$(git push --force origin main)"',
+    ])
+    def test_double_quoted_substitution_is_live_not_literal(
+        self, guard_script, repo_on, cmd
+    ):
+        """Substitutions run inside double quotes, so a destination (or a whole
+        push) hidden in one must fail closed instead of lexing as plain text.
+        """
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git push --force origin '$(echo main)'",
+        "git push --force --push-option=\"$(date)\" origin feature/x",
+        'git push --force origin "\\$(echo main)"',
+    ])
+    def test_single_quoted_or_escaped_substitution_stays_literal(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 0 and result.stderr == ""
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).
