@@ -507,7 +507,11 @@ try:
             raise SystemExit(10)
         if subprocess.run(["git", "-C", str(path), "status", "--porcelain"], capture_output=True, text=True, check=False).stdout:
             raise SystemExit(11)
-        raise SystemExit(subprocess.run(["git", "worktree", "remove", "--force", str(path)], check=False).returncode)
+        status = subprocess.run(["git", "worktree", "remove", "--force", str(path)], check=False).returncode
+        if status != 0 and path.is_dir():
+            guard = str(Path(os.environ["SWE_WORKBENCH_RUNTIME_DIR"]) / "swe-workbench-clean-ephemeral")
+            status = subprocess.run([guard, str(path)], check=False).returncode
+        raise SystemExit(status)
 except handoff_state.HandoffStateError:
     raise SystemExit(10)
 PY

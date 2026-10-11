@@ -50,6 +50,7 @@ const CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.handoff/1`;
 const CLEANUP_CHECKED_PIPE = String.raw`\| swe-workbench-result-check swb\.cleanup-merged/1`;
 const PI_SESSION_ARGUMENT = '"${PI_SESSION_ID:?missing PI_SESSION_ID}"';
 const PI_SESSION_ENV_ARGUMENT = "PI_SESSION_ID";
+const RESUME_PREFIX = `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? `;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -63,22 +64,16 @@ const ABANDON_COMMAND = new RegExp(
   `^swe-workbench-handoff abandon "?${UUID_PATTERN.source}"? --source-stopped ${CHECKED_PIPE}$`,
 );
 const CLEANUP_EXECUTE_COMMAND = new RegExp(
-  `^swe-workbench-cleanup-merged execute --request "?${UUID_PATTERN.source}"? --as "?pi"? ` +
-    `--session-ref-env ${PI_SESSION_ENV_ARGUMENT} ${CLEANUP_CHECKED_PIPE}$`,
+  `^swe-workbench-cleanup-merged execute --request "?${UUID_PATTERN.source}"? --as "?pi"? --session-ref-env ${PI_SESSION_ENV_ARGUMENT} ${CLEANUP_CHECKED_PIPE}$`,
 );
 const CONTROL_COMMANDS: readonly RegExp[] = [
   CLEANUP_EXECUTE_COMMAND,
   new RegExp(
-    `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
-      `--receiver-session ${escapeRegExp(PI_SESSION_ARGUMENT)} ` +
-      `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
+    `${RESUME_PREFIX}--receiver-session ${escapeRegExp(PI_SESSION_ARGUMENT)} (?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
   ),
-  // Literal-argument form: no runtime shell expansion, so a harness's static command guard
-  // can prove the pipeline inert. Mirrors bin/swe-workbench-handoff's resolve_session_ref.
+  // Literal-argument env form: statically provable inert (no shell expansion), like resolve_session_ref.
   new RegExp(
-    `^swe-workbench-handoff resume "?${UUID_PATTERN.source}"? --as "?pi"? ` +
-      `--receiver-session-env ${escapeRegExp(PI_SESSION_ENV_ARGUMENT)} ` +
-      `(?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
+    `${RESUME_PREFIX}--receiver-session-env ${escapeRegExp(PI_SESSION_ENV_ARGUMENT)} (?:--acknowledge-degraded )?${CHECKED_PIPE}$`,
   ),
   new RegExp(
     `^swe-workbench-handoff recover --from "?claude"? --source-stopped ${CHECKED_PIPE}$`,
