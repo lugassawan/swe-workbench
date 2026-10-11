@@ -161,7 +161,7 @@ _segment_awk='
 _push_token_awk='
   function emit_word() {
     if (!word_started) return
-    if (redirect_target) { if (here_string) print "NEST\t" word; redirect_target = 0; here_string = 0 }
+    if (redirect_target) { if (here_string) print "HERE\t" word; redirect_target = 0; here_string = 0 }
     else print "WORD\t" word
     word = ""; word_started = 0
   }
@@ -184,7 +184,7 @@ _push_token_awk='
       c = substr(line, i, 1)
       if (c == "\n") {
         escaped = 0
-        if (in_sq || in_dq) { word = word " "; word_started = 1 } else emit_separator()
+        if (in_sq || in_dq) { word = word "\001"; word_started = 1 } else emit_separator()
         continue
       }
       if (escaped) {
@@ -289,28 +289,49 @@ _push_token_awk='
 # The active segment is held in globals because Bash 3.2 has no namerefs.
 # `scan_force_push_text` resets them at every lexical separator.
 _push_tokens=()
+_push_here=()
+_push_subs=()
 _push_saw_tab=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
+# Set while a wrapper's code operand is re-scanned: everything before `git` there is an argument.
+_NESTED_WRAPPER_BODY=0
+
+# Programs that run their remaining arguments as a command; the flat scan this lexer replaced
+# treated everything after one of them as code, so the lexer must too.
+_is_wrapper_prefix() {
+  case "$1" in
+    sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|ksh|fish|eval|\
+    rtk|docker|podman|kubectl|su|setsid|stdbuf|flock|script) return 0 ;;
+  esac
+  return 1
+}
+
+_is_shell_interpreter() {
+  case "$1" in bash|sh|zsh|dash|ksh|fish|su|eval|source|.) return 0 ;; esac
+  return 1
+}
 
 _classify_force_push_segment() {
-  local _prefix _t push_text
-  local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
+  local _prefix _base _t push_text
+  local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
   local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
   local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _dynamic_flag_candidate=0
   local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
 
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
-    case "$_prefix" in
-      git|*/git) _found_git=1; break ;;
-      [[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
-      sudo|env|time|nice|nohup|command|exec|xargs|timeout|watch|ssh|bash|sh|zsh|dash|eval|rtk|\
-      docker|podman|kubectl|su|setsid|stdbuf|flock|script|*/rtk|*/docker|*/podman|*/kubectl)
-        _prefix_args=1 ;;
-      '!'|if|while|until|do|then) ;;
+    _base=${_prefix##*/}
+    case "$_base" in
+      git) _found_git=1; break ;;
+      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
+      '!'|if|while|until|do|then|else) ;;
       "$_DYNAMIC_TOKEN") ;;
-      -*) (( _prefix_args )) || _prefix_ok=0 ;;
-      *) (( _prefix_args )) || _prefix_ok=0 ;;
+      *)
+        if _is_wrapper_prefix "$_base"; then
+          _prefix_args=1
+        else
+          (( _prefix_args )) || _prefix_ok=0
+        fi ;;
     esac
     _i=$((_i + 1))
   done
@@ -406,89 +427,152 @@ _classify_force_push_segment() {
 MAX_PUSH_SCAN_DEPTH=4
 
 _scan_nested_text() {
-  local _nested_text=$1 _nested_depth=$2
+  local _nested_text=${1//$'\001'/$'\n'} _nested_depth=$2
   # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
   local -a _saved_tokens=(${_push_tokens[@]+"${_push_tokens[@]}"})
+  local -a _saved_here=(${_push_here[@]+"${_push_here[@]}"})
+  local -a _saved_subs=(${_push_subs[@]+"${_push_subs[@]}"})
   local _saved_saw_tab=$_push_saw_tab
   scan_force_push_text "$_nested_text" "$((_nested_depth + 1))"
   _push_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
+  _push_here=(${_saved_here[@]+"${_saved_here[@]}"})
+  _push_subs=(${_saved_subs[@]+"${_saved_subs[@]}"})
   _push_saw_tab=$_saved_saw_tab
 }
 
+# A word holding whitespace or a quoted newline is a candidate command string.
+_has_code_text() {
+  [[ "$1" == *[[:space:]]* || "$1" == *$'\001'* ]]
+}
+
+_scan_wrapper_operand() {
+  local _saved_seed=$_NESTED_WRAPPER_BODY
+  _NESTED_WRAPPER_BODY=1
+  _scan_nested_text "$1" "$2"
+  _NESTED_WRAPPER_BODY=$_saved_seed
+}
+
+# After a wrapper prefix every quoted string before the first `git` word is code (a shell's
+# `$0` args excepted); words after `git` are data unless git itself runs them.
 _scan_known_wrapper_body() {
-  local _depth=$1 _i _j _n=${#_push_tokens[@]} _body _has_body
-  (( _n )) || return
-  # Every wrapper in the segment is scanned: `env X=1 bash -lc '...'` carries two.
+  local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _tok _base _body
+  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0
   for ((_i = 0; _i < _n; _i++)); do
-    _body=""; _has_body=0
-    case "${_push_tokens[_i]}" in
-      bash|sh|zsh|dash|su)
-        # Only the operand after -c / a flag cluster ending in c is code; $0 and later args are not.
-        for ((_j = _i + 1; _j < _n; _j++)); do
-          case "${_push_tokens[_j]}" in
-            -c|-[[:alpha:]]*c)
-              _j=$((_j + 1))
-              [[ "${_push_tokens[_j]-}" == -- ]] && _j=$((_j + 1))
-              if (( _j < _n )); then _body=${_push_tokens[_j]}; _has_body=1; fi
-              break ;;
-          esac
-        done ;;
-      ssh)
-        _j=$((_i + 1))
-        while (( _j < _n )); do
-          case "${_push_tokens[_j]}" in
-            -p|-l|-i|-o|-F|-J|-S|-W) _j=$((_j + 2)) ;;
-            -*) _j=$((_j + 1)) ;;
-            *) _j=$((_j + 1)); break ;;
-          esac
-        done
-        for ((; _j < _n; _j++)); do _body="$_body${_body:+ }${_push_tokens[_j]}"; _has_body=1; done ;;
-      eval|watch)
-        for ((_j = _i + 1; _j < _n; _j++)); do _body="$_body${_body:+ }${_push_tokens[_j]}"; _has_body=1; done ;;
-      env)
-        for ((_j = _i + 1; _j < _n; _j++)); do
-          case "${_push_tokens[_j]}" in
-            -S|--split-string)
-              if (( _j + 1 < _n )); then _body=${_push_tokens[_j + 1]}; _has_body=1; fi
-              break ;;
-            --split-string=*) _body=${_push_tokens[_j]#*=}; _has_body=1; break ;;
-            -S?*) _body=${_push_tokens[_j]#-S}; _has_body=1; break ;;
-          esac
-        done ;;
-      script|flock)
-        for ((_j = _i + 1; _j + 1 < _n; _j++)); do
-          if [[ "${_push_tokens[_j]}" == -c ]]; then _body=${_push_tokens[_j + 1]}; _has_body=1; break; fi
-        done ;;
+    _tok=${_push_tokens[_i]}
+    _base=${_tok##*/}
+    _is_shell_interpreter "$_base" && _consumer=1
+    (( _g < 0 )) || continue
+    case "$_base" in
+      git) _g=$_i ;;
+      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*|'!'|if|while|until|do|then|else|"$_DYNAMIC_TOKEN") ;;
+      *)
+        if _is_wrapper_prefix "$_base"; then
+          (( _p >= 0 )) || _p=$_i
+          _after=1
+        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _push_saw_tab )); then
+          _g=$_n
+        fi ;;
     esac
-    (( _has_body )) && _scan_nested_text "$_body" "$_depth"
   done
+  (( _g < _n )) || _g=-1
+
+  # A body that was itself handed to a wrapper has no visible prefix, but is still all arguments.
+  if (( _p >= 0 || _NESTED_WRAPPER_BODY )); then
+    _end=$(( _g >= 0 ? _g : _n ))
+    for ((_i = (_p >= 0 ? _p : 0); _i < _end; _i++)); do
+      _tok=${_push_tokens[_i]}
+      case "${_tok##*/}" in
+        bash|sh|zsh|dash|ksh|fish|su)
+          for ((_j = _i + 1; _j < _n; _j++)); do
+            case "${_push_tokens[_j]}" in
+              --command=*)
+                _scan_wrapper_operand "${_push_tokens[_j]#*=}" "$_depth"
+                break ;;
+              -c*|--command|-[!-]*c*)
+                for ((_k = _j + 1; _k < _n; _k++)); do
+                  if _has_code_text "${_push_tokens[_k]}"; then
+                    _scan_wrapper_operand "${_push_tokens[_k]}" "$_depth"
+                    break
+                  fi
+                done
+                break ;;
+            esac
+          done
+          _i=$_end ;;
+        *)
+          if (( _i > _p )) && _has_code_text "$_tok"; then
+            _scan_wrapper_operand "$_tok" "$_depth"
+          fi ;;
+      esac
+    done
+  fi
+
+  if (( _g >= 0 )); then
+    for ((_i = _g + 1; _i < _n; _i++)); do
+      _tok=${_push_tokens[_i]}
+      case "$_tok" in
+        foreach|filter-branch|run|-x|--exec|--exec=*|--extcmd|--extcmd=*|--tree-filter|\
+        --index-filter|--msg-filter|--env-filter|--commit-filter|--parent-filter|--tag-name-filter)
+          _runner=1 ;;
+      esac
+      if [[ "$_prev" == -c || "$_tok" == -c?* ]] && _has_code_text "$_tok"; then
+        _base=${_tok#*=}
+        _scan_wrapper_operand "${_base#!}" "$_depth"
+      fi
+      _prev=$_tok
+    done
+    if (( _runner )); then
+      for ((_i = _g + 1; _i < _n; _i++)); do
+        _tok=${_push_tokens[_i]}
+        _has_code_text "$_tok" || continue
+        [[ "$_tok" == -*=* ]] && _tok=${_tok#*=}
+        _scan_wrapper_operand "$_tok" "$_depth"
+      done
+    fi
+  fi
+
+  for _body in ${_push_subs[@]+"${_push_subs[@]}"}; do
+    if (( _p >= 0 )); then _scan_wrapper_operand "$_body" "$_depth"
+    else _scan_nested_text "$_body" "$_depth"; fi
+  done
+  # A here-string is code only for a shell or a wrapper running one; `cat <<< 'text'` is data.
+  if (( _p >= 0 || _consumer )); then
+    for _body in ${_push_here[@]+"${_push_here[@]}"}; do
+      _scan_wrapper_operand "$_body" "$_depth"
+    done
+  fi
 }
 
 scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value _lex_ok=0
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | tr -d "'\"" | grep -Eq \
-      'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:]]|$)'; then
+      'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`]|$)'; then
       printf 'BLOCK\tindeterminate\n'
     fi
     return
   fi
   _push_tokens=()
+  _push_here=()
+  _push_subs=()
   _push_saw_tab=0
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
       WORD) _push_tokens+=("$_value") ;;
-      NEST) _scan_nested_text "$_value" "$_scan_depth" ;;
+      NEST) _push_subs+=("$_value") ;;
+      HERE) _push_here+=("$_value") ;;
       TAB) _push_saw_tab=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
         _classify_force_push_segment
         _push_tokens=()
+        _push_here=()
+        _push_subs=()
         _push_saw_tab=0
         ;;
     esac
-  done < <(printf '%s' "$_scan_text" | awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
+  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
   _classify_force_push_segment
   (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'
