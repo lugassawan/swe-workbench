@@ -156,7 +156,9 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Push-only lexer preserves empty quoted words and separates redirection syntax from Git argv.
+# Push-only lexer preserves empty quoted words, separates redirection syntax from Git argv, and
+# keeps a substitution inside the shell word it is glued to (`--opt=$(x)y` is one word); the
+# substitution body is emitted separately as NEST for recursive scanning.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _push_token_awk='
   function emit_word() {
@@ -221,7 +223,6 @@ _push_token_awk='
         continue
       }
       if (c == "$" && substr(line, i + 1, 1) == "(") {
-        emit_word()
         subtext = ""; sub_depth = 1; sub_sq = 0; sub_dq = 0
         i += 2
         for (; i <= n; i++) {
@@ -242,12 +243,11 @@ _push_token_awk='
           }
           subtext = subtext sc
         }
-        if (sub_depth == 0) print "SUB\t" subtext
-        else print "MALFORMED"
+        if (sub_depth == 0) print "NEST\t" subtext
+        word = word dyn; word_started = 1
         continue
       }
       if (c == "`") {
-        emit_word()
         subtext = ""
         i++
         for (; i <= n; i++) {
@@ -260,8 +260,8 @@ _push_token_awk='
           if (sc == "`") break
           subtext = subtext sc
         }
-        if (i <= n) print "SUB\t" subtext
-        else print "MALFORMED"
+        if (i <= n) print "NEST\t" subtext
+        word = word dyn; word_started = 1
         continue
       }
       if (c ~ /[;|&()]/) {
@@ -282,12 +282,13 @@ _push_token_awk='
 # `scan_force_push_text` resets them at every lexical separator.
 _push_tokens=()
 _push_saw_tab=0
+_DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
 
 _classify_force_push_segment() {
   local _prefix _t push_text
   local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=0 _found_git=0
   local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
-  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _skip_dynamic=0
+  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0
 
   (( ${#_push_tokens[@]} )) || return
   for _prefix in "${_push_tokens[@]}"; do
@@ -339,16 +340,15 @@ _classify_force_push_segment() {
       _consume_next=0
       continue
     fi
+    [[ "$_t" != -* && "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _has_dynamic=1
     case "$_t" in
-      __SWB_DYNAMIC_SUBSTITUTION__)
-        if (( _skip_dynamic )); then _skip_dynamic=0; else _has_dynamic=1; fi ;;
       --force|-f) _has_force=1 ;;
       --all) _pushes_all_refs=1 ;;
       --mirror) _has_force=1; _pushes_all_refs=1 ;;
       --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
       --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
       -u|--set-upstream|-d|--delete|--signed|--no-signed|-n) ;;
-      --*=*) _skip_dynamic=1 ;;
+      --*=*) ;;
       -*)
         if [[ "$_t" != --* && "$_t" == *f* ]]; then
           _has_force=1
@@ -383,10 +383,11 @@ MAX_PUSH_SCAN_DEPTH=4
 
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
-  local -a _saved_tokens=("${_push_tokens[@]}")
+  # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
+  local -a _saved_tokens=(${_push_tokens[@]+"${_push_tokens[@]}"})
   local _saved_saw_tab=$_push_saw_tab
   scan_force_push_text "$_nested_text" "$((_nested_depth + 1))"
-  _push_tokens=("${_saved_tokens[@]}")
+  _push_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
   _push_saw_tab=$_saved_saw_tab
 }
 
@@ -429,14 +430,13 @@ _scan_known_wrapper_body() {
       _body="$_body${_body:+ }${_push_tokens[_i]}"
     done
   fi
-  [[ "$_body" == *git[[:space:]]push* ]] || return
   _scan_nested_text "$_body" "$_depth"
 }
 
 scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
-    if printf '%s\n' "$_scan_text" | grep -Eq \
+    if printf '%s\n' "$_scan_text" | tr -d "'\"" | grep -Eq \
       'git[[:space:]]+push([[:space:]].*)?([[:space:]]|^)(--force|-[[:alnum:]]*f[[:alnum:]]*)([[:space:]]|$)'; then
       printf 'BLOCK\tindeterminate\n'
     fi
@@ -447,11 +447,7 @@ scan_force_push_text() {
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
       WORD) _push_tokens+=("$_value") ;;
-      SUB)
-        _push_tokens+=("__SWB_DYNAMIC_SUBSTITUTION__")
-        _scan_nested_text "$_value" "$_scan_depth"
-        ;;
-      MALFORMED) _push_tokens+=("__SWB_DYNAMIC_SUBSTITUTION__") ;;
+      NEST) _scan_nested_text "$_value" "$_scan_depth" ;;
       TAB) _push_saw_tab=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
@@ -460,7 +456,7 @@ scan_force_push_text() {
         _push_saw_tab=0
         ;;
     esac
-  done < <(printf '%s' "$_scan_text" | awk "$_push_token_awk")
+  done < <(printf '%s' "$_scan_text" | awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
   _classify_force_push_segment
 }

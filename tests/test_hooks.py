@@ -436,6 +436,41 @@ class TestImplicitForcePushBlocker:
         )
         assert result.returncode == 0 and result.stderr == ""
 
+    @pytest.mark.parametrize("cmd", [
+        "git push --force --push-option=$(date)x origin",
+        "git push --force --push-option=x$(date) origin",
+        "git push --force --push-option=pre$(date)post origin",
+        "git push --force --push-option=`date`x origin",
+        "git push --force --push-option=$(date)$(whoami) origin",
+    ])
+    def test_substitution_with_literal_stays_one_option_value_word(
+        self, guard_script, repo_on, cmd
+    ):
+        """A substitution glued to literal text is ONE shell word. Splitting it
+        into SUB + a trailing WORD makes the literal count as the remote and
+        `origin` as a refspec, hiding an implicit force-push from main.
+        """
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_substitution_with_literal_option_does_not_taint_explicit_feature_refspec(
+        self, guard_script, repo_on
+    ):
+        result = run_guard(
+            guard_script,
+            "git push --force --push-option=$(date)x origin feature/x",
+            cwd=str(repo_on("main")),
+        )
+        assert result.returncode == 0 and result.stderr == ""
+
+    def test_substitution_glued_to_destination_fails_closed(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script,
+            "git push --force origin feature/$(date)",
+            cwd=str(repo_on("feature")),
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
     def test_trailing_comment_false_positive_still_allowed(self, guard_script):
         """A protected token in a trailing shell comment must not over-block
         (no repo fixture needed — this never reaches the branch check).
