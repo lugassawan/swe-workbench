@@ -77,6 +77,18 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ('git -C "" push --force origin main', True),
     ("git -C '' push --force origin feature/x", False),
     ('git -C "" push --force origin feature/x', False),
+    # Rows below are blocked by this guard and were allowed before it, independent of the branch.
+    ("X=1 git push --force origin main", True),
+    (">/dev/null git push --force origin main", True),
+    ("git push --force origin $(echo feature)", True),
+    ('git push --force origin "feature/$(date)"', True),
+    ("git push $(echo -)f origin main", True),
+    ("git push --force --no-follow-tags $(echo origin main)", True),
+    ("git commit -m \"$(cat <<'EOT' | sh -s\ngit push --force origin main\nEOT\n)\"", True),
+    # Quoted text that is data stays allowed; the previous scan blocked these.
+    ("git commit -m 'document git push --force origin main'", False),
+    ("git log --grep='git push --force origin main'", False),
+    ("gh pr create --body \"$(cat <<'EOT'\ngit push --force origin main\nEOT\n)\"", False),
     # Dynamic destinations are never expanded to decide a destructive push policy.
     ("git push --force origin $(git branch --show-current)", True),
     ("git push --force origin `git branch --show-current`", True),

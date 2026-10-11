@@ -765,9 +765,9 @@ def repo_on(tmp_path):
     return _make
 
 
-class TestTypedLexerKeepsFlatScanCoverage:
-    """Shapes the earlier flat tokenizer blocked, which the typed push lexer
-    must keep blocking. Each of these executes a force push to a protected ref.
+class TestWrapperAndSubstitutionCoverage:
+    """Shapes that execute a force push to a protected ref and must stay blocked,
+    however a wrapper, a substitution or a quoted string carries them.
     """
 
     @pytest.mark.parametrize("cmd", [
@@ -872,7 +872,7 @@ class TestTypedLexerKeepsFlatScanCoverage:
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 0 and result.stderr == ""
 
-    # The flat scan treated everything after a wrapper prefix as code. These pin that class:
+    # Everything after a wrapper prefix is code. These pin that class:
     # any wrapper that runs a string, crossed with the ways a script body can be spelled.
     _WRAPPERS = [
         "bash -c {q}", "bash -lc {q}", "bash -ce {q}", "bash -c -e {q}", "/bin/sh -c {q}",
@@ -1100,7 +1100,7 @@ class TestTypedLexerKeepsFlatScanCoverage:
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
-    # Behaviours that previously had no test: reverting any of them left the suite green.
+    # Behaviours a mutation run showed could be reverted with the suite staying green.
     @pytest.mark.parametrize("cmd", [
         "git push &>/dev/null --force origin main",
         "echo `echo a\ngit push --force origin main`",
@@ -1115,7 +1115,7 @@ class TestTypedLexerKeepsFlatScanCoverage:
         "amp-redirect", "backtick-newline", "brace-group", "fish", "ksh", "here-string-ssh",
         "depth-plus-refspec", "depth-quoted-flag", "restored-after-operand",
     ])
-    def test_previously_unpinned_behaviours(self, guard_script, repo_on, cmd):
+    def test_additional_blocked_shapes(self, guard_script, repo_on, cmd):
         result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
@@ -1125,7 +1125,7 @@ class TestTypedLexerKeepsFlatScanCoverage:
         ">$(date +%s).log; git status",
         "sudo sh -c 'echo ok' && echo 'git push --force origin main'",
     ], ids=["backtick-glued", "grep-not-wrapper", "empty-array-guard", "data-after-and"])
-    def test_previously_unpinned_allows(self, guard_script, repo_on, cmd):
+    def test_additional_allowed_shapes(self, guard_script, repo_on, cmd):
         result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
         assert result.returncode == 0 and result.stderr == ""
 
@@ -1150,6 +1150,130 @@ class TestTypedLexerKeepsFlatScanCoverage:
         env = {"PATH": f"{shim_dir}:{os.environ['PATH']}"}
         result = run_guard(
             guard_script, "git push origin feature/x", cwd=str(repo_on("feature")), env=env
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+
+class TestSubstitutionAndFlagHardening:
+    """Review findings on the push lexer: heredoc skip, depth cap, dynamic flags and slots."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git commit -m \"$(cat <<'EOT' | sh -s\ngit push --force origin main\nEOT\n)\"",
+        "git commit -m \"$(echo ' cat <<\"EOT\"'\ngit push --force origin main\nEOT\n)\"",
+        "git commit -m \"$(cat <<'EOT' | xargs -I{} sh -c {}\ngit push --force origin main\nEOT\n)\"",
+        "gh pr create --body \"$(cat <<'EOT' | sh -s\ngit push --force origin main\nEOT\n)\"",
+    ], ids=["piped-to-sh", "quoted-lookalike", "piped-to-xargs", "pr-body-piped"])
+    def test_heredoc_that_is_piped_or_only_looks_like_one_is_code(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "echo $(echo $(echo $(echo $(g\\it push --force origin main))))",
+        "echo $(echo $(echo $(echo $(git push \\-\\-force origin main))))",
+        "echo $(echo $(echo $(echo $(git push -\\f origin main))))",
+    ], ids=["split-word", "escaped-long-flag", "escaped-short-flag"])
+    def test_depth_cap_fallback_normalises_backslashes(self, guard_script, repo_on, cmd):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git push $(echo -)f origin main",
+        "git push $(echo --)force origin main",
+    ])
+    def test_glued_substitution_spelling_of_a_force_flag_is_dynamic(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_glued_dynamic_flag_with_implicit_destination_checks_the_current_branch(
+        self, guard_script, repo_on
+    ):
+        cmd = "git push $(echo -)f origin"
+        blocked = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert blocked.returncode == 2 and "BLOCKED" in blocked.stderr
+        allowed = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert allowed.returncode == 0 and allowed.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        'git push origin "v$(cat VERSION)"',
+        'git push origin "release-$(date +%F)"',
+        'git push origin "$(git rev-parse HEAD)":main',
+        'git push origin "$(git branch --show-current)"',
+    ])
+    def test_dynamic_word_that_cannot_be_a_flag_stays_allowed_for_a_plain_push(
+        self, guard_script, repo_on, cmd
+    ):
+        """A flag starts with a dash, so a literal prefix or a refspec colon rules it out."""
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("main")))
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("flag", [
+        "--no-follow-tags", "--no-tags", "--no-prune", "--no-set-upstream", "--no-delete",
+        "--some-unknown-flag",
+    ])
+    def test_boolean_or_unknown_flag_does_not_hide_a_dynamic_destination(
+        self, guard_script, repo_on, flag
+    ):
+        cmd = f"git push --force {flag} $(echo origin main)"
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_value_taking_flag_may_carry_a_dynamic_value(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script,
+            "git push --force --push-option \"$(date)\" origin feature/x",
+            cwd=str(repo_on("main")),
+        )
+        assert result.returncode == 0 and result.stderr == ""
+
+    @pytest.mark.parametrize("cmd", [
+        "if false; then :; elif git push --force origin main; then :; fi",
+        "coproc git push --force origin main",
+        "find . -maxdepth 0 -exec git push --force origin main \\;",
+        "git push --force origin $\"main\"",
+        "git push --force origin $'main'",
+    ], ids=["elif", "coproc", "find-exec", "locale-string", "ansi-c-string"])
+    def test_command_position_and_dollar_quote_forms_are_classified(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+    def test_dynamic_destination_block_explains_itself(self, guard_script, repo_on):
+        result = run_guard(
+            guard_script, "git push --force origin $(echo feature)", cwd=str(repo_on("feature"))
+        )
+        assert result.returncode == 2
+        assert "protected branch" not in result.stderr
+        assert "dynamic" in result.stderr and "--force-with-lease" in result.stderr
+
+    def test_depth_cap_block_explains_itself(self, guard_script, repo_on):
+        cmd = "echo $(echo $(echo $(echo $(git push --force origin feature/x))))"
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2
+        assert "protected branch" not in result.stderr
+        assert "too deeply" in result.stderr
+
+    def test_lexer_awk_uses_no_posix_bracket_classes(self):
+        """mawk before 1.3.4 lacks bracket classes; there the class never matches and
+        words stop splitting, so the lexer must spell its whitespace set out.
+        """
+        text = GUARD.read_text()
+        start = text.index("_push_token_awk='")
+        end = text.index("\n'\n", start)
+        assert "[[:" not in text[start:end]
+
+    @pytest.mark.parametrize("cmd", [
+        "pi -p r\u00e9sum\u00e9",
+        "echo caf\u00e9; pi -p x",
+    ])
+    def test_nested_pi_detector_survives_non_ascii_arguments(self, guard_script, repo_on, cmd):
+        result = run_guard(
+            guard_script, cmd, cwd=str(repo_on("feature")),
+            env={"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
         )
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
