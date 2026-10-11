@@ -87,14 +87,18 @@ compression everywhere.
 `hooks/rtk_worktree_guard.sh` therefore stops the loop before it starts. After `EnterWorktree`
 it records a per-session marker (only when an `rtk hook claude` entry is configured); a Bash
 call whose cwd is inside the marked worktree is asked of `rtk rewrite` and **denied** when what
-will actually run is `rtk [proxy] git …`. The deny names one exact `RTK_DISABLED=1 git …` command
-that has itself been run back through the same check (class `containment`). No exact fix is
-offered when the original carries quotes, substitutions or a heredoc, sits behind a launcher
-wrapper (`time`, `command`, `exec`, `nice`, … — RTK splices `rtk` in after the wrapper, so a
-textual splice would not run), or the rendered fix cannot itself be decided on; the message is
-then a fixed instruction to run each git command as its own `RTK_DISABLED=1`-prefixed call
-(class `parse-complexity`). The tag names the failure class so containment and parse-complexity
-refusals are not conflated.
+will actually run is `rtk [proxy] git …`. The deny names one of three failure classes, so they are
+not conflated in logs or transcripts:
+
+- `containment` — one exact command to run: the **typed** command with `RTK_DISABLED=1` spliced
+  in at each git position (quotes, comments and continuations honoured, other segments left as
+  the model wrote them), after that fix has itself been run back through the same check.
+- `parse-complexity` — the command uses a substitution, backticks or a heredoc, so it cannot be
+  rendered safely; a fixed instruction to run each git command as its own
+  `RTK_DISABLED=1`-prefixed call.
+- `no-exact-fix` — it sits behind a launcher wrapper (`time`, `command`, `timeout`, … — RTK
+  splices `rtk` in after the wrapper, so a textual splice would not run), or the rendered fix
+  could not be decided on; the same fixed instruction, without the wrapper.
 
 Why deny rather than rewrite: PreToolUse `updatedInput` from separate hooks does not compose —
 the later hook would see, or overwrite, RTK's rewrite — while a deny always wins. Why decide on
@@ -107,15 +111,26 @@ means unchanged — so a user with that allow rule is still caught.
 
 The hook is fail-open (any uncertainty, a missing `rtk` or `jq`, a rewrite that hangs past
 ~2s, or an unexpected exit code allows the call) and applies only to Claude Code; on Pi there
-is no `EnterWorktree` and no RTK hook, so it is an explicit N/A row in `HOOK_PI_STATUS`. The
-marker is only written when RTK would in fact rewrite git there, and markers whose worktree has
-vanished are pruned on the next enter. A SIGKILL of the hook itself can leak one in-flight
-`rtk rewrite` child and its temp file; any other exit path reaps both.
+is no `EnterWorktree` and no RTK hook, so it is an explicit N/A row in `HOOK_PI_STATUS`.
 
+Operational details: settings are read from `${CLAUDE_CONFIG_DIR:-~/.claude}` and the worktree's
+and main checkout's `.claude/settings*.json`. The marker is only written when RTK would in fact
+rewrite git there, lives in a private (0700, owner-checked, never symlinked) directory under
+`$TMPDIR`, and is not re-seeded after a resume that follows a temp purge — the hook then simply
+stops until the next `EnterWorktree`. A subagent without a marker of its own inherits the
+session's (scoped by cwd); the matrix's subagent cells record whether Claude Code's guard
+applies to them. Markers whose worktree has vanished are pruned on the next enter. A SIGKILL of
+the hook itself can leak one in-flight `rtk rewrite` child and its temp file; any other exit
+path reaps both. `SWE_WORKBENCH_RTK_WORKTREE_GUARD=0` switches the hook off entirely.
+
+What this hook cannot do: the originating report's acceptance criteria 2 and 3 (authorization
+decided on the resolved executable; equal decisions for equal targets) are properties of Claude
+Code's guard, not something a plugin hook can provide — it only stops the loop from repeating.
 The root fix is upstream and this hook should be deleted when it lands: Claude Code should
 unwrap known launchers when proving containment, or RTK should skip rewriting git inside an
-isolated session. `bin/swe-workbench-doctor` prints an advisory when the RTK hook and the
-rewrite are both present.
+isolated session. No upstream issue is filed yet, so there is nothing to link here; the PR that
+introduced the hook tracks that follow-up. `bin/swe-workbench-doctor` prints an advisory when
+the RTK hook and the rewrite are both present.
 
 ## 2. Cross-harness memory — main-checkout anchoring, dual-slug read, own-store-only writes
 

@@ -149,12 +149,23 @@ fi
 rtk_bin=$(command -v rtk 2>/dev/null) || true
 if [[ -n "${rtk_bin}" ]]; then
   rtk_hook_configured=0
+  # a linked worktree's `root` misses the main checkout's untracked settings.local.json
+  rtk_main_root=""
+  if [[ -n "${root}" ]]; then
+    rtk_common=$(git -C "${root}" rev-parse --git-common-dir 2>/dev/null) || rtk_common=""
+    if [[ -n "${rtk_common}" ]]; then
+      rtk_main_root=$(cd "${root}" && cd "${rtk_common}" 2>/dev/null && cd .. && pwd -P) \
+        || rtk_main_root=""
+    fi
+  fi
   for settings_file in \
-    "${HOME}/.claude/settings.json" \
+    "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/settings.json" \
     "${root:+${root}/.claude/settings.json}" \
-    "${root:+${root}/.claude/settings.local.json}"; do
+    "${root:+${root}/.claude/settings.local.json}" \
+    "${rtk_main_root:+${rtk_main_root}/.claude/settings.json}" \
+    "${rtk_main_root:+${rtk_main_root}/.claude/settings.local.json}"; do
     [[ -n "${settings_file}" && -f "${settings_file}" ]] || continue
-    # same predicate as hooks/rtk_worktree_guard.sh: a hook command under .hooks
+    # the guard's hook-command test (jq, scoped to .hooks); without jq a whole-file grep
     if command -v jq >/dev/null 2>&1; then
       if jq -e '[.hooks // {} | .. | objects | .command? | strings
                  | select(test("(^|[/\\s])rtk hook claude"))] | length > 0' \
@@ -167,9 +178,10 @@ if [[ -n "${rtk_bin}" ]]; then
   done
   rtk_rewrite_rc=0
   rtk_rewritten=$("${rtk_bin}" rewrite -- "git status" 2>/dev/null) || rtk_rewrite_rc=$?
+  rtk_git_re='^([^[:space:]]*/)?rtk[[:space:]]+(proxy[[:space:]]+)?git([[:space:]]|$)'
   if [[ ${rtk_hook_configured} -eq 1 ]] \
     && [[ ${rtk_rewrite_rc} -eq 0 || ${rtk_rewrite_rc} -eq 3 ]] \
-    && [[ "${rtk_rewritten}" == "rtk git"* ]]; then
+    && [[ "${rtk_rewritten}" =~ ${rtk_git_re} ]]; then
     printf "\n"
     printf "RTK worktree compatibility\n"
     printf "%s\n" "─────────────────────────────────────"

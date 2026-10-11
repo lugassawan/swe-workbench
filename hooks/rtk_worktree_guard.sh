@@ -37,14 +37,14 @@ settings_has_rtk_hook() {
 }
 
 rtk_hook_configured() {
-    local wt_real="$1" project f
+    local wt_real="$1" project f conf="${CLAUDE_CONFIG_DIR:-${HOME:-/nonexistent}/.claude}"
     project=$(
         cd "$wt_real" 2>/dev/null || exit 0
         common=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
         cd "$common" 2>/dev/null && cd .. && pwd -P
     ) || project=""
     for f in \
-        "${HOME:-/nonexistent}/.claude/settings.json" \
+        "$conf/settings.json" \
         "$wt_real/.claude/settings.json" \
         "$wt_real/.claude/settings.local.json" \
         "${project:-/nonexistent}/.claude/settings.json" \
@@ -101,13 +101,18 @@ split_segments() {
         }'
 }
 
-# True when a segment of $1 launches `rtk [proxy] git`; $2 is what the user typed. With no
-# typed `rtk`, any `rtk git` is RTK's splice; WRAPPED=1 then bars a rendered fix.
+# True when a segment of $1 launches `rtk [proxy] git`; $2 is what the user typed. If $2 has
+# no `rtk git` of its own, any `rtk git` is RTK's splice and WRAPPED=1 bars a rendered fix.
 launches_rtk_git() {
-    local effective="$1" typed="$2" seg word wrapped skip segments
+    local effective="$1" typed="$2" seg word wrapped skip segments line
     local re_cmd='^([^[:space:]]*/)?rtk[[:space:]]+(proxy[[:space:]]+)?([^[:space:]]*/)?git([[:space:]]|$)'
     local re_any='(^|[[:space:]])rtk[[:space:]]+(proxy[[:space:]]+)?git([[:space:]]|$)'
-    local line
+    local typed_has_rtk_git=0
+    while IFS= read -r line; do
+        [[ $line =~ $re_any ]] && typed_has_rtk_git=1
+    done <<EOF
+$(split_segments "$typed")
+EOF
     WRAPPED=0
     segments=$(split_segments "$effective")
     while IFS= read -r line; do
@@ -134,7 +139,7 @@ launches_rtk_git() {
                     skip=1
                     seg="${seg#"$word"}"
                     ;;
-                -*)
+                -* | [0-9]*) # wrapper options and `timeout 5`
                     [ "$wrapped" -eq 1 ] || break
                     seg="${seg#"$word"}"
                     ;;
@@ -145,7 +150,7 @@ launches_rtk_git() {
             WRAPPED=$wrapped
             return 0
         fi
-        if [[ $typed != *rtk* && $line =~ $re_any ]]; then
+        if [ "$typed_has_rtk_git" -eq 0 ] && [[ $line =~ $re_any ]]; then
             WRAPPED=1
             return 0
         fi
@@ -192,10 +197,53 @@ effective_command() {
     return 0
 }
 
-# Replace each `[path/]rtk [proxy] [path/]git` with `RTK_DISABLED=1 git`.
+# The typed command with `RTK_DISABLED=1` spliced in at each git command position (a typed
+# `[path/]rtk [proxy] git` becomes plain `git`). Quotes, comments and continuations are honoured.
 render_fix() {
-    printf '%s\n' "$1" | sed -E \
-        's/(^|[[:space:];&|(])([^[:space:]]*\/)?rtk[[:space:]]+(proxy[[:space:]]+)?([^[:space:]]*\/)?git([[:space:]]|$)/\1RTK_DISABLED=1 git\5/g'
+    printf '%s\n' "$1" | awk '
+        BEGIN { sq = "\047"; dq = "\""; q = ""; start = 1 }
+        {
+            line = $0; n = length(line); out = ""; cont = 0
+            i = 1
+            while (i <= n) {
+                c = substr(line, i, 1)
+                if (q == sq) { out = out c; if (c == sq) q = ""; i++; continue }
+                if (q == dq) {
+                    if (c == "\\") { out = out c substr(line, i + 1, 1); i += 2; continue }
+                    out = out c
+                    if (c == dq) q = ""
+                    i++; continue
+                }
+                if (c == "\\") {
+                    if (i == n) cont = 1
+                    out = out c substr(line, i + 1, 1); i += 2; start = 0; continue
+                }
+                if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;&|()]/)) {
+                    out = out substr(line, i); i = n + 1; continue
+                }
+                if (c == sq || c == dq) { q = c; out = out c; start = 0; i++; continue }
+                if (c == ";" || c == "&" || c == "|" || c == "(") { out = out c; start = 1; i++; continue }
+                if (start && (c == " " || c == "\t")) { out = out c; i++; continue }
+                if (start) {
+                    rest = substr(line, i)
+                    if (match(rest, /^([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*(([^ \t]*\/)?rtk[ \t]+(proxy[ \t]+)?)?git([ \t]|$)/)) {
+                        mlen = RLENGTH
+                        m = substr(rest, 1, mlen)
+                        assigns = ""
+                        if (match(m, /^([A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*/)) assigns = substr(m, 1, RLENGTH)
+                        tail = substr(m, length(assigns) + 1)
+                        sub(/^(([^ \t]*\/)?rtk[ \t]+(proxy[ \t]+)?)?git/, "", tail)
+                        out = out "RTK_DISABLED=1 " assigns "git" tail
+                        i += mlen
+                        start = 0
+                        continue
+                    }
+                }
+                out = out c; start = 0; i++
+            }
+            print out
+            if (q == "" && !cont) start = 1
+        }'
 }
 
 # Drop markers whose worktree is gone (headless runs end without ExitWorktree).
@@ -211,6 +259,11 @@ prune_stale_markers() {
     return 0
 }
 
+# A private, owned, non-symlink marker dir; anything else fails the hook open.
+marker_dir_trusted() {
+    [ ! -L "$MARKER_DIR" ] && [ -d "$MARKER_DIR" ] && [ -O "$MARKER_DIR" ]
+}
+
 on_enter() {
     local wt_real prev="" tmp
     [ -n "$WT" ] || return 0
@@ -220,10 +273,11 @@ on_enter() {
     command -v rtk >/dev/null 2>&1 || return 0
     # only when RTK would actually rewrite git here (not e.g. exclude_commands = ["git"])
     effective_command "git status" && launches_rtk_git "$EFFECTIVE" "git status" || return 0
-    mkdir -p "$MARKER_DIR" 2>/dev/null || return 0
+    [ -d "$MARKER_DIR" ] || mkdir -m 700 "$MARKER_DIR" 2>/dev/null
+    marker_dir_trusted || return 0
     prune_stale_markers
     [ -f "$MARKER" ] && prev=$(<"$MARKER")
-    tmp="$MARKER.$$"
+    tmp=$(mktemp "$MARKER_DIR/.tmp.XXXXXX" 2>/dev/null) || return 0
     if ! { printf '%s\n' "$wt_real" >"$tmp" && mv -f "$tmp" "$MARKER"; } 2>/dev/null; then
         rm -f "$tmp" 2>/dev/null
         return 0
@@ -241,7 +295,10 @@ on_exit() {
 }
 
 on_bash() {
-    local input="$1" wt_real cwd_real cmd class fix head
+    local input="$1" session_marker="$2" wt_real cwd_real cmd class fix head
+    marker_dir_trusted || return 0
+    # a subagent without its own marker inherits the session's isolation
+    [ -f "$MARKER" ] || MARKER="$session_marker"
     [ -f "$MARKER" ] || return 0
     wt_real=$(<"$MARKER")
     [ -n "$wt_real" ] && [ -n "$CWD" ] || return 0
@@ -258,32 +315,40 @@ on_bash() {
     launches_rtk_git "$EFFECTIVE" "$cmd" || return 0
 
     class="containment"
-    [ "$WRAPPED" -eq 0 ] || class="parse-complexity"
     # shellcheck disable=SC2016 # `$(` and backtick are literal patterns here
     case "$cmd" in
-        *\'* | *\"* | *'$('* | *\`* | *'<<'*) class="parse-complexity" ;;
+        *'$('* | *\`* | *'<<'*) class="parse-complexity" ;;
     esac
+    [ "$class" != "containment" ] || [ "$WRAPPED" -eq 0 ] || class="no-exact-fix"
     if [ "$class" = "containment" ]; then
         # an undecidable re-check counts the same as one that would be denied again
-        fix=$(render_fix "$EFFECTIVE")
+        fix=$(render_fix "$cmd")
         if ! effective_command "$fix" || launches_rtk_git "$EFFECTIVE" "$fix"; then
-            class="parse-complexity"
+            class="no-exact-fix"
         fi
     fi
 
     head="BLOCKED [rtk-worktree:${class}]: this session is isolated in ${wt_real}; RTK's hook rewrites this to \`rtk git …\`, which Claude Code's worktree guard refuses."
-    if [ "$class" = "containment" ]; then
-        printf '%s Next step — run exactly:\n' "$head" >&2
-        printf '%s\n' "$fix" | sed 's/^/  /' >&2
-    else
-        # shellcheck disable=SC2016 # backticks are literal message text
-        printf '%s This command is too complex to rewrite safely. Next step — run each git command as its own Bash call, prefixed with `RTK_DISABLED=1 ` and without launcher wrappers such as `time` or `command`, e.g. `RTK_DISABLED=1 git status`.\n' "$head" >&2
-    fi
+    case "$class" in
+        containment)
+            printf '%s Next step — run exactly:\n' "$head" >&2
+            printf '%s\n' "$fix" | sed 's/^/  /' >&2
+            ;;
+        parse-complexity)
+            # shellcheck disable=SC2016 # backticks are literal message text
+            printf '%s This command uses a substitution or heredoc, which cannot be rewritten safely. Next step — run each git command as its own Bash call, prefixed with `RTK_DISABLED=1 `, e.g. `RTK_DISABLED=1 git status`.\n' "$head" >&2
+            ;;
+        *)
+            # shellcheck disable=SC2016 # backticks are literal message text
+            printf '%s No exact fix could be verified for this command (a launcher wrapper such as `time`, or a form RTK still rewrites). Next step — run each git command as its own Bash call, prefixed with `RTK_DISABLED=1 ` and without wrappers, e.g. `RTK_DISABLED=1 git status`.\n' "$head" >&2
+            ;;
+    esac
     exit 2
 }
 
 main() {
     local input meta event tool session agent
+    [ "${SWE_WORKBENCH_RTK_WORKTREE_GUARD:-1}" != "0" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
     input=$(cat) || return 0
     meta=$(printf '%s' "$input" | jq -r '[.hook_event_name // "", .tool_name // "", .session_id // "",
@@ -294,12 +359,13 @@ EOF
     session="${session//[^A-Za-z0-9_-]/_}"
     [ -n "$session" ] || return 0
     MARKER="$MARKER_DIR/$session"
+    local session_marker="$MARKER"
     [ -z "$agent" ] || MARKER="${MARKER}_${agent//[^A-Za-z0-9_-]/_}"
 
     case "$event:$tool" in
         PostToolUse:EnterWorktree) on_enter ;;
         PostToolUse:ExitWorktree) on_exit ;;
-        PreToolUse:Bash) on_bash "$input" ;;
+        PreToolUse:Bash) on_bash "$input" "$session_marker" ;;
     esac
     return 0
 }

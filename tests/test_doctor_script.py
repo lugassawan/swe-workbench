@@ -307,16 +307,19 @@ def _rtk_env(
     hook: bool = True,
     rtk: bool = True,
     settings_text: str | None = None,
+    rtk_word: str = "rtk",
+    real_git: bool = False,
 ) -> dict:
     # the mock jq only echoes a version; the advisory needs the real one to scope to `.hooks`
-    bin_dir = _make_mock_tools(tmp_path, omit={"jq"})
+    omit = {"jq", "git"} if real_git else {"jq"}
+    bin_dir = _make_mock_tools(tmp_path, omit=omit)
     if rtk:
         stub = bin_dir / "rtk"
         lines = [
             "#!/usr/bin/env bash",
             'if [[ "$1" == "rewrite" ]]; then',
             '  [[ "$2" == "--" ]] && shift',
-            f"  [[ {rewrite_rc} -eq 0 || {rewrite_rc} -eq 3 ]] && printf 'rtk %s' \"$2\"",
+            f"  [[ {rewrite_rc} -eq 0 || {rewrite_rc} -eq 3 ]] && printf '{rtk_word} %s' \"$2\"",
             f"  exit {rewrite_rc}",
             "fi",
             'echo "rtk 0.51.0"',
@@ -327,7 +330,8 @@ def _rtk_env(
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir()
         settings.write_text(settings_text if settings_text is not None else RTK_HOOK_SETTINGS)
-    return {**_CLEAN_ENV, "PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    base = {k: v for k, v in _CLEAN_ENV.items() if k != "CLAUDE_CONFIG_DIR"}
+    return {**base, "PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
 
 
 def test_rtk_warning_names_both_remedies_and_verified_version(tmp_path):
@@ -355,6 +359,31 @@ def test_rtk_warning_ignores_hook_text_outside_the_hooks_key(tmp_path):
     env = _rtk_env(tmp_path, hook=False, settings_text='{"env": {"NOTE": "rtk hook claude"}}')
     result = _run_doctor(env)
     assert "RTK_DISABLED=1" not in result.stdout
+
+
+def test_rtk_warning_honours_a_relocated_claude_config_dir(tmp_path):
+    cfg = tmp_path / "relocated"
+    cfg.mkdir()
+    (cfg / "settings.json").write_text(RTK_HOOK_SETTINGS)
+    env = {**_rtk_env(tmp_path, hook=False), "CLAUDE_CONFIG_DIR": str(cfg)}
+    assert "RTK_DISABLED=1" in _run_doctor(env).stdout
+
+
+def test_rtk_warning_accepts_a_path_qualified_rtk_in_the_rewrite(tmp_path):
+    result = _run_doctor(_rtk_env(tmp_path, rtk_word="/opt/rtk/bin/rtk"))
+    assert "RTK_DISABLED=1" in result.stdout
+
+
+def test_rtk_warning_reads_the_main_checkouts_settings_from_a_linked_worktree(tmp_path):
+    env = _rtk_env(tmp_path, hook=False, real_git=True)
+    repo, linked = tmp_path / "repo", tmp_path / "linked"
+    _init_repo(repo, env)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "init"], cwd=repo, env=env, check=True)
+    subprocess.run(["git", "worktree", "add", "-q", str(linked)], cwd=repo, env=env, check=True)
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.local.json").write_text(RTK_HOOK_SETTINGS)
+    result = _run_doctor(env, cwd=linked)
+    assert "RTK_DISABLED=1" in result.stdout
 
 
 def test_rtk_warning_absent_when_rewrite_leaves_git_alone(tmp_path):

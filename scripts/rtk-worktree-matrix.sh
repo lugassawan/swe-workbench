@@ -5,9 +5,8 @@
 #
 # Usage: scripts/rtk-worktree-matrix.sh [--plugin-dir DIR] [--configs c0,c1,...] [--model M] [--keep]
 #
-# Each config runs two headless sessions in a throwaway repo: one with the rewrite-prone git
-# spellings, one with the RTK_DISABLED=1 escape-hatch spellings. After EnterWorktree every Bash
-# call is classified and the result is printed as a matrix.
+# Each config runs three headless sessions: rewrite-prone git spellings, the RTK_DISABLED=1
+# forms, and one dispatching a subagent. Every Bash call is classified into a matrix.
 #
 #   c0  your real settings (RTK hook + whatever plugins you have installed)
 #   c1  Claude Code + RTK hook only
@@ -126,6 +125,11 @@ ${HEADER}
   M5: git add -A && git commit --allow-empty -m probe-m5
   W1: time git status
   W2: command git status
+  P1: git log -1 --oneline | head -3
+  P2: git status 2>&1
+  P3: mkdir -p sub && cd sub && git status
+  P4: FOO=1 git status
+  P5: git status; echo done
 
 Step 3: Reply with just "DONE".
 EOF
@@ -142,11 +146,31 @@ ${HEADER}
   D8: ls && RTK_DISABLED=1 git status
   D9: RTK_DISABLED=1 git commit --allow-empty -m "probe d9"
   D10: RTK_DISABLED=1 git log -1 --format="%h %s"
+  E1: RTK_DISABLED=1 git log -1 --oneline | head -3
+  E2: RTK_DISABLED=1 git status 2>&1
+  E3: mkdir -p sub && cd sub && RTK_DISABLED=1 git status
+  E4: RTK_DISABLED=1 FOO=1 git status
+  E5: RTK_DISABLED=1 git status; echo done
 
 Step 3: Reply with just "DONE".
 EOF
 
-run_session() { # <config> <rewrite|disabled>
+# The hook's marker is keyed per agent; whether Claude Code's guard applies to a subagent
+# spawned from an isolated session is what these two cells settle.
+cat >"$ROOT/prompt-subagent.md" <<EOF
+You are a test harness executor. Follow these steps EXACTLY. Do not reword, retry, or work around any command or refusal; just record what happens.
+
+Step 1: Call the EnterWorktree tool with name "probe".
+
+Step 2: Use the Agent tool to dispatch ONE general-purpose subagent with this exact prompt:
+  Run these two commands as two separate Bash tool calls, in order, typed verbatim, and reply with each result verbatim. Do not retry or work around a refusal.
+    S1: git status
+    S2: RTK_DISABLED=1 git status
+
+Step 3: Reply with just "DONE".
+EOF
+
+run_session() { # <config> <rewrite|disabled|subagent>
   local cfg="$1" which="$2" dir="$ROOT/$1-$2"
   mkdir -p "$dir"
   git -C "$dir" init -q
@@ -171,7 +195,7 @@ run_session() { # <config> <rewrite|disabled>
     GIT_AUTHOR_NAME=probe GIT_AUTHOR_EMAIL=probe@example.invalid \
       GIT_COMMITTER_NAME=probe GIT_COMMITTER_EMAIL=probe@example.invalid \
       claude --print --model "$MODEL" --output-format stream-json --verbose \
-        --allowedTools "Bash,EnterWorktree" ${extra[@]+"${extra[@]}"} \
+        --allowedTools "Bash,EnterWorktree,Agent,Task" ${extra[@]+"${extra[@]}"} \
         <"$ROOT/prompt-$which.md" >"$ROOT/$cfg-$which.jsonl" 2>"$ROOT/$cfg-$which.err"
   )
 }
@@ -180,6 +204,7 @@ IFS=',' read -r -a CFG_LIST <<<"$CONFIGS"
 for cfg in "${CFG_LIST[@]}"; do
   run_session "$cfg" rewrite
   run_session "$cfg" disabled
+  run_session "$cfg" subagent
 done
 
 python3 -I - "$ROOT" "$CONFIGS" <<'PY'
@@ -214,11 +239,24 @@ STEPS = [
     ("D8", "ls && RTK_DISABLED=1 git status"),
     ("D9", 'RTK_DISABLED=1 git commit --allow-empty -m "probe d9"'),
     ("D10", 'RTK_DISABLED=1 git log -1 --format="%h %s"'),
+    ("P1", "git log -1 --oneline | head -3"),
+    ("P2", "git status 2>&1"),
+    ("P3", "mkdir -p sub && cd sub && git status"),
+    ("P4", "FOO=1 git status"),
+    ("P5", "git status; echo done"),
+    ("E1", "RTK_DISABLED=1 git log -1 --oneline | head -3"),
+    ("E2", "RTK_DISABLED=1 git status 2>&1"),
+    ("E3", "mkdir -p sub && cd sub && RTK_DISABLED=1 git status"),
+    ("E4", "RTK_DISABLED=1 FOO=1 git status"),
+    ("E5", "RTK_DISABLED=1 git status; echo done"),
 ]
+# Bash calls made by a dispatched subagent are matched separately from the main loop's.
+SUBAGENT_STEPS = [("S1", "git status"), ("S2", "RTK_DISABLED=1 git status")]
 PATTERNS = [
     (sid, re.compile(re.escape(tpl).replace(re.escape("<WT>"), r"\S+")))
     for sid, tpl in STEPS
 ]
+SUB_PATTERNS = [(sid, re.compile(re.escape(tpl))) for sid, tpl in SUBAGENT_STEPS]
 
 
 def classify(text, is_error):
@@ -237,16 +275,18 @@ def results(path):
         return {}
     for line in path.read_text(errors="replace").splitlines():
         try:
-            content = (json.loads(line).get("message") or {}).get("content")
+            event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        content = (event.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue
+        in_subagent = bool(event.get("parent_tool_use_id"))
         for block in content:
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use" and block.get("name") == "Bash":
-                uses[block["id"]] = block.get("input", {}).get("command", "")
+                uses[block["id"]] = (block.get("input", {}).get("command", ""), in_subagent)
                 order.append(block["id"])
             elif block.get("type") == "tool_result":
                 body = block.get("content")
@@ -255,8 +295,9 @@ def results(path):
                 outs[block.get("tool_use_id")] = (body or "", bool(block.get("is_error")))
     found = {}
     for tid in order:
-        cmd = uses[tid].strip()
-        for sid, pat in PATTERNS:
+        raw, in_subagent = uses[tid]
+        cmd = raw.strip()
+        for sid, pat in SUB_PATTERNS if in_subagent else PATTERNS:
             if sid not in found and pat.fullmatch(cmd):
                 found[sid] = classify(*outs.get(tid, ("", True)))
                 break
@@ -266,13 +307,13 @@ def results(path):
 table = {}
 for cfg in configs:
     merged = {}
-    for which in ("rewrite", "disabled"):
+    for which in ("rewrite", "disabled", "subagent"):
         merged.update(results(root / f"{cfg}-{which}.jsonl"))
     table[cfg] = merged
 
 width = max(len(c) for c in ("CC-CONTAINMENT", "CC-COMPLEXITY", "PLUGIN-HOOK", "MISSING")) + 2
 print(f"{'step':<5} {'command':<62}" + "".join(f"{c:<{width}}" for c in configs))
-for sid, tpl in STEPS:
+for sid, tpl in STEPS + [(s, f"{t}  (via subagent)") for s, t in SUBAGENT_STEPS]:
     cells = "".join(f"{table[c].get(sid, 'MISSING'):<{width}}" for c in configs)
     print(f"{sid:<5} {tpl[:60]:<62}{cells}")
 PY

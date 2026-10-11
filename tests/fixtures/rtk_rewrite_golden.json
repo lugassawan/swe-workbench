@@ -1,0 +1,281 @@
+{
+  "rtk_version": "rtk 0.51.0",
+  "cases": [
+    {
+      "cmd": "git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status"
+    },
+    {
+      "cmd": "git -C /x status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git -C /x status"
+    },
+    {
+      "cmd": "RTK_DISABLED=1 git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "env RTK_DISABLED=1 git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "/usr/bin/git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "rtk git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status"
+    },
+    {
+      "cmd": "rtk proxy git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk proxy git status"
+    },
+    {
+      "cmd": "/opt/x/rtk git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "export RTK_DISABLED=1; git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "export RTK_DISABLED=1; rtk git status"
+    },
+    {
+      "cmd": "time git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "time rtk git status"
+    },
+    {
+      "cmd": "time -p git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "time -p rtk git status"
+    },
+    {
+      "cmd": "command git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "command rtk git status"
+    },
+    {
+      "cmd": "builtin git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "builtin rtk git status"
+    },
+    {
+      "cmd": "exec git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "exec rtk git status"
+    },
+    {
+      "cmd": "nohup git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "nohup rtk git status"
+    },
+    {
+      "cmd": "nice git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "nice rtk git status"
+    },
+    {
+      "cmd": "nice -n 5 git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "nice -n 5 rtk git status"
+    },
+    {
+      "cmd": "timeout 5 git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "timeout 5 rtk git status"
+    },
+    {
+      "cmd": "timeout -k 1 5 git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "timeout -k 1 5 rtk git status"
+    },
+    {
+      "cmd": "time RTK_DISABLED=1 git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "RTK_DISABLED=1 command git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "echo rtk git status",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "ls && git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk ls && rtk git status"
+    },
+    {
+      "cmd": "ls && RTK_DISABLED=1 git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk ls && RTK_DISABLED=1 git status"
+    },
+    {
+      "cmd": "RTK_DISABLED=1 git status && RTK_DISABLED=1 git log",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "git status | head -3",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status | head -3"
+    },
+    {
+      "cmd": "git status | grep foo",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "git status | rtk grep foo"
+    },
+    {
+      "cmd": "FOO=1 git status",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "FOO=1 rtk git status"
+    },
+    {
+      "cmd": "git status\ngit log",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status\nrtk git log"
+    },
+    {
+      "cmd": "git status; ls",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status; rtk ls"
+    },
+    {
+      "cmd": "git status || cat x",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git status || rtk read x"
+    },
+    {
+      "cmd": "cd /x && git status 2>&1",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "cd /x && rtk git status 2>&1"
+    },
+    {
+      "cmd": "timeout 5 git log --grep=rtk",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "timeout 5 rtk git log --grep=rtk"
+    },
+    {
+      "cmd": "git commit --allow-empty -m \"x\"",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git commit --allow-empty -m \"x\""
+    },
+    {
+      "cmd": "git commit --allow-empty -m \"a; git b\"",
+      "allow_rule": false,
+      "rc": 3,
+      "stdout": "rtk git commit --allow-empty -m \"a; git b\""
+    },
+    {
+      "cmd": "git log $(git rev-parse HEAD)",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "git commit -F - <<EOF\nmsg\nEOF",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "echo hi",
+      "allow_rule": false,
+      "rc": 1,
+      "stdout": ""
+    },
+    {
+      "cmd": "git status",
+      "allow_rule": true,
+      "rc": 0,
+      "stdout": "rtk git status"
+    },
+    {
+      "cmd": "git -C /x status",
+      "allow_rule": true,
+      "rc": 0,
+      "stdout": "rtk git -C /x status"
+    },
+    {
+      "cmd": "git commit --allow-empty -m x",
+      "allow_rule": true,
+      "rc": 0,
+      "stdout": "rtk git commit --allow-empty -m x"
+    },
+    {
+      "cmd": "git status && git log",
+      "allow_rule": true,
+      "rc": 0,
+      "stdout": "rtk git status && rtk git log"
+    },
+    {
+      "cmd": "ls && git status",
+      "allow_rule": true,
+      "rc": 3,
+      "stdout": "rtk ls && rtk git status"
+    },
+    {
+      "cmd": "git status | head -3",
+      "allow_rule": true,
+      "rc": 3,
+      "stdout": "rtk git status | head -3"
+    },
+    {
+      "cmd": "time git status",
+      "allow_rule": true,
+      "rc": 3,
+      "stdout": "time rtk git status"
+    },
+    {
+      "cmd": "RTK_DISABLED=1 git status",
+      "allow_rule": true,
+      "rc": 1,
+      "stdout": ""
+    }
+  ]
+}

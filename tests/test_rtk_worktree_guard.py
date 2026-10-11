@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import textwrap
@@ -25,6 +26,7 @@ from conftest import _CLEAN_ENV
 
 ROOT = Path(__file__).parent.parent
 HOOK = ROOT / "hooks" / "rtk_worktree_guard.sh"
+GOLDEN = ROOT / "tests" / "fixtures" / "rtk_rewrite_golden.json"
 BASH = shutil.which("bash") or "/bin/bash"
 REAL_RTK = shutil.which("rtk")
 
@@ -58,7 +60,30 @@ _STUB_SOURCE = textwrap.dedent(
     DURATION = re.compile(r"^[0-9.]+[smhd]?$")
 
 
-    def rewrite_segment(seg):
+    def split_command(cmd):
+        # [segment, separator, segment, ...]; separators inside quotes do not split
+        parts, buf, quote, i = [], "", "", 0
+        while i < len(cmd):
+            ch = cmd[i]
+            if quote:
+                buf += ch
+                if ch == quote:
+                    quote = ""
+            elif ch in "\\"'":
+                quote = ch
+                buf += ch
+            else:
+                m = SEP.match(cmd, i)
+                if m:
+                    parts += [buf, m.group(0)]
+                    buf, i = "", m.end()
+                    continue
+                buf += ch
+            i += 1
+        return parts + [buf]
+
+
+    def rewrite_segment(seg, consumer=False):
         stripped = seg.lstrip()
         lead = seg[: len(seg) - len(stripped)]
         rest, prefix = stripped, ""
@@ -83,8 +108,10 @@ _STUB_SOURCE = textwrap.dedent(
             prefix += word + m.group(2)
             rest = m.group(3)
         first = rest.split(None, 1)[0] if rest.strip() else ""
-        if first in ("git", "ls"):
+        if first in ("git", "ls") or (consumer and first == "grep"):
             return lead + prefix + "rtk " + rest
+        if first == "cat":
+            return lead + prefix + "rtk read" + rest[len("cat"):]
         return seg
 
 
@@ -122,8 +149,20 @@ _STUB_SOURCE = textwrap.dedent(
             return 3
         if "$(" in cmd or "`" in cmd or "<<" in cmd:
             return 1
-        parts = SEP.split(cmd)
-        out = [p if i % 2 else rewrite_segment(p) for i, p in enumerate(parts)]
+        parts = split_command(cmd)
+        # RTK rewrites a `grep` consumer instead of the producer feeding it
+        grep_consumer = any(
+            parts[i - 1] == "|" and parts[i].split(None, 1)[:1] == ["grep"]
+            for i in range(2, len(parts), 2)
+        )
+        out = []
+        for i, p in enumerate(parts):
+            if i % 2:
+                out.append(p)
+            elif grep_consumer and i + 1 < len(parts) and parts[i + 1] == "|":
+                out.append(p)
+            else:
+                out.append(rewrite_segment(p, consumer=i > 0 and parts[i - 1] == "|"))
         result = "".join(out)
         if result == cmd:
             return 1
@@ -199,13 +238,11 @@ class Sandbox:
                 if link.name not in omit_tools:
                     (tool_dir / link.name).symlink_to(link.resolve())
         path = f"{self.stub_bin}:{tool_dir}" if stub else str(tool_dir)
-        return {
-            **dict(_CLEAN_ENV),
-            "HOME": str(self.home),
-            "TMPDIR": str(self.tmpdir),
-            "PATH": path,
-            **extra,
-        }
+        base = dict(_CLEAN_ENV)
+        # ambient values must not leak a developer's real config dir or kill-switch in
+        for ambient in ("CLAUDE_CONFIG_DIR", "SWE_WORKBENCH_RTK_WORKTREE_GUARD"):
+            base.pop(ambient, None)
+        return {**base, "HOME": str(self.home), "TMPDIR": str(self.tmpdir), "PATH": path, **extra}
 
     def write_settings(self, where: str = "home", data=SETTINGS_WITH_RTK, name="settings.json"):
         base = {"home": self.home, "project": self.repo, "worktree": self.wt}[where]
@@ -377,18 +414,68 @@ class TestSpellingMatrix:
         denied = sandbox.run(sandbox.bash_payload(cmd))
         assert denied.returncode == 2
         fix = _fix_from(denied.stderr)
-        assert "RTK_DISABLED=1 git" in fix
+        assert "RTK_DISABLED=1" in fix
         assert not RTK_GIT.search(fix), f"fix still routes git through rtk: {fix!r}"
         again = sandbox.run(sandbox.bash_payload(fix))
         assert again.returncode == 0, (cmd, fix, again.stderr)
+
+
+class TestQuotedCommandsGetAnExactFix:
+    @pytest.mark.parametrize(
+        "cmd,fix",
+        [
+            pytest.param(
+                'git commit --allow-empty -m "x"',
+                'RTK_DISABLED=1 git commit --allow-empty -m "x"',
+                id="double-quoted",
+            ),
+            pytest.param(
+                "git commit --allow-empty -m 'x'",
+                "RTK_DISABLED=1 git commit --allow-empty -m 'x'",
+                id="single-quoted",
+            ),
+            pytest.param(
+                'git commit --allow-empty -m "a; git b && rtk git c"',
+                'RTK_DISABLED=1 git commit --allow-empty -m "a; git b && rtk git c"',
+                id="separators-inside-the-message-are-left-alone",
+            ),
+            pytest.param(
+                'git status; echo "done"',
+                'RTK_DISABLED=1 git status; echo "done"',
+                id="quote-in-a-non-git-segment",
+            ),
+        ],
+    )
+    def test_fix_is_the_typed_command_with_only_the_prefix_added(self, sandbox, cmd, fix):
+        sandbox.isolate()
+        r = sandbox.run(sandbox.bash_payload(cmd))
+        assert r.returncode == 2, r.stderr
+        assert _tags(r.stderr) == "containment", r.stderr
+        assert _fix_from(r.stderr) == fix
+        assert sandbox.run(sandbox.bash_payload(fix)).returncode == 0
+
+    @pytest.mark.parametrize(
+        "cmd,fix",
+        [
+            ("git status; ls", "RTK_DISABLED=1 git status; ls"),
+            ("ls && git status", "ls && RTK_DISABLED=1 git status"),
+            ("git status && git log", "RTK_DISABLED=1 git status && RTK_DISABLED=1 git log"),
+            ("FOO=1 git status", "RTK_DISABLED=1 FOO=1 git status"),
+            ("rtk proxy git status", "RTK_DISABLED=1 git status"),
+        ],
+    )
+    def test_other_segments_keep_the_text_the_model_wrote(self, sandbox, cmd, fix):
+        # RTK also rewrites `ls`; the rendered fix must not embed that rewrite.
+        sandbox.isolate()
+        r = sandbox.run(sandbox.bash_payload(cmd))
+        assert r.returncode == 2, r.stderr
+        assert _fix_from(r.stderr) == fix
 
 
 class TestParseComplexity:
     @pytest.mark.parametrize(
         "cmd",
         [
-            pytest.param('git commit --allow-empty -m "x"', id="double-quoted"),
-            pytest.param("git commit --allow-empty -m 'x'", id="single-quoted"),
             pytest.param("rtk git log $(git rev-parse HEAD)", id="command-substitution"),
             pytest.param("rtk git log `git rev-parse HEAD`", id="backtick"),
             pytest.param("rtk git commit -F - <<EOF\nmsg\nEOF", id="heredoc"),
@@ -416,13 +503,13 @@ class TestParseComplexity:
         assert r.returncode == 0, r.stderr
         assert r.stderr == ""
 
-    def test_fix_that_would_still_deny_downgrades_to_complexity(self, sandbox):
-        # A backslash-newline hides `rtk git` from the sed render but not the scanner, so
+    def test_fix_that_would_still_deny_is_not_offered_as_exact(self, sandbox):
+        # A backslash-newline hides `rtk git` from the renderer but not the scanner, so
         # the fix is a no-op the self-check must refuse to offer.
         sandbox.isolate()
         r = sandbox.run(sandbox.bash_payload("rtk \\\ngit status"))
         assert r.returncode == 2, r.stderr
-        assert _tags(r.stderr) == "parse-complexity", r.stderr
+        assert _tags(r.stderr) == "no-exact-fix", r.stderr
         assert "Next step — run exactly:" not in r.stderr
 
     def test_undecidable_self_check_is_not_treated_as_verified(self, sandbox):
@@ -432,7 +519,7 @@ class TestParseComplexity:
         env = sandbox.env(RTK_STUB_FIXED_RC="7")
         r = sandbox.run(sandbox.bash_payload("git status"), env=env)
         assert r.returncode == 2, r.stderr
-        assert _tags(r.stderr) == "parse-complexity", r.stderr
+        assert _tags(r.stderr) == "no-exact-fix", r.stderr
         assert "Next step — run exactly:" not in r.stderr
 
     @pytest.mark.parametrize(
@@ -455,7 +542,7 @@ class TestParseComplexity:
         sandbox.isolate()
         r = sandbox.run(sandbox.bash_payload(cmd))
         assert r.returncode == 2, r.stderr
-        assert _tags(r.stderr) == "parse-complexity", r.stderr
+        assert _tags(r.stderr) == "no-exact-fix", r.stderr
         assert "own Bash call" in r.stderr
 
     @pytest.mark.parametrize(
@@ -469,14 +556,24 @@ class TestParseComplexity:
 
 
 class TestSegmentScanner:
-    @pytest.mark.parametrize("cmd", ["timeout 5 git status", "timeout -k 1 5 git status"])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "timeout 5 git status",
+            "timeout -k 1 5 git status",
+            "timeout 5 git log --grep=rtk",
+            "timeout 5 git log --grep rtk",
+            "timeout 5 git checkout fix/rtk-hook",
+            "timeout 5 git show docs/rtk.md",
+        ],
+    )
     def test_any_launcher_rtk_spliced_in_is_denied(self, sandbox, cmd):
-        # RTK only ever splices `rtk` itself; when the typed text had no `rtk`, one in the
-        # rewritten command is RTK's, whatever wrapper sits in front of it.
+        # RTK only ever splices `rtk` itself; an `rtk` word elsewhere in the typed text
+        # (branch, path, --grep) must not switch that detection off.
         sandbox.isolate()
         r = sandbox.run(sandbox.bash_payload(cmd))
         assert r.returncode == 2, r.stderr
-        assert _tags(r.stderr) == "parse-complexity", r.stderr
+        assert _tags(r.stderr) == "no-exact-fix", r.stderr
 
     def test_typed_rtk_in_argument_position_is_not_a_launch(self, sandbox):
         sandbox.isolate()
@@ -534,6 +631,63 @@ class TestScoping:
         racing.write_text("")
         sandbox.isolate()
         assert racing.exists()
+
+    def test_subagent_without_its_own_marker_inherits_the_session_marker(self, sandbox):
+        sandbox.isolate()
+        r = sandbox.run(sandbox.bash_payload("git status", agent="agent9"))
+        assert r.returncode == 2, r.stderr
+        assert _tags(r.stderr) == "containment"
+        outside = sandbox.run(sandbox.bash_payload("git status", cwd=sandbox.elsewhere, agent="agent9"))
+        assert outside.returncode == 0
+
+    def test_agents_own_marker_wins_over_the_session_marker(self, sandbox):
+        sandbox.isolate()
+        other = sandbox.base / "other-wt"
+        other.mkdir()
+        sandbox.run(sandbox.enter_payload(agent="agent9", path=other))
+        # the agent's marker points at a different worktree, so the session's does not apply
+        r = sandbox.run(sandbox.bash_payload("git status", cwd=sandbox.wt, agent="agent9"))
+        assert r.returncode == 0, r.stderr
+
+    def test_config_dir_env_replaces_home_dot_claude(self, sandbox):
+        cfg = sandbox.base / "relocated-config"
+        cfg.mkdir()
+        (cfg / "settings.json").write_text(json.dumps(SETTINGS_WITH_RTK))
+        env = sandbox.env(CLAUDE_CONFIG_DIR=str(cfg))
+        r = sandbox.run(sandbox.enter_payload(), env=env)
+        assert r.returncode == 0
+        assert sandbox.marker().exists()
+
+    def test_home_settings_are_not_read_when_config_dir_is_set(self, sandbox):
+        sandbox.write_settings()
+        cfg = sandbox.base / "empty-config"
+        cfg.mkdir()
+        sandbox.run(sandbox.enter_payload(), env=sandbox.env(CLAUDE_CONFIG_DIR=str(cfg)))
+        assert not sandbox.marker().exists()
+
+    def test_marker_dir_is_private(self, sandbox):
+        sandbox.isolate()
+        assert stat.S_IMODE(sandbox.marker_dir.stat().st_mode) == 0o700
+        assert [p.name for p in sandbox.marker_dir.iterdir()] == [sandbox.session]
+
+    def test_symlinked_marker_dir_is_not_followed(self, sandbox):
+        target = sandbox.base / "attacker-dir"
+        target.mkdir()
+        sandbox.marker_dir.symlink_to(target)
+        sandbox.write_settings()
+        sandbox.run(sandbox.enter_payload())
+        assert list(target.iterdir()) == []
+        denied = sandbox.run(sandbox.bash_payload("git status"))
+        assert denied.returncode == 0
+
+    def test_kill_switch_disables_marker_and_deny(self, sandbox):
+        off = sandbox.env(SWE_WORKBENCH_RTK_WORKTREE_GUARD="0")
+        sandbox.write_settings()
+        sandbox.run(sandbox.enter_payload(), env=off)
+        assert not sandbox.marker().exists()
+        sandbox.isolate()
+        assert sandbox.run(sandbox.bash_payload("git status")).returncode == 2
+        assert sandbox.run(sandbox.bash_payload("git status"), env=off).returncode == 0
 
     def test_no_marker_allows(self, sandbox):
         r = sandbox.run(sandbox.bash_payload("git status"))
@@ -777,9 +931,15 @@ class TestContractPin:
         "ls && RTK_DISABLED=1 git status",
         "RTK_DISABLED=1 git status && RTK_DISABLED=1 git log",
         "git status | head -3",
+        "git status | grep foo",
         "FOO=1 git status",
         "git status\ngit log",
+        "git status; ls",
+        "git status || cat x",
+        "cd /x && git status 2>&1",
+        "timeout 5 git log --grep=rtk",
         'git commit --allow-empty -m "x"',
+        'git commit --allow-empty -m "a; git b"',
         "git log $(git rev-parse HEAD)",
         "git commit -F - <<EOF\nmsg\nEOF",
         "echo hi",
@@ -798,38 +958,65 @@ class TestContractPin:
         "RTK_DISABLED=1 git status",
     ]
 
-    def _real_and_stub(self, sandbox, cmd, stub_env=None, allow_rule=False):
-        assert REAL_RTK is not None
-        if allow_rule:
-            settings = sandbox.home / ".claude" / "settings.json"
-            settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git *)"]}}))
+    @staticmethod
+    def _run_rewrite(binary, cmd, home, cwd, allow_rule, extra_env=None):
         # neutral cwd and a temp HOME: the real rc depends on any settings found there
-        env = {**dict(_CLEAN_ENV), "HOME": str(sandbox.home)}
-        probe = subprocess.run(
-            [REAL_RTK, "rewrite", "--", "git status"],
-            env=env, cwd=sandbox.base, capture_output=True, text=True,
-        )  # fmt: skip
-        if probe.returncode not in (0, 3):
-            pytest.skip(f"installed rtk exits {probe.returncode} for `rewrite`; not the modelled contract")
-        real = subprocess.run(
-            [REAL_RTK, "rewrite", "--", cmd], env=env, cwd=sandbox.base, capture_output=True, text=True
+        settings = Path(home) / ".claude" / "settings.json"
+        if allow_rule:
+            settings.write_text(json.dumps({"permissions": {"allow": ["Bash(git *)"]}}))
+        elif settings.exists():
+            settings.unlink()
+        env = {**dict(_CLEAN_ENV), "HOME": str(home), **(extra_env or {})}
+        done = subprocess.run(
+            [str(binary), "rewrite", "--", cmd], env=env, cwd=cwd, capture_output=True, text=True
         )
-        stub = subprocess.run(
-            [str(sandbox.stub), "rewrite", "--", cmd],
-            env={**env, **(stub_env or {})}, cwd=sandbox.base, capture_output=True, text=True,
-        )  # fmt: skip
-        return (stub.returncode, stub.stdout), (real.returncode, real.stdout)
+        return {"rc": done.returncode, "stdout": done.stdout}
+
+    @staticmethod
+    def _recorded():
+        return json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
+
+    def test_golden_covers_every_pinned_spelling(self):
+        recorded = {(c["cmd"], c["allow_rule"]) for c in self._recorded()}
+        wanted = {(c, False) for c in self.FIXTURES} | {(c, True) for c in self.ALLOW_RULE_FIXTURES}
+        assert wanted <= recorded, f"regenerate the golden file: {sorted(wanted - recorded)}"
+
+    @pytest.mark.parametrize(
+        "case",
+        json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"],
+        ids=lambda c: f"{'allow:' if c['allow_rule'] else ''}{c['cmd']!r}",
+    )
+    def test_stub_reproduces_the_recorded_rtk_rewrite(self, sandbox, case):
+        # Runs everywhere (CI has no rtk): the stub every hook test leans on is held to
+        # answers recorded from the real binary.
+        extra = {"RTK_STUB_ALLOW_RULE": "1"} if case["allow_rule"] else {}
+        got = self._run_rewrite(sandbox.stub, case["cmd"], sandbox.home, sandbox.base, False, extra)
+        assert got == {"rc": case["rc"], "stdout": case["stdout"]}
 
     @pytest.mark.skipif(REAL_RTK is None, reason="real rtk not installed")
-    @pytest.mark.parametrize("cmd", FIXTURES)
-    def test_stub_matches_real_rtk_rewrite(self, sandbox, cmd):
-        stub, real = self._real_and_stub(sandbox, cmd)
-        assert stub == real
+    @pytest.mark.parametrize(
+        "case",
+        json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"],
+        ids=lambda c: f"{'allow:' if c['allow_rule'] else ''}{c['cmd']!r}",
+    )
+    def test_recorded_rewrite_still_matches_real_rtk(self, sandbox, case):
+        got = self._run_rewrite(REAL_RTK, case["cmd"], sandbox.home, sandbox.base, case["allow_rule"])
+        assert got == {"rc": case["rc"], "stdout": case["stdout"]}, (
+            "real rtk no longer answers as recorded; re-record with "
+            "RTK_GOLDEN_REGEN=1 and re-check the hook's assumptions"
+        )
 
     @pytest.mark.skipif(REAL_RTK is None, reason="real rtk not installed")
-    @pytest.mark.parametrize("cmd", ALLOW_RULE_FIXTURES)
-    def test_stub_matches_real_rtk_rewrite_under_an_allow_rule(self, sandbox, cmd):
-        stub, real = self._real_and_stub(
-            sandbox, cmd, stub_env={"RTK_STUB_ALLOW_RULE": "1"}, allow_rule=True
-        )
-        assert stub == real
+    @pytest.mark.skipif(not os.environ.get("RTK_GOLDEN_REGEN"), reason="set RTK_GOLDEN_REGEN=1")
+    def test_regenerate_golden(self, sandbox):
+        version = subprocess.run(
+            [str(REAL_RTK), "--version"], env=dict(_CLEAN_ENV), capture_output=True, text=True
+        ).stdout.strip()
+        cases = []
+        for allow_rule, cmds in ((False, self.FIXTURES), (True, self.ALLOW_RULE_FIXTURES)):
+            for cmd in cmds:
+                got = self._run_rewrite(REAL_RTK, cmd, sandbox.home, sandbox.base, allow_rule)
+                cases.append({"cmd": cmd, "allow_rule": allow_rule, **got})
+        GOLDEN.parent.mkdir(exist_ok=True)
+        payload = {"rtk_version": version, "cases": cases}
+        GOLDEN.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
