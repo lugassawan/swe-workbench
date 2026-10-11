@@ -250,6 +250,7 @@ def _execute(
     request_id: str,
     environment: dict[str, str] | None = None,
     harness: str = "claude",
+    execution_cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     session_env = _session_environment(harness)
     return subprocess.run(
@@ -263,7 +264,7 @@ def _execute(
             "--session-ref-env",
             session_env,
         ],
-        cwd=primary,
+        cwd=execution_cwd or primary,
         capture_output=True,
         text=True,
         env={
@@ -328,6 +329,19 @@ def _remote_branch_exists(remote: Path, branch: str) -> bool:
         text=True,
         env=dict(_CLEAN_ENV),
     ).returncode == 0
+
+
+def test_execute_completes_from_target_cwd_and_switches_to_surviving_worktree(tmp_path: Path) -> None:
+    primary, target, remote, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path, "pi")
+
+    result = _execute(
+        primary, state_dir, handoff_dir, tmp_path / "fake-bin", response, request_id, harness="pi", execution_cwd=target
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not target.exists()
+    assert not _branch_exists(primary, "feature/cleanup")
+    assert not _remote_branch_exists(remote, "feature/cleanup")
 
 
 @pytest.mark.parametrize("harness", ["claude", "pi"])

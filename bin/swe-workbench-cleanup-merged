@@ -479,8 +479,8 @@ def journal_request(path: Path, request: dict[str, object]) -> None:
         raise CleanupError(str(error)) from error
 
 
-def remove_target_worktree(request: dict[str, object], request_path: Path, cwd: Path) -> None:
-    """Remove only the sealed target while holding its shared lease lock."""
+def remove_target_worktree(request: dict[str, object], request_path: Path, cwd: Path) -> Path:
+    """Remove only the sealed target and return a surviving repository cwd."""
 
     target = Path(str(request["worktree_root"]))
     state_paths = handoff_state.StatePaths.from_environment()
@@ -492,20 +492,24 @@ def remove_target_worktree(request: dict[str, object], request_path: Path, cwd: 
             if lease is not None:
                 raise CleanupError("target worktree has an active handoff lease")
             registered = registered_target_roots(cwd, str(request["repo_key"]))
+            survivor = next((root for root in registered if root != target), None)
+            if survivor is None:
+                raise CleanupError("no surviving repository worktree is available for cleanup")
             if target not in registered:
                 if request["status"] == "prepared":
                     raise CleanupError("target worktree is no longer a registered live worktree")
                 request["progress"]["worktree_removed"] = True
                 journal_request(request_path, request)
-                return
+                return survivor
             revalidate_target(request, target)
             request["status"] = "running"
             journal_request(request_path, request)
             git_text(["worktree", "remove", str(target)], cwd)
-            if target.exists() or target in registered_target_roots(cwd, str(request["repo_key"])):
+            if target.exists() or target in registered_target_roots(survivor, str(request["repo_key"])):
                 raise CleanupError("target worktree removal was not verified")
             request["progress"]["worktree_removed"] = True
             journal_request(request_path, request)
+            return survivor
     except handoff_state.HandoffStateError as error:
         raise CleanupError(str(error)) from error
 
@@ -689,7 +693,7 @@ def execute_request(request_id: str, as_harness: str, session_env: str) -> Envel
             validate_sealed_pull_request(request, cwd)
             if request["status"] == "completed":
                 return result_envelope(request)
-            remove_target_worktree(request, path, cwd)
+            cwd = remove_target_worktree(request, path, cwd)
             if not request["progress"]["residuals_swept"]:
                 request["status"] = "running"
                 journal_request(path, request)
