@@ -488,6 +488,20 @@ def test_execute_resumes_after_each_journaled_crash_boundary(tmp_path: Path, bou
     assert not _remote_branch_exists(remote, "feature/cleanup")
 
 
+def test_execute_fails_closed_when_follow_up_issue_creation_was_interrupted(tmp_path: Path) -> None:
+    primary, _, _, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path)
+    path = _request_path(state_dir, request_id)
+    request = json.loads(path.read_text())
+    request["follow_up"] = "file_issue"
+    request["follow_up_started"] = True
+    handoff_state.write_atomic(path, json.dumps(request))
+
+    result = _execute(primary, state_dir, handoff_dir, tmp_path / "fake-bin", response, request_id)
+
+    assert result.returncode != 0
+    assert "outcome is unknown" in result.stderr
+
+
 def test_execute_replays_completed_result_idempotently(tmp_path: Path) -> None:
     primary, _, _, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path)
 
@@ -512,3 +526,26 @@ def test_execute_handles_already_absent_remote_branch_as_success(tmp_path: Path)
 
     assert result.returncode == 0, result.stderr
     assert not _remote_branch_exists(remote, "feature/cleanup")
+
+
+def test_execute_refuses_to_delete_a_remote_branch_repointed_after_prepare(tmp_path: Path) -> None:
+    primary, _, remote, state_dir, handoff_dir, response, request_id = _prepare_linked_request(tmp_path)
+    main_sha = _run_git(primary, "rev-parse", "main").stdout.strip()
+    subprocess.run(
+        ["git", "--git-dir", str(remote), "update-ref", "refs/heads/feature/cleanup", main_sha],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(_CLEAN_ENV),
+    )
+
+    result = _execute(primary, state_dir, handoff_dir, tmp_path / "fake-bin", response, request_id)
+
+    assert result.returncode != 0
+    assert subprocess.run(
+        ["git", "--git-dir", str(remote), "rev-parse", "refs/heads/feature/cleanup"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=dict(_CLEAN_ENV),
+    ).stdout.strip() == main_sha

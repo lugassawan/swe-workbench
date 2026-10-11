@@ -566,15 +566,24 @@ def local_branch_exists(cwd: Path, branch: str) -> bool:
     return git_result(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], cwd).returncode == 0
 
 
+def remote_branch_sha(cwd: Path, branch: str) -> str | None:
+    """Return the remote branch object ID, or None only when the ref is absent."""
+
+    result = git_result(["ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"], cwd)
+    if result.returncode == 2:
+        return None
+    if result.returncode != 0:
+        raise CleanupError(result.stderr.strip() or "could not query remote branch")
+    fields = result.stdout.strip().split()
+    if len(fields) != 2 or len(fields[0]) not in {40, 64} or any(character not in "0123456789abcdef" for character in fields[0]):
+        raise CleanupError("remote branch identity is invalid")
+    return fields[0]
+
+
 def remote_branch_exists(cwd: Path, branch: str) -> bool:
     """Return whether the remote still advertises the sealed branch ref."""
 
-    result = git_result(["ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}"], cwd)
-    if result.returncode == 0:
-        return True
-    if result.returncode == 2:
-        return False
-    raise CleanupError(result.stderr.strip() or "could not query remote branch")
+    return remote_branch_sha(cwd, branch) is not None
 
 
 def delete_branches(request: dict[str, object], request_path: Path, cwd: Path) -> None:
@@ -594,20 +603,28 @@ def delete_branches(request: dict[str, object], request_path: Path, cwd: Path) -
     if not progress["remote_branch_deleted"]:
         request["status"] = "running"
         journal_request(request_path, request)
-        if remote_branch_exists(cwd, branch):
-            git_text(["push", "origin", "--delete", branch], cwd)
+        remote_sha = remote_branch_sha(cwd, branch)
+        if remote_sha is not None:
+            if remote_sha != request["head_sha"]:
+                raise CleanupError("remote branch no longer matches the sealed pull request head")
+            ref = f"refs/heads/{branch}"
+            git_text(["push", f"--force-with-lease={ref}:{request['head_sha']}", "origin", f":{ref}"], cwd)
         if remote_branch_exists(cwd, branch):
             raise CleanupError("sealed remote branch deletion was not verified")
         progress["remote_branch_deleted"] = True
         journal_request(request_path, request)
 
 
-def complete_follow_up(request: dict[str, object], cwd: Path) -> None:
+def complete_follow_up(request: dict[str, object], request_path: Path, cwd: Path) -> None:
     """Record the sealed follow-up choice and file only the fixed issue shape."""
 
     if request.get("follow_up_done") is True:
         return
     if request["follow_up"] == "file_issue":
+        if request.get("follow_up_started") is True:
+            raise CleanupError("follow-up issue creation outcome is unknown; refusing a duplicate retry")
+        request["follow_up_started"] = True
+        journal_request(request_path, request)
         try:
             result = subprocess.run(
                 ["gh", "label", "list", "--repo", str(request["repo"]), "--json", "name", "-q", ".[].name"],
@@ -631,6 +648,7 @@ def complete_follow_up(request: dict[str, object], cwd: Path) -> None:
             arguments.extend(["--label", label])
         run(arguments, cwd)
     request["follow_up_done"] = True
+    journal_request(request_path, request)
 
 
 def result_envelope(request: dict[str, object]) -> Envelope:
@@ -681,7 +699,7 @@ def execute_request(request_id: str, as_harness: str, session_env: str) -> Envel
                 request["progress"]["residuals_swept"] = True
                 journal_request(path, request)
             delete_branches(request, path, cwd)
-            complete_follow_up(request, cwd)
+            complete_follow_up(request, path, cwd)
             request["status"] = "completed"
             journal_request(path, request)
             return result_envelope(request)

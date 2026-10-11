@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -202,8 +203,14 @@ def load_lease(workspace_directory: Path) -> dict[str, object] | None:
     """Load and validate a worktree lease, if one exists."""
 
     lease_path = workspace_directory / "lease.json"
-    if not lease_path.is_file():
+    try:
+        metadata = lease_path.lstat()
+    except FileNotFoundError:
         return None
+    except OSError as error:
+        raise HandoffStateError(f"could not inspect the handoff lease: {error}") from error
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        raise HandoffStateError("handoff lease is not an owner-only regular file")
     try:
         lease = json.loads(lease_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:

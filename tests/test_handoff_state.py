@@ -62,6 +62,23 @@ def test_shared_load_lease_rejects_malformed_or_unreadable_state(tmp_path: Path)
         handoff_state.load_lease(workspace)
 
 
+@pytest.mark.parametrize("kind", ["symlink", "directory", "unsafe_mode"])
+def test_shared_load_lease_fails_closed_for_nonregular_or_unsafe_evidence(tmp_path: Path, kind: str) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = workspace / "lease.json"
+    if kind == "symlink":
+        lease.symlink_to(workspace / "missing-lease")
+    elif kind == "directory":
+        lease.mkdir()
+    else:
+        lease.write_text(json.dumps({"schema_version": 1, "owner_harness": "claude", "epoch": 1, "checkpoint_id": "id", "receiver_session_ref": "session"}))
+        lease.chmod(0o644)
+
+    with pytest.raises(handoff_state.HandoffStateError):
+        handoff_state.load_lease(workspace)
+
+
 def test_shared_workspace_lock_serializes_processes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     handoff_state.ensure_owner_directory(workspace)
