@@ -642,7 +642,7 @@ _scan_wrapper_operand() {
 # `$0` args excepted); words after `git` are data unless git itself runs them.
 _scan_known_wrapper_body() {
   local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _m _tok _base _body _args
-  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit _cmdword=0
+  local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit _cmdword=0 _rest _split
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_push_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
@@ -717,6 +717,15 @@ _scan_known_wrapper_body() {
             esac
           done
           _i=$_end ;;
+        eval|ssh|watch)
+          # these re-split their argv into one command line, so a word with spaces joins its
+          # neighbours (`eval git "push -f" origin main` runs `git push -f origin main`)
+          _rest=""; _split=0
+          for ((_j = _i + 1; _j < _n; _j++)); do
+            _rest="$_rest ${_push_tokens[_j]}"
+            if _has_code_text "${_push_tokens[_j]}"; then _split=1; fi
+          done
+          if (( _split )); then _scan_wrapper_operand "$_rest" "$_depth"; fi ;;
         *)
           if (( _i > _p )) && _has_code_text "$_tok"; then
             _scan_wrapper_operand "$_tok" "$_depth"

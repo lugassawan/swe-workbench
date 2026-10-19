@@ -125,6 +125,17 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git push -Z --mirro origin", True),
     ("git push --al origin", False),
     ("git push --force-with-lease --al origin", False),
+    # eval, ssh and watch re-split their argv into one command line, so a word that holds
+    # spaces joins its neighbours (ssh host echo "…push text…" over-blocks the same way).
+    ('eval git "push -f" origin main', True),
+    ('eval git "push --force" origin main', True),
+    ('ssh host "git push" -f origin main', True),
+    ('watch git "push -f" origin main', True),
+    ('sudo ssh host "git push" -f origin main', True),
+    ('ssh host echo "doc git push -f origin main"', True),
+    ('eval git "push -f" origin feature/x', False),
+    ('ssh host "git push" -f origin feature/x', False),
+    ('ssh host "ls -la"', False),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),
