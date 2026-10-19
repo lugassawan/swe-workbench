@@ -73,10 +73,7 @@ const OUTPUT_FAMILIES: Readonly<Record<string, OutputFamily>> = {
 
 function outputFamilyFor(agent: string): OutputFamily {
   const family = OUTPUT_FAMILIES[agent];
-  if (family === undefined) {
-    throw new Error(`dispatch profile has no output family for agent "${agent}"`);
-  }
-  return family;
+  return family ?? "implementation";
 }
 
 function outputCapFor(profile: DispatchProfile): number {

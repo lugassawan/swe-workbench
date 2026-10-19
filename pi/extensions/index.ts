@@ -152,6 +152,6 @@ export default function (pi: ExtensionAPI): void {
   registerPhase(pi, root);
   registerMemoryRecord(pi, root);
   registerAskUser(pi);
-  registerDispatchProfile(pi);
-  registerSubagent(pi, root);
+  const profiles = registerDispatchProfile(pi);
+  registerSubagent(pi, root, profiles);
 }

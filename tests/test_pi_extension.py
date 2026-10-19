@@ -475,6 +475,8 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "dispatch-profile.ts",
         "dispatch-profile-store.ts",
         "dispatch-profile-ui.ts",
+        "subagent-attempt.ts",
+        "subagent-output.ts",
         "subagent-json.ts",
         "subagent.ts",
         "memory-guidance.ts",

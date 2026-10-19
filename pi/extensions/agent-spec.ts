@@ -203,6 +203,11 @@ export function skillDir(root: string, skillId: string): string {
   return join(root, "skills", bareSkillId(skillId));
 }
 
+/** Absolute path to a skill's entry file for on-demand child reads. */
+export function skillPath(root: string, skillId: string): string {
+  return join(skillDir(root, skillId), "SKILL.md");
+}
+
 /** Lists agent ids (basenames, no .md) under agents/ — for a "not found, available: ..." error. */
 export function listAgentNames(root: string): string[] {
   return readdirSync(join(root, "agents"), { withFileTypes: true })
