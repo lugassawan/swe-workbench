@@ -54,6 +54,7 @@ export async function runSubagentAttempt(pi: ExtensionAPI, input: AttemptInput):
       throw new Error(`task: child failed — ${capOutput(err instanceof Error ? err.message : String(err))}`);
     }
   } finally {
+    // Do this only after pi.exec resolves: a missing prompt file is silently treated as literal prompt text.
     try { unlinkSync(promptFile); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
     try { rmdirSync(tmpDir); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   }

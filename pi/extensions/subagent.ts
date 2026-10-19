@@ -97,7 +97,7 @@ export function registerSubagent(pi: ExtensionAPI, root: string, profiles?: Disp
         first = await runSubagentAttempt(pi, input(promptFor(false, false)));
       } catch (err) {
         const suffix = dispatch.warning ? ` (${dispatch.warning})` : "";
-        throw new Error(`${err instanceof Error ? err.message : String(err)}${suffix}`);
+        throw new Error(`task: dispatched agent "${sanitizeAgentId(agent)}" failed — ${err instanceof Error ? err.message : String(err)}${suffix}`);
       }
       const retryReason = plan.allowFullPreloadRetry ? parseFullPreloadRetry(first.text) : undefined;
       let stdout = first.stdout;
