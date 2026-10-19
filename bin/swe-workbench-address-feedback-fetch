@@ -146,6 +146,29 @@ def _split_batch_sections(content: str) -> list[str]:
         pos = idx + 1
 
 
+def _parse_sections(remainder: str) -> list[tuple[int, str]] | None:
+    """Shared by both batch carriers. `remainder` is the text after the batch marker line;
+    returns (finding_id, body) pairs, or None unless every section is producer-formatted."""
+    if not remainder.startswith("\n\n"):
+        return None
+    sections = _split_batch_sections(remainder[2:])
+    if len(sections) > MAX_BATCH_SECTIONS:
+        return None
+    parsed: list[tuple[int, str]] = []
+    previous_id = 0
+    for section in sections:
+        marker = _REVIEW_FINDING_LINE_RE.match(section)
+        if marker is None:
+            return None
+        finding_id = int(marker.group(1))
+        finding_body = strip_finding_key_markers(section[marker.end():]).strip()
+        if finding_id <= previous_id or not finding_body or _ANY_REVIEW_MARKER_LINE_RE.search(finding_body):
+            return None
+        previous_id = finding_id
+        parsed.append((finding_id, finding_body))
+    return parsed or None
+
+
 def parse_review_finding_batch(comment: dict) -> list[dict] | None:
     """Return projections only for a complete producer-formatted finding batch."""
     comment_id = comment.get("id")
@@ -157,33 +180,51 @@ def parse_review_finding_batch(comment: dict) -> list[dict] | None:
         return None
     if len(_REVIEW_BATCH_LINE_RE.findall(normalized)) != 1:
         return None
-    remainder = normalized[len(REVIEW_BATCH_MARKER):]
-    if not remainder.startswith("\n\n"):
+    parsed = _parse_sections(normalized[len(REVIEW_BATCH_MARKER):])
+    if parsed is None:
         return None
-
-    projections: list[dict] = []
-    previous_id = 0
-    sections = _split_batch_sections(remainder[2:])
-    if len(sections) > MAX_BATCH_SECTIONS:
-        return None
-    for section in sections:
-        marker = _REVIEW_FINDING_LINE_RE.match(section)
-        if marker is None:
-            return None
-        finding_id = int(marker.group(1))
-        finding_body = strip_finding_key_markers(section[marker.end():]).strip()
-        if finding_id <= previous_id or not finding_body or _ANY_REVIEW_MARKER_LINE_RE.search(finding_body):
-            return None
-        previous_id = finding_id
-        projections.append({
+    return [
+        {
             **comment,
             "body": finding_body,
             "parent_comment_id": comment_id,
             "finding_id": finding_id,
             "triage_key": f"prcomment:{comment_id}:finding:{finding_id}",
             "handled_marker": f"<!-- swe-workbench:handled:{comment_id}:finding:{finding_id} -->",
-        })
-    return projections or None
+        }
+        for finding_id, finding_body in parsed
+    ]
+
+
+def parse_review_body_batch(review: dict) -> list[dict] | None:
+    """Projections for a producer-formatted batch carried in a review body: the summary,
+    then the batch marker on its own line exactly once, then the sections. Review ids and
+    issue-comment ids are separate integer spaces, so every identity here is `review`-prefixed."""
+    review_id = review.get("id")
+    body = review.get("body")
+    if not isinstance(review_id, int) or isinstance(review_id, bool) or review_id < 1 or not isinstance(body, str):
+        return None
+    marker_lines = list(_REVIEW_BATCH_LINE_RE.finditer(body))
+    if len(marker_lines) != 1:
+        return None
+    marker = marker_lines[0]
+    if _ANY_REVIEW_MARKER_LINE_RE.search(body[:marker.start()]):
+        return None
+    parsed = _parse_sections(body[marker.end():])
+    if parsed is None:
+        return None
+    return [
+        {
+            **review,
+            "created_at": review.get("submitted_at") or "",
+            "body": finding_body,
+            "parent_comment_id": f"review-{review_id}",
+            "finding_id": finding_id,
+            "triage_key": f"review:{review_id}:finding:{finding_id}",
+            "handled_marker": f"<!-- swe-workbench:handled:review-{review_id}:finding:{finding_id} -->",
+        }
+        for finding_id, finding_body in parsed
+    ]
 
 
 def _strip_leading_provenance_markers(body: str) -> str:
@@ -205,6 +246,20 @@ def project_legacy_pr_comment(comment: dict) -> dict:
         "finding_id": None,
         "triage_key": f"prcomment:{comment_id}",
         "handled_marker": f"<!-- swe-workbench:handled:{comment_id} -->",
+    }
+
+
+def project_legacy_review(review: dict) -> dict:
+    """A review body that claims to be a batch but fails strict parsing stays visible as one item."""
+    review_id = review["id"]
+    return {
+        **review,
+        "created_at": review.get("submitted_at") or "",
+        "body": strip_finding_key_markers(review.get("body") or ""),
+        "parent_comment_id": f"review-{review_id}",
+        "finding_id": None,
+        "triage_key": f"review:{review_id}",
+        "handled_marker": f"<!-- swe-workbench:handled:review-{review_id} -->",
     }
 
 
@@ -248,8 +303,13 @@ def _is_handled(projection: dict, owner_comments: list[dict]) -> bool:
     )
 
 
-def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -> list[dict]:
-    """Project valid marked batches and keep legacy comments addressable on re-runs."""
+def compute_pr_comment_eligibility(
+    comments: list[dict], author: str, me: str, reviews: list[dict] | None = None,
+) -> list[dict]:
+    """Project valid marked batches and keep legacy comments addressable on re-runs. Review
+    bodies contribute only marked batches (valid ones per finding, malformed ones as one item):
+    a plain review summary is not PR feedback. Handled markers and manual replies are still
+    read from the issue comments, where the reply flow posts them."""
     owner_comments = [comment for comment in comments if _comment_login(comment) in (author, me)]
     # Parse owner automation once rather than per candidate.
     owner_automated = [
@@ -266,6 +326,14 @@ def compute_pr_comment_eligibility(comments: list[dict], author: str, me: str) -
         elif _comment_login(comment) not in (author, me) or _is_batch_shaped(comment):
             # Keep malformed batches visible as one legacy triage item.
             candidates.append(project_legacy_pr_comment(comment))
+    for review in reviews or []:
+        if _is_bot_comment(review) or review.get("state") == "PENDING" or not review.get("submitted_at"):
+            continue
+        review_batch = parse_review_body_batch(review)
+        if review_batch is not None:
+            candidates.extend(review_batch)
+        elif REVIEW_BATCH_MARKER in (review.get("body") or "") and isinstance(review.get("id"), int):
+            candidates.append(project_legacy_review(review))
 
     result = []
     for candidate in candidates:
@@ -437,6 +505,22 @@ def fetch_pr_comments_raw(owner: str, repo: str, pr: str, script_dir: Path) -> l
     return comments
 
 
+def fetch_reviews_raw(owner: str, repo: str, pr: str, script_dir: Path) -> list[dict]:
+    proc = _gh(["api", "--paginate", f"repos/{owner}/{repo}/pulls/{pr}/reviews", "--jq", ".[]"], script_dir)
+    if proc.returncode != 0:
+        raise FetchError(f"failed to fetch PR reviews: {proc.stderr.strip() or proc.stdout.strip()}")
+    reviews: list[dict] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            reviews.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise FetchError(f"malformed PR review JSON from gh: {exc}") from exc
+    return reviews
+
+
 # ── Atomic write ──────────────────────────────────────────────────────────────
 
 
@@ -554,7 +638,10 @@ def main(argv: list[str] | None = None) -> int:
             current_user = fetch_current_user(script_dir)
             threads = fetch_threads(owner, repo, pr, current_user, script_dir)
             pr_comments_raw = fetch_pr_comments_raw(owner, repo, pr, script_dir)
-            pr_comments = compute_pr_comment_eligibility(pr_comments_raw, preflight["author_login"], current_user)
+            reviews_raw = fetch_reviews_raw(owner, repo, pr, script_dir)
+            pr_comments = compute_pr_comment_eligibility(
+                pr_comments_raw, preflight["author_login"], current_user, reviews=reviews_raw,
+            )
 
             _atomic_write_json(threads_path, threads)
             _atomic_write_json(pr_comments_path, pr_comments)
