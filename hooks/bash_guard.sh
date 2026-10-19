@@ -185,11 +185,13 @@ _push_token_awk='
   function emit_word() {
     if (!word_started) return
     if (redirect_target) { if (here_string) print "HERE\t" word; redirect_target = 0; here_string = 0 }
-    else print "WORD\t" word
-    word = ""; word_started = 0
+    else print "WORD\t" ((cur_branch && word == dyn) ? cur : word)
+    word = ""; word_started = 0; cur_branch = 0
   }
   function finish_subst() {
     print "NEST\t" subtext
+    # a word that is exactly one current-branch query is the current branch, not an unknown value
+    cur_branch = (word == "" && subtext ~ /^[ \t]*(rtk[ \t]+)?git[ \t]+(branch[ \t]+--show-current|rev-parse[ \t]+--abbrev-ref[ \t]+HEAD|symbolic-ref[ \t]+--short[ \t]+HEAD)([ \t]+2>[ \t]*\/dev\/null)?[ \t]*$/)
     word = word dyn; word_started = 1
   }
   function unquoted(s,   r, k, ch, q, e) {
@@ -217,7 +219,7 @@ _push_token_awk='
     } else emit_word()
     redirect_target = 1
   }
-  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
   END {
     line = buf; gsub(/\001/, "\n", line); n = length(line)
@@ -405,6 +407,8 @@ _push_here=()
 _push_subs=()
 _push_saw_tab=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
+# Stands for a word that is exactly a query for the current branch name.
+_CURRENT_BRANCH_TOKEN=__SWB_CURRENT_BRANCH__
 # Set while a wrapper's code operand is re-scanned: everything before `git` there is an argument.
 _NESTED_WRAPPER_BODY=0
 
@@ -510,6 +514,12 @@ _classify_force_push_segment() {
       esac
       _consume_next=0
       continue
+    fi
+    if [[ "$_t" == "$_CURRENT_BRANCH_TOKEN" ]]; then
+      # `HEAD` here; the query runs in this directory, so it names the pushed branch only
+      # when no other repository was selected
+      (( _has_context )) && _has_dynamic=1
+      _t=HEAD
     fi
     if [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]]; then
       if [[ "$_t" != -* ]]; then
@@ -782,7 +792,7 @@ scan_force_push_text() {
         _push_saw_tab=0
         ;;
     esac
-  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
+  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" "$_push_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
   _classify_force_push_segment
   (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'

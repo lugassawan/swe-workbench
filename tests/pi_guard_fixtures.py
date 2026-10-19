@@ -129,9 +129,12 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),
     ("gh pr create --body \"$(cat <<'EOT'\ngit push --force origin main\nEOT\n)\"", False),
-    # Dynamic destinations are never expanded to decide a destructive push policy.
-    ("git push --force origin $(git branch --show-current)", True),
-    ("git push --force origin `git branch --show-current`", True),
+    # Dynamic destinations are never expanded to decide a destructive push policy; only a word
+    # that is exactly a current-branch query is read as HEAD (see the branch rows).
+    ("git push --force origin refs/heads/$(git branch --show-current)", True),
+    ("git push --force origin $(git branch --show-current)x", True),
+    ("git push --force origin $(git branch --show-current) $(echo main)", True),
+    ("git -C other push --force origin $(git branch --show-current)", True),
     ("git push --force-with-lease origin $(git branch --show-current)", False),
     ("git push --force-with-lease origin `git branch --show-current`", False),
     ("bash -c 'git push --force origin main && cd x'", True),
@@ -216,11 +219,26 @@ BASH_GUARD_BRANCH_FIXTURES: dict[str, list[tuple[str, bool]]] = {
         ("git push $(echo --force) origin", True),
         ('git push "$(git remote)"', True),
         ("git push $(echo --force) origin feature/x", False),
+        # a whole-word current-branch query is the current branch
+        ("git push --force origin $(git branch --show-current)", True),
+        ('git push --force origin "$(git branch --show-current)"', True),
+        ("git push --force origin `git branch --show-current`", True),
+        ("git push --force origin $(git rev-parse --abbrev-ref HEAD)", True),
+        ("git push --force origin $(git symbolic-ref --short HEAD)", True),
+        ("git push --force origin $(rtk git branch --show-current)", True),
+        ("git push --force origin $(git branch --show-current 2>/dev/null)", True),
     ],
     "feature/x": [
         ("git push origin --force 2>&1", False),
         ("git push $(echo --force) origin", False),
         ('git push "$(git remote)"', False),
         ("git push $(echo --force) origin feature/x", False),
+        ("git push --force origin $(git branch --show-current)", False),
+        ('git push --force origin "$(git branch --show-current)"', False),
+        ("git push --force origin `git branch --show-current`", False),
+        ("git push --force origin $(git rev-parse --abbrev-ref HEAD)", False),
+        ("git push --force origin $(git symbolic-ref --short HEAD)", False),
+        ("git push --force origin $(rtk git branch --show-current)", False),
+        ("git push --force origin $(git branch --show-current 2>/dev/null)", False),
     ],
 }

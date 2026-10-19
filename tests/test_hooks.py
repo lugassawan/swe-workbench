@@ -349,10 +349,24 @@ class TestImplicitForcePushBlocker:
         )
         assert result.stderr == ""
 
-    @pytest.mark.parametrize("branch", ["main", "feature/x"])
+    @pytest.mark.parametrize("branch,blocked", [("main", True), ("feature/x", False)])
     @pytest.mark.parametrize("cmd", [
         "git push --force origin $(git branch --show-current)",
         "git push --force origin `git branch --show-current`",
+    ])
+    def test_current_branch_query_is_the_current_branch(
+        self, guard_script, repo_on, branch, blocked, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on(branch)))
+        assert (result.returncode == 2) is blocked, (
+            f"{cmd!r} on {branch}: exit {result.returncode}, stderr {result.stderr!r}"
+        )
+
+    @pytest.mark.parametrize("branch", ["main", "feature/x"])
+    @pytest.mark.parametrize("cmd", [
+        "git push --force origin refs/heads/$(git branch --show-current)",
+        "git push --force origin $(git branch --show-current)x",
+        "git -C other push --force origin $(git branch --show-current)",
     ])
     def test_dynamic_refspec_fails_closed(self, guard_script, repo_on, branch, cmd):
         result = run_guard(guard_script, cmd, cwd=str(repo_on(branch)))
