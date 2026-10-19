@@ -63,11 +63,11 @@ compile() {
   local src="$1" out="$2"
   local tmp="" existing_stripped="" new_stripped=""
   if [[ "$CHECK" -eq 1 ]]; then
-    # Set trap before mktemp so partial failures don't leak files.
-    trap 'rm -f ${tmp:+"$tmp"} ${existing_stripped:+"$existing_stripped"} ${new_stripped:+"$new_stripped"}' RETURN
-    tmp=$(mktemp)
-    existing_stripped=$(mktemp)
-    new_stripped=$(mktemp)
+    # Temp files live in $VENV_DIR so its EXIT trap reaps them on every exit
+    # path, including a set -e abort mid-function that a RETURN trap misses.
+    tmp=$(mktemp "$VENV_DIR/XXXXXX")
+    existing_stripped=$(mktemp "$VENV_DIR/XXXXXX")
+    new_stripped=$(mktemp "$VENV_DIR/XXXXXX")
     # Run from REPO_ROOT so pip-compile records relative paths in the header.
     # Compiling into an empty mktemp file (not --output-file "$out") means there's no
     # existing pin to seed from, so this resolution is fresh by construction and needs
@@ -91,7 +91,6 @@ compile() {
       echo "::error::$out is out of date. Run scripts/lock-pip-requirements.sh to regenerate." >&2
       return 1
     fi
-    trap - RETURN
     echo "$out is up to date."
   else
     # Run from REPO_ROOT so pip-compile records relative paths in the header.

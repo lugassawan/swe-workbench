@@ -44,7 +44,7 @@ The resolution itself happens at the top of Step 1 (the `case "$MODE"` block), w
 This skill orchestrates; analysis is delegated to:
 - `swe-workbench:reviewer` subagent — produces `Severity | File:Line | Issue | Why | Fix` findings + a Review Decision footer (when instructed by this skill — see Step 4).
 - `swe-workbench:ticket-context` skill — prepended to the reviewer prompt when the PR body or commit messages reference a ticket key, atlassian/Confluence URL, or `#NNN` GitHub ref.
-- `swe-workbench:workflow-pr-review-post` skill — the shared posting core (Step 6): dedup, inline/PR-level posting, self-review gate + diff-scoping flip, submit, CTA, its own state reap.
+- `swe-workbench:workflow-pr-review-post` skill — the shared posting core (Step 6): dedup, inline/PR-level posting, self-review gate + diff-scoping flip, submit, its own state reap.
 - **Checkpoint:** write the workflow state file (see `shared/docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete the state file after Step 7.
 
 ## 7-step flow
@@ -219,7 +219,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `issue`, `why`, `fix`, `path`, `line` — the reviewer's `Issue`, `Why it matters` and `Suggested fix` columns verbatim, never a composed `body`; the posting script renders the layout; on a `pr-level` row omit `path`/`line` unless the reviewer gave a single `path:<integer>` — a range or blank rejects the whole batch); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
 
-- `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
+- `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN`, `SCOPE_SLUG` — from Step 1 (`SCOPE_SLUG` names the core's retry file).
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5 (`$DECISION` may since have been forced to `COMMENT` by Step 5.5's `AskUserQuestion` — pass whatever it currently holds).
 - `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `swe-workbench:reviewer`_ `` for first-pass, `` _Re-reviewed by `swe-workbench:reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `CALLER_TAG` — `$CALLER_TAG` from the mode table above (`general` / `followup`; scopes the core's own threads-cache filename so it never collides with a concurrent run of the other mode or a specialist run on the same PR).
@@ -227,7 +227,7 @@ Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity
 - `APPROVE_OVER_OPEN_THREADS` — whatever Step 5.5 produced (possibly empty: unset when `$DECISION` was never `APPROVE`, when Step 5.5 short-circuited on `nothing_to_verify`, when every thread resolved, or when the `AskUserQuestion` prompt was answered "Submit COMMENT").
 - `FINDINGS[]` — as parsed above.
 
-The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, the address-feedback CTA, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
+The core owns thread/review fetch + key and fuzzy dedup, one-review delivery (inline comments and PR-level findings in a single POST; an unchanged decision with nothing new is skipped without posting), the self-review gate + diff-scoping flip, the retry file, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
 
 ### Step 7 — Cleanup
 
@@ -289,7 +289,7 @@ See `skills/workflow-pr-review-post/SKILL.md` § Failure modes for posting/dedup
 | Forget repo-relative-path instruction | GitHub comment positioning requires repo-relative paths. The agent will emit `$WT/...` paths otherwise — comments won't anchor. |
 | Skip the footer instruction | Without it, the agent does NOT emit the footer (per its `## Decision footer (when instructed)` block). Step 5 will then abort. |
 | Assume worktree teardown still backgrounds `(... ) &` | `release` runs foregrounded — its `eval "$(...)"` output must be read directly, and removal is fast (`--skip-deps --skip-hooks` worktrees have no dependency tree to clean up). |
-| Reuse the core's own dedup/CTA/flip logic inline instead of invoking it | Duplicating that mechanism here is exactly the drift this skill was folded to remove — always delegate Step 6 to `swe-workbench:workflow-pr-review-post`. |
+| Reuse the core's own dedup/flip logic inline instead of invoking it | Duplicating that mechanism here is exactly the drift this skill was folded to remove — always delegate Step 6 to `swe-workbench:workflow-pr-review-post`. |
 | Run Step 5.5 unconditionally, or after `$DECISION` has already been forced to `COMMENT` | Step 5.5 is gated on `$DECISION == APPROVE` only — running it on a `COMMENT` decision wastes a GraphQL round-trip verifying threads that can't unblock anything this run. |
 | Resolve a thread in Step 5.5 based on the reviewer's own claim of a fix, without reading `excerpt`/`commits_since` | ADDRESSED requires evidence — the excerpt showing the concern is gone and/or a commit touching that path since the thread opened. Resolving on the reply text alone risks closing a thread that was never actually fixed. |
 | `exit 1` on an `evidence`/`resolve` failure (or a missing runtime command) inside Step 5.5 | Step 5.5 runs after `$RUN_DIR` is allocated and before Step 7's cleanup — aborting here leaks state and discards Step 4's review output. Print the warning and fall through to Step 6 with `$DECISION` unchanged instead. |

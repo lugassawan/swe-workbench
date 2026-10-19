@@ -67,6 +67,6 @@ Never string-concatenate a free-form value directly into a JSON literal (`"body"
   `skills/workflow-pr-review-post/SKILL.md`'s `## Post` section (shared by `swe-workbench:workflow-pr-review`
   (both first-pass and followup modes) and the `/swe-workbench:review` specialist PR-mode
   sub-flow) — builds the `comments[]` array as a JSON payload via `json.dumps` and posts it
-  with `gh api --input -` (see above), and uses `-f body=` in the per-comment ("model-A")
-  fallback POST (a reviewer finding can also start with `@author`); both guarded by
-  `tests/test_pr_review_skill_body_flag.py`.
+  with `gh api --input -` (see above) — every review POST, including the body-only last resort,
+  goes out that way, so a reviewer finding that starts with `@author` is never passed as a
+  `-f/-F body=` flag; guarded by `tests/test_pr_review_skill_body_flag.py`.

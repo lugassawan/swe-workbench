@@ -1,15 +1,15 @@
-"""Guards the raw-body discipline of bin/swe-workbench-pr-review-submit's two
-comment-posting call sites against injection/@-expansion hazards (issue #494,
-moved from bash+jq prose into the script by #550).
+"""Guards the raw-body discipline of bin/swe-workbench-pr-review-submit's review
+posting against injection/@-expansion hazards (issue #494, moved from bash+jq
+prose into the script by #550).
 
 A reviewer finding body is free-form text that can legitimately start with
-`@author...` or contain `"`/`\\` characters. Two distinct hazards apply
-depending on the call site:
+`@author...` or contain `"`/`\\` characters. Two distinct hazards apply:
 
 1. `gh api -F body=` treats an @-prefixed value as a file path to read, so
    posting such a finding with `-F` would silently read (or fail to read) a
-   bogus file instead of posting the literal text. `-f body=` forces a raw
-   string — the model-A per-comment fallback call site uses it (see
+   bogus file instead of posting the literal text. Every review POST — the
+   atomic one and the body-only last resort alike — therefore submits its
+   payload as JSON via `--input -` and never as `-f/-F body=` argv (see
    test_reply_and_resolve_script.py::test_body_flag_is_lowercase_f_not_uppercase_f
    for the sibling script this mirrors).
 2. Building the atomic `comments[]` payload by string-concatenating a
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -169,9 +170,10 @@ def test_atomic_comments_body_survives_byte_identical_via_json_payload(tmp_path)
     calls = _gh_calls(state_dir)
     post_call = next(c for c in calls if "--input" in c["argv"] and "/reviews" in json.dumps(c["argv"]))
     payload = json.loads(post_call["stdin"])
-    assert payload["comments"][0]["body"] == (
-        f"<!-- swe-workbench:review-finding:1 -->\n{_rendered(HAZARDOUS_BODY)}"
-    ), "the provenance marker must precede an otherwise byte-identical JSON payload body"
+    body = payload["comments"][0]["body"]
+    prefix = f"<!-- swe-workbench:review-finding:1 -->\n{_rendered(HAZARDOUS_BODY)}\n"
+    assert body.startswith(prefix), "the provenance marker must precede an otherwise byte-identical JSON payload body"
+    assert re.fullmatch(r"<!-- swe-workbench:finding-key:v1:[0-9a-f]{16} -->", body[len(prefix):])
 
 
 def test_atomic_reviews_post_uses_input_flag_not_f_F_for_body(tmp_path):
@@ -193,8 +195,9 @@ def test_atomic_reviews_post_uses_input_flag_not_f_F_for_body(tmp_path):
     )
 
 
-def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp_path):
-    """Drives the model-A fallback (double-422) and inspects the per-comment REST call's argv."""
+def test_body_only_last_resort_post_keeps_hazardous_text_byte_identical_and_never_uses_body_argv(tmp_path):
+    """Drives the double-422 ladder to its body-only POST: the demoted finding rides in the review
+    body, serialized once by json.dumps, with no -f/-F body= flag anywhere in any call."""
     head = _init_repo(tmp_path)
     stub_dir, state_dir = _write_gh_stub(tmp_path, [
         _threads_response(),
@@ -204,27 +207,19 @@ def test_fallback_per_comment_post_uses_lowercase_f_not_uppercase_f_for_body(tmp
         {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
         {"stdout": _PR_DIFF, "exit": 0},  # re-fetch PR diff alongside HEAD
         {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-        {"stdout": "[]", "exit": 0},  # read-your-write: nothing landed
-        {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
-        _review_post_response(),
+        _review_post_response(),  # body-only last resort
     ])
     findings = tmp_path / "findings.json"
     findings.write_text(json.dumps([
         _row(HAZARDOUS_BODY),
     ]))
-    result = _run(
-        _base_args(findings) + ["--head-sha", head, "--current-user", "alice"],
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir,
-    )
+    result = _run(_base_args(findings) + ["--head-sha", head], cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir)
     assert result.returncode == 0, result.stderr
     calls = _gh_calls(state_dir)
-    fallback_call = next(c for c in calls if c["argv"][0] == "api" and "/comments" in json.dumps(c["argv"]))
-    marked_body = f"<!-- swe-workbench:review-finding:1 -->\n{_rendered(HAZARDOUS_BODY)}"
-    assert f"body={marked_body}" in fallback_call["argv"], (
-        f"expected -f body=<raw> in the fallback per-comment POST argv, got: {fallback_call['argv']}"
-    )
-    idx = fallback_call["argv"].index(f"body={marked_body}")
-    assert fallback_call["argv"][idx - 1] == "-f", (
-        "the fallback per-comment POST must use -f (raw string) for body, not -F "
-        "(which @-expands a value starting with '@')"
+    posts = [c for c in calls if "--input" in c["argv"] and "/reviews" in json.dumps(c["argv"])]
+    final = json.loads(posts[-1]["stdin"])
+    assert "comments" not in final
+    assert f"**High** · `src.py:2` — {HAZARDOUS_BODY}\n\n**Why it matters:** why" in final["body"]
+    assert not any(a.startswith("body=") for c in calls for a in c["argv"]), (
+        "no call may pass a finding body as -f/-F body= argv"
     )

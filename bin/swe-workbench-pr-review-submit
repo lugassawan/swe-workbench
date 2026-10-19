@@ -1,83 +1,42 @@
 #!/usr/bin/env python3
-"""Posting mechanism for workflow-pr-review-post's `## Post` section (issue #550).
+"""Posting mechanism for workflow-pr-review-post's `## Post` section.
 
-Fetches existing review threads, dedups a findings payload against them,
-pre-validates inline anchors against the PR diff, posts pr-level batches,
-applies the self-review + diff-scoping decision flip, and submits the
-review — atomically when possible, with a bounded 422 retry and a
-per-comment fallback when it isn't. This module owns the mechanism only;
-the input contract, the Step 5 AskUserQuestion CTA (main-thread-only, can't
-move into a script), and the failure-mode/common-mistakes documentation
-stay in skills/workflow-pr-review-post/SKILL.md.
+Fetches threads, earlier reviews and issue comments, dedups a findings payload against them,
+pre-validates inline anchors against the PR diff, applies the self-review + diff-scoping decision
+flip, and delivers the run as one review POST. The input contract, dedup rules, skip rule, failure
+ladder and retry file are documented in skills/workflow-pr-review-post/SKILL.md; this docstring
+only records what the code alone cannot say.
 
-Prints one JSON envelope to stdout on success (schema `swb.pr-review-submit/1`, see
-shared/docs/runtime-result-contract.md): `status` is "ok" when the review was
-successfully submitted (by any of the atomic/retry/fallback paths) and "partial"
-when every path was exhausted with nothing landed — the script still exits 0 either
-way, since the caller's cleanup chain must never abort on a posting failure. An
-input-contract validation failure (see `validate_payload`) exits 1 with no stdout at
-all — never a partial envelope.
-
-Comment bodies are rendered here, never by the caller: each --findings-json row
-carries structured fields (`severity`, `issue`, `why`, `fix`, `anchor`, and optional
-`path`/`line`/`category`) and render_finding() applies the one template —
-`**<Sev>**[ · <Category>][ · `path:line`] — <issue>` / `**Why it matters:** <why>` /
-`**Suggested fix:** <fix>`, one paragraph each. Rendering happens at post time, after
-validate_lines() has settled each row's final anchor, so a row demoted from inline to
-PR-level gets its `path:line` in the headline. A row carrying the old free-form `body`
-is rejected: the payload is strict rather than silently accepting two shapes.
-
-Atomicity and idempotency rationale (why this isn't a simple per-finding
-loop): the GitHub Reviews API's POST .../pulls/{n}/reviews accepts a
-comments[] array and posts the whole batch as one review in one call. That
-buys atomicity (either every candidate lands with the review, or none do)
-but costs debuggability — a single bad (path, line) 422s the entire batch,
-and the error body carries no per-comment index to identify which row
-failed. Steps 2's pre-validate pass exists to catch that class of error
-before it can poison the batch; the 422 handler below exists for the
-residual case (the diff moved between pre-validate and submit).
-
-There is no idempotency key for this endpoint, so a client-side failure
-(timeout, 5xx) is genuinely ambiguous — the POST may have landed
-server-side even though the client never saw success. Blind-retrying would
-double-post every comment in the batch on the ~50% of ambiguous failures
-where it actually landed. Instead, an ambiguous failure triggers a cheap
-read-your-write check (list reviews, filter by current user + head SHA)
-before conceding to the per-comment ("model-A") fallback — this confirmation
-requires --current-user to be known; with identity unknown (a valid,
-documented state) the check can't filter by author and is skipped, the same
-fail-open posture the pre-#550 bash carried. The one
-*intentional* retry is scoped narrowly: a confirmed 422 (stale commit_id,
-or a line that went out-of-diff between pre-validate and submit) is
-re-validated against a freshly-fetched HEAD and retried exactly once.
-
-Why `gh api` bracket-indexed field flags (-f "comments[0][path]=...") can't
-build the comments[] payload: they build a JSON *object* keyed by
-stringified indices ({"comments":{"0":{...}}}), not an array — GitHub's
-Reviews API requires an array and rejects the object shape outright. This
-module builds the payload as real Python data structures and serializes it
-once with json.dumps, which sidesteps that failure mode entirely (see
-shared/docs/gh-api-field-flags.md for the shell-side version of this pitfall, and
-shared/docs/shell-echo-vs-printf.md for the related `echo`-corrupts-JSON hazard —
-neither applies here since no shell ever sees this payload as a string to
-re-interpret).
-
-All `gh` calls funnel through _gh()/_gh_json(), which dispatch to the
-sibling swe-workbench-gh-timeout script (resolved via Path(__file__).parent,
-the Python equivalent of the bin/ dirname "$0" convention) rather than a
-bare PATH lookup, so every network call inherits gh-timeout's per-call
-deadline — including gh pr diff, which the prior hand-written prose called
-unwrapped.
+- Output: one JSON envelope on stdout (schema `swb.pr-review-submit/1`, see
+  shared/docs/runtime-result-contract.md). A posting failure still exits 0 with `status: "partial"`
+  so the caller's cleanup chain never aborts; an invalid input or outgoing payload exits 1 with no
+  stdout at all.
+- Rendering: rows carry structured fields and render_finding() applies the one comment template,
+  after validate_lines() settles each row's final anchor, so a row demoted from inline to PR-level
+  gains its `path:line`. A row carrying the old free-form `body` is rejected.
+- Identity: finding_key() hashes the path, the anchor line's text at the reviewed head and the
+  normalized content, never the line number or the anchor kind. Keys are trusted only from the
+  current user's own bodies.
+- Payloads are built as Python data and serialized once with json.dumps and sent via `--input -`.
+  `gh api -f "comments[0][path]=..."` builds a JSON object keyed by indices, not the array the
+  Reviews API requires (see shared/docs/gh-api-field-flags.md and shared/docs/shell-echo-vs-printf.md).
+- Every `gh` call goes through _gh()/_gh_json(), which dispatch to the sibling
+  swe-workbench-gh-timeout script so each call inherits its per-call deadline.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
+import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -112,6 +71,7 @@ class Thread:
     head_comment_body: str
     reactor_logins: set[str] = field(default_factory=set)
     is_outdated: bool = False
+    head_comment_author: str = ""
 
 
 def _label_pattern(label: str) -> str:
@@ -129,8 +89,11 @@ REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
 _REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
 # Keep each post within the consumer's strict section cap.
 MAX_BATCH_ROWS = 50
+# The key marker lives outside the `review-` namespace: the consumer rejects whole batches
+# that carry a stray `review-*` marker line inside a finding body.
+_FINDING_KEY_MARKER_PREFIX = "<!-- swe-workbench:finding-key:v1:"
 _PROVENANCE_MARKER_RE = re.compile(
-    r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
+    r"(?m)^<!-- swe-workbench:(?:review-(?:findings|finding:[1-9][0-9]*)|finding-key:v1:[0-9a-f]{16}) -->\n?"
 )
 _RESERVED_PLUGIN_MARKER_RE = re.compile(r"(?m)(?:^|(?<=\r))[ \t\r]*<!-- swe-workbench:")
 
@@ -163,8 +126,67 @@ def assign_finding_ids(findings: list[dict]) -> list[dict]:
     return [{**finding, "_finding_id": index} for index, finding in enumerate(findings, start=1)]
 
 
+def _normalize_for_key(text: str) -> str:
+    return " ".join((text or "").casefold().split())
+
+
+def finding_key(row: dict, anchor_text: str) -> str:
+    """Stable identity for a finding across runs: path + the anchor line's *text* (not its
+    number, so it survives line shifts) + the normalized content. The anchor kind is left out
+    on purpose, so a finding demoted from inline to PR-level keeps its key."""
+    content = _normalize_for_key(dedup_text(render_finding(row, pr_level=False)))
+    parts = (row.get("path") or "", _normalize_for_key(anchor_text), content)
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def assign_finding_keys(findings: list[dict], head_sha: str) -> list[dict]:
+    keyed = []
+    for finding in findings:
+        path, line = finding.get("path"), finding.get("line")
+        anchor_text = _git_show_line(head_sha, path, line) if path and line else None
+        keyed.append({**finding, "_finding_key": finding_key(finding, anchor_text or "")})
+    return keyed
+
+
+def collapse_duplicate_keys(findings: list[dict]) -> tuple[list[dict], int]:
+    """Keep the first row per key; returns (unique_rows, dropped_count)."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for finding in findings:
+        key = finding.get("_finding_key")
+        if key is not None and key in seen:
+            continue
+        if key is not None:
+            seen.add(key)
+        unique.append(finding)
+    return unique, len(findings) - len(unique)
+
+
+def _rows_fuzzy_match(a: dict, b: dict) -> bool:
+    """Same path, lines within LINE_FUZZ (when both rows have one), and enough text overlap."""
+    if (a.get("path") or "") != (b.get("path") or ""):
+        return False
+    line_a, line_b = a.get("line"), b.get("line")
+    if line_a and line_b and abs(line_a - line_b) > LINE_FUZZ:
+        return False
+    text_a = dedup_text(render_finding(a, pr_level=False))
+    text_b = dedup_text(render_finding(b, pr_level=False))
+    return jaccard(text_a, text_b) >= JACCARD_THRESHOLD
+
+
+def drop_reworded_carried_rows(findings: list[dict]) -> tuple[list[dict], int]:
+    """A rerun re-invokes the reviewer, which rewords what it said before, so a carried row can
+    survive exact-key dedup beside its own reworded twin; the fresh row wins."""
+    fresh = [f for f in findings if not f.get("_from_retry")]
+    kept = [f for f in findings if not (f.get("_from_retry") and any(_rows_fuzzy_match(f, g) for g in fresh))]
+    return kept, len(findings) - len(kept)
+
+
 def render_marked_finding(row: dict, pr_level: bool) -> str:
-    return f"{_REVIEW_FINDING_MARKER_PREFIX}{row['_finding_id']} -->\n{render_finding(row, pr_level)}"
+    rendered = f"{_REVIEW_FINDING_MARKER_PREFIX}{row['_finding_id']} -->\n{render_finding(row, pr_level)}"
+    if row.get("_finding_key"):
+        rendered += f"\n{_FINDING_KEY_MARKER_PREFIX}{row['_finding_key']} -->"
+    return rendered
 
 
 def render_pr_level_batch(findings: list[dict]) -> str:
@@ -345,6 +367,7 @@ def _thread_from_node(node: dict) -> Thread:
         head_comment_body=(head or {}).get("body") or "",
         reactor_logins=reactors,
         is_outdated=bool(node.get("isOutdated")),
+        head_comment_author=((head or {}).get("author") or {}).get("login") or "",
     )
 
 
@@ -384,26 +407,166 @@ mutation($subjectId: ID!) {
 """
 
 
-def dedup_and_react(threads: list[Thread], inline_findings: list[dict], current_user: str) -> tuple[list[dict], int]:
+def _parse_json_objects(text: str, strict: bool = False) -> list[dict]:
+    """Objects from `gh api --paginate`: one per line (`--jq '.[]'`) or concatenated arrays.
+    Lenient by default (an unparseable tail ends the list); strict raises ValueError instead."""
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    pos = 0
+    while True:
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos >= len(text):
+            return objects
+        try:
+            value, pos = decoder.raw_decode(text, pos)
+        except (json.JSONDecodeError, ValueError):
+            if strict:
+                raise ValueError("unparseable JSON in gh output")
+            return objects
+        items = value if isinstance(value, list) else [value]
+        objects.extend(item for item in items if isinstance(item, dict))
+
+
+def _fetch_paginated(path: str, what: str) -> list[dict]:
+    proc = _gh(["api", "--paginate", path, "--jq", ".[]"])
+    if proc.returncode != 0:
+        raise PostingError(f"failed to fetch {what}: {proc.stderr.strip() or proc.stdout.strip()}")
+    try:
+        return _parse_json_objects(proc.stdout, strict=True)
+    except ValueError:
+        # A silently truncated list could hide the latest review and flip the skip decision.
+        raise PostingError(f"failed to fetch {what}: unparseable response") from None
+
+
+def fetch_reviews(owner: str, repo: str, pr: str) -> list[dict]:
+    return _fetch_paginated(f"repos/{owner}/{repo}/pulls/{pr}/reviews", "PR reviews")
+
+
+def fetch_issue_comments(owner: str, repo: str, pr: str) -> list[dict]:
+    return _fetch_paginated(f"repos/{owner}/{repo}/issues/{pr}/comments", "PR issue comments")
+
+
+_FINDING_KEY_LINE_RE = re.compile(
+    r"(?m)^[ \t]*<!-- swe-workbench:finding-key:v1:([0-9a-f]{16}) -->[ \t]*\r?$"
+)
+
+
+def extract_finding_keys(text: str) -> set[str]:
+    """Keys only count as a marker on their own line, never quoted mid-sentence."""
+    return set(_FINDING_KEY_LINE_RE.findall(text or ""))
+
+
+def collect_known_keys(threads: list[Thread], reviews: list[dict], issue_comments: list[dict], current_user: str) -> set[str]:
+    """Keys the current user already posted, on any surface and in any thread state. Bodies by
+    anyone else are untrusted: a forged marker must not be able to suppress a real finding, so
+    with identity unknown nothing is trusted and only fuzzy matching remains."""
+    if not current_user:
+        return set()
+    keys: set[str] = set()
+    for thread in threads:
+        if thread.head_comment_author == current_user:
+            keys |= extract_finding_keys(thread.head_comment_body)
+    for item in (*reviews, *issue_comments):
+        if item.get("state") == "PENDING":
+            continue
+        if ((item.get("user") or {}).get("login") or "") == current_user:
+            keys |= extract_finding_keys(item.get("body") or "")
+    return keys
+
+
+def _threads_by_key(threads: list[Thread], current_user: str) -> dict[str, list[Thread]]:
+    by_key: dict[str, list[Thread]] = {}
+    if not current_user:
+        return by_key
+    for thread in threads:
+        if thread.head_comment_author == current_user:
+            for key in extract_finding_keys(thread.head_comment_body):
+                by_key.setdefault(key, []).append(thread)
+    return by_key
+
+
+def _react(thread: Thread, current_user: str) -> None:
+    if current_user and thread.head_comment_id and current_user not in thread.reactor_logins:
+        _gh(["api", "graphql", "-F", f"subjectId={thread.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
+
+
+def dedup_findings(
+    threads: list[Thread], findings: list[dict], current_user: str, known_keys: set[str] | frozenset = frozenset(),
+) -> tuple[list[dict], int, list[Thread]]:
+    """Exact key first (any surface, any thread state), then fuzzy matching of inline rows
+    against unresolved threads. Returns (survivors, deduped, threads_to_thumbs_up): a thumbs-up
+    is owed only to a live (unresolved, current) match, and is left to the caller so that a
+    run which turns out to be a no-op can skip it."""
+    key_threads = _threads_by_key(threads, current_user)
     survivors: list[dict] = []
     deduped = 0
-    for finding in inline_findings:
-        rendered = render_marked_finding(finding, pr_level=False)
-        match = next(
-            (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
-            None,
-        )
-        if match is None:
-            survivors.append(finding)
+    to_react: list[Thread] = []
+    for finding in findings:
+        key = finding.get("_finding_key")
+        if key and key in known_keys:
+            deduped += 1
+            live = next((t for t in key_threads.get(key, []) if not t.is_resolved and not t.is_outdated), None)
+            if live is not None:
+                to_react.append(live)
             continue
-        deduped += 1
-        if current_user and match.head_comment_id and current_user not in match.reactor_logins:
-            _gh(["api", "graphql", "-F", f"subjectId={match.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
-    return survivors, deduped
+        if finding.get("anchor") == "inline":
+            rendered = render_marked_finding(finding, pr_level=False)
+            match = next(
+                (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
+                None,
+            )
+            if match is not None:
+                deduped += 1
+                to_react.append(match)
+                continue
+        survivors.append(finding)
+    return survivors, deduped, to_react
+
+
+def react_to_threads(threads: list[Thread], current_user: str) -> None:
+    reacted: set[str] = set()
+    for thread in threads:
+        if thread.id not in reacted:
+            reacted.add(thread.id)
+            _react(thread, current_user)
+
+
+_DECISIVE_STATES = {"APPROVED": "APPROVE", "CHANGES_REQUESTED": "CHANGES_REQUESTED", "DISMISSED": "DISMISSED"}
+
+
+def prior_decision(reviews: list[dict], current_user: str, head_sha: str | None = None) -> str | None:
+    """The current user's standing decision from their submitted reviews: the latest decisive
+    one (a later COMMENTED reply does not erase an approval), else COMMENT if they only ever
+    commented, else None. With identity unknown there is no prior to compare against. An
+    approval given on an older commit than `head_sha` is not the same decision as approving the
+    current head, so it reports as a distinct value that never equals an event."""
+    if not current_user:
+        return None
+    mine = [
+        r for r in reviews
+        if ((r.get("user") or {}).get("login") or "") == current_user
+        and r.get("submitted_at") and r.get("state") != "PENDING"
+    ]
+    decisive = sorted((r for r in mine if r.get("state") in _DECISIVE_STATES), key=lambda r: r["submitted_at"])
+    if decisive:
+        latest = decisive[-1]
+        if latest["state"] == "APPROVED" and head_sha and latest.get("commit_id") != head_sha:
+            return "APPROVE_ON_OLDER_HEAD"
+        return _DECISIVE_STATES[latest["state"]]
+    if any(r.get("state") == "COMMENTED" for r in mine):
+        return "COMMENT"
+    return None
+
+
+def should_skip(prior: str | None, event: str, new_rows: int, retry_rows: int) -> bool:
+    """A run is a no-op when it would re-submit the decision already standing, with nothing new
+    to say. DISMISSED and CHANGES_REQUESTED never equal an event, so they always post."""
+    return prior is not None and prior == event and new_rows == 0 and retry_rows == 0
 
 
 def _git_show_line(head_sha: str, path: str, line: int) -> str | None:
-    proc = subprocess.run(["git", "show", f"{head_sha}:{path}"], capture_output=True, text=True)
+    proc = subprocess.run(["git", "show", f"{head_sha}:{path}"], capture_output=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         return None
     lines = proc.stdout.splitlines()
@@ -463,26 +626,59 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
     return in_diff, demoted
 
 
-def post_pr_level(pr: str, findings: list[dict]) -> int:
+def _overflow_chunks(findings: list[dict]) -> list[list[dict]]:
+    """Contiguous ascending runs of at most MAX_BATCH_ROWS rows and BODY_CHAR_BUDGET characters;
+    a single row larger than the budget gets a chunk of its own."""
+    room = BODY_CHAR_BUDGET - len(REVIEW_BATCH_MARKER) - 4
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    used = 0
+    for finding in findings:
+        cost = len(render_marked_finding(finding, pr_level=True)) + len(_BATCH_SEPARATOR)
+        if current and (len(current) >= MAX_BATCH_ROWS or used + cost > room):
+            chunks.append(current)
+            current, used = [], 0
+        current.append(finding)
+        used += cost
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def post_pr_level(pr: str, findings: list[dict]) -> tuple[int, list[dict]]:
+    """Post overflow rows as issue-comment batches; returns (posted_count, rows_not_posted)."""
     if not findings:
-        return 0
-    # Slice contiguous ascending finding-ID ranges.
+        return 0, []
     findings = sorted(findings, key=lambda finding: finding["_finding_id"])
     posted = 0
-    for start in range(0, len(findings), MAX_BATCH_ROWS):
-        chunk = findings[start : start + MAX_BATCH_ROWS]
-        proc = _gh(["pr", "comment", str(pr), "--body", render_pr_level_batch(chunk)])
-        if proc.returncode != 0:
+    failed: list[dict] = []
+    for chunk in _overflow_chunks(findings):
+        try:
+            proc = _gh(["pr", "comment", str(pr), "--body", render_pr_level_batch(chunk)])
+            ok = proc.returncode == 0
+        except OSError:
+            ok = False
+        if not ok:
             print(
                 f"[warn] gh pr comment failed — pr-level batch chunk of {len(chunk)} finding(s) NOT posted.",
                 file=sys.stderr,
             )
+            failed.extend(chunk)
             continue
         posted += len(chunk)
-    return posted
+    return posted, failed
 
 
 # ── Step 4 — submit ─────────────────────────────────────────────────────────
+
+READ_BACK_SETTLE_SECONDS = 3
+RUN_MARKER_PREFIX = "<!-- swe-workbench:review-run:"
+_ALLOWED_EVENTS = ("APPROVE", "COMMENT")
+MAX_REVIEW_TEXT_CHARS = 65_536
+
+
+def new_run_marker() -> str:
+    return f"{RUN_MARKER_PREFIX}{uuid.uuid4()} -->"
 
 
 @dataclass
@@ -491,6 +687,11 @@ class SubmitResult:
     posted_pr_level: int
     submitted: bool
     review_url: str
+    event: str = ""  # the event actually submitted; may differ from the requested one
+    failure: str = ""  # "refused" when GitHub rejected the review outright (permanent 4xx, or a 422 that survived the ladder)
+    # Rows whose delivery is not confirmed: everything when the review itself is unconfirmed,
+    # otherwise only the overflow rows whose comment batch failed.
+    pending_rows: list[dict] = field(default_factory=list)
 
 
 def _extract_review_url(stdout: str) -> str:
@@ -501,25 +702,66 @@ def _extract_review_url(stdout: str) -> str:
     return data.get("html_url") or "" if isinstance(data, dict) else ""
 
 
-def _landed_review_url(owner: str, repo: str, pr: str, current_user: str, head_sha: str) -> str | None:
-    if not current_user:
-        return None
-    data, _proc = _gh_json(["api", f"repos/{owner}/{repo}/pulls/{pr}/reviews"])
-    if not isinstance(data, list):
-        return None
-    matches = [
-        r for r in data
-        if (r.get("user") or {}).get("login") == current_user and r.get("commit_id") == head_sha
-    ]
+def _read_back(owner: str, repo: str, pr: str, run_marker: str) -> tuple[str, str]:
+    """Read-your-write check after an ambiguous POST failure. Returns ("landed", url),
+    ("absent", "") when the list was read and no review carries this run's marker, or
+    ("unknown", "") when the list could not be read or parsed — only "absent" proves the
+    review did not land, so only "absent" may be retried. The marker is a fresh random value
+    per run, so an earlier review on the same commit can never be mistaken for this one."""
+    proc = _gh(["api", "--paginate", f"repos/{owner}/{repo}/pulls/{pr}/reviews", "--jq", ".[]"])
+    if proc.returncode != 0:
+        return "unknown", ""
+    try:
+        reviews = _parse_json_objects(proc.stdout, strict=True)
+    except ValueError:
+        return "unknown", ""
+    matches = [r for r in reviews if run_marker in (r.get("body") or "")]
     if not matches:
-        return None
-    return matches[-1].get("html_url") or ""
+        return "absent", ""
+    return "landed", matches[-1].get("html_url") or ""
+
+
+def validate_review_payload(payload: dict) -> None:
+    """Last gate before a POST: raises PostingError so nothing malformed reaches GitHub."""
+
+    def refuse(problem: str):
+        raise PostingError(f"refusing to post an invalid review payload — {problem}")
+
+    if payload.get("event") not in _ALLOWED_EVENTS:
+        refuse(f"event must be one of {', '.join(_ALLOWED_EVENTS)}")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", payload.get("commit_id") or ""):
+        refuse("commit_id must be a 40-character git SHA")
+    body = payload.get("body")
+    if not isinstance(body, str) or len(body) > MAX_REVIEW_TEXT_CHARS:
+        refuse(f"body must be a string of at most {MAX_REVIEW_TEXT_CHARS} characters")
+    texts = [body]
+    if "comments" in payload:
+        comments = payload["comments"]
+        if not isinstance(comments, list) or not comments:
+            refuse("comments, when present, must be a non-empty list")
+        for index, comment in enumerate(comments):
+            if not isinstance(comment, dict):
+                refuse(f"comments[{index}] must be an object")
+            if not isinstance(comment.get("path"), str) or not comment["path"].strip():
+                refuse(f"comments[{index}].path must be a non-empty string")
+            if not _is_positive_int(comment.get("line")):
+                refuse(f"comments[{index}].line must be a positive integer")
+            if comment.get("side") != "RIGHT":
+                refuse(f"comments[{index}].side must be RIGHT")
+            text = comment.get("body")
+            if not isinstance(text, str) or not text.strip() or len(text) > MAX_REVIEW_TEXT_CHARS:
+                refuse(f"comments[{index}].body must be a non-empty string within the size limit")
+            texts.append(text)
+    keys = [key for text in texts for key in _FINDING_KEY_LINE_RE.findall(text)]
+    if len(keys) != len(set(keys)):
+        refuse("the same finding key appears more than once")
 
 
 def _post_review(owner: str, repo: str, pr: str, head_sha: str, event: str, body: str, comments: list[dict] | None):
     payload = {"commit_id": head_sha, "event": event, "body": body}
     if comments:
         payload["comments"] = comments
+    validate_review_payload(payload)
     return _gh(
         ["api", "--method", "POST", f"repos/{owner}/{repo}/pulls/{pr}/reviews", "--input", "-"],
         input_data=json.dumps(payload),
@@ -533,92 +775,142 @@ def _inline_comment(finding: dict) -> dict:
     }
 
 
+_BATCH_SEPARATOR = "\n\n---\n\n"
+# GitHub caps a review body at 65,536 chars; leave headroom for the summary and markers.
+BODY_CHAR_BUDGET = 60_000
+
+
+def build_review_body(summary: str, rows: list[dict]) -> tuple[str, list[dict]]:
+    """summary + batch marker + ascending-ID sections, for the longest prefix of `rows` that
+    fits the row and character budget. Returns (body, overflow_rows); overflow goes to
+    issue-comment batches after the review lands."""
+    ordered = sorted(rows, key=lambda row: row["_finding_id"])
+    head = f"{summary.rstrip()}\n\n{REVIEW_BATCH_MARKER}\n\n"
+    used = len(head)
+    fitting: list[str] = []
+    for row in ordered:
+        piece = render_marked_finding(row, pr_level=True)
+        cost = len(piece) + (len(_BATCH_SEPARATOR) if fitting else 0)
+        if len(fitting) >= MAX_BATCH_ROWS or used + cost > BODY_CHAR_BUDGET:
+            break
+        fitting.append(piece)
+        used += cost
+    if not fitting:
+        return summary, ordered
+    return head + _BATCH_SEPARATOR.join(fitting), ordered[len(fitting):]
+
+
+def _is_timeout(proc: subprocess.CompletedProcess) -> bool:
+    """gh-timeout exits 124 on SIGTERM and 137 when it had to SIGKILL a gh that ignored it."""
+    return proc.returncode in (124, 137)
+
+
+def _classify(proc: subprocess.CompletedProcess) -> str:
+    """"ok"; "rejected" (a confirmed HTTP 422: nothing landed); "permanent" (any other 4xx that a
+    retry cannot fix — auth, permission, not found); or "ambiguous" (network, timeout, 5xx, 408/425/429:
+    the POST may have landed even though the client never saw success). Only gh's own status line
+    counts: a timeout echoes the whole argv and a 5xx body can carry any digits."""
+    if proc.returncode == 0:
+        return "ok"
+    if not _is_timeout(proc):
+        status = re.search(r"\bHTTP (4\d\d)\b", proc.stderr)
+        if status:
+            code = int(status.group(1))
+            if code == 422:
+                return "rejected"
+            if code not in (408, 425, 429):
+                return "permanent"
+    return "ambiguous"
+
+
 def submit_review(
     *, owner: str, repo: str, pr: str, head_sha: str, event: str,
-    findings: list[dict], summary_fn, current_user: str, posted_pr_level: int,
+    inline_rows: list[dict], body_rows: list[dict], summary_fn, run_marker: str,
     pr_diff: str, script_dir: Path,
 ) -> SubmitResult:
-    """summary_fn(n_inline, posted_pr_level) -> review body text.
+    """Deliver one review POST (summary + inline comments + body-batch rows), returning what landed
+    and the rows still pending. `summary_fn(n_inline, n_pr_level, downgraded)` renders the summary.
+    Ladder: 422 -> re-validate and retry once -> body-only POST; ambiguous failure -> read back by
+    run marker (twice) -> retry once if absent; permanent 4xx -> stop. Contract details live in
+    skills/workflow-pr-review-post/SKILL.md."""
+    inline, rows = list(inline_rows), list(body_rows)
+    reviewed_head = head_sha
+    head_note = ""
+    clamped = False
 
-    Takes structured rows, not rendered comments: a row demoted mid-submit (422 retry,
-    per-comment fallback) must re-render as PR-level with its path:line in the headline."""
-    comments = [_inline_comment(f) for f in findings]
-    n = len(comments)
-    posted_inline = 0
-    submitted = False
-    review_url = ""
+    def compose() -> tuple[str, list[dict] | None, list[dict]]:
+        summary = f"{summary_fn(len(inline), len(rows), clamped).rstrip()}{head_note}\n\n{run_marker}\n"
+        body, overflow = build_review_body(summary, rows)
+        return body, [_inline_comment(f) for f in inline] or None, overflow
 
-    if n > 0:
-        # Atomic path: one POST carrying every candidate comment plus the review event/body.
-        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
-        if proc.returncode == 0:
-            posted_inline, submitted, review_url = n, True, _extract_review_url(proc.stdout)
-        elif "422" in (proc.stdout + proc.stderr):
-            # Confirmed 422 (stale commit_id, or a line pre-validate missed): re-fetch HEAD and
-            # the PR diff together, genuinely re-validate every comment against both, demote
-            # anything now out-of-diff into the pr-level batch, then retry the atomic POST
-            # exactly once. Re-fetching only head_sha while re-validating file content against
-            # it but line-position against the stale diff text would defeat the point of this
-            # retry — the diff moving is exactly the scenario it exists to handle.
-            new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
-            head_sha = (new_head_data or {}).get("headRefOid") or head_sha
+    body, comments, overflow = compose()
+    proc = _post_review(owner, repo, pr, head_sha, event, body, comments)
+    outcome = _classify(proc)
+
+    if outcome == "rejected":
+        new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
+        head_sha = (new_head_data or {}).get("headRefOid") or head_sha
+        if head_sha != reviewed_head and event != "COMMENT":
+            # Never approve code the reviewer did not look at: the retry targets the new head, so
+            # it can only carry comments.
+            print(
+                f"[warn] PR head moved from {reviewed_head[:7]} to {head_sha[:7]} while the review ran — "
+                f"submitting COMMENT instead of {event}.",
+                file=sys.stderr,
+            )
+            event = "COMMENT"
+            clamped = True
+            head_note = "\n\n_Submitted as COMMENT: the PR head moved while this review ran._"
+        if inline:
             pr_diff = _refetch_pr_diff(pr, pr_diff)
-            still_in_diff, newly_demoted = [], []
-            for f in findings:
-                if _line_is_in_diff(f["path"], f["line"], head_sha, pr_diff, script_dir):
-                    still_in_diff.append(f)
-                else:
-                    newly_demoted.append(f)
-            if newly_demoted:
-                posted_pr_level += post_pr_level(pr, newly_demoted)
-            findings = still_in_diff
-            comments = [_inline_comment(f) for f in findings]
-            n = len(comments)
-            if n > 0:
-                proc2 = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
-                if proc2.returncode == 0:
-                    posted_inline, submitted, review_url = n, True, _extract_review_url(proc2.stdout)
-                else:
-                    # Retry failed too (double-422, or network/5xx one level deeper) — same
-                    # ambiguous-failure class as below, so reuse the read-your-write check
-                    # before conceding to the model-A fallback.
-                    landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
-                    if landed is not None:
-                        posted_inline, submitted, review_url = n, True, landed
-        else:
-            # Network/5xx: no idempotency key on this endpoint, so a blind retry risks
-            # double-posting a POST that actually landed server-side. Confirm via a
-            # read-your-write check (list reviews, filter by current user + head SHA) instead.
-            landed = _landed_review_url(owner, repo, pr, current_user, head_sha)
-            if landed is not None:
-                posted_inline, submitted, review_url = n, True, landed
+            still_in_diff = [f for f in inline if _line_is_in_diff(f["path"], f["line"], head_sha, pr_diff, script_dir)]
+            rows += [f for f in inline if f not in still_in_diff]
+            inline = still_in_diff
+        body, comments, overflow = compose()
+        proc = _post_review(owner, repo, pr, head_sha, event, body, comments)
+        outcome = _classify(proc)
+        if outcome == "rejected" and inline:
+            rows += inline
+            inline = []
+            body, comments, overflow = compose()
+            proc = _post_review(owner, repo, pr, head_sha, event, body, None)
+            outcome = _classify(proc)
 
-    if not submitted:
-        # Reached when N==0 (today's plain submit), OR the atomic POST 422'd twice, OR it
-        # failed on network/5xx with no confirmed landing — model-A per-comment fallback.
-        posted_inline = 0
-        demoted: list[dict] = []
-        for f in findings:
-            c = _inline_comment(f)
-            proc = _gh([
-                "api", f"repos/{owner}/{repo}/pulls/{pr}/comments",
-                "-f", f"body={c['body']}",
-                "-F", f"path={c['path']}",
-                "-F", f"line={c['line']}",
-                "-F", "side=RIGHT",
-                "-F", f"commit_id={head_sha}",
-            ])
+    review_url = ""
+    if outcome == "ok":
+        review_url = _extract_review_url(proc.stdout)
+    elif outcome == "ambiguous":
+        found, url = _read_back(owner, repo, pr, run_marker)
+        if found == "absent":
+            # A timeout or a gateway 502/504 is exactly when the write may still be completing, so
+            # one empty list is weak evidence; give it a moment and look once more.
+            time.sleep(READ_BACK_SETTLE_SECONDS)
+            found, url = _read_back(owner, repo, pr, run_marker)
+        if found == "landed":
+            outcome, review_url = "ok", url
+        elif found == "absent":
+            proc = _post_review(owner, repo, pr, head_sha, event, body, comments)
             if proc.returncode == 0:
-                posted_inline += 1
-            else:
-                demoted.append(f)  # Never drop it: fold into follow-up pr-level batch comment(s).
-        if demoted:
-            posted_pr_level += post_pr_level(pr, demoted)
-        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
-        if proc.returncode == 0:
-            submitted, review_url = True, _extract_review_url(proc.stdout)
+                outcome, review_url = "ok", _extract_review_url(proc.stdout)
 
-    return SubmitResult(posted_inline=posted_inline, posted_pr_level=posted_pr_level, submitted=submitted, review_url=review_url)
+    if outcome != "ok":
+        refused = outcome in ("permanent", "rejected")
+        if refused:
+            detail = (proc.stderr.strip() or proc.stdout.strip())[:200]
+            print(f"[warn] review POST was refused and will not be retried: {detail}", file=sys.stderr)
+        return SubmitResult(
+            0, 0, False, "", event=event, failure="refused" if refused else "", pending_rows=inline + rows,
+        )
+
+    posted_overflow, failed_overflow = post_pr_level(pr, overflow)
+    return SubmitResult(
+        posted_inline=len(inline),
+        posted_pr_level=len(rows) - len(overflow) + posted_overflow,
+        submitted=True,
+        review_url=review_url,
+        event=event,
+        pending_rows=failed_overflow,
+    )
 
 
 def _repo_is_private(owner: str, repo: str) -> bool | None:
@@ -644,6 +936,9 @@ def _byline_problem(byline: str) -> str | None:
         return problem
     if re.search(r"(?i)\bposted\b", byline) or re.search(r"(?i)\bdeduped\b", byline):
         return "must not embed posted/deduped counts"
+    if _RESERVED_PLUGIN_MARKER_RE.search(byline):
+        # The byline opens the review body, ahead of the batch marker the consumer parses.
+        return "must not embed a reserved swe-workbench marker"
     return None
 
 
@@ -738,6 +1033,8 @@ def validate_payload(args) -> tuple[list[dict] | None, tuple[str, str] | None]:
     for field_name, value in (("--current-user", args.current_user), ("--author-login", args.author_login)):
         if value and not re.match(r"^[^\s]+$", value):
             return None, (field_name, "must be a plain login string")
+    if args.retry_state is not None and (not args.retry_state.strip() or "\0" in args.retry_state):
+        return None, ("--retry-state", "must be a non-empty path")
     if args.approve_over_open_threads:
         reason = args.approve_over_open_threads
         if "\n" in reason:
@@ -767,6 +1064,163 @@ def validate_payload(args) -> tuple[list[dict] | None, tuple[str, str] | None]:
     return findings, None
 
 
+# ── Retry state ──────────────────────────────────────────────────────────────
+
+RETRY_STATE_VERSION = 1
+MAX_RETRY_ATTEMPTS = 5
+_MAX_RETRY_ROWS = 500
+_MAX_RETRY_FILE_BYTES = 4_000_000
+
+
+@dataclass
+class RetryState:
+    rows: list[dict] = field(default_factory=list)
+    attempts: int = 0
+    event: str = ""
+    warning: str = ""
+    warning_code: str = ""
+
+
+def _row_for_state(row: dict) -> dict:
+    return {"key": row.get("_finding_key", ""), **{k: v for k, v in row.items() if not k.startswith("_")}}
+
+
+def _private_dir_problem(directory: Path) -> str:
+    """Why `directory` cannot be trusted to hold the retry file, or "" when it can (a missing
+    directory is fine: it is created 0700). Another user who owns, or can write to, the
+    directory could swap the file under us."""
+    try:
+        status = directory.lstat()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        return str(exc)
+    if not stat.S_ISDIR(status.st_mode):
+        return "not a directory"
+    if status.st_uid != os.getuid():
+        return "owned by another user"
+    if status.st_mode & 0o002:
+        return "world-writable"
+    return ""
+
+
+def load_retry_state(path: str, head_sha: str, caller_tag: str) -> RetryState:
+    """What a previous run could not confirm. The file is best-effort
+    carry-over, never trusted input: it is opened without following symlinks and checked on the
+    open descriptor (so nothing can be swapped in between check and read), read with a size cap,
+    and refused when the directory is not private, the file is not ours, or it is oversized,
+    unparseable or written for another head, caller or version. Each row must still pass the
+    normal row contract. Rows that did land after all are pruned later by the ordinary key
+    dedup, so a stale entry costs nothing."""
+    target = Path(path)
+    problem = _private_dir_problem(target.parent)
+    if problem:
+        print(
+            f"[warn] ignoring retry state {path}: {target.parent} is not a private directory ({problem})",
+            file=sys.stderr,
+        )
+        return RetryState()
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return RetryState()
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            status = os.fstat(handle.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_uid != os.getuid():
+                return RetryState()
+            raw = handle.read(_MAX_RETRY_FILE_BYTES + 1)
+        if len(raw) > _MAX_RETRY_FILE_BYTES:
+            return RetryState()
+        data = json.loads(raw)
+    except (OSError, ValueError, RecursionError):
+        return RetryState()
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        return RetryState()
+    if (
+        data.get("version") != RETRY_STATE_VERSION
+        or data.get("head_sha") != head_sha or data.get("caller_tag") != caller_tag
+    ):
+        if data["rows"]:
+            print(
+                f"[warn] discarding retry state for another head or caller ({len(data['rows'])} row(s)) — {path}",
+                file=sys.stderr,
+            )
+        return RetryState()
+    warning = warning_code = ""
+    if len(data["rows"]) > _MAX_RETRY_ROWS:
+        warning_code = "retry_truncated"
+        warning = (
+            f"retry state held {len(data['rows'])} rows; {len(data['rows']) - _MAX_RETRY_ROWS} row(s) "
+            f"were not carried over (cap {_MAX_RETRY_ROWS})."
+        )
+    rows = []
+    for item in data["rows"][:_MAX_RETRY_ROWS]:
+        if not isinstance(item, dict):
+            continue
+        row = {k: v for k, v in item.items() if k != "key"}
+        if _finding_problem(row) is None:
+            rows.append({**row, "_from_retry": True})
+    attempts = data.get("attempts")
+    attempts = attempts if _is_positive_int(attempts) else 0
+    if rows and attempts >= MAX_RETRY_ATTEMPTS:
+        return RetryState(
+            warning=f"giving up on {len(rows)} carried finding(s) after {attempts} failed attempts — they are dropped.",
+            warning_code="retry_given_up",
+        )
+    event = data.get("event")
+    return RetryState(rows=rows, attempts=attempts, event=event if event in _ALLOWED_EVENTS else "",
+                      warning=warning, warning_code=warning_code)
+
+
+def write_retry_state(path: str, head_sha: str, caller_tag: str, event: str, attempts: int, rows: list[dict]) -> bool:
+    """Atomic (temp file in the same directory + os.replace) and private (mode 0600)."""
+    target = Path(path)
+    payload = {
+        "version": RETRY_STATE_VERSION, "head_sha": head_sha, "caller_tag": caller_tag,
+        "event": event, "attempts": attempts, "rows": [_row_for_state(r) for r in rows],
+    }
+    tmp_name = ""
+    problem = _private_dir_problem(target.parent)
+    if problem:
+        print(
+            f"[warn] could not write retry state {path}: {target.parent} is not a private directory ({problem})",
+            file=sys.stderr,
+        )
+        return False
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        problem = _private_dir_problem(target.parent)  # a directory created by someone else in the gap
+        if problem:
+            print(
+                f"[warn] could not write retry state {path}: {target.parent} is not a private directory ({problem})",
+                file=sys.stderr,
+            )
+            return False
+        fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.tmp-")
+        with os.fdopen(fd, "w") as handle:
+            json.dump(payload, handle, ensure_ascii=True)
+        os.replace(tmp_name, target)
+        return True
+    except OSError as exc:
+        print(f"[warn] could not write retry state {path}: {exc}", file=sys.stderr)
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        return False
+
+
+def clear_retry_state(path: str) -> None:
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"[warn] could not remove retry state {path}: {exc}", file=sys.stderr)
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -785,6 +1239,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--author-login", default="")
     p.add_argument("--approve-over-open-threads", default="")
     p.add_argument("--debug-dir", default=None)
+    p.add_argument("--retry-state", default=None)
     return p
 
 
@@ -798,19 +1253,29 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     owner, repo = args.repo.split("/", 1)
-    findings = assign_finding_ids(findings)
-    inline_findings, pr_level_findings = partition_findings(findings)
+    retry = load_retry_state(args.retry_state, args.head_sha, args.caller_tag) if args.retry_state else RetryState()
+    retry_rows, prior_attempts = retry.rows, retry.attempts
+    findings = assign_finding_ids(findings + retry_rows)
+    findings = assign_finding_keys(findings, args.head_sha)
+    findings, duplicate_rows = collapse_duplicate_keys(findings)
+    findings, reworded_rows = drop_reworded_carried_rows(findings)
+    duplicate_rows += reworded_rows
     script_dir = _script_dir()
 
     try:
         _check_siblings(script_dir)
         threads = fetch_threads(owner, repo, args.pr)
-        survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
+        reviews = fetch_reviews(owner, repo, args.pr) if args.current_user else []
+        issue_comments = fetch_issue_comments(owner, repo, args.pr) if args.current_user else []
+        known_keys = collect_known_keys(threads, reviews, issue_comments, args.current_user)
+        survivors, deduped, to_react = dedup_findings(threads, findings, args.current_user, known_keys)
+        deduped += duplicate_rows
+        survivors_inline, pr_level_findings = partition_findings(survivors)
 
         pr_diff = _fetch_pr_diff(args.pr)
-        in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
+        in_diff, demoted = validate_lines(survivors_inline, pr_diff, args.head_sha, script_dir)
 
-        posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
+        body_rows = pr_level_findings + demoted
 
         n_blocking = len(blocking_threads(threads))
         override = bool(args.approve_over_open_threads)
@@ -828,20 +1293,86 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         override_note = args.approve_over_open_threads if override_used else None
-        is_private = _repo_is_private(owner, repo)
 
-        def summary_fn(n_inline: int, pr_level_count: int) -> str:
-            byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
-            return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
+        n_retry = sum(1 for row in in_diff + body_rows if row.get("_from_retry"))
+        n_new = len(in_diff) + len(body_rows) - n_retry
+        if n_retry and retry.event == "COMMENT" and event == "APPROVE":
+            # The carried findings were held back from a COMMENT review; they must not be posted
+            # inside an approval just because this rerun's fresh output happens to be clean.
+            print(
+                "[info] carried-over findings were held back from a COMMENT review — "
+                "submitting COMMENT instead of APPROVE.",
+                file=sys.stderr,
+            )
+            event = decision = "COMMENT"
+            override_note = None
 
-        result = submit_review(
-            owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
-            findings=in_diff, summary_fn=summary_fn, current_user=args.current_user,
-            posted_pr_level=posted_pr_level, pr_diff=pr_diff, script_dir=script_dir,
-        )
+        skipped_reason = ""
+        if should_skip(prior_decision(reviews, args.current_user, args.head_sha), event, n_new, n_retry):
+            skipped_reason = "unchanged"
+            result = SubmitResult(posted_inline=0, posted_pr_level=0, submitted=False, review_url="")
+        else:
+            react_to_threads(to_react, args.current_user)
+            is_private = _repo_is_private(owner, repo)
+
+            def summary_fn(n_inline: int, pr_level_count: int, downgraded: bool = False) -> str:
+                byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
+                if downgraded:  # the event was clamped to COMMENT mid-submit; the text must not claim otherwise
+                    return build_summary("COMMENT", byline_full, is_self_review, n_blocking=n_blocking)
+                return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
+
+            result = submit_review(
+                owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
+                inline_rows=in_diff, body_rows=body_rows, summary_fn=summary_fn, run_marker=new_run_marker(),
+                pr_diff=pr_diff, script_dir=script_dir,
+            )
     except PostingError as exc:
         print(f"workflow-pr-review-post: {exc}", file=sys.stderr)
         return 1
+
+    persisted = False
+    if args.retry_state:
+        if result.pending_rows:
+            attempts = prior_attempts + 1 if retry_rows else 1
+            persisted = write_retry_state(
+                args.retry_state, args.head_sha, args.caller_tag, result.event or event, attempts, result.pending_rows,
+            )
+        else:
+            clear_retry_state(args.retry_state)
+
+    warnings: list[dict] = []
+    if retry.warning:
+        warnings.append({"code": retry.warning_code, "message": retry.warning})
+        print(f"[warn] {retry.warning}", file=sys.stderr)
+    if result.pending_rows:
+        n_pending = len(result.pending_rows)
+        if not args.retry_state:
+            warnings.append({
+                "code": "retry_not_requested",
+                "message": f"{n_pending} finding(s) not delivered — no --retry-state was given, so they are not saved.",
+            })
+        elif persisted:
+            warnings.append({
+                "code": "retry_pending",
+                "message": f"{n_pending} finding(s) not delivered — rerun with the same --retry-state to retry.",
+            })
+        else:
+            warnings.append({
+                "code": "retry_not_saved",
+                "message": f"{n_pending} finding(s) not delivered and NOT saved — the retry state could not be written.",
+            })
+    if not (result.submitted or skipped_reason):
+        if result.failure == "refused":
+            warnings.append({
+                "code": "review_rejected",
+                "message": "GitHub refused the review (a permanent error, or a 422 that survived re-validation) — "
+                           "nothing was posted; fix the cause (permissions, auth, target) and rerun.",
+            })
+        else:
+            warnings.append({
+                "code": "review_unconfirmed",
+                "message": "the review was not confirmed — check the PR for a late-landing review, then rerun to retry.",
+            })
 
     if args.debug_dir:
         debug_dir = Path(args.debug_dir)
@@ -855,20 +1386,22 @@ def main(argv: list[str] | None = None) -> int:
 
     envelope = {
         "schema": "swb.pr-review-submit/1",
-        "status": "ok" if result.submitted else "partial",
+        "status": "partial" if result.pending_rows or not (result.submitted or skipped_reason) else "ok",
         "data": {
             "posted_inline": result.posted_inline,
             "posted_pr_level": result.posted_pr_level,
             "deduped": deduped,
             "submitted": result.submitted,
-            "event": event,
+            "event": result.event or event,
             "decision": decision,
             "review_url": result.review_url,
             "blocked_by_unresolved": n_blocking,
             "approve_over_open_threads": bool(args.approve_over_open_threads),
             "override_reason": args.approve_over_open_threads,
+            "skipped_reason": skipped_reason,
+            "retry_pending": len(result.pending_rows),
         },
-        "warnings": [],
+        "warnings": warnings,
     }
     json.dump(envelope, sys.stdout, ensure_ascii=True)
     sys.stdout.write("\n")

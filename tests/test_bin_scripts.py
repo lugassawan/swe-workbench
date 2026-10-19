@@ -48,6 +48,7 @@ SCRIPTS = {
     "swe-workbench-pr-title-drift": "python3",
     "swe-workbench-reap-run-dir": "bash",
     "swe-workbench-reap-session-scratch": "bash",
+    "swe-workbench-redact": "python3",
     "swe-workbench-reply-and-resolve": "bash",
     "swe-workbench-repo-scope": "bash",
     "swe-workbench-result-check": "python3",
@@ -66,6 +67,7 @@ SIBLING_CALLERS = {
     "swe-workbench-fetch-pr": ["swe-workbench-gh-timeout"],
     "swe-workbench-issue-preflight": ["swe-workbench-gh-timeout"],
     "swe-workbench-new-run-dir": ["swe-workbench-reap-run-dir", "swe-workbench-repo-scope"],
+    "swe-workbench-redact": ["swe-workbench-memory"],
     "swe-workbench-preflight-pr": [
         "swe-workbench-gh-timeout",
         "swe-workbench-fetch-pr",

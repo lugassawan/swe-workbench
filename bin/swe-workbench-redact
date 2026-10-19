@@ -1,0 +1,786 @@
+#!/usr/bin/env python3
+"""Deterministically sanitize drafts that are about to become public text.
+
+Usage: swe-workbench-redact [options] --field NAME SRC DST [--field NAME SRC DST ...]
+
+Reads each SRC draft, replaces anything private with an unnumbered bracketed
+placeholder, and writes the sanitized text to DST. Drafts are never modified, so an
+edit loop can always re-run from the original. Placeholders:
+  [redacted-token] [internal-email] [internal-host] [internal-ip] [local-path]
+  [memory-ref] [internal-service] [internal-repo] [internal-org] [internal-ticket] [local-user]
+Existing placeholders are left alone, so re-running over a sanitized file changes nothing.
+
+Options:
+  --field NAME SRC DST   one draft to sanitize (repeatable); NAME labels it in the report
+  --target-repo OWNER/NAME
+                         the public repository the text is going to; its GitHub URLs,
+                         owner handle and owner/name#N references are kept
+  --allow TERM           keep this exact span or exact host (a restored false positive);
+                         never applies to credentials
+  --deny CATEGORY=TERM   always redact TERM; CATEGORY is one of
+                         org, repo, service, memory, user, host, ticket
+  --deny-file PATH       --deny entries, one CATEGORY=TERM per line ('#' comments)
+  --preserve-file PATH   user-authored public text, one span per line; matches inside a
+                         preserved span are skipped, except credentials
+  --no-auto-context      do not derive terms from the environment
+
+Unless --no-auto-context is given, these are also redacted: the home-directory username,
+the short hostname, the current repository's owner, name and directory name (when they
+differ from --target-repo), and the names of memory entries.
+
+Always kept: swe-workbench, plugin command/skill/agent/script names, loopback addresses
+and well-known public documentation domains.
+
+stdout is one swb.redact/1 envelope holding counts only — never a removed value:
+  data.total, data.by_category[{key,count}], data.by_field[{key,count}],
+  data.summary (a ready-to-print line), data.outputs.
+Fails closed: on any error the exit code is non-zero, stdout is empty and no DST is left
+behind — every DST is removed before any work starts, so a stale sanitized file from an
+earlier run can never be filed by mistake.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import unicodedata
+from collections import Counter
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from swe_workbench_runtime.secret_patterns import SECRET_PATTERNS
+
+SCHEMA = "swb.redact/1"
+INSTALL_DIR = Path(__file__).resolve().parent.parent
+
+CREDENTIAL = "redacted-token"
+EMAIL = "internal-email"
+HOST = "internal-host"
+IP = "internal-ip"
+PATH = "local-path"
+MEMORY = "memory-ref"
+SERVICE = "internal-service"
+REPO = "internal-repo"
+ORG = "internal-org"
+USER = "local-user"
+TICKET = "internal-ticket"
+PRIORITY = {
+    TICKET: 6,
+    CREDENTIAL: 0,
+    EMAIL: 1,
+    HOST: 2,
+    IP: 3,
+    PATH: 4,
+    MEMORY: 5,
+    SERVICE: 6,
+    REPO: 6,
+    ORG: 6,
+    USER: 6,
+}
+DENY_ALIASES = {
+    "org": ORG,
+    "repo": REPO,
+    "service": SERVICE,
+    "memory": MEMORY,
+    "user": USER,
+    "host": HOST,
+    "ticket": TICKET,
+}
+DENY_CATEGORIES = frozenset(DENY_ALIASES.values())
+# A user-preserved span never exempts machine-identifying text, only wording that can be a false positive.
+NEVER_PRESERVED = frozenset({PATH, IP, USER})
+
+PLACEHOLDER = re.compile(r"\[(?:" + "|".join(sorted(PRIORITY)) + r")\]")
+TRAILING_PUNCTUATION = ".,;:!?'\"*"
+# A credential match must not swallow the delimiter that closes the text around it.
+CREDENTIAL_TRAILING = TRAILING_PUNCTUATION + "`)]}>"
+
+_SECRET_WORD = r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)"
+# Redactor-only credential shapes; the shared set stays narrow because it also guards memory writes.
+EXTRA_SECRET_PATTERNS = (
+    re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|[\s\S]*\Z)"
+    ),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),
+    re.compile(r"\b(?:proxy-)?authorization\s*:\s*(?:token\s+)?[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
+    re.compile(r"\b(?:x-api-key|x-auth-token|api-key)\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"\b(?:set-)?cookie\s*:\s*[^\n]+", re.IGNORECASE),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"\bAS[IC]A[0-9A-Z]{16}\b"),
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
+    re.compile(
+        r"(?:\bexport\s+)?\b[\w.-]*" + _SECRET_WORD + r"[\w.-]*\s*[:=]\s*(?!\[)(?:\"[^\"\n]{4,}\"|'[^'\n]{4,}'|\S{6,})",
+        re.IGNORECASE,
+    ),
+)
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+SCP_REMOTE_RE = re.compile(
+    r"(?<![\w.@-])[\w.-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}:[\w.~-]+(?:/[\w.~-]+)+"
+)
+_STOP = "<>\"'`)\\]"  # characters that end a URL or path token
+URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s" + _STOP + r"\[]|\[[0-9A-Fa-f:.]*\])*")
+# A curated list, not every TLD: names that double as file extensions or code (.sh, .py, .rs, .md) are
+# left out. A name immediately followed by "(" is a call (logger.info(...)), not a host.
+_TLDS = (
+    "internal|local|corp|lan|intranet|localdomain|com|net|org|io|dev|ai|cloud|xyz|co|app|tech|me|run"
+    "|info|biz|online|site|store|shop|digital|systems|network|group|team|global|tools|club|space|world"
+    "|today|media|email|solutions|agency|studio|software|edu|gov|page|live|news|blog"
+    "|cn|ru|br|ch|it|es|se|be|kr|tv|gg|ly|uk|eu|us|de|fr|nl|jp|au|ca|sg"
+)
+BARE_HOST_RE = re.compile(
+    r"(?<![A-Za-z0-9@./-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?:"
+    + _TLDS
+    + "|"
+    + _TLDS.upper()
+    + r")(?![A-Za-z0-9-])(?!\()(?!\.[A-Za-z0-9])(?::\d{1,5})?(?:/[^\s"
+    + _STOP
+    + r"]*)?"
+)
+IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w]|\.\d)")
+IPV6_RE = re.compile(r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])")
+# A path name may contain spaces when each later word is capitalised ("Jane Doe", "Application Support").
+_SEGMENT = r"[^\s/" + _STOP + r"]+(?: [A-Z][^\s/" + _STOP + r"]*)*"
+_WIN_SEGMENT = r"[^\s\\/" + _STOP + r"]+(?: [A-Z][^\s\\/" + _STOP + r"]*)*"
+_UNIX_ROOT_GUARD = r"(?:(?<![\w.~-])|(?<=-[A-Za-z]))"  # a flag like -I/Users/... still counts
+_MOUNT_PREFIX = r"(?:/mnt/[a-z]|/System/Volumes/Data|/host_mnt|/@fs)?"
+_UNIX_USER_PATH = _MOUNT_PREFIX + r"/(?:Users|home)/" + _SEGMENT + r"(?:/" + _SEGMENT + r")*/?"
+# Inside a URL the path begins right after the host or port, so no word-character guard applies.
+URL_TAIL_PATH_RE = re.compile(_UNIX_USER_PATH)
+PATH_RES = (
+    re.compile(_UNIX_ROOT_GUARD + _UNIX_USER_PATH),
+    re.compile(
+        r"(?<![\w])[A-Za-z]:[\\/]+Users[\\/]+" + _WIN_SEGMENT + r"(?:[\\/]+" + _WIN_SEGMENT + r")*[\\/]*"
+    ),
+    re.compile(r"(?<![\w.~-])/(?:private/var|var/folders)(?:/[^\s" + _STOP + r"]*)?"),
+)
+MEMORY_RES = (
+    re.compile(r"\[\[[A-Za-z0-9_.-]{1,100}\]\]"),
+    re.compile(r"\b(?:user|feedback|project|reference)_[A-Za-z0-9_-]+\.md\b"),
+    re.compile(r"\bMEMORY\.md\b"),
+)
+SERVICE_RE = re.compile(
+    r"(?<![\w-])[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-(?:api|service|svc|worker|gateway)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+CROSS_REPO_RE = re.compile(r"(?<![\w/.-])[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*#\d+\b")
+# Hyphens may touch a key (feature/ACME-123-fix, hotfix-ACME-123); only letters and digits bound it.
+TICKET_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{1,9})-\d{1,6}(?![A-Za-z0-9])")
+# Standards, dates and public trackers that look like tracker keys (UTF-8, Q3-2025, GH-1234) but are public wording.
+PUBLIC_KEY_PREFIXES = frozenset(
+    "UTF SHA SHA1 SHA2 SHA3 MD MD5 ISO RFC CVE CWE GHSA PEP BCP STD IEEE IEC ANSI ASCII HTTP TLS SSL AES DES RSA"
+    " TCP UDP HTML CSS JSON XML UTC GMT WCAG ECMA ES ES5 ES6 NFC NFD NFKC NFKD IPV USB COVID H264 GPT"
+    " Q1 Q2 Q3 Q4 H1 H2 FY GH CP PSR JEP JSR EIP ERC BIP".split()
+)
+
+# Well-known public documentation domains; a host matches itself or any subdomain.
+PUBLIC_DOMAINS = (
+    "docs.github.com",
+    "cli.github.com",
+    "python.org",
+    "pypi.org",
+    "pypa.io",
+    "nodejs.org",
+    "npmjs.com",
+    "npmjs.org",
+    "pytest.org",
+    "anthropic.com",
+    "claude.com",
+    "claude.ai",
+)
+GENERIC_USERS = frozenset({"root", "user", "admin", "runner", "ubuntu", "shared", "home"})
+REMOTE_URL_RE = re.compile(
+    r"^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/]+@)?[^/:]+[:/](?P<owner>[^/]+)/(?:[^/]+/)*?(?P<name>[^/]+?)(?:\.git)?/?$"
+)
+TARGET_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*$")
+
+
+class RedactError(Exception):
+    """A failure that must abort the run with no output."""
+
+
+class UsageError(RedactError):
+    """Invalid arguments."""
+
+
+def normalize(text: str) -> str:
+    """Drops every invisible format character (zero-width, soft hyphen, direction marks), then NFKC."""
+    visible = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return unicodedata.normalize("NFKC", visible)
+
+
+@dataclass(frozen=True)
+class Rules:
+    target: tuple[str, str] | None
+    allow: frozenset[str]
+    deny_map: dict[str, str]
+    deny_re: re.Pattern[str] | None
+    preserve: tuple[str, ...]
+
+    @classmethod
+    def build(
+        cls,
+        target_repo: str | None,
+        allow: Iterable[str],
+        deny: Iterable[tuple[str, str]],
+        preserve: Iterable[str],
+        plugin_names: Iterable[str],
+    ) -> Rules:
+        target = None
+        allowed = {"swe-workbench"}
+        if target_repo:
+            owner, name = target_repo.lower().split("/", 1)
+            target = (owner, name)
+            allowed.update((owner, name))
+        allowed.update(name.lower() for name in plugin_names)
+        allowed.update(normalize(term).lower() for term in allow)
+        deny_map: dict[str, str] = {}
+        for category, term in deny:
+            category = DENY_ALIASES.get(category, category)
+            if category not in DENY_CATEGORIES:
+                raise UsageError(f"unknown deny category {category!r}")
+            term = normalize(term).strip().lower()
+            if term and term not in allowed:
+                deny_map.setdefault(term, category)
+        deny_re = None
+        if deny_map:
+            terms = "|".join(re.escape(t) for t in sorted(deny_map, key=len, reverse=True))
+            # "_" separates identifier words (acmecorp_prod_db), so it is not a word character here.
+            deny_re = re.compile(r"(?<![A-Za-z0-9])(?:" + terms + r")(?![A-Za-z0-9])", re.IGNORECASE)
+        spans = tuple(span for span in (normalize(p) for p in preserve) if span.strip())
+        return cls(target, frozenset(allowed), deny_map, deny_re, spans)
+
+    def allows(self, span: str) -> bool:
+        return span.lower() in self.allow
+
+    def vouched_prefix(self, endpoint: str) -> int | None:
+        """How many leading characters of a URL or bare host[/path] are public, or None if none are.
+
+        Only the host (and, for the target repository, its owner/name path) is vouched for: a
+        query, fragment or deeper path can still carry private data and keeps being scanned.
+        """
+        try:
+            parts = urlsplit(endpoint if "://" in endpoint else "//" + endpoint)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return None
+        if parts.username is not None or parts.password is not None or not host:
+            return None
+        authority = re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#]*", endpoint).end()
+        if endpoint.lower() in self.allow:
+            return len(endpoint)
+        if host in self.allow or host == "localhost" or _is_loopback(host):
+            return authority
+        if any(host == domain or host.endswith("." + domain) for domain in PUBLIC_DOMAINS):
+            return authority
+        segments = [s for s in parts.path.split("/") if s]
+        if host in ("github.com", "www.github.com"):
+            if not segments:
+                return authority
+            if self.target and len(segments) >= 2:
+                if (segments[0].lower(), segments[1].lower().removesuffix(".git")) == self.target:
+                    return _prefix_end(endpoint, 2)
+        if host == "api.github.com" and self.target and len(segments) >= 3 and segments[0] == "repos":
+            if (segments[1].lower(), segments[2].lower().removesuffix(".git")) == self.target:
+                return _prefix_end(endpoint, 3)
+        return None
+
+
+def _documentation_path(span: str, start: int, vouched: int) -> list[tuple[int, int]]:
+    """The path portion (before any ? or #) of a documentation-domain or target-repository URL.
+
+    Both are public by construction (a docs page, a file in the public repository); the query and
+    fragment are not, so they stay out of the returned span. Offsets are absolute.
+    """
+    host = (urlsplit(span if "://" in span else "//" + span).hostname or "").lower()
+    documentation = any(host == d or host.endswith("." + d) for d in PUBLIC_DOMAINS)
+    # Only the target repository is ever vouched past its host on GitHub, so a github.com URL that
+    # got here is a link into it.
+    repository = host in ("github.com", "www.github.com", "api.github.com")
+    if not (documentation or repository):
+        return []
+    query = re.search(r"[?#]", span[vouched:])
+    stop = vouched + query.start() if query else len(span)
+    return [(start + vouched, start + stop)]
+
+
+def _prefix_end(endpoint: str, segments: int) -> int:
+    """End offset of the authority plus its first `segments` path segments."""
+    pattern = r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#]*" + r"/[^/?#]+" * segments
+    match = re.match(pattern, endpoint)
+    return match.end() if match else len(endpoint)
+
+
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _trim(text: str, start: int, end: int, chars: str = TRAILING_PUNCTUATION) -> int:
+    while end > start and text[end - 1] in chars:
+        end -= 1
+    return end
+
+
+def _finditer(
+    pattern: re.Pattern[str], text: str, trim: bool | str = False
+) -> Iterable[tuple[int, int, str]]:
+    """Yields (start, end, span); `trim` strips trailing punctuation, or the given characters."""
+    chars = trim if isinstance(trim, str) else TRAILING_PUNCTUATION
+    for match in pattern.finditer(text):
+        end = _trim(text, match.start(), match.end(), chars) if trim else match.end()
+        if end > match.start():
+            yield match.start(), end, text[match.start() : end]
+
+
+def _contained(span: tuple[int, int], within: Iterable[tuple[int, int]]) -> bool:
+    return any(start <= span[0] and span[1] <= end for start, end in within)
+
+
+def _overlaps(span: tuple[int, int], others: Iterable[tuple[int, int]]) -> bool:
+    return any(span[0] < end and start < span[1] for start, end in others)
+
+
+def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
+    """Returns (candidate spans, shield spans that vouch for a public host or repository prefix)."""
+    found: list[tuple[int, int, str]] = []
+    shields: list[tuple[int, int]] = []
+
+    for pattern in SECRET_PATTERNS + EXTRA_SECRET_PATTERNS:
+        for match in pattern.finditer(text):
+            # A quote that opened inside the match belongs to it; an unbalanced one closes outer text.
+            balanced = match.group(0).count('"') % 2 == 0 and match.group(0).count("'") % 2 == 0
+            trailing = CREDENTIAL_TRAILING.translate({ord('"'): None, ord("'"): None}) if balanced else CREDENTIAL_TRAILING
+            end = _trim(text, match.start(), match.end(), trailing)
+            if end > match.start():
+                found.append((match.start(), end, CREDENTIAL))
+
+    scp_spans: list[tuple[int, int]] = []
+    for start, end, span in _finditer(SCP_REMOTE_RE, text, trim=True):
+        scp_spans.append((start, end))
+        host, _, path = span.partition("@")[2].partition(":")
+        owner, _, name = path.partition("/")
+        vouched = (
+            host.lower() == "github.com"
+            and rules.target is not None
+            and (owner.lower(), name.lower().removesuffix(".git")) == rules.target
+        )
+        if vouched or rules.allows(span):
+            shields.append((start, end))
+        else:
+            found.append((start, end, HOST))
+
+    for start, end, span in _finditer(EMAIL_RE, text, trim=True):
+        if not _contained((start, end), scp_spans) and not rules.allows(span):
+            found.append((start, end, EMAIL))
+
+    public_spans: list[tuple[int, int]] = []  # whole URLs on a vouched host, tail included
+    doc_paths: list[tuple[int, int]] = []  # path (not query/fragment) of documentation-domain URLs
+    blocked: list[tuple[int, int]] = []  # spans a bare-host match inside must not re-trigger on
+    for start, end, span in _finditer(URL_RE, text, trim=True):
+        if not span.split("://", 1)[1]:
+            continue
+        vouched = rules.vouched_prefix(span)
+        if vouched is None:
+            found.append((start, end, HOST))
+            blocked.append((start, end))
+        else:
+            shields.append((start, start + vouched))
+            blocked.append((start, start + vouched))
+            public_spans.append((start, end))
+            doc_paths.extend(_documentation_path(span, start, vouched))
+    for start, end, span in _finditer(BARE_HOST_RE, text, trim=True):
+        if _contained((start, end), blocked):
+            continue
+        vouched = rules.vouched_prefix(span)
+        if vouched is None:
+            found.append((start, end, HOST))
+        else:
+            shields.append((start, start + vouched))
+            public_spans.append((start, end))
+            doc_paths.extend(_documentation_path(span, start, vouched))
+
+    for start, end, span in _finditer(IPV4_RE, text):
+        octets = [int(part) for part in span.split(".")]
+        if max(octets) > 255 or octets[0] in (0, 127) or rules.allows(span):
+            continue
+        found.append((start, end, IP))
+    for start, end, span in _finditer(IPV6_RE, text):
+        try:
+            address = ipaddress.IPv6Address(span)
+        except ValueError:
+            continue
+        if address.is_loopback or address.is_unspecified or rules.allows(span):
+            continue
+        found.append((start, end, IP))
+
+    for pattern in PATH_RES:
+        for start, end, span in _finditer(pattern, text, trim=True):
+            if not rules.allows(span):
+                found.append((start, end, PATH))
+    for url_start, url_end in public_spans:
+        tail_start = next((end for start, end in blocked if start == url_start), url_start)
+        for start, end, span in _finditer(URL_TAIL_PATH_RE, text[tail_start:url_end], trim=True):
+            if not rules.allows(span):
+                found.append((tail_start + start, tail_start + end, PATH))
+
+    for pattern in MEMORY_RES:
+        for start, end, span in _finditer(pattern, text):
+            if not rules.allows(span):
+                found.append((start, end, MEMORY))
+
+    for start, end, span in _finditer(SERVICE_RE, text):
+        # Only a documentation domain's own path (".../rest-api") is public wording; a query, a
+        # fragment, a repository URL or a loopback URL can all carry a private service id.
+        if not rules.allows(span) and not _contained((start, end), doc_paths):
+            found.append((start, end, SERVICE))
+
+    for match in TICKET_RE.finditer(text):
+        span = match.group(0)
+        if match.group(1) not in PUBLIC_KEY_PREFIXES and not rules.allows(span):
+            found.append((match.start(), match.end(), TICKET))
+
+    for start, end, span in _finditer(CROSS_REPO_RE, text):
+        slug = span.split("#", 1)[0].lower()
+        if (rules.target is None or slug != "/".join(rules.target)) and not rules.allows(span):
+            found.append((start, end, REPO))
+
+    if rules.deny_re is not None:
+        for start, end, span in _finditer(rules.deny_re, text):
+            found.append((start, end, rules.deny_map[span.lower()]))
+
+    return found, shields
+
+
+def redact(text: str, rules: Rules) -> tuple[str, Counter[str]]:
+    """Returns the sanitized text and a count of replacements per placeholder category."""
+    text = normalize(text)
+    found, shields = _candidates(text, rules)
+
+    placeholders = [(m.start(), m.end()) for m in PLACEHOLDER.finditer(text)]
+    preserved = []
+    for span in rules.preserve:
+        position = text.find(span)
+        while position != -1:
+            preserved.append((position, position + len(span)))
+            position = text.find(span, position + 1)
+
+    kept = []
+    for start, end, category in found:
+        if category != CREDENTIAL:
+            if _overlaps((start, end), placeholders) or _contained((start, end), shields):
+                continue
+            if category not in NEVER_PRESERVED and _contained((start, end), preserved):
+                continue
+        kept.append((start, end, category))
+    kept.sort(key=lambda c: (c[0], -c[1]))
+
+    # Overlapping matches merge into one replacement labelled by the highest-priority member.
+    clusters: list[list] = []
+    for start, end, category in kept:
+        if clusters and start < clusters[-1][1]:
+            cluster = clusters[-1]
+            cluster[1] = max(cluster[1], end)
+            if PRIORITY[category] < PRIORITY[cluster[2]]:
+                cluster[2] = category
+        else:
+            clusters.append([start, end, category])
+
+    counts: Counter[str] = Counter()
+    pieces = []
+    cursor = 0
+    for start, end, category in clusters:
+        pieces.append(text[cursor:start])
+        pieces.append(f"[{category}]")
+        counts[category] += 1
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces), counts
+
+
+# ── environment adapter ───────────────────────────────────────────────────────
+
+
+def plugin_names(install_dir: Path = INSTALL_DIR) -> list[str]:
+    names: list[str] = []
+    for folder in ("commands", "agents"):
+        directory = install_dir / folder
+        if directory.is_dir():
+            names.extend(p.stem for p in directory.glob("*.md"))
+    skills = install_dir / "skills"
+    if skills.is_dir():
+        names.extend(p.name for p in skills.iterdir() if p.is_dir())
+    bin_dir = install_dir / "bin"
+    if bin_dir.is_dir():
+        names.extend(p.name for p in bin_dir.iterdir() if p.is_file())
+    return [n for n in names if not n.startswith(".")]
+
+
+def _git_output(cwd: Path, *args: str) -> str | None:
+    # An inherited GIT_DIR (e.g. from a hook) would answer for the wrong repository.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=10, env=env
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def memory_entry_names() -> list[str]:
+    """Names (and file stems) of memory entries, via the sibling memory script."""
+    harness = "pi" if os.environ.get("PI_SESSION_ID") else "claude"
+    script = Path(__file__).resolve().parent / "swe-workbench-memory"
+    result = subprocess.run(
+        [str(script), "show", "--as", harness], capture_output=True, text=True, timeout=15
+    )
+    if result.returncode != 0:
+        raise OSError("memory show failed")
+    entries = json.loads(result.stdout)["data"]["entries"]
+    names: list[str] = []
+    for entry in entries:
+        names.append(str(entry.get("name", "")))
+        names.append(str(entry.get("file", "")).removesuffix(".md"))
+    return names
+
+
+def collect_auto_context(
+    home: Path,
+    cwd: Path,
+    target_repo: str | None,
+    hostname: str,
+    memory_names: Callable[[], list[str]],
+) -> tuple[list[tuple[str, str]], list[dict[str, str]]]:
+    """Derives deny terms from the environment; lookup failures become warnings."""
+    target_owner, target_name = (target_repo.lower().split("/", 1) if target_repo else (None, None))
+    terms: list[tuple[str, str]] = []
+    warnings: list[dict[str, str]] = []
+
+    def add(category: str, term: str, minimum: int = 3) -> None:
+        term = term.strip()
+        if len(term) >= minimum and term.lower() not in (target_owner, target_name):
+            terms.append((category, term))
+
+    username = home.name
+    if username.lower() not in GENERIC_USERS:
+        add(USER, username)
+
+    short_host = hostname.split(".", 1)[0]
+    if short_host.lower() != "localhost":
+        add(HOST, short_host, minimum=4)
+
+    top = _git_output(cwd, "rev-parse", "--show-toplevel")
+    if top is None:
+        warnings.append(
+            {"code": "auto-context-unavailable", "message": "no git repository found for the working directory"}
+        )
+    else:
+        add(REPO, Path(top).name, minimum=4)
+        remote = _git_output(cwd, "config", "--get", "remote.origin.url")
+        match = REMOTE_URL_RE.match(remote) if remote else None
+        if match:
+            add(ORG, match["owner"])
+            add(REPO, match["name"])
+
+    try:
+        for name in memory_names():
+            add(MEMORY, name, minimum=6)
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        warnings.append(
+            {"code": "auto-context-unavailable", "message": "memory entry names could not be read"}
+        )
+    return terms, warnings
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="swe-workbench-redact",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--field", nargs=3, action="append", metavar=("NAME", "SRC", "DST"), required=True
+    )
+    parser.add_argument("--target-repo")
+    parser.add_argument("--allow", action="append", default=[])
+    parser.add_argument("--deny", action="append", default=[])
+    parser.add_argument("--deny-file", action="append", default=[])
+    parser.add_argument("--preserve-file", action="append", default=[])
+    parser.add_argument("--no-auto-context", action="store_true")
+    return parser
+
+
+def _real(path: str) -> str:
+    return os.path.realpath(path)
+
+
+def remove_stale_destinations(argv: list[str]) -> None:
+    """Unlinks every --field DST that is not also some field's SRC, before anything can fail."""
+    # Abbreviations like "--fi" are refused by the parser, but their DST must still be cleared.
+    triples = [
+        argv[i + 1 : i + 4]
+        for i, arg in enumerate(argv)
+        if len(arg) >= 3 and "--field".startswith(arg) and i + 3 < len(argv)
+    ]
+    sources = {_real(src) for _, src, _ in triples}
+    for _, _, dst in triples:
+        if _real(dst) in sources:
+            continue
+        try:
+            if os.path.isfile(dst) or os.path.islink(dst):
+                os.unlink(dst)
+        except OSError:
+            pass
+
+
+def parse_deny(spec: str) -> tuple[str, str]:
+    category, separator, term = spec.partition("=")
+    category = category.strip().lower()
+    if not separator or not term.strip() or (category not in DENY_ALIASES and category not in DENY_CATEGORIES):
+        raise UsageError(f"--deny expects CATEGORY=TERM with CATEGORY in {sorted(DENY_ALIASES)}")
+    return category, term.strip()
+
+
+def read_lines(path: str, what: str) -> list[str]:
+    try:
+        text = Path(path).read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise RedactError(f"cannot read {what} file {path}: {type(error).__name__}") from error
+    return text.splitlines()
+
+
+def write_atomic(destination: Path, text: str) -> None:
+    descriptor, temp = tempfile.mkstemp(prefix=".redact-", dir=str(destination.parent))
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+        os.replace(temp, destination)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def summarize(counts: Counter[str]) -> str:
+    total = sum(counts.values())
+    if not total:
+        return "none detected"
+    rows = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return f"{total} replacement(s) — " + ", ".join(f"{key} ×{count}" for key, count in rows)
+
+
+def count_rows(counts: Counter[str], order: list[str] | None = None) -> list[dict[str, object]]:
+    if order is not None:
+        return [{"key": key, "count": counts.get(key, 0)} for key in order]
+    return [{"key": k, "count": n} for k, n in sorted(counts.items(), key=lambda i: (-i[1], i[0]))]
+
+
+def run(args: argparse.Namespace) -> dict[str, object]:
+    if args.target_repo is not None and not TARGET_RE.match(args.target_repo):
+        raise UsageError(f"--target-repo expects OWNER/NAME, got {args.target_repo!r}")
+
+    fields = [(name, Path(src), Path(dst)) for name, src, dst in args.field]
+    names = [name for name, _, _ in fields]
+    if len(set(names)) != len(names):
+        raise UsageError("--field names must be unique")
+    source_paths = {_real(str(src)) for _, src, _ in fields}
+    destination_paths = [_real(str(dst)) for _, _, dst in fields]
+    if len(set(destination_paths)) != len(destination_paths) or source_paths & set(destination_paths):
+        raise UsageError("a DST may not repeat or equal any SRC")
+
+    deny = [parse_deny(spec) for spec in args.deny]
+    for path in args.deny_file:
+        for line in read_lines(path, "deny"):
+            if line.strip() and not line.lstrip().startswith("#"):
+                deny.append(parse_deny(line))
+    preserve = [line for path in args.preserve_file for line in read_lines(path, "preserve") if line.strip()]
+
+    warnings: list[dict[str, str]] = []
+    if not args.no_auto_context:
+        terms, warnings = collect_auto_context(
+            home=Path(os.path.expanduser("~")),
+            cwd=Path.cwd(),
+            target_repo=args.target_repo,
+            hostname=socket.gethostname(),
+            memory_names=memory_entry_names,
+        )
+        deny.extend(terms)
+
+    rules = Rules.build(args.target_repo, args.allow, deny, preserve, plugin_names())
+
+    results = []
+    for name, source, destination in fields:
+        try:
+            text = source.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise RedactError(f"cannot read draft for field {name!r}: {type(error).__name__}") from error
+        results.append((name, destination, *redact(text, rules)))
+
+    try:
+        for _, destination, clean, _ in results:
+            write_atomic(destination, clean)
+    except OSError as error:
+        raise RedactError(f"cannot write sanitized output: {type(error).__name__}") from error
+
+    by_field: Counter[str] = Counter()
+    by_category: Counter[str] = Counter()
+    for name, _, _, found in results:
+        by_field[name] = sum(found.values())
+        by_category.update(found)
+    return {
+        "schema": SCHEMA,
+        "status": "ok",
+        "data": {
+            "total": sum(by_category.values()),
+            "by_category": count_rows(by_category),
+            "by_field": count_rows(by_field, names),
+            "summary": summarize(by_category),
+            "outputs": [str(destination) for _, destination, _, _ in results],
+        },
+        "warnings": warnings,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not any(arg in ("-h", "--help") for arg in argv):
+        remove_stale_destinations(argv)
+    try:
+        args = build_parser().parse_args(argv)
+        envelope = run(args)
+    except SystemExit as error:
+        return error.code if isinstance(error.code, int) else 2
+    except RedactError as error:
+        remove_stale_destinations(argv)
+        print(f"swe-workbench-redact: {error}", file=sys.stderr)
+        return 2 if isinstance(error, UsageError) else 1
+    except Exception as error:  # fail closed on anything unforeseen
+        remove_stale_destinations(argv)
+        print(f"swe-workbench-redact: unexpected {type(error).__name__}", file=sys.stderr)
+        return 1
+    print(json.dumps(envelope, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

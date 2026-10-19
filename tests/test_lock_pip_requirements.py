@@ -6,15 +6,17 @@ Static classes (TestBuildRequirementsSource, TestBuildRequirementsLock,
 TestBootstrapUsesRequireHashes) read the script text; no subprocess needed.
 
 Behavioral classes (TestArgParsing, TestCheckDriftGate,
-TestGenerateRefreshesStalePins) drive the real script via subprocess in a
-hermetic temp repo with a stubbed python3.12 — no network, no real
-pip-compile, no Python 3.12 required in the test environment.
+TestCheckLeavesNoTempFiles, TestGenerateRefreshesStalePins) drive the real
+script via subprocess in a hermetic temp repo with a stubbed python3.12 — no
+network, no real pip-compile, no Python 3.12 required in the test environment.
 """
 
 import re
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from conftest import _CLEAN_ENV
 
@@ -338,6 +340,83 @@ class TestCheckDriftGate:
             env=self._env(paths),
         )
         assert result.returncode == 0, result.stderr
+
+
+# Template-less mktemp calls get an explicit $TMPDIR template: BSD mktemp (macOS)
+# otherwise picks the per-user Darwin temp dir over TMPDIR, hiding leaked files.
+_MKTEMP_SHIM = (
+    "#!/usr/bin/env bash\n"
+    'for arg in "$@"; do\n'
+    '    [[ "$arg" == -* ]] || exec "$REAL_MKTEMP" "$@"\n'
+    "done\n"
+    'exec "$REAL_MKTEMP" "$@" "${TMPDIR%/}/tmp.XXXXXXXXXX"\n'
+)
+
+
+def _on_second_lockfile(paths: dict, action: str) -> None:
+    """Make the pip-compile stub run `action` only while compiling the second lockfile."""
+    stub = paths["stub_dir"] / "_pip_compile"
+    shebang, body = stub.read_text().split("\n", 1)
+    stub.write_text(f'{shebang}\n[[ "$*" == *release-requirements.txt* ]] && {action}\n{body}')
+
+
+def _remove_second_lockfile(paths: dict) -> None:
+    (paths["repo"] / "tests" / "release-requirements.lock").unlink()
+
+
+class TestCheckLeavesNoTempFiles:
+    """--check must remove every temp file it creates, however it exits.
+
+    Each run gets a private TMPDIR that must be empty afterwards.  Failures
+    are staged on the second lockfile so the first compile has already
+    succeeded; its temp files are the ones a cleanup gap would strand.
+    """
+
+    def _run_check(self, tmp_path: Path, prepare=None) -> tuple[subprocess.CompletedProcess, Path]:
+        paths = _make_repo(tmp_path)
+        if prepare is not None:
+            prepare(paths)
+        shim_dir = tmp_path / "mktemp-shim"
+        shim_dir.mkdir()
+        shim = shim_dir / "mktemp"
+        shim.write_text(_MKTEMP_SHIM)
+        shim.chmod(0o755)
+        private_tmp = tmp_path / "private-tmp"
+        private_tmp.mkdir()
+        env = {
+            **_CLEAN_ENV,
+            "PATH": f"{shim_dir}:{paths['stub_dir']}:{_CLEAN_ENV['PATH']}",
+            "STUB_DIR": str(paths["stub_dir"]),
+            "DRIFT_TEST": "0",
+            "REAL_MKTEMP": shutil.which("mktemp", path=_CLEAN_ENV["PATH"]),
+            "TMPDIR": str(private_tmp),
+        }
+        result = subprocess.run(
+            ["bash", str(paths["script"]), "--check"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        return result, private_tmp
+
+    def test_in_sync_check_leaves_no_temp_files(self, tmp_path):
+        result, private_tmp = self._run_check(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert sorted(p.name for p in private_tmp.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "stage_failure",
+        [
+            pytest.param(lambda paths: _on_second_lockfile(paths, "DRIFT_TEST=1"), id="out-of-date"),
+            pytest.param(_remove_second_lockfile, id="missing-lockfile"),
+            pytest.param(lambda paths: _on_second_lockfile(paths, "exit 1"), id="pip-compile-error"),
+        ],
+    )
+    def test_failed_check_leaves_no_temp_files(self, tmp_path, stage_failure):
+        result, private_tmp = self._run_check(tmp_path, prepare=stage_failure)
+        assert result.returncode == 1
+        assert result.stdout.count("up to date") == 1, result.stdout
+        assert sorted(p.name for p in private_tmp.iterdir()) == []
 
 
 class TestGenerateRefreshesStalePins:

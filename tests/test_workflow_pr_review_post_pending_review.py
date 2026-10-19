@@ -20,9 +20,9 @@ other #531 behavior (visibility detection: test_build_byline_*; self-review
 event forcing: test_resolve_event_self_review_never_yields_approve;
 empty-comments fallthrough: test_n_zero_skips_atomic_post_entirely; the
 bounded 422 retry: test_confirmed_422_retries_once_demotes_and_posts_second_review;
-never-blind-retry: test_5xx_issues_zero_retries_and_one_read_your_write_call;
+never-blind-retry: test_5xx_where_the_read_back_finds_no_marker_retries_once;
 pre-submit-summary-from-N: test_atomic_post_carries_candidate_count_in_body;
-fallback-never-drops: test_double_422_falls_through_to_per_comment_model_a)
+demotion-never-drops: test_double_422_ends_in_a_single_body_only_post)
 now has a direct behavioral equivalent in tests/test_pr_review_submit_script.py.
 """
 
@@ -57,11 +57,28 @@ def test_never_approve_on_self_review_documented():
     )
 
 
-def test_posting_core_documents_chunked_pr_level_batches_and_partial_counts():
+def test_posting_core_documents_body_batch_budget_and_overflow():
     text = _text()
-    assert re.search(r"one pr-level batch comment\s+per 50 findings", text)
-    assert re.search(r"failed chunk is dropped with a warning", text)
-    assert re.search(r"count reflects the chunks that posted", text)
+    assert re.search(r"single\s+`POST \.\.\./pulls/\{n\}/reviews`", text)
+    assert re.search(r"up to 50 rows / ~60,000 characters", text)
+    assert re.search(r"Only the overflow beyond that budget is posted\s+afterwards as issue-comment batches", text)
+    assert re.search(r"the one allowed second mutation", text)
+
+
+def test_posting_core_documents_the_failure_ladder_and_retry_file():
+    text = _text()
+    assert re.search(r"(?i)no per-comment fallback", text)
+    assert re.search(r"(?i)never.{0,20}blind-retried", text)
+    assert re.search(r"reads the reviews back and looks for\s+it", text)
+    assert re.search(r"submitted as `COMMENT`.{0,80}never approved", text, re.S)
+    assert "--retry-state" in text and "$RETRY_STATE" in text
+    assert "submit-retry.json" in text
+    assert re.search(r"`\.data\.skipped_reason = \"unchanged\"`", text)
+    assert re.search(r"reworded\s+out-of-diff finding counts as new", text)
+    assert re.search(r"two\s+`except Exception:` lines", text)
+    assert re.search(r"after 5\s+failed attempts", text)
+    assert re.search(r'\.warnings\[\]\.code\s*=\s*"review_rejected"', text)
+    assert re.search(r"`\.warnings`\s+is\s+a\s+list\s+of\s+`\{code,\s+message\}`\s+objects", text)
 
 
 def test_posting_core_documents_address_feedback_provenance_markers():
@@ -69,4 +86,5 @@ def test_posting_core_documents_address_feedback_provenance_markers():
     assert "<!-- swe-workbench:review-findings -->" in text
     assert "<!-- swe-workbench:review-finding:<positive-integer> -->" in text
     assert "address-feedback" in text
-    assert re.search(r"Review summary bodies are not consumed by\s+address-feedback\.", text)
+    assert re.search(r"whether it sits in a review body or an issue comment", text)
+    assert not re.search(r"Review summary bodies are not consumed", text)

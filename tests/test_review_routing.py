@@ -83,8 +83,7 @@ class TestReviewModeRouting:
 
     def test_specialist_subflow_post_confirmation_uses_ask_user_question(self):
         """The post/skip confirmation must call AskUserQuestion with a valid schema, not a
-        free-text 'reply post/skip' prompt — matching the pattern workflow-pr-review-post's
-        own CTA already uses (PR #520 review feedback)."""
+        free-text 'reply post/skip' prompt."""
         import json as _json
         import re as _re
         text = REVIEW_PATH.read_text(encoding="utf-8")

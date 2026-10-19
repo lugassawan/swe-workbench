@@ -277,6 +277,234 @@ def test_parse_review_finding_batch_preserves_horizontal_rules_inside_a_finding(
     assert [projection["body"] for projection in projections] == ["first\n\n---\n\nstill first", "second"]
 
 
+# ── Unit: trailing finding-key marker is hidden from display ────────────────
+
+_KEY_LINE = "<!-- swe-workbench:finding-key:v1:0123456789abcdef -->"
+
+
+def test_strip_finding_key_markers_removes_only_the_marker_line():
+    assert aff.strip_finding_key_markers(f"body text\n{_KEY_LINE}") == "body text"
+    assert aff.strip_finding_key_markers(f"body text\r\n{_KEY_LINE}\r\n") == "body text"
+    assert aff.strip_finding_key_markers("no marker here") == "no marker here"
+
+
+def test_strip_finding_key_markers_leaves_an_inline_mention_alone():
+    inline = f"quoting {_KEY_LINE} inside a sentence"
+    assert aff.strip_finding_key_markers(inline) == inline
+
+
+def test_key_marker_is_not_a_review_marker():
+    assert aff._ANY_REVIEW_MARKER_LINE_RE.search(_KEY_LINE) is None
+
+
+def test_parse_review_finding_batch_strips_key_markers_from_projected_bodies():
+    comment = _pr_comment(
+        42, _review_finding_batch((2, f"first body\n{_KEY_LINE}"), (7, f"second body\n{_KEY_LINE}"))
+    )
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first body", "second body"]
+
+
+def test_thread_bodies_have_the_key_marker_stripped_before_display():
+    node = {"id": "T", "comments": {"nodes": [{"id": "c", "body": f"finding text\n{_KEY_LINE}"}]}}
+
+    cleaned = aff.strip_thread_key_markers(node)
+
+    assert cleaned["comments"]["nodes"][0]["body"] == "finding text"
+    assert node["comments"]["nodes"][0]["body"].endswith(_KEY_LINE), "input node must not be mutated"
+
+
+def test_legacy_projection_of_a_malformed_batch_hides_the_key_marker():
+    comment = _pr_comment(9, f"<!-- swe-workbench:review-findings -->\n\nbroken\n{_KEY_LINE}")
+
+    projected = aff.project_legacy_pr_comment(comment)
+
+    assert _KEY_LINE not in projected["body"]
+
+
+# ── Unit: review-body finding batches ───────────────────────────────────────
+
+
+def _review_body_batch(summary: str, *sections: tuple[int, str]) -> str:
+    return summary.rstrip("\n") + "\n\n" + _review_finding_batch(*sections)
+
+
+def _review(review_id: int, body: str, *, login: str = "reviewer", state: str = "COMMENTED",
+            submitted_at: str | None = "2026-01-01T00:00:00Z", user_type: str = "User") -> dict:
+    return {
+        "id": review_id,
+        "user": {"login": login, "type": user_type},
+        "body": body,
+        "state": state,
+        "submitted_at": submitted_at,
+        "html_url": f"https://github.com/o/r/pull/1#pullrequestreview-{review_id}",
+    }
+
+
+def test_parse_review_body_batch_projects_findings_with_review_identity():
+    summary = "**Review Decision: COMMENT**\n\n_Reviewed by `bot`_. Posted 0 inline comment(s) and 2 PR-level note(s), deduped 0."
+    review = _review(77, _review_body_batch(summary, (2, f"first body\n{_KEY_LINE}"), (7, "second body")))
+
+    projections = aff.parse_review_body_batch(review)
+
+    assert [projection["body"] for projection in projections] == ["first body", "second body"]
+    assert [
+        (p["parent_comment_id"], p["finding_id"], p["triage_key"], p["handled_marker"], p["created_at"])
+        for p in projections
+    ] == [
+        ("review-77", 2, "review:77:finding:2", "<!-- swe-workbench:handled:review-77:finding:2 -->", "2026-01-01T00:00:00Z"),
+        ("review-77", 7, "review:77:finding:7", "<!-- swe-workbench:handled:review-77:finding:7 -->", "2026-01-01T00:00:00Z"),
+    ]
+    assert all(projection["id"] == 77 for projection in projections)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "summary only, no batch at all",
+        "summary\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\nbody",
+        _review_body_batch("summary", (7, "first"), (2, "descending")),
+        _review_body_batch("summary", (2, "first"), (2, "duplicate")),
+        "summary text <!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\nbody",
+        "summary\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->",
+        "<!-- swe-workbench:review-finding:1 -->\nstray marker\n\n" + _review_finding_batch((2, "body")),
+    ],
+)
+def test_parse_review_body_batch_rejects_malformed_input(body):
+    assert aff.parse_review_body_batch(_review(77, body)) is None
+
+
+def test_parse_review_body_batch_rejects_non_integer_or_missing_ids_and_bodies():
+    batch = _review_body_batch("summary", (2, "body"))
+    assert aff.parse_review_body_batch({**_review(77, batch), "id": "77"}) is None
+    assert aff.parse_review_body_batch({**_review(77, batch), "id": 0}) is None
+    assert aff.parse_review_body_batch({**_review(77, batch), "body": None}) is None
+
+
+def test_parse_review_body_batch_shares_the_section_cap():
+    over = [(index, f"body {index}") for index in range(1, aff.MAX_BATCH_SECTIONS + 2)]
+    assert aff.parse_review_body_batch(_review(77, _review_body_batch("summary", *over))) is None
+
+
+def test_parse_review_body_batch_preserves_horizontal_rules_inside_a_finding():
+    review = _review(77, _review_body_batch("summary", (2, "first\n\n---\n\nstill first"), (7, "second")))
+
+    projections = aff.parse_review_body_batch(review)
+
+    assert [projection["body"] for projection in projections] == ["first\n\n---\n\nstill first", "second"]
+
+
+def test_review_batches_become_eligible_items_through_the_shared_eligibility_path():
+    reviews = [_review(77, _review_body_batch("summary", (2, "first"), (7, "second")))]
+
+    result = aff.compute_pr_comment_eligibility([], author="pr-author", me="runner", reviews=reviews)
+
+    assert [(item["triage_key"], item["eligible"]) for item in result] == [
+        ("review:77:finding:2", True),
+        ("review:77:finding:7", True),
+    ]
+
+
+def test_malformed_review_batch_surfaces_as_one_legacy_item():
+    body = "summary\n\n<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->"
+
+    result = aff.compute_pr_comment_eligibility([], author="pr-author", me="runner", reviews=[_review(77, body)])
+
+    assert len(result) == 1
+    assert (result[0]["triage_key"], result[0]["handled_marker"], result[0]["finding_id"]) == (
+        "review:77", "<!-- swe-workbench:handled:review-77 -->", None,
+    )
+    assert result[0]["eligible"] is True
+
+
+def test_plain_review_bodies_are_not_pr_feedback_items():
+    reviews = [_review(77, "LGTM with nits"), _review(78, "")]
+    assert aff.compute_pr_comment_eligibility([], author="pr-author", me="runner", reviews=reviews) == []
+
+
+def test_bot_and_pending_reviews_are_skipped():
+    batch = _review_body_batch("summary", (2, "body"))
+    reviews = [
+        _review(1, batch, login="helper[bot]"),
+        _review(2, batch, user_type="Bot"),
+        _review(3, batch, state="PENDING", submitted_at=None),
+    ]
+    assert aff.compute_pr_comment_eligibility([], author="pr-author", me="runner", reviews=reviews) == []
+
+
+def test_owner_handled_marker_makes_one_review_finding_ineligible():
+    reviews = [_review(77, _review_body_batch("summary", (2, "first"), (7, "second")))]
+    owner_reply = {
+        **_pr_comment(900, "done\n\n<!-- swe-workbench:handled:review-77:finding:2 -->"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+
+    result = aff.compute_pr_comment_eligibility([owner_reply], author="pr-author", me="runner", reviews=reviews)
+
+    assert [(item["finding_id"], item["eligible"]) for item in result] == [(2, False), (7, True)]
+
+
+def test_generic_review_handled_marker_covers_every_finding_of_that_review():
+    reviews = [_review(77, _review_body_batch("summary", (2, "first"), (7, "second")))]
+    owner_reply = {
+        **_pr_comment(900, "done\n\n<!-- swe-workbench:handled:review-77 -->"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+
+    result = aff.compute_pr_comment_eligibility([owner_reply], author="pr-author", me="runner", reviews=reviews)
+
+    assert [item["eligible"] for item in result] == [False, False]
+
+
+def test_issue_comment_and_review_with_the_same_numeric_id_never_collide():
+    """Both id spaces are independent integers: handling issue comment 77 must not hide review 77, and
+    the reverse."""
+    comment_batch = _pr_comment(77, _review_finding_batch((2, "comment finding")))
+    review = _review(77, _review_body_batch("summary", (2, "review finding")))
+    handled_comment = {
+        **_pr_comment(901, "ok\n\n<!-- swe-workbench:handled:77:finding:2 -->"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+    handled_review = {
+        **_pr_comment(902, "ok\n\n<!-- swe-workbench:handled:review-77:finding:2 -->"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-02T00:00:00Z",
+    }
+
+    only_comment_handled = aff.compute_pr_comment_eligibility(
+        [comment_batch, handled_comment], author="pr-author", me="runner", reviews=[review],
+    )
+    only_review_handled = aff.compute_pr_comment_eligibility(
+        [comment_batch, handled_review], author="pr-author", me="runner", reviews=[review],
+    )
+
+    by_key = lambda result: {item["triage_key"]: item["eligible"] for item in result}
+    assert by_key(only_comment_handled) == {"prcomment:77:finding:2": False, "review:77:finding:2": True}
+    assert by_key(only_review_handled) == {"prcomment:77:finding:2": True, "review:77:finding:2": False}
+
+
+def test_review_findings_after_an_owner_manual_reply_are_not_resurrected():
+    reviews = [_review(77, _review_body_batch("summary", (2, "first")), submitted_at="2026-01-01T00:00:00Z")]
+    manual_reply = {
+        **_pr_comment(903, "I took care of this by hand"),
+        "user": {"login": "pr-author", "type": "User"},
+        "created_at": "2026-01-03T00:00:00Z",
+    }
+
+    result = aff.compute_pr_comment_eligibility([manual_reply], author="pr-author", me="runner", reviews=reviews)
+
+    assert [item["eligible"] for item in result] == [False]
+
+
+def test_reviews_argument_defaults_to_none_for_existing_callers():
+    assert aff.compute_pr_comment_eligibility([], author="a", me="b") == []
+
+
 # ── Unit: compute_pr_comment_eligibility (ported jq-program fixtures) ────────
 
 
@@ -701,6 +929,39 @@ def test_producer_and_consumer_batch_caps_agree():
     assert prs.MAX_BATCH_ROWS == aff.MAX_BATCH_SECTIONS
 
 
+def test_producer_built_review_body_round_trips_through_the_consumer():
+    rows = prs.assign_finding_keys(
+        prs.assign_finding_ids([
+            {"severity": "High", "issue": f"issue {n}", "why": "why", "fix": "fix", "anchor": "pr-level"}
+            for n in (1, 2, 3)
+        ]),
+        "a" * 40,
+    )
+    summary = "**Review Decision: COMMENT**\n\n_Reviewed by `bot`_. Posted 0 inline comment(s) and 3 PR-level note(s), deduped 0.\n"
+
+    body, overflow = prs.build_review_body(summary, rows)
+    projections = aff.parse_review_body_batch(_review(9, body))
+
+    assert overflow == []
+    assert [p["finding_id"] for p in projections] == [1, 2, 3]
+    assert all("finding-key" not in p["body"] for p in projections)
+    assert projections[0]["body"].startswith("**High** — issue 1")
+
+
+def test_run_marker_in_a_review_body_does_not_disturb_batch_parsing():
+    """The producer stamps a random run marker into the summary of every review body."""
+    run_marker = "<!-- swe-workbench:review-run:0b1c2d3e-0000-4000-8000-000000000000 -->"
+    rows = prs.assign_finding_ids([
+        {"severity": "High", "issue": "issue", "why": "why", "fix": "fix", "anchor": "pr-level"},
+    ])
+
+    body, _ = prs.build_review_body(f"**Review Decision: COMMENT**\n\n{run_marker}\n", rows)
+
+    assert aff._ANY_REVIEW_MARKER_LINE_RE.search(run_marker) is None
+    projections = aff.parse_review_body_batch(_review(9, body))
+    assert [p["finding_id"] for p in projections] == [1]
+
+
 def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
     """The reply template quotes the first ~100 chars of an item body into the
     owner's own reply — a hostile comment whose opening text contains a handled
@@ -735,10 +996,15 @@ import json, os, sys
 
 state_dir = os.environ["GH_STUB_STATE"]
 responses = json.load(open(os.environ["GH_STUB_RESPONSES"]))
+argv = sys.argv[1:]
+if any("/pulls/" in a and a.endswith("/reviews") for a in argv):
+    # Review reads are routed, not positional, so they never shift the call indices.
+    reviews_file = os.environ.get("GH_STUB_REVIEWS", "")
+    sys.stdout.write(open(reviews_file).read() if reviews_file and os.path.exists(reviews_file) else "")
+    sys.exit(0)
 count_file = os.path.join(state_dir, "count")
 i = int(open(count_file).read()) if os.path.exists(count_file) else 0
 open(count_file, "w").write(str(i + 1))
-argv = sys.argv[1:]
 stdin_data = sys.stdin.read()
 with open(os.path.join(state_dir, f"call-{i}.json"), "w") as f:
     json.dump({"argv": argv, "stdin": stdin_data}, f)
@@ -751,7 +1017,8 @@ sys.exit(resp.get("exit", 0))
 '''
 
 
-def _write_gh_stub(tmp_path: Path, responses: list[dict]) -> tuple[Path, Path]:
+def _write_gh_stub(tmp_path: Path, responses: list[dict], reviews: list[dict] | None = None) -> tuple[Path, Path]:
+    (tmp_path / "gh_reviews.txt").write_text("".join(json.dumps(r) + "\n" for r in (reviews or [])))
     stub_dir = tmp_path / "stubs"
     stub_dir.mkdir(exist_ok=True)
     stub = stub_dir / "gh"
@@ -778,14 +1045,15 @@ def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path,
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
     env["GH_STUB_STATE"] = str(state_dir)
     env["GH_STUB_RESPONSES"] = str(responses_file)
+    env["GH_STUB_REVIEWS"] = str(responses_file.with_name("gh_reviews.txt"))
     # Fresh non-git cwd by default: no origin -> legacy un-scoped paths (what these
     # tests characterize); scoped runs pass --repo explicitly.
-    if cwd is None:
-        cwd = Path(tempfile.mkdtemp(prefix="aff-nogit-"))
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
-        capture_output=True, text=True, env=env, cwd=str(cwd),
-    )
+    with tempfile.TemporaryDirectory(prefix="aff-nogit-") as fresh:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
+            capture_output=True, text=True, env=env,
+            cwd=str(cwd if cwd is not None else fresh),
+        )
 
 
 def _ok(stdout="", exit=0, stderr=""):
@@ -855,6 +1123,26 @@ class TestOpenPrFullFetch:
             assert envelope["data"]["skipped_pr_comments"] == 1
             written = json.loads(Path(envelope["data"]["pr_comments_path"]).read_text())
             assert [(item["finding_id"], item["eligible"]) for item in written] == [(2, False), (7, True)]
+        finally:
+            _cleanup_state_files(pr)
+
+    def test_review_body_batches_are_projected_alongside_issue_comments(self, tmp_path):
+        pr = _unique_n()
+        comments = [_pr_comment(37, _review_finding_batch((1, "legacy-carrier finding")))]
+        reviews = [_review(77, _review_body_batch("summary", (1, "review-carrier finding"), (2, "second")))]
+        responses = _preflight_responses(pr) + [
+            _ok("me\n"), _threads_page_response([]), _pr_comments_response(comments),
+        ]
+        stub_dir, state_dir = _write_gh_stub(tmp_path, responses, reviews=reviews)
+        try:
+            result = _run(pr, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json")
+            assert result.returncode == 0, result.stderr
+            envelope = json.loads(result.stdout)
+            assert envelope["data"]["eligible_pr_comments"] == 3
+            written = json.loads(Path(envelope["data"]["pr_comments_path"]).read_text())
+            assert [item["triage_key"] for item in written] == [
+                "prcomment:37:finding:1", "review:77:finding:1", "review:77:finding:2",
+            ]
         finally:
             _cleanup_state_files(pr)
 
