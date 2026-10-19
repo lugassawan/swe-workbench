@@ -55,7 +55,7 @@ SKILLS_DIR = ROOT / "skills"
 # not shrink, is what issue #700 targets.
 TOOL_VOCAB_SECTION_CHAR_CAP_TASK_TOOL = 3606
 TOOL_VOCAB_SECTION_CHAR_CAP_NO_TASK_TOOL = 3526
-BIN_SCRIPTS_SECTION_CHAR_CAP = 1451  # +1 script row (swe-workbench-cleanup-merged +32) — measured, not estimated
+BIN_SCRIPTS_SECTION_CHAR_CAP = 1475  # +1 script row (swe-workbench-redact +24) — measured, not estimated
 
 # Concatenated (not a single literal) so this fixture's shape never appears contiguous in this
 # file's own source — this file is not on secret_guard.py's allowlist (unlike

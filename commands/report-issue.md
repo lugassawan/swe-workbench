@@ -86,21 +86,32 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 
 4. **Rank.** Order candidate insights by **prevalence** (cluster size) first; break ties by **recency** — an entry's position in the entries' listed order — with a boost for any cluster the conversation also touches per step 2. Keep the top **5–7** insights. If fewer than 5 emergent clusters exist, present all available clusters — do not pad to reach the 5–7 range.
 
-5. **Draft one preview body per insight**, using the Synthesis issue body shape below. Run the **Version capture** once, and the **Redaction pass** (delegation step 7) once over every drafted body — both before any display.
+5. **Draft one preview body per insight**, using the Synthesis issue body shape below. Run the **Version capture** once. These drafts appear only in the Turn 1 digest; the picks are sanitized at Turn 2 (step 7), before any file is filed or any `gh` command runs.
 
-6. **Turn 1 — ranked digest.** Print insights numbered 1..N, most-prevalent first; each entry shows its theme label, a one-line rationale, the memory entries cited (`name` + `type`), its drafted `Title:`, and its fenced preview body. End with:
+6. **Turn 1 — ranked digest.** Print insights numbered 1..N, most-prevalent first; each entry shows its theme label, a one-line rationale, the memory entries it draws on (`name` + `type` — for your eyes only, never copied into an issue body), its drafted `Title:`, and its fenced preview body. End with:
    ```
    Reply with the numbers to file (e.g. `1,3`), or `none`.
    ```
    **Write no temp files and run no `gh` command this turn.** An out-of-range number or `none` re-prompts once, then exits without filing.
 
-7. **Turn 2 — final preview of picks.** Parse the reply into the set of picked digest numbers. If, after the one re-prompt from step 6, the picked set is still empty, exit cleanly with "No insights remain to file" instead of proceeding. Run delegation step 1 (auth + repo check) once. Branch B never runs delegation step 4 (template discovery) and never adopts a repo template's body shape — every picked insight always uses the fixed Synthesis issue body shape below. Per pick, run: label discovery seeded directly at delegation step 5c's commit-tag mapping (the title always starts with `[feat]`, mapping to `enhancement`, then the verbatim/substring match chain against the repo's label list — no match found still omits `--label`, same as delegation step 5d), and delegation step 6 (duplicate scan). Capture one shared `date +%s` timestamp. For each pick `<n>` (its digest number), write its body via the **Write** tool to `/tmp/report-issue-lugassawan-swe-workbench-<ts>-<n>.md`. Write ONE shared `.cmd` sidecar at `/tmp/report-issue-lugassawan-swe-workbench-<ts>.cmd`, containing one `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path-n> [--label "enhancement"]` line per pick — one enhancement issue per pick, never bundled. Print each selected body with its `Title:` / `Filing into:` / `Redacted:` / `Label:` / `Possibly related:` lines, then:
+7. **Turn 2 — final preview of picks.** Parse the reply into the set of picked digest numbers. If, after the one re-prompt from step 6, the picked set is still empty, exit cleanly with "No insights remain to file" instead of proceeding. Run delegation step 1 (auth + repo check) once. Branch B never runs delegation step 4 (template discovery) and never adopts a repo template's body shape — every picked insight always uses the fixed Synthesis issue body shape below. Capture one shared `date +%s` timestamp. For each pick `<n>` (its digest number), write its one-line title to `/tmp/report-issue-lugassawan-swe-workbench-<ts>-<n>.title.draft` and its body to `/tmp/report-issue-lugassawan-swe-workbench-<ts>-<n>.draft.md` via the **Write** tool. Then sanitize every pick in one call — the delegation block's **Redaction pass** (step 6) has the rules, the allowlist and the failure handling; this is the Branch B shape of its command:
+   ```bash
+   command -v swe-workbench-redact >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   REDACTED=$(swe-workbench-redact --target-repo lugassawan/swe-workbench \
+     --deny-file <deny-path> \
+     --field title-<n> <title-draft-n> <title-n> --field body-<n> <body-draft-n> <body-n> \
+     | swe-workbench-result-check swb.redact/1) || exit 1
    ```
-   Reply 'confirm' to file all, or `drop N` / `edit N`.
+   Repeat the `--field title-<n>` / `--field body-<n>` pair once per pick. The one shared `….deny` file (delegation step 6 says what it holds) goes to this single call; drop `--deny-file` when there is none. `<title-n>` and `<body-n>` are the sanitized `-<n>.title` and `-<n>.md` siblings; append the version footer to each `-<n>.md` (delegation step 6). Per pick, then run: label discovery seeded directly at delegation step 5c's commit-tag mapping (the title always starts with `[feat]`, mapping to `enhancement`, then the verbatim/substring match chain against the repo's label list — no match found still omits `--label`, same as delegation step 5d), and delegation step 7 (duplicate scan, keywords from that pick's sanitized `-<n>.title`). Write ONE shared `.cmd` sidecar at `/tmp/report-issue-lugassawan-swe-workbench-<ts>.cmd`, containing one `gh issue create --repo lugassawan/swe-workbench --title "$(cat <title-n>)" --body-file <body-n> [--label "enhancement"]` line per pick — one enhancement issue per pick, never bundled, and the sanitized title is read back from its file, never re-typed. Print each selected body with its `Title:` / `Filing into:` / `Redacted:` / `Label:` / `Possibly related:` lines — `Title:` is the sanitized title and `Redacted:` is `data.summary` from the one redactor call (categories and counts only; never print a removed value) — then:
    ```
-   **Wait for `confirm`. Do NOT run `gh issue create` on this turn.** After `drop N` or `edit N`, re-print the updated preview and wait for `confirm` again — never file immediately after an edit. If `drop N` empties the pick set, exit cleanly with "No insights remain to file" instead of re-prompting for `confirm`.
+   Reply 'confirm' to file all, or `drop N` / `edit N` / `restore X`.
+   ```
+   **Wait for `confirm`. Do NOT run `gh issue create` on this turn.** After `drop N`, `edit N` or `restore X`, apply the change to the draft files (never the sanitized ones), re-run the redactor for the affected picks (a restored term goes back as `--allow`, together with every earlier `--allow` term; credentials can never be restored), re-append the footer, re-print the updated preview and wait for a fresh `confirm` — never file immediately after an edit. If `drop N` empties the pick set, exit cleanly with "No insights remain to file" instead of re-prompting for `confirm`.
 
-8. **File on confirm.** Only on a literal `confirm` reply, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's temp file and rewrites the sidecar to drop its line; `edit N` rewrites that pick's temp file and re-prints only that pick's preview. On full success, reap every `-<n>.md` temp file plus the shared `.cmd` sidecar via `swe-workbench-clean-state-files`. On partial failure, reap the `-<n>.md` temp file for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' temp files in place for retry. A `gh issue create` failure is reported per delegation step 9's create-time rows: HTTP 403 / "Resource not accessible by personal access token" is insufficient issue-write scope, never the repo being inaccessible.
+8. **File on confirm.** Only on a literal `confirm` reply that follows the last edit, read the `.cmd` sidecar and run each line verbatim, returning each issue URL. `drop N` removes that pick's four files (`-<n>.title.draft`, `-<n>.draft.md`, `-<n>.title`, `-<n>.md`) and rewrites the sidecar to drop its line; `edit N` rewrites that pick's draft files, re-runs the redactor on it, and re-prints only that pick's preview. On full success, reap every pick's four files plus the shared `.cmd` sidecar and `.deny` file via `swe-workbench-clean-state-files`. On partial failure, reap the four files for each pick that filed successfully, rewrite the sidecar to contain only the unfiled lines, and leave the still-unfiled picks' files in place for retry. A `gh issue create` failure is reported per delegation step 9's create-time rows: HTTP 403 / "Resource not accessible by personal access token" is insufficient issue-write scope, never the repo being inaccessible.
 
 **Edge cases:**
 - **No memory found, or the memory directory is missing:** fall back to the conversation-only signal from step 2; if that is also empty, exit cleanly exactly like Branch A step 4 ("No plugin-related thought found…").
@@ -109,9 +120,9 @@ Reply `1` → **Branch A — Quick pick**. Reply `2` → **Branch B — Synthesi
 - **`gh` unauthenticated (`failure_kind == unauthenticated`):** do not bail — apply the Branch B carve-out in delegation step 1: warn, still render the digest and the final preview, and keep the `.cmd` sidecar on disk for a manual run.
 - **Out-of-range number or `none`:** re-prompt once; file nothing.
 
-**Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply unchanged):
+**Synthesis issue body** (per insight — always this fixed shape, never a repo template's; redaction, the version footer, label discovery, and the duplicate scan from the delegation block still apply):
 - **Title:** `[feat] <theme>: <concise enhancement>` — the `[feat]` tag drives label discovery to `enhancement` via delegation step 5c.
-- **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets citing the memory entries feeding this theme, by `name` + `type`) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
+- **Sections:** `## Problem` (the recurring user pain) · `## Value` · `## Themed evidence` (bullets that paraphrase the evidence feeding this theme — never cite memory entry names or types: public maintainers cannot open them, and the redactor's `[memory-ref]` matcher is only a backstop) · `## Acceptance criteria` (2–4 bullets) · `## Impact / Effort` (S/M/L each).
 - **Footer:** the same `_Reported via ... plugin v<version>, <harness> <cli-version>._` footer, version captured once and shared across all picked insights.
 
 ---
@@ -164,18 +175,7 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    c. **No template chosen:** map by commit-tag — `[feat]` → `enhancement`, `[bug]` → `bug`, `[chore]` → `documentation` — then apply the same chain against the repo's label list. If no commit-tag is recognisable in the user's input, proceed directly to step d.
    d. **No match found:** omit `--label`; record this so the preview can warn the user ("No matching label found; filing without label").
 
-6. **Duplicate scan.** Extract 2–3 keywords from the thought. Strip each to `[a-zA-Z0-9_-]` only (drop shell metacharacters, quotes, and flags) and single-quote them when building the search string. Then run `gh issue list --repo lugassawan/swe-workbench --search '<sanitized keywords>' --state open --limit 5`. Surface matches. Ask before drafting if any look duplicative.
-
-7. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
-
-   Append the following footer to the body's last free-text section (or as a final `---` block):
-
-   ```markdown
-   ---
-   _Reported via `/swe-workbench:report-issue` — plugin v<version>, <harness> <cli-version>._
-   ```
-
-   …where `<harness>` renders as `Claude Code` or `Pi`, per the detection below.
+6. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`. Write the title as one line.
 
    **Harness detection (run once, before version capture).** Do not probe `PATH` — both CLIs can be installed while only one is running. Use the session env var each harness injects into its own bash tool:
    ```bash
@@ -189,38 +189,59 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    - **Pi — plugin version:** read `~/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json` directly: `python3 -c "import json; print(json.load(open('$HOME/.pi/agent/git/github.com/lugassawan/swe-workbench/.claude-plugin/plugin.json'))['version'])" 2>/dev/null`.
    - **Remote fallback (either harness):** if the harness-local plugin-version lookup above returns no output (not installed from the expected local path), fall back to: `gh api repos/lugassawan/swe-workbench/contents/.claude-plugin/plugin.json --jq '.content' | python3 -c "import base64,sys,json; print(json.loads(base64.b64decode(sys.stdin.read().strip()))['version'])"`.
 
-   **Redaction pass (privacy guard).** Before writing the body in step 8, scan the drafted body for confidential identifiers pulled from conversation context and replace each with a generic placeholder. Prefer over-redaction — the user restores false positives at the preview gate.
+   **Redaction pass (privacy guard).** A deterministic script sanitizes the draft — never redact by eye, and never file text the script has not seen. Obtain a Unix timestamp once (`date +%s`) and reuse it for every file below. With the **Write** tool (not a Bash heredoc) write the title to `/tmp/report-issue-lugassawan-swe-workbench-<ts>.title.draft` and the body to `/tmp/report-issue-lugassawan-swe-workbench-<ts>.draft.md`; inline the text of any user-supplied text attachment into the body first so it is sanitized too. The script never overwrites a draft, so an edit can always re-run from it. Only when the user explicitly says that some wording must stay verbatim in the public text (typing the thought is not enough), also write that wording — one span per line — to `/tmp/report-issue-lugassawan-swe-workbench-<ts>.preserve`; otherwise write no `.preserve` file. A preserved span never exempts local paths, IPs or the local username. Also write a `….deny` file — one `CATEGORY=TERM` per line, `CATEGORY` being one of `org`, `repo`, `service`, `memory`, `user`, `host`, `ticket` — naming every private organisation, product, customer, team, service or tracker key you used while drafting that the environment cannot reveal (a company named in the conversation, an internal project name). The script cannot redact a name it is never told, so this list is how your knowledge of what is private reaches it; skip the file when there is nothing to list. Then:
+   ```bash
+   command -v swe-workbench-redact >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   REDACTED=$(swe-workbench-redact --target-repo lugassawan/swe-workbench \
+     --preserve-file <preserve-path> \
+     --deny-file <deny-path> \
+     --field title <title-draft-path> <title-path> --field body <body-draft-path> <body-path> \
+     | swe-workbench-result-check swb.redact/1) || exit 1
+   ```
+   Drop `--preserve-file` when no `.preserve` file was written, and `--deny-file` when no `.deny` file was written. `<title-path>` and `<body-path>` are the sanitized `-<ts>.title` and `-<ts>.md` siblings. A non-zero exit means nothing was written: report the failure and stop. Read `.data.summary` with `printf '%s' "$REDACTED" | jq -r '.data.summary'`, and print each `.warnings[]` (for example an environment lookup that failed) as a one-line warning.
 
-   - **Allowlist — NEVER redact** (these are the legitimate subject of the issue): the target repo `lugassawan/swe-workbench` and the bare string `swe-workbench`; this plugin's command/skill/agent names (e.g. `report-issue`, `capture`, `product-manager`, `workflow-*`, `principle-*`, `language-*`); plugin-internal file paths (e.g. `commands/report-issue.md`); the repo owner handle `lugassawan`; and the following public tech names and their canonical domains: GitHub (`github.com`, `api.github.com`), Claude Code, Pi / Pi Coding Agent, the `gh` CLI, Python, pytest, Node, npm, pip. When uncertain whether a name is public, prefer to redact it. <!-- validate: prose-ref -->
-   - **Redact when NOT allowlisted** (handle camelCase / snake_case / kebab-case variants):
-     - Email addresses → `[internal-email]`
-     - URLs, hostnames, internal domains (e.g. `*.corp`, `*.internal`, company domains) → `[internal-host]`
-     - IP addresses → `[internal-ip]`
-     - API keys, tokens, and credential strings matching common patterns (e.g. `sk-…`, `ghp_…`, `AKIA…`, `Bearer <token>`) → `[redacted-token]`. Do NOT redact bare UUIDs without surrounding context that identifies them as secrets (e.g., a UUID in a JSON field named `secret`, `key`, or `token`).
-     - Internal service identifiers (`*-api`, `*-service`, `*-svc`, `*-worker`, `*-gateway`) that are not plugin names → `an internal service`
-     - Apparent company / product / org names, and other-repo or monorepo slugs surfaced from conversation → `a downstream consumer` / `the monorepo` / `an internal repository` as fits.
-   - Never redact text the user explicitly typed as their own thought intending it to be public.
-   - Count the replacements made; carry the count into the step 8 preview.
+   - **Allowlist — NEVER redact** (the script keeps these): the target repo `lugassawan/swe-workbench` — its GitHub URLs and `lugassawan/swe-workbench#N` references — and the bare string `swe-workbench`; this plugin's own command, skill, agent and script names; the owner handle `lugassawan`; loopback addresses; and well-known public names and documentation domains (GitHub docs and CLI, Claude Code, Pi / Pi Coding Agent, Python, pytest, Node, npm, pip). Any other URL, including another GitHub repository, is replaced.
+   - **Placeholders** (a fixed, unnumbered vocabulary; an existing placeholder is never re-matched, so re-running changes nothing): `[redacted-token]`, `[internal-email]`, `[internal-host]` (URLs and hostnames), `[internal-ip]`, `[local-path]`, `[memory-ref]`, `[internal-service]`, `[internal-repo]`, `[internal-org]`, `[internal-ticket]` (tracker keys such as `KEY-123`), `[local-user]`. Beyond the generic patterns, the script also removes this machine's username and hostname, the working repository's owner and name, and the names of memory entries.
+   - Wording the user said must stay verbatim is protected by `--preserve-file` — except credentials, local paths, IPs and the local username, which are always replaced.
 
-8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it. Write the body to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write a one-line command to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path> --label "<matched-label>"`; when no label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "..." --body-file <path>` (no `--label` segment). Then print:
+   Append the following footer to the sanitized body (`<body-path>`, never the draft) — it is generated by the plugin and public by construction, so it is added after redaction:
+
+   ```markdown
+   ---
+   _Reported via `/swe-workbench:report-issue` — plugin v<version>, <harness> <cli-version>._
+   ```
+
+   …where `<harness>` renders as `Claude Code` or `Pi`, per the detection above. Append it with:
+   ```bash
+   printf '\n---\n_Reported via `/swe-workbench:report-issue` — plugin v%s, %s %s._\n' "<version>" "<harness>" "<cli-version>" >> <body-path>
+   ```
+
+7. **Duplicate scan.** Extract 2–3 keywords from the **sanitized title** (`<title-path>`) — never the raw thought or the draft, because the keywords are sent to GitHub. Skip any word that belongs to a `[placeholder]`. Strip each to `[a-zA-Z0-9_-]` only (drop shell metacharacters, quotes, and flags) and single-quote them when building the search string. Then run `gh issue list --repo lugassawan/swe-workbench --search '<sanitized keywords>' --state open --limit 5`. Surface matches. Ask before previewing if any look duplicative.
+
+8. **Preview gate.** Reuse the timestamp from step 6. Write the one-line command to `/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "$(cat <title-path>)" --body-file <body-path> --label "<matched-label>"`; when no label was matched, write `gh issue create --repo lugassawan/swe-workbench --title "$(cat <title-path>)" --body-file <body-path>` (no `--label` segment). The title is read back from its sanitized file, so it is never re-typed. Then print:
    ```
    Filing into: lugassawan/swe-workbench
    Template: <chosen template> | none — default body
-   Title: <drafted title>
+   Title: <sanitized title>
    Label: <chosen label> | none — no matching label found
-   Redacted: <N internal identifier(s) → placeholders | none detected>
+   Redacted: <data.summary — categories and counts only, never the removed values>
    Possibly related: <#N list, or "none">
 
    Body:
-   <code-fenced body>
+   <code-fenced sanitized body>
 
-   Command: gh issue create --repo lugassawan/swe-workbench --title "<title>" --body-file <path> [--label "<chosen-label>" when matched]
+   Command: gh issue create --repo lugassawan/swe-workbench --title "$(cat <title-path>)" --body-file <body-path> [--label "<chosen-label>" when matched]
 
    Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
    When a label was matched, render `Command:` with `--label "<chosen-label>"`. When no label was matched, omit the `--label` segment entirely. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 8). On failure, leave the files for retry, and classify the failure from `gh`'s own output before reporting it:
+   **Edit loop.** Any edit — a user change to the title or body, `restore X`, or an agent redraft — is applied to the *draft* files (`.title.draft` / `.draft.md`), never to the sanitized ones. The agent then re-runs the redactor with the step 6 command, re-appends the footer, re-renders this preview and requires a fresh `confirm`; never file immediately after an edit. `restore X` names a placeholder or the text it replaced (resolve it from the draft; never print a removed value into the preview), and the term goes back to the redactor as `--allow <term>`, carrying forward every earlier `--allow` term of this draft. Credentials can never be restored. A label-only edit rewrites the `.cmd` and still requires a fresh `confirm`.
+
+9. **File on confirm.** Only when the user replies `confirm` after the last edit, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.md" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.title" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.draft.md" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.title.draft" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.preserve" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.deny" "/tmp/report-issue-lugassawan-swe-workbench-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths; a file that was never written is fine). On failure, leave the files for retry, and classify the failure from `gh`'s own output before reporting it:
 
    | `gh issue create` failure | Report |
    |---|---|

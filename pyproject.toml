@@ -2,4 +2,6 @@
 # Add tests/ and scripts/ to sys.path so imports like `from validate import …`
 # and `from conftest import …` resolve correctly from any working directory.
 # This replaces the sys.path.insert calls that were in tests/conftest.py.
-pythonpath = ["tests", "scripts"]
+# bin/ is also on the path so loader-based tests can exec a bin/ script that imports the
+# shared swe_workbench_runtime package, whichever test file runs first.
+pythonpath = ["tests", "scripts", "bin"]
