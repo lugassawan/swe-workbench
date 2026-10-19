@@ -1866,3 +1866,17 @@ class TestOversizeCommand:
         # 60 KB stays below the cap, so the full lexer decides and a feature-branch force push passes.
         result = run_guard(guard_script, f"echo {'a' * 60_000}; git push --force origin feature/x")
         assert result.returncode == 0, result.stderr
+
+
+class TestAwkImplementation:
+    def test_awk_is_mawk_when_the_mawk_leg_requires_it(self):
+        # The CI mawk leg sets SWB_REQUIRE_MAWK=1 and shims `awk` to mawk; if the shim ever
+        # stops applying, the guard tests would silently run on whatever awk the runner ships.
+        if os.environ.get("SWB_REQUIRE_MAWK") != "1":
+            pytest.skip("SWB_REQUIRE_MAWK is not set; the guard tests run on the system awk")
+        result = subprocess.run(
+            ["awk", "-W", "version"], capture_output=True, text=True, env=_CLEAN_ENV, timeout=10
+        )
+        assert "mawk" in (result.stdout + result.stderr).lower(), (
+            f"awk on PATH is not mawk: {result.stdout!r} {result.stderr!r}"
+        )
