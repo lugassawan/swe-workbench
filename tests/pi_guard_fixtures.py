@@ -108,6 +108,23 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git push $(echo -)f origin main", True),
     ("git push --force --no-follow-tags $(echo origin main)", True),
     ("git commit -m \"$(cat <<'EOT' | sh -s\ngit push --force origin main\nEOT\n)\"", True),
+    # Glob and matching refspecs push every ref (a wildcard tag force push over-blocks too);
+    # unique-prefix long options spell all/branches/mirror.
+    ("git push --force origin 'refs/heads/*:refs/heads/*'", True),
+    ("git push --force origin refs/heads/*:refs/heads/*", True),
+    ("git push --force origin 'refs/tags/*'", True),
+    ("git push -f origin :", True),
+    ("git push origin +:", True),
+    ("git push origin 'refs/heads/*:refs/heads/*'", False),
+    ("git push origin :", False),
+    ("git push -f --al origin", True),
+    ("git push -f --b origin", True),
+    ("git push --branche -f origin", True),
+    ("git push --mirro origin", True),
+    ("git push --force -Z --al origin", True),
+    ("git push -Z --mirro origin", True),
+    ("git push --al origin", False),
+    ("git push --force-with-lease --al origin", False),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),
@@ -195,8 +212,15 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
 BASH_GUARD_BRANCH_FIXTURES: dict[str, list[tuple[str, bool]]] = {
     "main": [
         ("git push origin --force 2>&1", True),
+        # a bare substitution first can be the force flag; the destination is then implicit
+        ("git push $(echo --force) origin", True),
+        ('git push "$(git remote)"', True),
+        ("git push $(echo --force) origin feature/x", False),
     ],
     "feature/x": [
         ("git push origin --force 2>&1", False),
+        ("git push $(echo --force) origin", False),
+        ('git push "$(git remote)"', False),
+        ("git push $(echo --force) origin feature/x", False),
     ],
 }

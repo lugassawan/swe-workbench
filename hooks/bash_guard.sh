@@ -445,6 +445,7 @@ _classify_force_push_segment() {
   local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
   local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _dynamic_flag_candidate=0
   local _consume_flag="" _glued_flag_candidate=0 _skip_tok=0 _tail=""
+  local _positional_count=0 _first_positional_dynamic=0 _has_colon_refspec=0
   local _flag_cluster_re='^[A-Za-z]*f[A-Za-z]*$'
   local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
 
@@ -498,8 +499,8 @@ _classify_force_push_segment() {
     if (( _consume_next )); then
       case "$_t" in
         --force|-f) _has_force=1 ;;
-        --all) _pushes_all_refs=1 ;;
-        --mirror) _has_force=1; _pushes_all_refs=1 ;;
+        --al|--all|--b|--br|--bra|--bran|--branc|--branch|--branche|--branches) _pushes_all_refs=1 ;;
+        --m|--mi|--mir|--mirr|--mirro|--mirror) _has_force=1; _pushes_all_refs=1 ;;
         -*) [[ "$_t" != --* && "$_t" == *f* ]] && _has_force=1 ;;
       esac
       # a value-taking flag may carry a substitution; any other flag's slot is the destination
@@ -529,8 +530,8 @@ _classify_force_push_segment() {
     [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
     case "$_t" in
       --force|-f) _has_force=1 ;;
-      --all|--branches) _pushes_all_refs=1 ;;
-      --mirror) _has_force=1; _pushes_all_refs=1 ;;
+      --al|--all|--b|--br|--bra|--bran|--branc|--branch|--branche|--branches) _pushes_all_refs=1 ;;
+      --m|--mi|--mir|--mirr|--mirro|--mirror) _has_force=1; _pushes_all_refs=1 ;;
       --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
       --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
       -u|--set-upstream|-d|--delete|--signed|--no-signed|-n|--no-thin|--no-atomic|--verify|\
@@ -546,8 +547,17 @@ _classify_force_push_segment() {
           _consume_flag=$_t
         fi ;;
       '{}'|HEAD|@) ;;
-      *:*) _has_refspec=1 ;;
-      *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
+      # a wildcard or the matching refspec ':' / '+:' updates every matching ref
+      *\**|:|+:) _has_refspec=1; _pushes_all_refs=1 ;;
+      *:*) _has_refspec=1; _has_colon_refspec=1 ;;
+      *)
+        _positional_count=$((_positional_count + 1))
+        if (( _seen_positional )); then
+          _has_refspec=1
+        else
+          _seen_positional=1
+          [[ "$_t" == "$_DYNAMIC_TOKEN" ]] && _first_positional_dynamic=1
+        fi ;;
     esac
   done
   push_text=$(printf ' %s' "${_push_tokens[@]}")
@@ -560,6 +570,12 @@ _classify_force_push_segment() {
       printf 'CHECK_CURRENT_MAYBE\n'
       return
     fi
+  fi
+  # A bare substitution first may itself be the force flag; with the destination implicit
+  # (at most one literal positional after it) only the current branch is at stake.
+  if (( ! _has_force && _first_positional_dynamic && _positional_count <= 2 && ! _has_colon_refspec )); then
+    printf 'CHECK_CURRENT_MAYBE\n'
+    return
   fi
   (( _has_force )) || return
   if (( _pushes_all_refs )); then
