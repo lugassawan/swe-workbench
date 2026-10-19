@@ -892,101 +892,6 @@ def test_failed_pr_diff_fetch_aborts_loudly_instead_of_silent_demotion(tmp_path)
     assert len(calls) == 2, "must abort immediately after the failed pr diff call, no further gh calls"
 
 
-def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\n"
-        "index e69de29..1234567 100644\n"
-        "--- a/src.py\n"
-        "+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n"
-        "+line1\n"
-        "+line2\n"
-        "+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},  # pr diff
-            {"stdout": "", "exit": 0},  # pr comment (demoted batch, one call)
-            _repo_view_response(True),
-            _review_post_response(),  # N=0 (the only inline row was demoted)
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="out of diff finding", line=999),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 1
-    assert _data(result)["posted_inline"] == 0
-    calls = _gh_calls(state_dir)
-    pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
-    assert len(pr_comment_calls) == 1, "demoted findings must batch into exactly one gh pr comment call"
-    body = pr_comment_calls[0]["argv"][pr_comment_calls[0]["argv"].index("--body") + 1]
-    assert body == (
-        "<!-- swe-workbench:review-findings -->\n\n"
-        "<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
-        + _key_line(_row(issue="out of diff finding", line=999), "")
-    ), "a demoted row must gain its path:line and retain its provenance marker"
-
-
-def test_middle_pr_level_batch_failure_continues_and_counts_successful_chunks(tmp_path):
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": "", "exit": 0},  # pr diff
-            {"stdout": "", "exit": 0},  # first 50-row chunk
-            {"stdout": "", "stderr": "gh: connection reset", "exit": 1},  # second chunk
-            {"stdout": "", "exit": 0},  # final one-row chunk
-            _repo_view_response(True),
-            _review_post_response(),
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None)
-        for index in range(101)
-    ])
-    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
-
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 51
-    assert _data(result)["submitted"] is True
-    assert "chunk of 50 finding(s) NOT posted" in result.stderr
-    assert len([call for call in _gh_calls(state_dir) if call["argv"][:2] == ["pr", "comment"]]) == 3
-
-
-def test_failing_pr_level_batch_leaves_posted_pr_level_zero(tmp_path):
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": "", "exit": 0},  # pr diff
-            {"stdout": "", "stderr": "gh: connection reset", "exit": 1},  # pr comment fails
-            _repo_view_response(True),
-            _review_post_response(),
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(severity="Low", issue="a dependency finding", anchor="pr-level", path=None, line=None),
-    ])
-    result = _run(
-        _args(findings),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 0
-
-
 # ── Behavioral: atomic submit / 422 / 5xx / model-A fallback ─────────────────
 
 
@@ -1080,56 +985,6 @@ def test_confirmed_422_retries_once_demotes_and_posts_second_review(tmp_path):
     assert len(head_view_calls) == 1
     diff_calls = [c for c in calls if c["argv"][:2] == ["pr", "diff"]]
     assert len(diff_calls) == 2, "the 422 retry must re-fetch the PR diff alongside HEAD, not reuse the stale one"
-
-
-def test_422_retry_demotes_one_of_two_findings_and_preserves_ordinals(tmp_path):
-    """Ordinal stability through 422 re-validation with a partial demotion: the
-    surviving inline row keeps ID 1 and the demoted row keeps ID 2 — no
-    renumbering of either after the partition moves between buckets."""
-    head = _init_repo(tmp_path)
-    hunk = (
-        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
-    )
-    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
-    diff_after = hunk + "@@ -0,0 +1,2 @@\n+line1\n+line2\n"  # line 3 left the diff
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": diff_before, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
-            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
-            _review_post_response(),  # retry POST succeeds with the surviving row
-            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="issue on line2", line=2),
-        _row(issue="issue on line3", line=3),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_inline"] == 1
-    assert _data(result)["posted_pr_level"] == 1
-    calls = _gh_calls(state_dir)
-    post_calls = [c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"]]
-    retry_payload = json.loads(post_calls[-1]["stdin"])
-    assert len(retry_payload["comments"]) == 1
-    assert retry_payload["comments"][0]["body"].startswith("<!-- swe-workbench:review-finding:1 -->\n")
-    assert "review-finding:2" not in post_calls[-1]["stdin"]
-    pr_comment = next(c for c in calls if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert body.startswith(
-        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\n"
-        "**High** · `src.py:3` — issue on line3\n\n"
-    )
-    assert "review-finding:1" not in body
 
 
 def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
@@ -2137,6 +1992,383 @@ def test_parse_json_objects_accepts_ndjson_and_concatenated_arrays():
     assert prs._parse_json_objects("") == []
 
 
+# ── Behavioral: PR-level findings ride in the review body ─────────────────────
+
+
+def _review_posts(state_dir) -> list[dict]:
+    """Parsed payloads of every POST to the reviews endpoint, in arrival order."""
+    return [
+        json.loads(c["stdin"]) for c in _all_calls(state_dir)
+        if "--input" in c["argv"] and any(a.endswith("/pulls/1/reviews") for a in c["argv"])
+    ]
+
+
+def _pr_comment_bodies(state_dir) -> list[str]:
+    return [
+        c["argv"][c["argv"].index("--body") + 1]
+        for c in _all_calls(state_dir) if c["argv"][:2] == ["pr", "comment"]
+    ]
+
+
+def _finding_ids(text: str) -> list[int]:
+    return [int(i) for i in re.findall(r"swe-workbench:review-finding:(\d+)", text)]
+
+
+def _pr_level_row(index: int, **overrides) -> dict:
+    return _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None, **overrides)
+
+
+def _run_pr_level(tmp_path, findings, *, comment_responses=(), diff="", head=None, extra_args=None):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": diff, "exit": 0},  # pr diff
+            _repo_view_response(True),
+            _review_post_response(),
+            *comment_responses,
+        ],
+    )
+    args = {"--head-sha": head} if head else {}
+    result = _run(
+        _args(_write_findings(tmp_path, findings), **args, **(extra_args or {})),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    return result, state_dir
+
+
+def test_build_review_body_without_rows_is_the_bare_summary():
+    assert prs.build_review_body("summary\n", []) == ("summary\n", [])
+
+
+def test_build_review_body_appends_marker_and_ascending_sections_after_the_summary():
+    rows = prs.assign_finding_ids([_pr_level_row(1), _pr_level_row(2)])
+    body, overflow = prs.build_review_body("the summary\n", [rows[1], rows[0]])
+    assert overflow == []
+    assert body == (
+        "the summary\n\n" + prs.REVIEW_BATCH_MARKER + "\n\n"
+        + prs.render_marked_finding(rows[0], True) + "\n\n---\n\n" + prs.render_marked_finding(rows[1], True)
+    )
+
+
+def test_build_review_body_overflows_past_the_row_cap_in_ascending_order():
+    rows = prs.assign_finding_ids([_pr_level_row(i) for i in range(prs.MAX_BATCH_ROWS + 3)])
+    body, overflow = prs.build_review_body("s", list(reversed(rows)))
+    assert _finding_ids(body) == list(range(1, prs.MAX_BATCH_ROWS + 1))
+    assert [row["_finding_id"] for row in overflow] == [prs.MAX_BATCH_ROWS + 1, prs.MAX_BATCH_ROWS + 2, prs.MAX_BATCH_ROWS + 3]
+
+
+def test_build_review_body_overflows_past_the_character_budget():
+    rows = prs.assign_finding_ids([_pr_level_row(i, why="w" * 20_000) for i in range(4)])
+    body, overflow = prs.build_review_body("s", rows)
+    assert len(body) <= prs.BODY_CHAR_BUDGET
+    assert _finding_ids(body) == [1, 2]
+    assert [row["_finding_id"] for row in overflow] == [3, 4]
+
+
+def test_build_review_body_sends_a_single_oversized_row_to_overflow():
+    rows = prs.assign_finding_ids([_pr_level_row(0, why="w" * (prs.BODY_CHAR_BUDGET + 1))])
+    body, overflow = prs.build_review_body("s", rows)
+    assert body == "s"
+    assert len(overflow) == 1
+
+
+def test_one_run_posts_one_review_and_no_other_mutation(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_pr_level(
+        tmp_path, [_row(line=2), _pr_level_row(1), _row(issue="out of diff", line=999)],
+        diff=_PR_DIFF_3_LINES, head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert (data["posted_inline"], data["posted_pr_level"], data["submitted"]) == (1, 2, True)
+    mutations = _mutating_calls(state_dir)
+    assert len(mutations) == 1, f"expected exactly one mutation, got {mutations}"
+    payload = _review_posts(state_dir)[0]
+    assert len(payload["comments"]) == 1
+    assert payload["body"].count(prs.REVIEW_BATCH_MARKER) == 1
+
+
+def test_out_of_diff_row_is_demoted_into_the_review_body_never_dropped(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_pr_level(
+        tmp_path, [_row(issue="out of diff finding", line=999)], diff=_PR_DIFF_3_LINES, head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (_data(result)["posted_pr_level"], _data(result)["posted_inline"]) == (1, 0)
+    assert _pr_comment_bodies(state_dir) == [], "a demoted row must not become a separate PR comment"
+    (payload,) = _review_posts(state_dir)
+    assert "comments" not in payload
+    assert payload["body"].endswith(
+        "<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
+        + _key_line(_row(issue="out of diff finding", line=999), "")
+    ), "a demoted row must gain its path:line and retain its provenance marker"
+
+
+def test_body_sections_are_joined_with_the_batch_separator(tmp_path):
+    result, state_dir = _run_pr_level(
+        tmp_path, [_row(issue="first", anchor="pr-level", path=None, line=None),
+                   _row(issue="second", anchor="pr-level", path="pkg.lock", line=None)],
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 2
+    (payload,) = _review_posts(state_dir)
+    summary, batch = payload["body"].split("\n\n" + prs.REVIEW_BATCH_MARKER + "\n\n")
+    assert "Posted 0 inline comment(s) and 2 PR-level note(s)" in summary
+    first, second = batch.split("\n\n---\n\n")
+    assert first.startswith("<!-- swe-workbench:review-finding:1 -->\n**High** — first\n\n**Why it matters:**")
+    assert second.startswith(
+        "<!-- swe-workbench:review-finding:2 -->\n**High** · `pkg.lock` — second\n\n**Why it matters:**"
+    )
+
+
+def test_body_sections_preserve_original_ordinals_after_partition(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_pr_level(
+        tmp_path, [_row(issue="inline", line=2), _pr_level_row(2), _pr_level_row(3)],
+        diff=_PR_DIFF_3_LINES, head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert _finding_ids(payload["body"]) == [2, 3]
+    assert _finding_ids(payload["comments"][0]["body"]) == [1]
+
+
+def test_demoted_and_original_pr_level_rows_render_in_ascending_id_order(tmp_path):
+    """`pr_level + demoted` concatenation order must not leak: the consumer rejects a batch whose
+    IDs are not strictly ascending."""
+    head = _init_repo(tmp_path)
+    one_line_diff = (
+        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+        "@@ -0,0 +1,1 @@\n+line1\n"
+    )
+    result, state_dir = _run_pr_level(
+        tmp_path, [_row(issue="demoted inline finding", line=999), _pr_level_row(2)], diff=one_line_diff, head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert _finding_ids(payload["body"]) == [1, 2]
+    assert "`src.py:999` — demoted inline finding" in payload["body"].split("\n\n---\n\n")[0]
+
+
+def test_rows_past_the_body_cap_overflow_into_comment_batches_after_the_review(tmp_path):
+    rows = [_pr_level_row(index) for index in range(1, 61)]
+    result, state_dir = _run_pr_level(tmp_path, rows, comment_responses=[{"stdout": "", "exit": 0}])
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 60
+    (payload,) = _review_posts(state_dir)
+    assert _finding_ids(payload["body"]) == list(range(1, 51))
+    (overflow_body,) = _pr_comment_bodies(state_dir)
+    assert _finding_ids(overflow_body) == list(range(51, 61))
+    kinds = [("review" if _is_mutating(c) and "--input" in c["argv"] else "comment") for c in _mutating_calls(state_dir)]
+    assert kinds == ["review", "comment"], "overflow is the only allowed second mutation, and it follows the review"
+
+
+def test_overflow_is_sorted_and_chunked_to_the_row_cap(tmp_path):
+    """45 demoted + 10 original pr-level rows, then 120 more: the body takes IDs 1..50 and each
+    overflow comment is one contiguous ascending run of at most 50."""
+    rows = [_row(issue=f"demoted {index}", line=index) for index in range(1, 46)]
+    rows += [_pr_level_row(index) for index in range(46, 171)]
+    result, state_dir = _run_pr_level(
+        tmp_path, rows, comment_responses=[{"stdout": "", "exit": 0}] * 3,
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert _finding_ids(payload["body"]) == list(range(1, 51))
+    assert [_finding_ids(body) for body in _pr_comment_bodies(state_dir)] == [
+        list(range(51, 101)), list(range(101, 151)), list(range(151, 171)),
+    ]
+
+
+def test_character_budget_overflow_goes_to_comment_batches(tmp_path):
+    rows = [_pr_level_row(index, why="w" * 20_000) for index in range(4)]
+    result, state_dir = _run_pr_level(tmp_path, rows, comment_responses=[{"stdout": "", "exit": 0}])
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert len(payload["body"]) <= 65_536
+    assert _finding_ids(payload["body"]) == [1, 2]
+    assert [_finding_ids(body) for body in _pr_comment_bodies(state_dir)] == [[3, 4]]
+    assert _data(result)["posted_pr_level"] == 4
+
+
+def test_middle_overflow_chunk_failure_continues_and_counts_successful_chunks(tmp_path):
+    rows = [_pr_level_row(index) for index in range(201)]
+    result, state_dir = _run_pr_level(
+        tmp_path, rows,
+        comment_responses=[
+            {"stdout": "", "exit": 0},  # IDs 51..100
+            {"stdout": "", "stderr": "gh: connection reset", "exit": 1},  # IDs 101..150
+            {"stdout": "", "exit": 0},  # IDs 151..200
+            {"stdout": "", "exit": 0},  # ID 201
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 50 + 50 + 50 + 1
+    assert _data(result)["submitted"] is True
+    assert "chunk of 50 finding(s) NOT posted" in result.stderr
+    assert len(_pr_comment_bodies(state_dir)) == 4
+
+
+def test_failing_overflow_batch_leaves_only_the_body_rows_counted(tmp_path):
+    rows = [_pr_level_row(index) for index in range(51)]
+    result, _ = _run_pr_level(
+        tmp_path, rows, comment_responses=[{"stdout": "", "stderr": "gh: connection reset", "exit": 1}],
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 50
+
+
+def test_reserved_marker_in_the_byline_is_rejected_before_any_gh_call(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    findings = _write_findings(tmp_path, [])
+    result = _run(
+        _args(findings, **{"--byline": "_Reviewed by `bot`_\n" + prs.REVIEW_BATCH_MARKER}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 1
+    assert "reserved swe-workbench marker" in result.stderr
+    assert _all_calls(state_dir) == []
+
+
+def test_row_demoted_on_422_retry_renders_pr_level_with_location_in_the_body(tmp_path):
+    """The diff moving between pre-validate and submit demotes a row *after* the inline comment
+    payload was built — it must still re-render as PR-level with path:line in its headline."""
+    head = _init_repo(tmp_path)
+    hunk = "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    diff_after = hunk + "@@ -0,0 +1,1 @@\n+line1\n"  # line 2 left the diff
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": diff_before, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
+            _review_post_response(),  # retry carries no inline row -> body-only review
+        ],
+    )
+    findings = _write_findings(tmp_path, [_row(category="Correctness")])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 0, result.stderr
+    assert _data(result)["posted_pr_level"] == 1
+    assert _data(result)["posted_inline"] == 0
+    assert _pr_comment_bodies(state_dir) == []
+    first, retry = _review_posts(state_dir)
+    assert "comments" in first and "comments" not in retry
+    assert retry["body"].endswith(
+        "<!-- swe-workbench:review-finding:1 -->\n"
+        "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
+        + _key_line(_row(category="Correctness"), "line2")
+    )
+
+
+def test_422_retry_demotes_one_of_two_findings_into_the_body_and_preserves_ordinals(tmp_path):
+    """Ordinal stability through 422 re-validation with a partial demotion: the surviving inline
+    row keeps ID 1 and the demoted row keeps ID 2 — no renumbering after the partition moves."""
+    head = _init_repo(tmp_path)
+    hunk = "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+    diff_after = hunk + "@@ -0,0 +1,2 @@\n+line1\n+line2\n"  # line 3 left the diff
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": diff_before, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
+            _review_post_response(),  # retry POST succeeds with the surviving row + demoted body row
+        ],
+    )
+    findings = _write_findings(tmp_path, [
+        _row(issue="issue on line2", line=2),
+        _row(issue="issue on line3", line=3),
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (_data(result)["posted_inline"], _data(result)["posted_pr_level"]) == (1, 1)
+    assert _pr_comment_bodies(state_dir) == []
+    retry = _review_posts(state_dir)[-1]
+    assert _finding_ids(retry["comments"][0]["body"]) == [1]
+    assert _finding_ids(retry["body"]) == [2]
+    assert "`src.py:3` — issue on line3" in retry["body"]
+
+
+def test_row_demoted_by_failed_per_comment_fallback_lands_in_the_body(tmp_path):
+    """The model-A fallback demotes a row whose individual POST fails — it must land in the
+    review body as a re-render (path:line in the headline), not as the inline body."""
+    head = _init_repo(tmp_path)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},  # re-fetch PR diff alongside HEAD
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
+            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST fails
+            _review_post_response(),  # final plain review submit
+        ],
+    )
+    findings = _write_findings(tmp_path, [_row(category="Correctness")])
+    result = _run(
+        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (_data(result)["posted_inline"], _data(result)["posted_pr_level"]) == (0, 1)
+    assert _pr_comment_bodies(state_dir) == []
+    assert "**High** · Correctness · `src.py:2` — issue on line2" in _review_posts(state_dir)[-1]["body"]
+
+
+def test_fallback_demotes_one_of_two_findings_into_the_body_and_preserves_ordinals(tmp_path):
+    head = _init_repo(tmp_path)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response([]),
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},
+            _repo_view_response(True),
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},  # re-fetch PR diff alongside HEAD
+            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
+            {"stdout": "", "exit": 0},  # per-comment fallback POST for finding 1 succeeds
+            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST for finding 2 fails
+            _review_post_response(),  # final plain review submit
+        ],
+    )
+    findings = _write_findings(tmp_path, [
+        _row(issue="issue on line2", line=2),
+        _row(issue="issue on line3", line=3),
+    ])
+    result = _run(
+        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (_data(result)["posted_inline"], _data(result)["posted_pr_level"]) == (1, 1)
+    per_comment_posts = [c for c in _gh_calls(state_dir) if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
+    assert len(per_comment_posts) == 2
+    landed = next(a for a in per_comment_posts[0]["argv"] if a.startswith("body="))
+    assert landed.startswith("body=<!-- swe-workbench:review-finding:1 -->\n")
+    final = _review_posts(state_dir)[-1]
+    assert _finding_ids(final["body"]) == [2]
+    assert "`src.py:3` — issue on line3" in final["body"]
+
+
 # ── Unit: structured row validation ──────────────────────────────────────────
 
 
@@ -2217,322 +2449,6 @@ def test_leftover_body_aborts_the_whole_batch_naming_the_field(tmp_path):
     assert "--findings-json[1].body" in result.stderr
     assert result.stdout == ""
     assert _gh_calls(state_dir) == []
-
-
-def test_row_demoted_on_422_retry_renders_pr_level_with_location(tmp_path):
-    """The diff moving between pre-validate and submit demotes a row *after* the inline comment
-    payload was built — it must still re-render as PR-level with path:line in its headline."""
-    head = _init_repo(tmp_path)
-    hunk = "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
-    diff_before = hunk + "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
-    diff_after = hunk + "@@ -0,0 +1,1 @@\n+line1\n"  # line 2 left the diff
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": diff_before, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1},  # atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
-            {"stdout": diff_after, "exit": 0},  # re-fetch PR diff
-            {"stdout": "", "exit": 0},  # pr comment carrying the newly demoted row
-            _review_post_response(),  # N=0 -> plain review submit
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [_row(category="Correctness")])
-    result = _run(
-        _args(findings, **{"--head-sha": head}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 1
-    assert _data(result)["posted_inline"] == 0
-    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert body == (
-        "<!-- swe-workbench:review-findings -->\n\n"
-        "<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
-        + _key_line(_row(category="Correctness"), "line2")
-    )
-
-
-def test_out_of_diff_demoted_row_keeps_batch_ascending_with_pr_level_row(tmp_path):
-    """main() posts `pr_level_findings + demoted`: a lower-ID demoted inline row
-    must not render after a higher-ID original pr-level row — the consumer
-    requires strictly ascending IDs or rejects the whole batch."""
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\n"
-        "index e69de29..1234567 100644\n"
-        "--- a/src.py\n"
-        "+++ b/src.py\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+line1\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},  # pr diff (line 999 not in it)
-            {"stdout": "", "exit": 0},  # pr comment (mixed batch, one call)
-            _repo_view_response(True),
-            _review_post_response(),  # N=0 (the only inline row was demoted)
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="demoted inline finding", line=999),
-        _row(issue="original pr level", anchor="pr-level", path=None, line=None),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 2
-    assert _data(result)["posted_inline"] == 0
-    calls = _gh_calls(state_dir)
-    pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
-    assert len(pr_comment_calls) == 1
-    body = pr_comment_calls[0]["argv"][pr_comment_calls[0]["argv"].index("--body") + 1]
-    assert re.findall(r"swe-workbench:review-finding:(\d+)", body) == ["1", "2"], (
-        "the batch must render in ascending finding-ID order regardless of the "
-        "pr_level+demoted concatenation order"
-    )
-    first_section = body.split("\n\n---\n\n")[0]
-    assert "`src.py:999` — demoted inline finding" in first_section
-
-
-def test_post_pr_level_chunks_oversized_batches(tmp_path):
-    """The consumer rejects marked batches over its section cap — the producer
-    must chunk oversized pr-level payloads into per-batch-parseable comments,
-    each internally ascending."""
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": "", "exit": 0},  # pr diff
-            {"stdout": "", "exit": 0},  # pr comment — chunk 1
-            {"stdout": "", "exit": 0},  # pr comment — chunk 2
-            _repo_view_response(True),
-            _review_post_response(),  # N=0
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    rows = [
-        _row(issue=f"finding {index}", anchor="pr-level", path=None, line=None)
-        for index in range(1, 61)
-    ]
-    findings = _write_findings(tmp_path, rows)
-    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 60
-    calls = _gh_calls(state_dir)
-    pr_comment_calls = [c for c in calls if c["argv"][:2] == ["pr", "comment"]]
-    assert len(pr_comment_calls) == 2, "60 rows at a 50-row cap must post exactly two batch comments"
-    chunks = [
-        re.findall(r"swe-workbench:review-finding:(\d+)", c["argv"][c["argv"].index("--body") + 1])
-        for c in pr_comment_calls
-    ]
-    assert [len(ids) for ids in chunks] == [50, 10]
-    for ids in chunks:
-        assert ids == sorted(ids, key=int), "each chunk must be internally ascending"
-    assert [int(i) for i in chunks[0] + chunks[1]] == list(range(1, 61)), "no row may be lost or duplicated"
-
-
-def test_post_pr_level_sorts_before_chunking_mixed_partition_rows(tmp_path):
-    """main() builds `pr_level_findings + demoted`, so positional chunking would
-    interleave ranges (46..55 then 1..45). Sort before slicing so every posted
-    comment is one contiguous ascending finding-ID run."""
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": "", "exit": 0},  # empty diff: all inline rows demote
-            {"stdout": "", "exit": 0},  # pr comment — IDs 1..50
-            {"stdout": "", "exit": 0},  # pr comment — IDs 51..55
-            _repo_view_response(True),
-            _review_post_response(),  # N=0
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    rows = [
-        _row(issue=f"demoted {index}", line=index)
-        for index in range(1, 46)
-    ] + [
-        _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None)
-        for index in range(46, 56)
-    ]
-    findings = _write_findings(tmp_path, rows)
-    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
-    assert result.returncode == 0, result.stderr
-    calls = _gh_calls(state_dir)
-    chunks = [
-        [int(finding_id) for finding_id in re.findall(r"swe-workbench:review-finding:(\d+)", c["argv"][c["argv"].index("--body") + 1])]
-        for c in calls
-        if c["argv"][:2] == ["pr", "comment"]
-    ]
-    assert chunks == [list(range(1, 51)), list(range(51, 56))]
-
-
-def test_pr_level_batch_joins_rendered_rows_with_separator(tmp_path):
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": "", "exit": 0},  # pr diff
-            {"stdout": "", "exit": 0},  # pr comment
-            _repo_view_response(True),
-            _review_post_response(),
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="first", anchor="pr-level", path=None, line=None),
-        _row(issue="second", anchor="pr-level", path="pkg.lock", line=None),
-    ])
-    result = _run(_args(findings), cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file)
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_pr_level"] == 2
-    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    first, second = body.split("\n\n---\n\n")
-    assert first.startswith(
-        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** — first\n\n**Why it matters:**"
-    )
-    assert second.startswith(
-        "<!-- swe-workbench:review-finding:2 -->\n**High** · `pkg.lock` — second\n\n**Why it matters:**"
-    )
-
-
-def test_pr_level_batch_preserves_original_ordinals_after_partition(tmp_path):
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            {"stdout": "", "exit": 0},  # pr-level batch
-            _repo_view_response(True),
-            _review_post_response(),
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="inline", line=2),
-        _row(issue="second", anchor="pr-level", path=None, line=None),
-        _row(issue="third", anchor="pr-level", path=None, line=None),
-    ])
-
-    result = _run(
-        _args(findings, **{"--head-sha": head}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-
-    assert result.returncode == 0, result.stderr
-    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert "<!-- swe-workbench:review-finding:2 -->" in body
-    assert "<!-- swe-workbench:review-finding:3 -->" in body
-    assert "<!-- swe-workbench:review-finding:1 -->" not in body
-
-
-def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_location(tmp_path):
-    """The model-A fallback demotes a row whose individual POST fails — it must land in the
-    pr-level comment as a re-render (path:line in the headline), not as the inline body."""
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
-            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST fails
-            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
-            _review_post_response(),  # final plain review submit
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [_row(category="Correctness")])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_inline"] == 0
-    assert _data(result)["posted_pr_level"] == 1
-    pr_comment = next(c for c in _gh_calls(state_dir) if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert body.startswith(
-        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** · Correctness · `src.py:2` — issue on line2\n\n"
-    )
-
-
-def test_fallback_demotes_one_of_two_findings_and_preserves_ordinals(tmp_path):
-    """Ordinal stability through the per-comment fallback with a partial failure:
-    the row whose individual POST fails demotes to pr-level keeping its original
-    ID, while the row that landed inline keeps its own — no renumbering."""
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
-            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "exit": 0},  # per-comment fallback POST for finding 1 succeeds
-            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST for finding 2 fails
-            {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
-            _review_post_response(),  # final plain review submit
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(issue="issue on line2", line=2),
-        _row(issue="issue on line3", line=3),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_inline"] == 1
-    assert _data(result)["posted_pr_level"] == 1
-    calls = _gh_calls(state_dir)
-    per_comment_posts = [c for c in calls if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
-    assert len(per_comment_posts) == 2
-    landed = next(a for a in per_comment_posts[0]["argv"] if a.startswith("body="))
-    assert landed.startswith("body=<!-- swe-workbench:review-finding:1 -->\n")
-    pr_comment = next(c for c in calls if c["argv"][:2] == ["pr", "comment"])
-    body = pr_comment["argv"][pr_comment["argv"].index("--body") + 1]
-    assert body.startswith(
-        "<!-- swe-workbench:review-findings -->\n\n<!-- swe-workbench:review-finding:2 -->\n"
-        "**High** · `src.py:3` — issue on line3\n\n"
-    )
-    assert "review-finding:1" not in body
 
 
 def test_render_puts_fence_led_fix_on_its_own_paragraph():

@@ -664,16 +664,49 @@ def _inline_comment(finding: dict) -> dict:
     }
 
 
+_BATCH_SEPARATOR = "\n\n---\n\n"
+# GitHub caps a review body at 65,536 chars; leave headroom for the summary and markers.
+BODY_CHAR_BUDGET = 60_000
+
+
+def build_review_body(summary: str, rows: list[dict]) -> tuple[str, list[dict]]:
+    """summary + batch marker + ascending-ID sections, for the longest prefix of `rows` that
+    fits the row and character budget. Returns (body, overflow_rows); overflow goes to
+    issue-comment batches after the review lands."""
+    ordered = sorted(rows, key=lambda row: row["_finding_id"])
+    head = f"{summary.rstrip()}\n\n{REVIEW_BATCH_MARKER}\n\n"
+    used = len(head)
+    fitting: list[str] = []
+    for row in ordered:
+        piece = render_marked_finding(row, pr_level=True)
+        cost = len(piece) + (len(_BATCH_SEPARATOR) if fitting else 0)
+        if len(fitting) >= MAX_BATCH_ROWS or used + cost > BODY_CHAR_BUDGET:
+            break
+        fitting.append(piece)
+        used += cost
+    if not fitting:
+        return summary, ordered
+    return head + _BATCH_SEPARATOR.join(fitting), ordered[len(fitting):]
+
+
 def submit_review(
     *, owner: str, repo: str, pr: str, head_sha: str, event: str,
-    findings: list[dict], summary_fn, current_user: str, posted_pr_level: int,
+    inline_rows: list[dict], body_rows: list[dict], summary_fn, current_user: str,
     pr_diff: str, script_dir: Path,
 ) -> SubmitResult:
-    """summary_fn(n_inline, posted_pr_level) -> review body text.
+    """summary_fn(n_inline, n_pr_level) -> the review summary text.
 
     Takes structured rows, not rendered comments: a row demoted mid-submit (422 retry,
-    per-comment fallback) must re-render as PR-level with its path:line in the headline."""
-    comments = [_inline_comment(f) for f in findings]
+    per-comment fallback) must re-render as PR-level with its path:line in the headline.
+    PR-level rows ride in the review body; only what overflows the body budget is posted
+    as issue-comment batches, after the review."""
+    findings = inline_rows
+
+    def compose(inline: list[dict], rows: list[dict], n_inline: int):
+        body, overflow = build_review_body(summary_fn(n_inline, len(rows)), rows)
+        return body, [_inline_comment(f) for f in inline], overflow
+
+    body, comments, overflow = compose(findings, body_rows, len(findings))
     n = len(comments)
     posted_inline = 0
     submitted = False
@@ -681,13 +714,13 @@ def submit_review(
 
     if n > 0:
         # Atomic path: one POST carrying every candidate comment plus the review event/body.
-        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
+        proc = _post_review(owner, repo, pr, head_sha, event, body, comments)
         if proc.returncode == 0:
             posted_inline, submitted, review_url = n, True, _extract_review_url(proc.stdout)
         elif "422" in (proc.stdout + proc.stderr):
             # Confirmed 422 (stale commit_id, or a line pre-validate missed): re-fetch HEAD and
             # the PR diff together, genuinely re-validate every comment against both, demote
-            # anything now out-of-diff into the pr-level batch, then retry the atomic POST
+            # anything now out-of-diff into the review body, then retry the atomic POST
             # exactly once. Re-fetching only head_sha while re-validating file content against
             # it but line-position against the stale diff text would defeat the point of this
             # retry — the diff moving is exactly the scenario it exists to handle.
@@ -700,13 +733,12 @@ def submit_review(
                     still_in_diff.append(f)
                 else:
                     newly_demoted.append(f)
-            if newly_demoted:
-                posted_pr_level += post_pr_level(pr, newly_demoted)
+            body_rows = body_rows + newly_demoted
             findings = still_in_diff
-            comments = [_inline_comment(f) for f in findings]
+            body, comments, overflow = compose(findings, body_rows, len(findings))
             n = len(comments)
             if n > 0:
-                proc2 = _post_review(owner, repo, pr, head_sha, event, summary_fn(n, posted_pr_level), comments)
+                proc2 = _post_review(owner, repo, pr, head_sha, event, body, comments)
                 if proc2.returncode == 0:
                     posted_inline, submitted, review_url = n, True, _extract_review_url(proc2.stdout)
                 else:
@@ -742,12 +774,16 @@ def submit_review(
             if proc.returncode == 0:
                 posted_inline += 1
             else:
-                demoted.append(f)  # Never drop it: fold into follow-up pr-level batch comment(s).
-        if demoted:
-            posted_pr_level += post_pr_level(pr, demoted)
-        proc = _post_review(owner, repo, pr, head_sha, event, summary_fn(posted_inline, posted_pr_level), None)
+                demoted.append(f)  # Never drop it: fold into the review body.
+        body_rows = body_rows + demoted
+        body, _no_comments, overflow = compose([], body_rows, posted_inline)
+        proc = _post_review(owner, repo, pr, head_sha, event, body, None)
         if proc.returncode == 0:
             submitted, review_url = True, _extract_review_url(proc.stdout)
+
+    posted_pr_level = 0
+    if submitted:
+        posted_pr_level = len(body_rows) - len(overflow) + post_pr_level(pr, overflow)
 
     return SubmitResult(posted_inline=posted_inline, posted_pr_level=posted_pr_level, submitted=submitted, review_url=review_url)
 
@@ -775,6 +811,9 @@ def _byline_problem(byline: str) -> str | None:
         return problem
     if re.search(r"(?i)\bposted\b", byline) or re.search(r"(?i)\bdeduped\b", byline):
         return "must not embed posted/deduped counts"
+    if _RESERVED_PLUGIN_MARKER_RE.search(byline):
+        # The byline opens the review body, ahead of the batch marker the consumer parses.
+        return "must not embed a reserved swe-workbench marker"
     return None
 
 
@@ -947,7 +986,7 @@ def main(argv: list[str] | None = None) -> int:
         pr_diff = _fetch_pr_diff(args.pr)
         in_diff, demoted = validate_lines(survivors_inline, pr_diff, args.head_sha, script_dir)
 
-        posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
+        body_rows = pr_level_findings + demoted
 
         n_blocking = len(blocking_threads(threads))
         override = bool(args.approve_over_open_threads)
@@ -973,8 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
 
         result = submit_review(
             owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
-            findings=in_diff, summary_fn=summary_fn, current_user=args.current_user,
-            posted_pr_level=posted_pr_level, pr_diff=pr_diff, script_dir=script_dir,
+            inline_rows=in_diff, body_rows=body_rows, summary_fn=summary_fn, current_user=args.current_user,
+            pr_diff=pr_diff, script_dir=script_dir,
         )
     except PostingError as exc:
         print(f"workflow-pr-review-post: {exc}", file=sys.stderr)

@@ -929,6 +929,25 @@ def test_producer_and_consumer_batch_caps_agree():
     assert prs.MAX_BATCH_ROWS == aff.MAX_BATCH_SECTIONS
 
 
+def test_producer_built_review_body_round_trips_through_the_consumer():
+    rows = prs.assign_finding_keys(
+        prs.assign_finding_ids([
+            {"severity": "High", "issue": f"issue {n}", "why": "why", "fix": "fix", "anchor": "pr-level"}
+            for n in (1, 2, 3)
+        ]),
+        "a" * 40,
+    )
+    summary = "**Review Decision: COMMENT**\n\n_Reviewed by `bot`_. Posted 0 inline comment(s) and 3 PR-level note(s), deduped 0.\n"
+
+    body, overflow = prs.build_review_body(summary, rows)
+    projections = aff.parse_review_body_batch(_review(9, body))
+
+    assert overflow == []
+    assert [p["finding_id"] for p in projections] == [1, 2, 3]
+    assert all("finding-key" not in p["body"] for p in projections)
+    assert projections[0]["body"].startswith("**High** — issue 1")
+
+
 def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
     """The reply template quotes the first ~100 chars of an item body into the
     owner's own reply — a hostile comment whose opening text contains a handled
