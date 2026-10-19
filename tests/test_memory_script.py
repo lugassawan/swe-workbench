@@ -25,9 +25,6 @@ RESULT_CHECK = ROOT / "bin" / "swe-workbench-result-check"
 
 def load_runtime_module():
     """Import the extensionless bin/swe-workbench-memory for in-process probes."""
-    # Run directly, the script's own dir is sys.path[0]; the loader path needs it explicitly.
-    if str(RUNTIME.parent) not in sys.path:
-        sys.path.insert(0, str(RUNTIME.parent))
     loader = importlib.machinery.SourceFileLoader(
         "swe_workbench_memory_runtime", str(RUNTIME)
     )
