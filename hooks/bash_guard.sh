@@ -185,7 +185,7 @@ _push_token_awk='
   function emit_word() {
     if (!word_started) return
     if (redirect_target) { if (here_string) print "HERE\t" word; redirect_target = 0; here_string = 0 }
-    else print "WORD\t" ((cur_branch && word == dyn) ? cur : word)
+    else { print "WORD\t" ((cur_branch && word == dyn) ? cur : word); wcount++ }
     word = ""; word_started = 0; cur_branch = 0
   }
   function finish_subst() {
@@ -231,7 +231,7 @@ _push_token_awk='
   }
   function emit_separator() {
     emit_word()
-    redirect_target = 0; here_string = 0
+    redirect_target = 0; here_string = 0; wcount = 0
     print "SEP"
   }
   function begin_redirect() {
@@ -240,7 +240,7 @@ _push_token_awk='
     } else emit_word()
     redirect_target = 1
   }
-  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; wcount = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
   END {
     line = buf; gsub(/\001/, "\n", line); n = length(line)
@@ -378,7 +378,8 @@ _push_token_awk='
                 if (found) {
                   hbody = substr(line, bstart, pos - bstart)
                   gsub(/\n/, "\001", hbody)
-                  print "HERE\t" hbody
+                  # the word index tells the caller whether this word is code (a redirect target never is)
+                  print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
                   i = pos + length(ltxt) - 1
                 }
               }
@@ -455,6 +456,9 @@ _push_token_awk='
 _push_tokens=()
 _push_here=()
 _push_subs=()
+# `cat <<'EOT'` heredocs inside `$(...)`: the word index each belongs to, and its body.
+_push_subhere_idx=()
+_push_subhere_body=()
 _push_saw_tab=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
 # Stands for a word that is exactly a query for the current branch name.
@@ -668,11 +672,15 @@ _scan_nested_text() {
   local -a _saved_tokens=(${_push_tokens[@]+"${_push_tokens[@]}"})
   local -a _saved_here=(${_push_here[@]+"${_push_here[@]}"})
   local -a _saved_subs=(${_push_subs[@]+"${_push_subs[@]}"})
+  local -a _saved_subhere_idx=(${_push_subhere_idx[@]+"${_push_subhere_idx[@]}"})
+  local -a _saved_subhere_body=(${_push_subhere_body[@]+"${_push_subhere_body[@]}"})
   local _saved_saw_tab=$_push_saw_tab
   scan_force_push_text "$_nested_text" "$((_nested_depth + 1))"
   _push_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
   _push_here=(${_saved_here[@]+"${_saved_here[@]}"})
   _push_subs=(${_saved_subs[@]+"${_saved_subs[@]}"})
+  _push_subhere_idx=(${_saved_subhere_idx[@]+"${_saved_subhere_idx[@]}"})
+  _push_subhere_body=(${_saved_subhere_body[@]+"${_saved_subhere_body[@]}"})
   _push_saw_tab=$_saved_saw_tab
 }
 
@@ -693,13 +701,17 @@ _scan_wrapper_operand() {
 _scan_known_wrapper_body() {
   local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _m _tok _base _body _args
   local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit _cmdword=0 _rest _split
+  local _wp=-1 _interp=-1 _cmdidx=-1
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_push_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
-    _is_shell_interpreter "$_base" && _consumer=1
+    if _is_shell_interpreter "$_base"; then
+      _consumer=1
+      (( _interp >= 0 )) || _interp=$_i
+    fi
     case "$_tok" in
-      -exec|-execdir|-ok|-okdir) _p=-1; _g=-1; _after=0; continue ;;
+      -exec|-execdir|-ok|-okdir) _p=-1; _wp=-1; _g=-1; _after=0; continue ;;
     esac
     (( _g < 0 )) || continue
     _isgit=0
@@ -719,6 +731,7 @@ _scan_known_wrapper_body() {
       *)
         if _is_wrapper_prefix "$_base"; then
           (( _p >= 0 )) || _p=$_i
+          (( _wp >= 0 )) || _wp=$_i
           _after=1
         elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _push_saw_tab )); then
           _g=$_n
@@ -731,6 +744,7 @@ _scan_known_wrapper_body() {
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;;
       "$_DYNAMIC_TOKEN") _cmdword=1 ;;
     esac
+    _cmdidx=$_i
     break
   done
 
@@ -820,6 +834,17 @@ _scan_known_wrapper_body() {
       _scan_wrapper_operand "$_body" "$_depth"
     done
   fi
+  # A heredoc inside `$(cat ...)` is that word's value: code when the word is the command, an
+  # argument of a shell, or sits between a wrapper and `git`. An assignment value or a word after
+  # `git` is data.
+  for ((_m = 0; _m < ${#_push_subhere_body[@]}; _m++)); do
+    _k=${_push_subhere_idx[_m]}
+    (( _k >= 0 )) || continue
+    if (( _k == _cmdidx || (_interp >= 0 && _k > _interp) \
+          || (_wp >= 0 && _k > _wp && (_g < 0 || _k < _g)) )); then
+      _scan_wrapper_operand "${_push_subhere_body[_m]}" "$_depth"
+    fi
+  done
 }
 
 # The substitutions an unquoted heredoc body expands are code even when the body is data.
@@ -847,6 +872,8 @@ scan_force_push_text() {
   _push_tokens=()
   _push_here=()
   _push_subs=()
+  _push_subhere_idx=()
+  _push_subhere_body=()
   _push_saw_tab=0
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
@@ -856,6 +883,9 @@ scan_force_push_text() {
       UHERE)
         _push_here+=("$_value")
         _collect_heredoc_substitutions "$_value" ;;
+      SUBHERE)
+        _push_subhere_idx+=("${_value%%:*}")
+        _push_subhere_body+=("${_value#*:}") ;;
       TAB) _push_saw_tab=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
@@ -864,6 +894,8 @@ scan_force_push_text() {
         _push_tokens=()
         _push_here=()
         _push_subs=()
+        _push_subhere_idx=()
+        _push_subhere_body=()
         _push_saw_tab=0
         ;;
     esac

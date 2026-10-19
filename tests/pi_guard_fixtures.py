@@ -176,6 +176,18 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("cat <<EOF\nit's $(git push -f origin main)\nEOF", True),
     ("cat <<EOF\n\\$(git push --force origin main)\nEOF", False),
     ("cat <<EOF\n$(git push --force origin feature/x)\nEOF", False),
+    # A `$(cat <<'EOT' ...)` heredoc is code only where its word is run: the command word, a
+    # word between a wrapper and git, or a shell's argument. An assignment value or a word
+    # after git is data, whatever prefixes the command.
+    ('MSG="$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', False),
+    ('X=1 git commit -m "$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', False),
+    ('rtk git commit -m "$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', False),
+    ('X=1 echo "$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', False),
+    ('eval "$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', True),
+    ('bash -c "$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)"', True),
+    ('sudo $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
+    ('FOO=1 sudo $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
+    ('$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),
