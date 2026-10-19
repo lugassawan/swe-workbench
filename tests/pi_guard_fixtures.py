@@ -164,6 +164,18 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("echo `echo \\`git push --force origin feature/x\\``", False),
     ("echo \\`git push --force origin main\\`", False),
     ('echo "\\`git push --force origin main\\`"', False),
+    # An unquoted heredoc body is data too, except for the substitutions it expands; a shell
+    # reading it as a script still runs it.
+    ("cat <<EOF\nit's\nEOF\ngit push --force origin main", True),
+    ("cat <<EOF\ngit push --force origin main\nEOF", False),
+    ("cat <<-EOF\n\tgit push --force origin main\n\tEOF", False),
+    ("cat <<EOF > notes.txt\ngit push --force origin main\nEOF", False),
+    ("bash <<EOF\ngit push --force origin main\nEOF", True),
+    ("cat <<EOF\n$(git push --force origin main)\nEOF", True),
+    ("cat <<EOF\n`git push --force origin main`\nEOF", True),
+    ("cat <<EOF\nit's $(git push -f origin main)\nEOF", True),
+    ("cat <<EOF\n\\$(git push --force origin main)\nEOF", False),
+    ("cat <<EOF\n$(git push --force origin feature/x)\nEOF", False),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),

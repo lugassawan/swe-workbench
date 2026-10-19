@@ -246,6 +246,11 @@ _push_token_awk='
     line = buf; gsub(/\001/, "\n", line); n = length(line)
     for (i = 1; i <= n; i++) {
       c = substr(line, i, 1)
+      # an unquoted heredoc body: quotes and operators are text, only expansions are live
+      if (hdmode) {
+        if (c == "\\") { i++; continue }
+        if (c != "$" && c != "`") continue
+      }
       if (hd_nl > 0 && i > hd_nl) hd_nl = 0
       if (c == "\n") {
         escaped = 0
@@ -301,7 +306,7 @@ _push_token_awk='
           hj = i + 2; hstrip = 0
           if (substr(line, hj, 1) == "-") { hstrip = 1; hj++ }
           while (substr(line, hj, 1) ~ /[ \t]/) hj++
-          hq = substr(line, hj, 1); hid = ""; hend = 0
+          hq = substr(line, hj, 1); hid = ""; hend = 0; hunq = 0
           if ((hq == "\047" || hq == "\"") && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
             hid = substr(line, hj + 1, RLENGTH)
             hend = hj + 1 + RLENGTH
@@ -309,6 +314,11 @@ _push_token_awk='
           } else if (hq == "\\" && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
             hid = substr(line, hj + 1, RLENGTH)
             hend = hj + 1 + RLENGTH
+          } else if (hq ~ /[A-Za-z_]/ && match(substr(line, hj), /^[A-Za-z_][A-Za-z0-9_]*/)) {
+            # a bare delimiter leaves the body expanding substitutions: UHERE tells the caller to look for them
+            hid = substr(line, hj, RLENGTH)
+            hend = hj + RLENGTH
+            hunq = 1
           }
           if (hid != "") {
             hnl = index(substr(line, hend), "\n")
@@ -327,7 +337,7 @@ _push_token_awk='
               if (hfound) {
                 hb = substr(line, hbs, hp - hbs)
                 gsub(/\n/, "\001", hb)
-                print "HERE\t" hb
+                print (hunq ? "UHERE" : "HERE") "\t" hb
                 hd_nl = hnlpos
                 hd_to = hp + length(hl) - 1
               }
@@ -812,6 +822,19 @@ _scan_known_wrapper_body() {
   fi
 }
 
+# The substitutions an unquoted heredoc body expands are code even when the body is data.
+# A lexer that dies here has seen nothing, so it reports `scan-failed` like the main scan.
+_collect_heredoc_substitutions() {
+  local _hd_kind _hd_value _hd_ok=0
+  while IFS=$'\t' read -r _hd_kind _hd_value; do
+    case "$_hd_kind" in
+      NEST) _push_subs+=("$_hd_value") ;;
+      EOS) _hd_ok=1 ;;
+    esac
+  done < <(printf '%s' "$1" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" -v hdmode=1 "$_push_token_awk")
+  (( _hd_ok )) || printf 'BLOCK\tscan-failed\n'
+}
+
 scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value _lex_ok=0
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
@@ -830,6 +853,9 @@ scan_force_push_text() {
       WORD) _push_tokens+=("$_value") ;;
       NEST) _push_subs+=("$_value") ;;
       HERE) _push_here+=("$_value") ;;
+      UHERE)
+        _push_here+=("$_value")
+        _collect_heredoc_substitutions "$_value" ;;
       TAB) _push_saw_tab=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
