@@ -93,34 +93,70 @@ DENY_ALIASES = {
     "host": HOST,
 }
 DENY_CATEGORIES = frozenset(DENY_ALIASES.values())
+# A user-preserved span never exempts machine-identifying text, only wording that can be a false positive.
+NEVER_PRESERVED = frozenset({PATH, IP, USER})
 
-ZERO_WIDTH = re.compile("[​‌‍⁠﻿]")
 PLACEHOLDER = re.compile(r"\[(?:" + "|".join(sorted(PRIORITY)) + r")\]")
 TRAILING_PUNCTUATION = ".,;:!?'\"*"
+# A credential match must not swallow the delimiter that closes the text around it.
+CREDENTIAL_TRAILING = TRAILING_PUNCTUATION + "`)]}>"
 
+_SECRET_WORD = r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)"
+# Redactor-only credential shapes; the shared set stays narrow because it also guards memory writes.
 EXTRA_SECRET_PATTERNS = (
     re.compile(
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----|[\s\S]*\Z)"
+        r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|[\s\S]*\Z)"
     ),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),
+    re.compile(r"\b(?:proxy-)?authorization\s*:\s*(?:token\s+)?[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
+    re.compile(r"\b(?:x-api-key|x-auth-token|api-key)\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"\b(?:set-)?cookie\s*:\s*[^\n]+", re.IGNORECASE),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"\bAS[IC]A[0-9A-Z]{16}\b"),
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
+    re.compile(
+        r"(?:\bexport\s+)?\b[\w.-]*" + _SECRET_WORD + r"[\w.-]*\s*[:=]\s*(?!\[)(?:\"[^\"\n]{4,}\"|'[^'\n]{4,}'|\S{6,})",
+        re.IGNORECASE,
+    ),
 )
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
-URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"'`)\]]*")
-_TLDS = "internal|local|corp|lan|intranet|localdomain|com|net|org|io|dev|ai|cloud|xyz|info|biz|uk|eu|us|de|fr|nl|jp|au|ca|sg"
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+SCP_REMOTE_RE = re.compile(
+    r"(?<![\w.@-])[\w.-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}:[\w.~-]+(?:/[\w.~-]+)+"
+)
+_STOP = "<>\"'`)\\]"  # characters that end a URL or path token
+URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s" + _STOP + r"\[]|\[[0-9A-Fa-f:.]*\])*")
+_TLDS = (
+    "internal|local|corp|lan|intranet|localdomain|com|net|org|io|dev|ai|cloud|xyz|co|app|tech|me|run"
+    "|cn|ru|br|ch|it|es|se|be|kr|tv|gg|ly|uk|eu|us|de|fr|nl|jp|au|ca|sg"
+)
 BARE_HOST_RE = re.compile(
-    r"(?<![\w@./:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?:"
+    r"(?<![A-Za-z0-9@./-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?:"
     + _TLDS
-    + r")(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])(?::\d{1,5})?(?:/[^\s<>\"'`)\]]*)?"
+    + "|"
+    + _TLDS.upper()
+    + r")(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])(?::\d{1,5})?(?:/[^\s"
+    + _STOP
+    + r"]*)?"
 )
 IPV4_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w]|\.\d)")
 IPV6_RE = re.compile(r"(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])")
-_PATH_TAIL = r"""(?:/[^\s<>"'`)\]]*)?"""
+# A path name may contain spaces when each later word is capitalised ("Jane Doe", "Application Support").
+_SEGMENT = r"[^\s/" + _STOP + r"]+(?: [A-Z][^\s/" + _STOP + r"]*)*"
+_WIN_SEGMENT = r"[^\s\\/" + _STOP + r"]+(?: [A-Z][^\s\\/" + _STOP + r"]*)*"
+_UNIX_ROOT_GUARD = r"(?:(?<![\w.~-])|(?<=-[A-Za-z]))"  # a flag like -I/Users/... still counts
+_MOUNT_PREFIX = r"(?:/mnt/[a-z]|/System/Volumes/Data|/host_mnt|/@fs)?"
+_UNIX_USER_PATH = _MOUNT_PREFIX + r"/(?:Users|home)/" + _SEGMENT + r"(?:/" + _SEGMENT + r")*/?"
+# Inside a URL the path begins right after the host or port, so no word-character guard applies.
+URL_TAIL_PATH_RE = re.compile(_UNIX_USER_PATH)
 PATH_RES = (
-    re.compile(r"""(?<![\w.~-])/Users/[^/\s<>"'`)\]]+""" + _PATH_TAIL),
-    re.compile(r"""(?<![\w.~-])/home/[^/\s<>"'`)\]]+""" + _PATH_TAIL),
-    re.compile(r"""(?<![\w])[A-Za-z]:\\Users\\[^\\\s<>"'`)\]]+(?:\\[^\s<>"'`)\]]*)?"""),
-    re.compile(r"(?<![\w.~-])/private/var" + _PATH_TAIL),
-    re.compile(r"(?<![\w.~-])/var/folders" + _PATH_TAIL),
+    re.compile(_UNIX_ROOT_GUARD + _UNIX_USER_PATH),
+    re.compile(
+        r"(?<![\w])[A-Za-z]:[\\/]+Users[\\/]+" + _WIN_SEGMENT + r"(?:[\\/]+" + _WIN_SEGMENT + r")*[\\/]*"
+    ),
+    re.compile(r"(?<![\w.~-])/(?:private/var|var/folders)(?:/[^\s" + _STOP + r"]*)?"),
 )
 MEMORY_RES = (
     re.compile(r"\[\[[A-Za-z0-9_.-]{1,100}\]\]"),
@@ -139,8 +175,10 @@ PUBLIC_DOMAINS = (
     "cli.github.com",
     "python.org",
     "pypi.org",
+    "pypa.io",
     "nodejs.org",
     "npmjs.com",
+    "npmjs.org",
     "pytest.org",
     "anthropic.com",
     "claude.com",
@@ -148,7 +186,7 @@ PUBLIC_DOMAINS = (
 )
 GENERIC_USERS = frozenset({"root", "user", "admin", "runner", "ubuntu", "shared", "home"})
 REMOTE_URL_RE = re.compile(
-    r"^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/]+@)?[^/:]+[:/](?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$"
+    r"^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/]+@)?[^/:]+[:/](?P<owner>[^/]+)/(?:[^/]+/)*?(?P<name>[^/]+?)(?:\.git)?/?$"
 )
 TARGET_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*$")
 
@@ -162,7 +200,9 @@ class UsageError(RedactError):
 
 
 def normalize(text: str) -> str:
-    return unicodedata.normalize("NFKC", ZERO_WIDTH.sub("", text))
+    """Drops every invisible format character (zero-width, soft hyphen, direction marks), then NFKC."""
+    visible = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return unicodedata.normalize("NFKC", visible)
 
 
 @dataclass(frozen=True)
@@ -201,33 +241,52 @@ class Rules:
         deny_re = None
         if deny_map:
             terms = "|".join(re.escape(t) for t in sorted(deny_map, key=len, reverse=True))
-            deny_re = re.compile(r"(?<![A-Za-z0-9_])(?:" + terms + r")(?![A-Za-z0-9_])", re.IGNORECASE)
+            # "_" separates identifier words (acmecorp_prod_db), so it is not a word character here.
+            deny_re = re.compile(r"(?<![A-Za-z0-9])(?:" + terms + r")(?![A-Za-z0-9])", re.IGNORECASE)
         spans = tuple(span for span in (normalize(p) for p in preserve) if span.strip())
         return cls(target, frozenset(allowed), deny_map, deny_re, spans)
 
     def allows(self, span: str) -> bool:
         return span.lower() in self.allow
 
-    def public_endpoint(self, endpoint: str) -> bool:
-        """True when a URL or bare host[/path] is loopback, a public doc domain or the target."""
-        parts = urlsplit(endpoint if "://" in endpoint else "//" + endpoint)
-        if parts.username is not None or parts.password is not None:
-            return False
-        host = (parts.hostname or "").lower()
-        if not host:
-            return False
-        if host in self.allow or endpoint.lower() in self.allow or host == "localhost":
-            return True
-        if _is_loopback(host):
-            return True
+    def vouched_prefix(self, endpoint: str) -> int | None:
+        """How many leading characters of a URL or bare host[/path] are public, or None if none are.
+
+        Only the host (and, for the target repository, its owner/name path) is vouched for: a
+        query, fragment or deeper path can still carry private data and keeps being scanned.
+        """
+        try:
+            parts = urlsplit(endpoint if "://" in endpoint else "//" + endpoint)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return None
+        if parts.username is not None or parts.password is not None or not host:
+            return None
+        authority = re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#]*", endpoint).end()
+        if endpoint.lower() in self.allow:
+            return len(endpoint)
+        if host in self.allow or host == "localhost" or _is_loopback(host):
+            return authority
         if any(host == domain or host.endswith("." + domain) for domain in PUBLIC_DOMAINS):
-            return True
-        if host in ("github.com", "www.github.com") and self.target:
-            segments = [s for s in parts.path.split("/") if s]
-            if len(segments) >= 2:
-                name = segments[1].lower().removesuffix(".git")
-                return (segments[0].lower(), name) == self.target
-        return False
+            return authority
+        segments = [s for s in parts.path.split("/") if s]
+        if host in ("github.com", "www.github.com"):
+            if not segments:
+                return authority
+            if self.target and len(segments) >= 2:
+                if (segments[0].lower(), segments[1].lower().removesuffix(".git")) == self.target:
+                    return _prefix_end(endpoint, 2)
+        if host == "api.github.com" and self.target and len(segments) >= 3 and segments[0] == "repos":
+            if (segments[1].lower(), segments[2].lower().removesuffix(".git")) == self.target:
+                return _prefix_end(endpoint, 3)
+        return None
+
+
+def _prefix_end(endpoint: str, segments: int) -> int:
+    """End offset of the authority plus its first `segments` path segments."""
+    pattern = r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#]*" + r"/[^/?#]+" * segments
+    match = re.match(pattern, endpoint)
+    return match.end() if match else len(endpoint)
 
 
 def _is_loopback(host: str) -> bool:
@@ -237,15 +296,19 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-def _trim(text: str, start: int, end: int) -> int:
-    while end > start and text[end - 1] in TRAILING_PUNCTUATION:
+def _trim(text: str, start: int, end: int, chars: str = TRAILING_PUNCTUATION) -> int:
+    while end > start and text[end - 1] in chars:
         end -= 1
     return end
 
 
-def _finditer(pattern: re.Pattern[str], text: str, trim: bool = False) -> Iterable[tuple[int, int, str]]:
+def _finditer(
+    pattern: re.Pattern[str], text: str, trim: bool | str = False
+) -> Iterable[tuple[int, int, str]]:
+    """Yields (start, end, span); `trim` strips trailing punctuation, or the given characters."""
+    chars = trim if isinstance(trim, str) else TRAILING_PUNCTUATION
     for match in pattern.finditer(text):
-        end = _trim(text, match.start(), match.end()) if trim else match.end()
+        end = _trim(text, match.start(), match.end(), chars) if trim else match.end()
         if end > match.start():
             yield match.start(), end, text[match.start() : end]
 
@@ -259,32 +322,60 @@ def _overlaps(span: tuple[int, int], others: Iterable[tuple[int, int]]) -> bool:
 
 
 def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], list[tuple[int, int]]]:
-    """Returns (candidate spans, shield spans that protect public text from non-credential matches)."""
+    """Returns (candidate spans, shield spans that vouch for a public host or repository prefix)."""
     found: list[tuple[int, int, str]] = []
     shields: list[tuple[int, int]] = []
 
     for pattern in SECRET_PATTERNS + EXTRA_SECRET_PATTERNS:
-        for start, end, _ in _finditer(pattern, text):
-            found.append((start, end, CREDENTIAL))
+        for match in pattern.finditer(text):
+            # A quote that opened inside the match belongs to it; an unbalanced one closes outer text.
+            balanced = match.group(0).count('"') % 2 == 0 and match.group(0).count("'") % 2 == 0
+            trailing = CREDENTIAL_TRAILING.translate({ord('"'): None, ord("'"): None}) if balanced else CREDENTIAL_TRAILING
+            end = _trim(text, match.start(), match.end(), trailing)
+            if end > match.start():
+                found.append((match.start(), end, CREDENTIAL))
+
+    scp_spans: list[tuple[int, int]] = []
+    for start, end, span in _finditer(SCP_REMOTE_RE, text, trim=True):
+        scp_spans.append((start, end))
+        host, _, path = span.partition("@")[2].partition(":")
+        owner, _, name = path.partition("/")
+        vouched = (
+            host.lower() == "github.com"
+            and rules.target is not None
+            and (owner.lower(), name.lower().removesuffix(".git")) == rules.target
+        )
+        if vouched or rules.allows(span):
+            shields.append((start, end))
+        else:
+            found.append((start, end, HOST))
 
     for start, end, span in _finditer(EMAIL_RE, text, trim=True):
-        if not rules.allows(span):
+        if not _contained((start, end), scp_spans) and not rules.allows(span):
             found.append((start, end, EMAIL))
 
-    url_spans: list[tuple[int, int]] = []
+    public_spans: list[tuple[int, int]] = []  # whole URLs on a vouched host, tail included
+    blocked: list[tuple[int, int]] = []  # spans a bare-host match inside must not re-trigger on
     for start, end, span in _finditer(URL_RE, text, trim=True):
-        url_spans.append((start, end))
-        if rules.public_endpoint(span):
-            shields.append((start, end))
-        else:
-            found.append((start, end, HOST))
-    for start, end, span in _finditer(BARE_HOST_RE, text, trim=True):
-        if _contained((start, end), url_spans):
+        if not span.split("://", 1)[1]:
             continue
-        if rules.public_endpoint(span):
-            shields.append((start, end))
-        else:
+        vouched = rules.vouched_prefix(span)
+        if vouched is None:
             found.append((start, end, HOST))
+            blocked.append((start, end))
+        else:
+            shields.append((start, start + vouched))
+            blocked.append((start, start + vouched))
+            public_spans.append((start, end))
+    for start, end, span in _finditer(BARE_HOST_RE, text, trim=True):
+        if _contained((start, end), blocked):
+            continue
+        vouched = rules.vouched_prefix(span)
+        if vouched is None:
+            found.append((start, end, HOST))
+        else:
+            shields.append((start, start + vouched))
+            public_spans.append((start, end))
 
     for start, end, span in _finditer(IPV4_RE, text):
         octets = [int(part) for part in span.split(".")]
@@ -304,6 +395,11 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
         for start, end, span in _finditer(pattern, text, trim=True):
             if not rules.allows(span):
                 found.append((start, end, PATH))
+    for url_start, url_end in public_spans:
+        tail_start = next((end for start, end in blocked if start == url_start), url_start)
+        for start, end, span in _finditer(URL_TAIL_PATH_RE, text[tail_start:url_end], trim=True):
+            if not rules.allows(span):
+                found.append((tail_start + start, tail_start + end, PATH))
 
     for pattern in MEMORY_RES:
         for start, end, span in _finditer(pattern, text):
@@ -311,7 +407,8 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
                 found.append((start, end, MEMORY))
 
     for start, end, span in _finditer(SERVICE_RE, text):
-        if not rules.allows(span):
+        # A documentation URL's own path (".../rest-api") is public wording, not a private service id.
+        if not rules.allows(span) and not _contained((start, end), public_spans):
             found.append((start, end, SERVICE))
 
     for start, end, span in _finditer(CROSS_REPO_RE, text):
@@ -338,12 +435,13 @@ def redact(text: str, rules: Rules) -> tuple[str, Counter[str]]:
         while position != -1:
             preserved.append((position, position + len(span)))
             position = text.find(span, position + 1)
-    protected = preserved + shields
 
     kept = []
     for start, end, category in found:
         if category != CREDENTIAL:
-            if _overlaps((start, end), placeholders) or _contained((start, end), protected):
+            if _overlaps((start, end), placeholders) or _contained((start, end), shields):
+                continue
+            if category not in NEVER_PRESERVED and _contained((start, end), preserved):
                 continue
         kept.append((start, end, category))
     kept.sort(key=lambda c: (c[0], -c[1]))
@@ -474,6 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="swe-workbench-redact",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--field", nargs=3, action="append", metavar=("NAME", "SRC", "DST"), required=True
@@ -493,7 +592,12 @@ def _real(path: str) -> str:
 
 def remove_stale_destinations(argv: list[str]) -> None:
     """Unlinks every --field DST that is not also some field's SRC, before anything can fail."""
-    triples = [argv[i + 1 : i + 4] for i, arg in enumerate(argv) if arg == "--field" and i + 3 < len(argv)]
+    # Abbreviations like "--fi" are refused by the parser, but their DST must still be cleared.
+    triples = [
+        argv[i + 1 : i + 4]
+        for i, arg in enumerate(argv)
+        if len(arg) >= 3 and "--field".startswith(arg) and i + 3 < len(argv)
+    ]
     sources = {_real(src) for _, src, _ in triples}
     for _, _, dst in triples:
         if _real(dst) in sources:
@@ -509,7 +613,7 @@ def parse_deny(spec: str) -> tuple[str, str]:
     category, separator, term = spec.partition("=")
     category = category.strip().lower()
     if not separator or not term.strip() or (category not in DENY_ALIASES and category not in DENY_CATEGORIES):
-        raise UsageError(f"--deny expects CATEGORY=TERM with CATEGORY in {sorted(DENY_ALIASES)}, got {spec!r}")
+        raise UsageError(f"--deny expects CATEGORY=TERM with CATEGORY in {sorted(DENY_ALIASES)}")
     return category, term.strip()
 
 
