@@ -132,6 +132,11 @@ def _row(**overrides) -> dict:
     return {k: v for k, v in row.items() if v is not None}
 
 
+def _key_line(row: dict, anchor_text: str) -> str:
+    """The trailing finding-key marker line a posted row carries."""
+    return f"<!-- swe-workbench:finding-key:v1:{prs.finding_key(row, anchor_text)} -->"
+
+
 _DEDUP_ROW = _row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=12)
 
 
@@ -801,7 +806,8 @@ def test_out_of_diff_row_is_demoted_never_dropped(tmp_path):
     assert body == (
         "<!-- swe-workbench:review-findings -->\n\n"
         "<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+        "**High** · `src.py:999` — out of diff finding\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
+        + _key_line(_row(issue="out of diff finding", line=999), "")
     ), "a demoted row must gain its path:line and retain its provenance marker"
 
 
@@ -895,7 +901,8 @@ def test_atomic_post_carries_candidate_count_in_body(tmp_path):
     assert "Posted 1 inline comment(s)" in payload["body"], payload["body"]
     assert payload["comments"][0]["body"] == (
         "<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+        "**High** — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
+        + _key_line(_row(), "line2")
     )
 
 
@@ -1747,6 +1754,99 @@ def test_finding_dedups_against_pre_template_run_on_thread(old_body):
     assert prs.thread_matches("src.py", 12, prs.render_finding(row, False), thread) is True
 
 
+# ── Unit: stable finding key ─────────────────────────────────────────────────
+
+_KEY_MARKER_RE = re.compile(r"<!-- swe-workbench:finding-key:v1:([0-9a-f]{16}) -->")
+
+
+def test_finding_key_is_sixteen_lowercase_hex_chars():
+    assert re.fullmatch(r"[0-9a-f]{16}", prs.finding_key(_row(), "x = 1"))
+
+
+def test_finding_key_survives_a_line_shift_when_anchor_text_is_unchanged():
+    assert prs.finding_key(_row(line=2), "x = 1") == prs.finding_key(_row(line=40), "x = 1")
+
+
+def test_finding_key_changes_with_anchor_text():
+    assert prs.finding_key(_row(), "x = 1") != prs.finding_key(_row(), "x = 2")
+
+
+def test_finding_key_changes_with_path_and_content():
+    base = prs.finding_key(_row(), "x = 1")
+    assert prs.finding_key(_row(path="other.py"), "x = 1") != base
+    assert prs.finding_key(_row(issue="a different issue"), "x = 1") != base
+
+
+def test_finding_key_normalizes_case_and_whitespace():
+    loose = _row(issue="Unchecked   NIL deref", why="Panics\nin prod", fix="guard  the call")
+    tight = _row(issue="unchecked nil deref", why="panics in prod", fix="guard the call")
+    assert prs.finding_key(loose, "  X =  1") == prs.finding_key(tight, "x = 1")
+
+
+def test_finding_key_ignores_severity_and_category_presentation():
+    assert prs.finding_key(_row(severity="Low", category="Style"), "x") == prs.finding_key(_row(), "x")
+
+
+def test_finding_key_is_the_same_for_inline_and_demoted_anchor_kinds():
+    inline = _row(anchor="inline")
+    demoted = _row(anchor="pr-level")
+    assert prs.finding_key(inline, "x = 1") == prs.finding_key(demoted, "x = 1")
+
+
+def test_finding_key_without_path_or_anchor_text_is_still_stable():
+    row = _row(anchor="pr-level", path=None, line=None)
+    assert prs.finding_key(row, "") == prs.finding_key(dict(row), "")
+
+
+def test_render_marked_finding_appends_key_marker_as_last_line():
+    row = {**prs.assign_finding_ids([_row()])[0], "_finding_key": "0123456789abcdef"}
+    rendered = prs.render_marked_finding(row, pr_level=False)
+    assert rendered.splitlines()[-1] == "<!-- swe-workbench:finding-key:v1:0123456789abcdef -->"
+    assert rendered.splitlines()[0] == "<!-- swe-workbench:review-finding:1 -->"
+
+
+def test_key_marker_stays_outside_the_review_marker_namespace():
+    row = {**prs.assign_finding_ids([_row()])[0], "_finding_key": "0123456789abcdef"}
+    assert "swe-workbench:review-" not in prs.render_marked_finding(row, False).splitlines()[-1]
+
+
+def test_dedup_text_strips_the_finding_key_marker():
+    row = {**prs.assign_finding_ids([_row(issue="alpha", why="bravo", fix="charlie")])[0], "_finding_key": "0123456789abcdef"}
+    marked = prs.render_marked_finding(row, pr_level=False)
+    assert "finding-key" not in prs.dedup_text(marked)
+    assert prs.tokenize(prs.dedup_text(marked)) == prs.tokenize(prs.dedup_text(prs.render_finding(row, False)))
+
+
+def test_assign_finding_keys_reads_the_anchor_line_text_at_head(monkeypatch):
+    lookups = []
+
+    def fake_show(head_sha, path, line):
+        lookups.append((head_sha, path, line))
+        return {2: "line2", 3: "line3"}.get(line)
+
+    monkeypatch.setattr(prs, "_git_show_line", fake_show)
+    keyed = prs.assign_finding_keys([_row(line=2), _row(line=3)], "a" * 40)
+    assert lookups == [("a" * 40, "src.py", 2), ("a" * 40, "src.py", 3)]
+    assert keyed[0]["_finding_key"] != keyed[1]["_finding_key"]
+    assert keyed[0]["_finding_key"] == prs.finding_key(_row(line=2), "line2")
+
+
+def test_assign_finding_keys_uses_empty_anchor_text_without_path_and_line():
+    keyed = prs.assign_finding_keys([_row(anchor="pr-level", path=None, line=None)], "a" * 40)
+    assert keyed[0]["_finding_key"] == prs.finding_key(keyed[0], "")
+
+
+def test_collapse_duplicate_keys_keeps_first_occurrence_and_counts_drops():
+    rows = [
+        {**_row(issue="one"), "_finding_key": "k1"},
+        {**_row(issue="two"), "_finding_key": "k2"},
+        {**_row(issue="one again"), "_finding_key": "k1"},
+    ]
+    unique, dropped = prs.collapse_duplicate_keys(rows)
+    assert [r["issue"] for r in unique] == ["one", "two"]
+    assert dropped == 1
+
+
 # ── Unit: structured row validation ──────────────────────────────────────────
 
 
@@ -1863,7 +1963,8 @@ def test_row_demoted_on_422_retry_renders_pr_level_with_location(tmp_path):
     assert body == (
         "<!-- swe-workbench:review-findings -->\n\n"
         "<!-- swe-workbench:review-finding:1 -->\n"
-        "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix"
+        "**High** · Correctness · `src.py:2` — issue on line2\n\n**Why it matters:** why\n\n**Suggested fix:** fix\n"
+        + _key_line(_row(category="Correctness"), "line2")
     )
 
 

@@ -72,6 +72,7 @@ unwrapped.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -128,8 +129,11 @@ REVIEW_BATCH_MARKER = "<!-- swe-workbench:review-findings -->"
 _REVIEW_FINDING_MARKER_PREFIX = "<!-- swe-workbench:review-finding:"
 # Keep each post within the consumer's strict section cap.
 MAX_BATCH_ROWS = 50
+# The key marker lives outside the `review-` namespace: the consumer rejects whole batches
+# that carry a stray `review-*` marker line inside a finding body.
+_FINDING_KEY_MARKER_PREFIX = "<!-- swe-workbench:finding-key:v1:"
 _PROVENANCE_MARKER_RE = re.compile(
-    r"(?m)^<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->\n?"
+    r"(?m)^<!-- swe-workbench:(?:review-(?:findings|finding:[1-9][0-9]*)|finding-key:v1:[0-9a-f]{16}) -->\n?"
 )
 _RESERVED_PLUGIN_MARKER_RE = re.compile(r"(?m)(?:^|(?<=\r))[ \t\r]*<!-- swe-workbench:")
 
@@ -162,8 +166,47 @@ def assign_finding_ids(findings: list[dict]) -> list[dict]:
     return [{**finding, "_finding_id": index} for index, finding in enumerate(findings, start=1)]
 
 
+def _normalize_for_key(text: str) -> str:
+    return " ".join((text or "").casefold().split())
+
+
+def finding_key(row: dict, anchor_text: str) -> str:
+    """Stable identity for a finding across runs: path + the anchor line's *text* (not its
+    number, so it survives line shifts) + the normalized content. The anchor kind is left out
+    on purpose, so a finding demoted from inline to PR-level keeps its key."""
+    content = _normalize_for_key(dedup_text(render_finding(row, pr_level=False)))
+    parts = (row.get("path") or "", _normalize_for_key(anchor_text), content)
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def assign_finding_keys(findings: list[dict], head_sha: str) -> list[dict]:
+    keyed = []
+    for finding in findings:
+        path, line = finding.get("path"), finding.get("line")
+        anchor_text = _git_show_line(head_sha, path, line) if path and line else None
+        keyed.append({**finding, "_finding_key": finding_key(finding, anchor_text or "")})
+    return keyed
+
+
+def collapse_duplicate_keys(findings: list[dict]) -> tuple[list[dict], int]:
+    """Keep the first row per key; returns (unique_rows, dropped_count)."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for finding in findings:
+        key = finding.get("_finding_key")
+        if key is not None and key in seen:
+            continue
+        if key is not None:
+            seen.add(key)
+        unique.append(finding)
+    return unique, len(findings) - len(unique)
+
+
 def render_marked_finding(row: dict, pr_level: bool) -> str:
-    return f"{_REVIEW_FINDING_MARKER_PREFIX}{row['_finding_id']} -->\n{render_finding(row, pr_level)}"
+    rendered = f"{_REVIEW_FINDING_MARKER_PREFIX}{row['_finding_id']} -->\n{render_finding(row, pr_level)}"
+    if row.get("_finding_key"):
+        rendered += f"\n{_FINDING_KEY_MARKER_PREFIX}{row['_finding_key']} -->"
+    return rendered
 
 
 def render_pr_level_batch(findings: list[dict]) -> str:
@@ -798,6 +841,8 @@ def main(argv: list[str] | None = None) -> int:
 
     owner, repo = args.repo.split("/", 1)
     findings = assign_finding_ids(findings)
+    findings = assign_finding_keys(findings, args.head_sha)
+    findings, duplicate_rows = collapse_duplicate_keys(findings)
     inline_findings, pr_level_findings = partition_findings(findings)
     script_dir = _script_dir()
 
@@ -805,6 +850,7 @@ def main(argv: list[str] | None = None) -> int:
         _check_siblings(script_dir)
         threads = fetch_threads(owner, repo, args.pr)
         survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
+        deduped += duplicate_rows
 
         pr_diff = _fetch_pr_diff(args.pr)
         in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
