@@ -79,6 +79,13 @@ Skills used by reviewer: swe-workbench:principle-code-review, swe-workbench:prin
 
 Top-level skill calls and zero-skill runs produce no output. Individual agents can opt out via `skill_telemetry: false` in their frontmatter. See [docs/skill-usage-telemetry.md](docs/skill-usage-telemetry.md) for full details.
 
+### Pi subagent quota profiles
+
+Use `/swe-workbench-profile economy|balanced|full` to choose a user-global Pi subagent profile.
+Economy reduces routine child cost while retaining verification and independent review; Balanced
+keeps declared effort and complete preloads with a 16k success-output cap; Full uses complete
+preloads and raises known effort levels to `max`. See [task dispatch](docs/task-dispatch.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -86,9 +93,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT.
-
-### Pi subagent quota profiles
-
-Use `/swe-workbench-profile economy|balanced|full` to choose a user-global Pi subagent profile.
-Economy reduces routine child cost while retaining verification and independent review; Balanced
-preserves existing behavior; Full uses complete preloads. See [task dispatch](docs/task-dispatch.md).

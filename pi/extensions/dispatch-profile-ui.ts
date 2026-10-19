@@ -59,9 +59,16 @@ function profileOptions(): string[] {
 
 /** Registers user selection and parent-only guidance for the dispatch profile. */
 export function registerDispatchProfile(pi: ExtensionAPI, store: ProfileStore = defaultStore()): DispatchProfileController {
+  let pendingSelection: Promise<DispatchProfile | undefined> | undefined;
+
   async function select(ctx: Pick<ExtensionContext, "hasUI" | "ui">): Promise<DispatchProfile | undefined> {
     if (!ctx.hasUI) return undefined;
     return profileFromChoice(await ctx.ui.select("swe-workbench subagent profile", profileOptions()));
+  }
+
+  function selectOnce(ctx: Pick<ExtensionContext, "hasUI" | "ui">): Promise<DispatchProfile | undefined> {
+    pendingSelection ??= select(ctx).finally(() => { pendingSelection = undefined; });
+    return pendingSelection;
   }
 
   const controller: DispatchProfileController = {
@@ -70,7 +77,7 @@ export function registerDispatchProfile(pi: ExtensionAPI, store: ProfileStore = 
       const current = store.read();
       if (current.kind === "configured") return { profile: current.profile, selectedNow: false };
       if (current.kind === "invalid") throw new Error(`invalid dispatch profile at ${store.path()}: ${current.reason}`);
-      const profile = await select(ctx);
+      const profile = await selectOnce(ctx);
       if (profile === undefined) {
         if (!ctx.hasUI) {
           throw new Error(`dispatch profile needs an interactive session; run /${DISPATCH_PROFILE_COMMAND} first`);

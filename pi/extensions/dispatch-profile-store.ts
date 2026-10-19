@@ -1,7 +1,7 @@
 /** Strict user-global persistence for the reviewed dispatch-profile enum. */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { DISPATCH_PROFILES, type DispatchProfile } from "./dispatch-profile.ts";
 
 export type ProfileReadResult =
@@ -18,7 +18,9 @@ function isProfile(value: unknown): value is DispatchProfile {
 
 /** Resolves only the user agent directory, never a target repository's `.pi` directory. */
 export function dispatchProfilePath(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  const agentDir = env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent");
+  const configured = env.PI_CODING_AGENT_DIR;
+  const expanded = configured?.startsWith("~") ? join(home, configured.slice(1)) : configured;
+  const agentDir = expanded && isAbsolute(expanded) ? expanded : join(home, ".pi", "agent");
   return join(agentDir, PROFILE_DIRECTORY, PROFILE_FILE);
 }
 

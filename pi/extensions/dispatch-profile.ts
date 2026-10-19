@@ -119,13 +119,14 @@ export function resolveDispatchProfile(params: {
     ...preloads,
     outputFamily: outputFamilyFor(agent),
     outputCapChars: outputCapFor(profile),
-    allowFullPreloadRetry: profile === "economy",
+    // A retry only restores guidance when Economy actually withheld it.
+    allowFullPreloadRetry: preloads.onDemandSkillIds.length > 0,
   };
 }
 
 /** Reads a semantic retry request only when it is the exact final output line. */
 export function parseFullPreloadRetry(text: string): FullPreloadRetryReason | undefined {
-  const normalized = text.replace(/\r\n/g, "\n");
+  const normalized = text.replace(/\r\n/g, "\n").trimEnd();
   const match = /(?:^|\n)SWB_FULL_PRELOAD_RETRY: ([a-z-]+)$/.exec(normalized);
   if (match === null) return undefined;
   const reason = match[1];
@@ -143,7 +144,7 @@ export function outputContract(family: OutputFamily, capChars: number, allowRetr
     advisory: "recommendation, evidence anchors, risks, and unresolved decisions",
   };
   const retry = allowRetry
-    ? ` If full domain guidance is required, end with exactly SWB_FULL_PRELOAD_RETRY: one approved reason.`
+    ? ` If full domain guidance is required, end with exactly SWB_FULL_PRELOAD_RETRY: <${FULL_PRELOAD_RETRY_REASONS.join("|")}>.`
     : "";
   return `Return ${shape[family]}. Keep the response within ${capChars} characters.${retry}`;
 }

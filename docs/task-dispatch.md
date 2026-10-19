@@ -145,8 +145,8 @@ re-evaluate the dispatch. In headless use, select a profile first with the comma
 | Profile | Dispatch behavior |
 | --- | --- |
 | Economy | Parent implements work below the existing delegated-implementation gate. Reviewer dispatches use their four core preloads; other reviewer skills remain available by `read`ing their listed `SKILL.md`. Routine effort is reduced one step. |
-| Balanced | Existing selection, declared effort, and complete skill preload behavior. |
-| Full | Complete preloads with maximum declared portable effort. |
+| Balanced | Declared effort and complete skill preloads, with a 16k success-output cap. |
+| Full | Complete preloads and `max` effective effort for known declared levels. |
 
 Profiles never select a provider or exact model ID: exact-ID model-policy resolution remains the
 only model authority. Economy never suppresses command-mandated consultations, specialist risk
@@ -154,7 +154,9 @@ triggers, verification, or independent review. Protected agents (`swe-workbench:
 `swe-workbench:security-auditor`, and `swe-workbench:senior-engineer`) keep their declared effort and complete preloads.
 
 An Economy child may request exactly one semantic full-preload retry by ending with an approved
-`SWB_FULL_PRELOAD_RETRY:` marker. Successful child output is bounded by profile and overflow is
-kept only in a private temporary `0600` artifact. Dispatch details contain local metadata such as
+`SWB_FULL_PRELOAD_RETRY:` marker. Approved reasons are `missing-domain-guidance`,
+`cross-domain-ambiguity`, and `output-contract-conflict`. Successful child output is bounded by
+profile and overflow may be kept in a private temporary `0600` artifact; if artifact creation
+fails, the bounded head/tail response still succeeds. Dispatch details contain local metadata such as
 profile, effort, aggregate usage, and truncation state; they never include prompts, code,
 credentials, repository paths, or remote telemetry.

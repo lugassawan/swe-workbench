@@ -13,6 +13,7 @@ import { outputContract, parseFullPreloadRetry, resolveDispatchProfile } from ".
 import type { DispatchProfileController } from "./dispatch-profile-ui.ts";
 import { runSubagentAttempt } from "./subagent-attempt.ts";
 import { capOutput, createSessionOutputStore } from "./subagent-output.ts";
+import { parseNestedTaskJson } from "./subagent-json.ts";
 import { TASK_TOOL_NAME, taskRenderCall, taskRenderResult, sanitizeAgentId } from "./task-call-line.ts";
 
 export { composeTaskCallLine, composeTaskDispatchLine, renderTaskCall, renderTaskResult, TASK_TOOL_NAME } from "./task-call-line.ts";
@@ -102,14 +103,19 @@ export function registerSubagent(pi: ExtensionAPI, root: string, profiles?: Disp
       let stdout = first.stdout;
       let parsed = first;
       if (retryReason) {
-        const second = await runSubagentAttempt(pi, input(promptFor(true, true)));
-        stdout += `\n${second.stdout}`;
-        // Parsing the concatenated streams preserves the final response and aggregates usage.
-        const { parseNestedTaskJson } = await import("./subagent-json.ts");
-        parsed = { stdout, ...parseNestedTaskJson(stdout) };
+        if (signal?.aborted) throw new Error(`task: dispatched agent "${sanitizeAgentId(agent)}" was aborted before retry`);
+        try {
+          const second = await runSubagentAttempt(pi, input(promptFor(true, true)));
+          stdout += `\n${second.stdout}`;
+          // Parsing the concatenated streams preserves the final response and aggregates usage.
+          parsed = { stdout, ...parseNestedTaskJson(stdout) };
+        } catch (err) {
+          const suffix = dispatch.warning ? ` (${dispatch.warning})` : "";
+          throw new Error(`task: dispatched agent "${sanitizeAgentId(agent)}" retry failed — ${err instanceof Error ? err.message : String(err)}${suffix}`);
+        }
       }
       const projection = outputs.project(parsed.text, plan.outputCapChars);
-      const uncachedInput = Math.max(0, parsed.usage.input - parsed.usage.cacheRead);
+      const uncachedInput = parsed.usage.input;
       return {
         content: [
           ...(dispatch.warning ? [{ type: "text" as const, text: `[swe-workbench] ${dispatch.warning}` }] : []),
