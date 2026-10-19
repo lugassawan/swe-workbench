@@ -1897,7 +1897,7 @@ def _finding_ids(text: str) -> list[int]:
 
 
 def _pr_level_row(index: int, **overrides) -> dict:
-    return _row(issue=f"pr-level {index}", anchor="pr-level", path=None, line=None, **overrides)
+    return _row(**{"issue": f"pr-level {index}", "anchor": "pr-level", "path": None, "line": None, **overrides})
 
 
 def _run_pr_level(tmp_path, findings, *, comment_responses=(), diff="", head=None, extra_args=None):
@@ -2358,10 +2358,10 @@ def _read_retry(tmp_path) -> dict:
     return json.loads(_retry_path(tmp_path).read_text())
 
 
-def _write_retry(tmp_path, rows, *, head="a" * 40, caller_tag="general", version=1, attempts=1) -> None:
+def _write_retry(tmp_path, rows, *, head="a" * 40, caller_tag="general", version=1, attempts=1, event="COMMENT") -> None:
     _retry_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
     _retry_path(tmp_path).write_text(json.dumps({
-        "version": version, "head_sha": head, "caller_tag": caller_tag, "event": "COMMENT",
+        "version": version, "head_sha": head, "caller_tag": caller_tag, "event": event,
         "attempts": attempts, "rows": rows,
     }))
 
@@ -2656,7 +2656,8 @@ def _state_file(tmp_path, **overrides) -> Path:
 
 
 def test_load_retry_state_returns_validated_rows_tagged_as_carried_over(tmp_path):
-    rows, attempts = prs.load_retry_state(str(_state_file(tmp_path, attempts=4)), "a" * 40, "general")
+    state = prs.load_retry_state(str(_state_file(tmp_path, attempts=4)), "a" * 40, "general")
+    rows, attempts = state.rows, state.attempts
     assert attempts == 4
     assert [row["issue"] for row in rows] == ["pr-level 1"]
     assert rows[0]["_from_retry"] is True and "key" not in rows[0]
@@ -2665,7 +2666,7 @@ def test_load_retry_state_returns_validated_rows_tagged_as_carried_over(tmp_path
 def test_load_retry_state_drops_rows_that_fail_the_row_contract(tmp_path):
     good, bad = _pr_level_row(1), {**_pr_level_row(2), "body": "legacy shape"}
     path = _state_file(tmp_path, rows=[{"key": "0" * 16, **good}, {"key": "1" * 16, **bad}, "not a row", 7])
-    rows, _ = prs.load_retry_state(str(path), "a" * 40, "general")
+    rows = prs.load_retry_state(str(path), "a" * 40, "general").rows
     assert [row["issue"] for row in rows] == ["pr-level 1"]
 
 
@@ -2673,16 +2674,16 @@ def test_load_retry_state_refuses_a_symlink(tmp_path):
     real = _state_file(tmp_path)
     link = tmp_path / "link.json"
     link.symlink_to(real)
-    assert prs.load_retry_state(str(link), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(link), "a" * 40, "general") == prs.RetryState()
 
 
 def test_load_retry_state_refuses_an_oversized_file(tmp_path, monkeypatch):
     monkeypatch.setattr(prs, "_MAX_RETRY_FILE_BYTES", 10)
-    assert prs.load_retry_state(str(_state_file(tmp_path)), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(_state_file(tmp_path)), "a" * 40, "general") == prs.RetryState()
 
 
 def test_load_retry_state_missing_file_is_empty(tmp_path):
-    assert prs.load_retry_state(str(tmp_path / "absent.json"), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(tmp_path / "absent.json"), "a" * 40, "general") == prs.RetryState()
 
 
 def test_write_retry_state_is_private_atomic_and_leaves_no_temp_files(tmp_path):
@@ -2839,6 +2840,7 @@ def test_a_head_that_moved_during_the_run_is_never_approved(tmp_path):
     assert (first["event"], first["commit_id"]) == ("APPROVE", "a" * 40)
     assert (retry["event"], retry["commit_id"]) == ("COMMENT", new_head)
     assert "head moved" in retry["body"]
+    assert "Review Decision: APPROVE" not in retry["body"]
     assert _data(result)["event"] == "COMMENT"
     assert "head moved" in result.stderr
 
@@ -2869,17 +2871,6 @@ def test_a_timed_out_post_is_read_back_twice_before_it_is_called_absent(tmp_path
     assert result.returncode == 0, result.stderr
     assert len(_review_posts(state_dir)) == 1, "the late-landing review must not be re-posted"
     assert (_data(result)["submitted"], _data(result)["review_url"]) == (True, _LANDED_URL)
-
-
-def test_a_fast_5xx_is_read_back_only_once(tmp_path):
-    head = _init_repo(tmp_path)
-    result, state_dir = _run_delivery(
-        tmp_path, [_row()],
-        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503, _review_post_response()],
-        review_reads=[_ndjson([]), _ndjson([])], head=head,
-    )
-    reads = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
-    assert len(reads) == 2, "one dedup read plus one read-back"
 
 
 def test_an_unconfirmed_review_with_no_rows_still_explains_itself(tmp_path):
@@ -2931,7 +2922,7 @@ def test_load_retry_state_refuses_a_world_writable_directory(tmp_path):
     shared.mkdir()
     shared.chmod(0o777)
     path = _state_file(shared)
-    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == prs.RetryState()
 
 
 def test_write_retry_state_refuses_a_world_writable_directory(tmp_path, capsys):
@@ -2946,19 +2937,19 @@ def test_write_retry_state_refuses_a_world_writable_directory(tmp_path, capsys):
 def test_load_retry_state_refuses_a_fifo_without_blocking(tmp_path):
     fifo = tmp_path / "retry.json"
     os.mkfifo(fifo)
-    assert prs.load_retry_state(str(fifo), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(fifo), "a" * 40, "general") == prs.RetryState()
 
 
 def test_load_retry_state_survives_pathologically_nested_json(tmp_path):
     path = tmp_path / "retry.json"
     path.write_text("[" * 200_000)
-    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == prs.RetryState()
 
 
 def test_load_retry_state_reads_only_a_bounded_amount(tmp_path, monkeypatch):
     path = _state_file(tmp_path)
     monkeypatch.setattr(prs, "_MAX_RETRY_FILE_BYTES", 10)
-    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == prs.RetryState()
 
 
 def test_overflow_comments_respect_the_character_budget(monkeypatch):
@@ -3014,7 +3005,7 @@ def test_a_refused_retry_directory_is_announced_on_load(tmp_path, capsys):
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
-    assert prs.load_retry_state(str(_state_file(shared)), "a" * 40, "general") == ([], 0)
+    assert prs.load_retry_state(str(_state_file(shared)), "a" * 40, "general") == prs.RetryState()
     assert "not a private directory" in capsys.readouterr().err
 
 
@@ -3025,6 +3016,196 @@ def test_both_timeout_exit_codes_count_as_a_timeout(returncode, expected):
 
 def test_a_killed_gh_is_ambiguous_even_if_its_stderr_mentions_http_422():
     assert prs._classify(_proc(137, "", "partial output ... (HTTP 422)")) == "ambiguous"
+
+
+# ── Address-feedback hardening ───────────────────────────────────────────────
+
+
+def test_a_carried_row_is_dropped_when_a_reworded_fresh_row_matches_it(tmp_path):
+    head = _init_repo(tmp_path)
+    carried = _row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=2)
+    reworded = _row(issue="alpha bravo charlie reworded", why="delta echo foxtrot", fix="golf hotel india", line=3)
+    _write_retry(tmp_path, [{"key": "0" * 16, **carried}], head=head)
+    result, state_dir = _run_delivery(
+        tmp_path, [reworded],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert len(payload["comments"]) == 1, "the carried row duplicates the reworded fresh one"
+    assert "reworded" in payload["comments"][0]["body"]
+    assert _data(result)["deduped"] == 1
+
+
+def test_a_carried_row_that_matches_no_fresh_row_is_kept(tmp_path):
+    head = _init_repo(tmp_path)
+    carried = _row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=2)
+    unrelated = _row(issue="kilo lima mike", why="november oscar papa", fix="quebec romeo sierra", line=3)
+    _write_retry(tmp_path, [{"key": "0" * 16, **carried}], head=head)
+    result, state_dir = _run_delivery(
+        tmp_path, [unrelated],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    (payload,) = _review_posts(state_dir)
+    assert len(payload["comments"]) == 2
+
+
+def test_drop_reworded_carried_rows_compares_only_carried_against_fresh():
+    fresh = {**_row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=3), "_finding_id": 1}
+    carried = {**_row(issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india", line=2),
+               "_finding_id": 2, "_from_retry": True}
+    other_path = {**carried, "_finding_id": 3, "path": "other.py"}
+    far_line = {**carried, "_finding_id": 4, "line": 40}
+    kept, dropped = prs.drop_reworded_carried_rows([fresh, carried, other_path, far_line])
+    assert [row["_finding_id"] for row in kept] == [1, 3, 4]
+    assert dropped == 1
+
+
+def test_drop_reworded_carried_rows_matches_location_free_rows_on_text_alone():
+    fresh = {**_pr_level_row(1, issue="alpha bravo charlie", why="delta echo foxtrot", fix="golf hotel india"), "_finding_id": 1}
+    carried = {**fresh, "_finding_id": 2, "issue": "alpha bravo charlie again", "_from_retry": True}
+    kept, dropped = prs.drop_reworded_carried_rows([fresh, carried])
+    assert ([row["_finding_id"] for row in kept], dropped) == ([1], 1)
+
+
+def test_carried_comment_rows_never_ride_in_an_approve(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], event="COMMENT")
+    result, state_dir = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({"--decision": "APPROVE", "--author-login": "bob"}, tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert payload["event"] == "COMMENT"
+    assert "Review Decision: COMMENT" in payload["body"] and "Review Decision: APPROVE" not in payload["body"]
+    assert _data(result)["event"] == "COMMENT"
+    assert "carried-over" in result.stderr
+
+
+def test_carried_rows_from_an_approve_run_keep_the_approve(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], event="APPROVE")
+    result, state_dir = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({"--decision": "APPROVE", "--author-login": "bob"}, tmp_path),
+    )
+    assert _review_posts(state_dir)[0]["event"] == "APPROVE"
+
+
+def test_every_ambiguous_failure_is_read_back_twice_before_it_is_called_absent(tmp_path):
+    """A 502/504 is the classic 'the write completed, the gateway gave up' case; a lagging list
+    must get a second look before the identical payload is re-posted."""
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _ndjson([]), _ndjson([_landed_review()])], head=head,
+    )
+    assert len(_review_posts(state_dir)) == 1, "the late-landing review must not be re-posted"
+    assert _data(result)["review_url"] == _LANDED_URL
+    reads = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
+    assert len(reads) == 3, "one dedup read plus two read-backs"
+
+
+def test_a_clamped_review_no_longer_announces_an_approval(tmp_path):
+    new_head = "c" * 40
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [
+            {"stdout": "", "exit": 0}, _repo_view_response(True),
+            _HTTP_422, {"stdout": json.dumps({"headRefOid": new_head}), "exit": 0}, _review_post_response(),
+        ],
+        extra_args={"--decision": "APPROVE", "--author-login": "bob", "--approve-over-open-threads": "known"},
+    )
+    first, retry = _review_posts(state_dir)
+    assert "Review Decision: APPROVE" in first["body"]
+    assert "Review Decision: COMMENT" in retry["body"]
+    assert "Review Decision: APPROVE" not in retry["body"] and "Approved with" not in retry["body"]
+
+
+def test_collect_known_keys_ignores_pending_reviews():
+    body = _posted_marked(_row(), "a")
+    pending = {"user": {"login": "alice"}, "state": "PENDING", "body": body}
+    submitted = {"user": {"login": "alice"}, "state": "COMMENTED", "body": _posted_marked(_row(issue="other"), "b")}
+    assert prs.collect_known_keys([], [pending, submitted], [], "alice") == {prs.finding_key(_row(issue="other"), "b")}
+
+
+def test_a_non_utf8_file_does_not_crash_key_assignment(tmp_path):
+    head = _init_repo(tmp_path)
+    (tmp_path / "src.py").write_bytes(b"line1\nl\xe9ine2\nline3\n")
+    _git(["add", "src.py"], cwd=tmp_path)
+    _git(["commit", "-m", "latin-1 file"], cwd=tmp_path)
+    head = _git(["rev-parse", "HEAD"], cwd=tmp_path).stdout.strip()
+    result, state_dir = _run_delivery(
+        tmp_path, [_row(line=1)],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
+        head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "stderr, expected",
+    [
+        ("gh: Not Found (HTTP 404)", "permanent"),
+        ("gh: Resource not accessible by integration (HTTP 403)", "permanent"),
+        ("gh: Bad credentials (HTTP 401)", "permanent"),
+        ("gh: Too Many Requests (HTTP 429)", "ambiguous"),
+        ("gh: Request Timeout (HTTP 408)", "ambiguous"),
+        ("gh: Bad Gateway (HTTP 502)", "ambiguous"),
+        ("gh: Unprocessable Entity (HTTP 422)", "rejected"),
+    ],
+)
+def test_classify_stops_retrying_permanent_client_errors(stderr, expected):
+    assert prs._classify(_proc(1, "", stderr)) == expected
+
+
+def test_a_permanent_failure_is_not_read_back_or_retried(tmp_path):
+    head = _init_repo(tmp_path)
+    forbidden = {"stdout": "", "stderr": "gh: Resource not accessible by integration (HTTP 403)", "exit": 1}
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), forbidden],
+        extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    assert len(_review_posts(state_dir)) == 1
+    reads = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
+    assert len(reads) == 1, "only the dedup read — a permanent error is not worth a read-back"
+    assert json.loads(result.stdout)["status"] == "partial"
+    assert len(_read_retry(tmp_path)["rows"]) == 1
+
+
+def test_rows_past_the_retry_cap_are_reported_not_silently_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr(prs, "_MAX_RETRY_ROWS", 1)
+    rows = [{"key": "0" * 16, **_pr_level_row(1)}, {"key": "1" * 16, **_pr_level_row(2)}]
+    state = prs.load_retry_state(str(_state_file(tmp_path, rows=rows)), "a" * 40, "general")
+    assert [row["issue"] for row in state.rows] == ["pr-level 1"]
+    assert "1 row(s)" in state.warning and "not carried" in state.warning
+
+
+def test_rows_that_keep_failing_are_dropped_after_the_attempt_cap_with_a_warning(tmp_path):
+    path = _state_file(tmp_path, attempts=prs.MAX_RETRY_ATTEMPTS)
+    state = prs.load_retry_state(str(path), "a" * 40, "general")
+    assert state.rows == [] and "giving up" in state.warning
+    below = _state_file(tmp_path, attempts=prs.MAX_RETRY_ATTEMPTS - 1)
+    assert len(prs.load_retry_state(str(below), "a" * 40, "general").rows) == 1
+
+
+def test_a_given_up_retry_file_is_announced_in_the_envelope_and_cleared(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], attempts=prs.MAX_RETRY_ATTEMPTS)
+    result, _ = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    assert any("giving up" in warning for warning in json.loads(result.stdout)["warnings"])
+    assert not _retry_path(tmp_path).exists()
+
+
+def test_the_stored_event_round_trips_through_load(tmp_path):
+    state = prs.load_retry_state(str(_state_file(tmp_path, event="COMMENT")), "a" * 40, "general")
+    assert (state.event, len(state.rows)) == ("COMMENT", 1)
 
 
 # ── Unit: structured row validation ──────────────────────────────────────────

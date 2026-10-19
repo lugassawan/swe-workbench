@@ -70,9 +70,14 @@ previously written out as bash+jq prose here, and it delivers a run as **one rev
   bodies are ignored. Inline findings that match no key then go through the fuzzy match (±5-line +
   Jaccard ≥ 0.4 overlap of the comment text with its headline and labels stripped, any author,
   unresolved threads only), and a 👍 reaction goes only on a live (unresolved, current) match.
+  Known limits: PR-level rows (including demoted ones) match earlier posts by exact key only — a
+  reworded out-of-diff finding counts as new; and the key has no occurrence index, so the same
+  finding on two lines that read identically (two `except Exception:` lines) shares one key. A
+  carried-over row that a reworded fresh row matches (same path, ±5 lines, Jaccard ≥ 0.4) is dropped.
 - **No-op skip.** When the current user's standing decision (their latest approved /
   changes-requested / dismissed review, else COMMENT if they only ever commented) equals the event
-  this run would submit, and nothing new or carried over survives dedup, the run makes **zero
+  this run would submit, and nothing new or carried over survives dedup (so it holds only while the
+  reviewer's output is byte-stable or inline-only: a reworded PR-level finding counts as new), the run makes **zero
   mutations** — no review, reaction or comment — and reports `.data.skipped_reason = "unchanged"`.
   A dismissed review never equals anything, so a run after a dismissal always posts; neither does
   an approval given on an older commit than the head being reviewed, so a new push is re-approved.
@@ -93,13 +98,17 @@ previously written out as bash+jq prose here, and it delivers a run as **one rev
   the head moved while the review ran, the retry is submitted as `COMMENT` (and `.data.event` says
   so) — code the reviewer never saw is never approved. A
   network/5xx failure is **never** blind-retried: every review body carries a fresh random run
-  marker, and the script reads the reviews back and looks for it. Found → landed. Absent (after a
-  client-side timeout, a second look a few seconds later) → the identical payload is retried once.
-  Unreadable, or the retry fails → unconfirmed.
+  marker, and the script reads the reviews back and looks for it. Found → landed. Absent (a second
+  look a couple of seconds later, since a timeout or a 502/504 is when the write may still be
+  completing) → the identical payload is retried once. Unreadable, or the retry fails → unconfirmed.
+  A permanent client error (401/403/404 and other 4xx besides 408/422/425/429) is neither read back
+  nor retried.
 - **Retry file.** Rows whose delivery is unconfirmed — everything after an unconfirmed review, or
   only the overflow rows whose comment batch failed — are written to `$RETRY_STATE` (atomic, mode
   0600) and merged into the next run for the same head and caller; a merged row that landed after
-  all is pruned by the key dedup. The file is deleted once nothing is pending.
+  all is pruned by the key dedup. Carried rows from a `COMMENT` run never ride in an `APPROVE` (the
+  rerun is clamped to `COMMENT`), at most 500 rows are carried (the rest are reported), and after 5
+  failed attempts the rows are dropped with a warning. The file is deleted once nothing is pending.
 
 The core applies the self-review + diff-scoping decision flip and never submits APPROVE on self-review — GitHub
 blocks a self-authored `APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of
