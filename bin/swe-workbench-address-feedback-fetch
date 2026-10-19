@@ -18,9 +18,12 @@ threads_path/pr_comments_path empty. The calling skill still owns the
 
 When OPEN: paginates `reviewThreads` (mirroring bin/swe-workbench-pr-review-submit's
 cursor loop) with a per-thread `eligible`/`skip_reason` projection, paginates REST
-`issues/{pr}/comments` with the same bot/owner-exclusion + handled-marker/manual-reply
-eligibility logic the skill's jq program used to run (ported here as direct python,
-unit-tested against the same fixtures that program was tested against), atomically
+`issues/{pr}/comments` and `pulls/{pr}/reviews` with the same bot/owner-exclusion +
+handled-marker/manual-reply eligibility logic the skill's jq program used to run (ported here
+as direct python, unit-tested against the same fixtures that program was tested against) —
+comment batches project as `prcomment:<id>:finding:<n>`, review-body batches as
+`review:<id>:finding:<n>`, and the producer's trailing finding-key line is stripped from
+every displayed body — atomically
 writes the three snapshot files at repo-scoped paths (owner-repo slug
 prefix; legacy un-scoped names when no scope resolves — ratcheted against
 swe-workbench-sweep-residuals' own legacy+scoped literal sets), and dual-reads

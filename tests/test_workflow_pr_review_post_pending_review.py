@@ -69,7 +69,8 @@ def test_posting_core_documents_the_failure_ladder_and_retry_file():
     text = _text()
     assert re.search(r"(?i)no per-comment fallback", text)
     assert re.search(r"(?i)never.{0,20}blind-retried", text)
-    assert "run\n  marker" in text or "run marker" in text
+    assert re.search(r"reads the reviews back and looks for\s+it", text)
+    assert re.search(r"submitted as `COMMENT`.{0,80}never approved", text, re.S)
     assert "--retry-state" in text and "$RETRY_STATE" in text
     assert "submit-retry.json" in text
     assert re.search(r"`\.data\.skipped_reason = \"unchanged\"`", text)

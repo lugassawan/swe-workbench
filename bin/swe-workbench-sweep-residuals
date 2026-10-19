@@ -340,7 +340,6 @@ if [ -n "$SCOPE_SLUG" ]; then
   STATE_FILES+=(
     "$PR_REVIEW_DIR/${SCOPE_STEM}.json"
     "$PR_REVIEW_DIR/${SCOPE_STEM}-followup.json"
-    "$PR_REVIEW_DIR/${SCOPE_STEM}-submit-retry.json"
     "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}.json"
     "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-threads.json"
     "$ADDR_FEEDBACK_DIR/${SCOPE_STEM}-pr-comments.json"
@@ -351,7 +350,8 @@ if [ -n "$SCOPE_SLUG" ]; then
     STATE_FILES+=("$PR_REVIEW_DIR/${SCOPE_STEM}-review-$mode.json")
   done
   shopt -s nullglob
-  for f in "$PR_REVIEW_DIR"/"${SCOPE_STEM}"-post-threads-*.json; do
+  for f in "$PR_REVIEW_DIR"/"${SCOPE_STEM}"-post-threads-*.json \
+           "$PR_REVIEW_DIR"/"${SCOPE_STEM}"-*-submit-retry.json; do
     STATE_FILES+=("$f")
   done
   shopt -u nullglob

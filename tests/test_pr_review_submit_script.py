@@ -1735,7 +1735,9 @@ def _run_dedup_scenario(tmp_path, *, findings, threads=(), reviews=(), issue_com
             _review_post_response(),
         ],
         routes={
-            "GET repos/o/r/pulls/1/reviews": [_ndjson(list(reviews))],
+            "GET repos/o/r/pulls/1/reviews": [
+                _ndjson([{**r, "commit_id": head} if r.get("commit_id") == "HEAD" else r for r in reviews])
+            ],
             "GET repos/o/r/issues/1/comments": [_ndjson(list(issue_comments))],
         },
     )
@@ -2187,8 +2189,12 @@ def test_422_retry_demotes_one_of_two_findings_into_the_body_and_preserves_ordin
 # ── No-op skip: unchanged decision and nothing new ───────────────────────────
 
 
-def _prior(state, *, login="alice", at="2026-01-01T00:00:00Z", review_id=1):
-    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "body": "earlier"}
+def _prior(state, *, login="alice", at="2026-01-01T00:00:00Z", review_id=1, commit_id="HEAD"):
+    """`commit_id="HEAD"` is replaced with the scenario repo's real head by _run_dedup_scenario."""
+    return {
+        "id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "body": "earlier",
+        "commit_id": commit_id,
+    }
 
 
 @pytest.mark.parametrize(
@@ -2765,6 +2771,231 @@ def test_an_invalid_payload_posts_nothing_and_exits_nonzero(tmp_path, monkeypatc
     assert result.returncode == 1
     assert "refusing to post an invalid review payload" in result.stderr
     assert result.stdout == ""
+    assert _mutating_calls(state_dir) == []
+
+
+# ── Review-driven hardening ──────────────────────────────────────────────────
+
+
+def _proc(returncode, stdout="", stderr=""):
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+@pytest.mark.parametrize(
+    "proc, expected",
+    [
+        (_proc(0, "{}"), "ok"),
+        (_proc(1, "", "gh: Unprocessable Entity (HTTP 422)"), "rejected"),
+        (_proc(1, "", "HTTP 422: Unprocessable Entity"), "rejected"),
+        # A timeout echoes the whole argv; a PR number containing "422" is not a rejection.
+        (_proc(124, "", "gh-timeout: 'gh api --method POST repos/o/r/pulls/1422/reviews --input -' exceeded 60s deadline"), "ambiguous"),
+        # Neither is a 5xx whose body happens to contain the digits.
+        (_proc(1, "<html>request id 8422a</html>", "gh: Bad Gateway (HTTP 502)"), "ambiguous"),
+        (_proc(1, "", "connection reset by peer"), "ambiguous"),
+    ],
+)
+def test_classify_confirms_a_rejection_only_from_an_http_422_status(proc, expected):
+    assert prs._classify(proc) == expected
+
+
+def test_a_standing_approval_on_an_older_commit_is_not_the_same_decision():
+    stale = {**_prior("APPROVED"), "commit_id": "b" * 40}
+    current = {**_prior("APPROVED"), "commit_id": "a" * 40}
+    assert prs.prior_decision([current], "alice", "a" * 40) == "APPROVE"
+    assert prs.prior_decision([stale], "alice", "a" * 40) != "APPROVE"
+    assert prs.should_skip(prs.prior_decision([stale], "alice", "a" * 40), "APPROVE", 0, 0) is False
+
+
+def test_a_comment_review_on_an_older_commit_still_counts_as_the_same_decision():
+    older = {**_prior("COMMENTED"), "commit_id": "b" * 40}
+    assert prs.prior_decision([older], "alice", "a" * 40) == "COMMENT"
+
+
+def test_unchanged_approve_on_the_current_head_still_skips(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("APPROVED")], decision="APPROVE")
+    assert _data(result)["skipped_reason"] == "unchanged" and _mutating_calls(state_dir) == []
+
+
+def test_approval_on_an_older_head_is_renewed_on_the_new_head(tmp_path):
+    stale = {**_prior("APPROVED"), "commit_id": "b" * 40}
+    result, state_dir = _skip_scenario(tmp_path, [stale], decision="APPROVE")
+    assert (_data(result)["submitted"], _data(result)["event"]) == (True, "APPROVE")
+    assert re.fullmatch(r"[0-9a-f]{40}", _review_posts(state_dir)[0]["commit_id"])
+
+
+def test_a_head_that_moved_during_the_run_is_never_approved(tmp_path):
+    """A 422 re-targets the retry at the new head; code the reviewer never saw must not be approved."""
+    new_head = "c" * 40
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [
+            {"stdout": "", "exit": 0}, _repo_view_response(True),
+            _HTTP_422, {"stdout": json.dumps({"headRefOid": new_head}), "exit": 0}, _review_post_response(),
+        ],
+        extra_args={"--decision": "APPROVE", "--author-login": "bob"},
+    )
+    assert result.returncode == 0, result.stderr
+    first, retry = _review_posts(state_dir)
+    assert (first["event"], first["commit_id"]) == ("APPROVE", "a" * 40)
+    assert (retry["event"], retry["commit_id"]) == ("COMMENT", new_head)
+    assert "head moved" in retry["body"]
+    assert _data(result)["event"] == "COMMENT"
+    assert "head moved" in result.stderr
+
+
+def test_an_unmoved_head_keeps_the_approval_through_a_422_retry(tmp_path):
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [
+            {"stdout": "", "exit": 0}, _repo_view_response(True),
+            _HTTP_422, {"stdout": json.dumps({"headRefOid": "a" * 40}), "exit": 0}, _review_post_response(),
+        ],
+        extra_args={"--decision": "APPROVE", "--author-login": "bob"},
+    )
+    assert [p["event"] for p in _review_posts(state_dir)] == ["APPROVE", "APPROVE"]
+    assert _data(result)["event"] == "APPROVE"
+
+
+def test_a_timed_out_post_is_read_back_twice_before_it_is_called_absent(tmp_path):
+    """After a client-side timeout the server may still be finishing the request, so one empty
+    list is not proof; a second read gets a chance to see the review land."""
+    head = _init_repo(tmp_path)
+    timeout = {"stdout": "", "stderr": "gh-timeout: 'gh api ...' exceeded 60s deadline", "exit": 124}
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), timeout],
+        review_reads=[_ndjson([]), _ndjson([]), _ndjson([_landed_review()])], head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(_review_posts(state_dir)) == 1, "the late-landing review must not be re-posted"
+    assert (_data(result)["submitted"], _data(result)["review_url"]) == (True, _LANDED_URL)
+
+
+def test_a_fast_5xx_is_read_back_only_once(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503, _review_post_response()],
+        review_reads=[_ndjson([]), _ndjson([])], head=head,
+    )
+    reads = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
+    assert len(reads) == 2, "one dedup read plus one read-back"
+
+
+def test_an_unconfirmed_review_with_no_rows_still_explains_itself(tmp_path):
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED],
+    )
+    envelope = json.loads(result.stdout)
+    assert (envelope["status"], envelope["data"]["retry_pending"]) == ("partial", 0)
+    assert any("not confirmed" in warning for warning in envelope["warnings"])
+
+
+def test_a_retry_state_write_failure_is_reported_in_the_envelope(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], extra_args={"--retry-state": str(blocker / "retry.json")},
+    )
+    warnings = json.loads(result.stdout)["warnings"]
+    assert any("NOT saved" in warning for warning in warnings), warnings
+    assert not any("rerun with the same --retry-state" in warning for warning in warnings)
+
+
+def test_unconfirmed_rows_without_a_retry_state_flag_do_not_promise_a_retry(tmp_path):
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED],
+    )
+    warnings = json.loads(result.stdout)["warnings"]
+    assert warnings and not any("rerun with the same --retry-state" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("overrides", [{"head": "b" * 40}, {"caller_tag": "security"}], ids=["head", "caller"])
+def test_discarding_a_retry_file_that_still_holds_rows_is_announced(tmp_path, overrides):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], **overrides)
+    result, _ = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    assert "discarding retry state" in result.stderr and "1 row" in result.stderr
+
+
+def test_load_retry_state_refuses_a_world_writable_directory(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    path = _state_file(shared)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+
+
+def test_write_retry_state_refuses_a_world_writable_directory(tmp_path, capsys):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    assert prs.write_retry_state(str(shared / "retry.json"), "a" * 40, "general", "COMMENT", 1, []) is False
+    assert "not a private directory" in capsys.readouterr().err
+    assert list(shared.iterdir()) == []
+
+
+def test_load_retry_state_refuses_a_fifo_without_blocking(tmp_path):
+    fifo = tmp_path / "retry.json"
+    os.mkfifo(fifo)
+    assert prs.load_retry_state(str(fifo), "a" * 40, "general") == ([], 0)
+
+
+def test_load_retry_state_survives_pathologically_nested_json(tmp_path):
+    path = tmp_path / "retry.json"
+    path.write_text("[" * 200_000)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+
+
+def test_load_retry_state_reads_only_a_bounded_amount(tmp_path, monkeypatch):
+    path = _state_file(tmp_path)
+    monkeypatch.setattr(prs, "_MAX_RETRY_FILE_BYTES", 10)
+    assert prs.load_retry_state(str(path), "a" * 40, "general") == ([], 0)
+
+
+def test_overflow_comments_respect_the_character_budget(monkeypatch):
+    bodies = []
+
+    def fake_gh(args, input_data=None):
+        bodies.append(args[args.index("--body") + 1])
+        return _proc(0)
+
+    monkeypatch.setattr(prs, "_gh", fake_gh)
+    rows = prs.assign_finding_ids([_pr_level_row(i, why="w" * 2_000) for i in range(60)])
+    posted, failed = prs.post_pr_level("1", rows)
+    assert (posted, failed) == (60, [])
+    assert len(bodies) > 2, "60 rows of ~2 KB cannot fit two 50-row chunks"
+    assert all(len(body) <= prs.BODY_CHAR_BUDGET for body in bodies)
+    assert [i for body in bodies for i in _finding_ids(body)] == list(range(1, 61))
+
+
+def test_overflow_post_that_cannot_even_start_is_a_failed_chunk_not_a_crash(monkeypatch):
+    def fake_gh(args, input_data=None):
+        raise OSError("argument list too long")
+
+    monkeypatch.setattr(prs, "_gh", fake_gh)
+    rows = prs.assign_finding_ids([_pr_level_row(1)])
+    assert prs.post_pr_level("1", rows) == (0, rows)
+
+
+def test_an_unparseable_review_list_aborts_instead_of_hiding_the_latest_review(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path, [_threads_response([])],
+        routes={"GET repos/o/r/pulls/1/reviews": [{"stdout": '{"id": 1, "user": ', "exit": 0}]},
+    )
+    result = _run(
+        _args(_write_findings(tmp_path, []), **{"--current-user": "alice"}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 1 and "failed to fetch PR reviews" in result.stderr
     assert _mutating_calls(state_dir) == []
 
 

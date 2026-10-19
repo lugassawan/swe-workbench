@@ -86,6 +86,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -462,7 +463,11 @@ def _fetch_paginated(path: str, what: str) -> list[dict]:
     proc = _gh(["api", "--paginate", path, "--jq", ".[]"])
     if proc.returncode != 0:
         raise PostingError(f"failed to fetch {what}: {proc.stderr.strip() or proc.stdout.strip()}")
-    return _parse_json_objects(proc.stdout)
+    try:
+        return _parse_json_objects(proc.stdout, strict=True)
+    except ValueError:
+        # A silently truncated list could hide the latest review and flip the skip decision.
+        raise PostingError(f"failed to fetch {what}: unparseable response") from None
 
 
 def fetch_reviews(owner: str, repo: str, pr: str) -> list[dict]:
@@ -559,10 +564,12 @@ def react_to_threads(threads: list[Thread], current_user: str) -> None:
 _DECISIVE_STATES = {"APPROVED": "APPROVE", "CHANGES_REQUESTED": "CHANGES_REQUESTED", "DISMISSED": "DISMISSED"}
 
 
-def prior_decision(reviews: list[dict], current_user: str) -> str | None:
+def prior_decision(reviews: list[dict], current_user: str, head_sha: str | None = None) -> str | None:
     """The current user's standing decision from their submitted reviews: the latest decisive
     one (a later COMMENTED reply does not erase an approval), else COMMENT if they only ever
-    commented, else None. With identity unknown there is no prior to compare against."""
+    commented, else None. With identity unknown there is no prior to compare against. An
+    approval given on an older commit than `head_sha` is not the same decision as approving the
+    current head, so it reports as a distinct value that never equals an event."""
     if not current_user:
         return None
     mine = [
@@ -572,7 +579,10 @@ def prior_decision(reviews: list[dict], current_user: str) -> str | None:
     ]
     decisive = sorted((r for r in mine if r.get("state") in _DECISIVE_STATES), key=lambda r: r["submitted_at"])
     if decisive:
-        return _DECISIVE_STATES[decisive[-1]["state"]]
+        latest = decisive[-1]
+        if latest["state"] == "APPROVED" and head_sha and latest.get("commit_id") != head_sha:
+            return "APPROVE_ON_OLDER_HEAD"
+        return _DECISIVE_STATES[latest["state"]]
     if any(r.get("state") == "COMMENTED" for r in mine):
         return "COMMENT"
     return None
@@ -645,18 +655,39 @@ def validate_lines(survivors: list[dict], pr_diff: str, head_sha: str, script_di
     return in_diff, demoted
 
 
+def _overflow_chunks(findings: list[dict]) -> list[list[dict]]:
+    """Contiguous ascending runs of at most MAX_BATCH_ROWS rows and BODY_CHAR_BUDGET characters;
+    a single row larger than the budget gets a chunk of its own."""
+    room = BODY_CHAR_BUDGET - len(REVIEW_BATCH_MARKER) - 4
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    used = 0
+    for finding in findings:
+        cost = len(render_marked_finding(finding, pr_level=True)) + len(_BATCH_SEPARATOR)
+        if current and (len(current) >= MAX_BATCH_ROWS or used + cost > room):
+            chunks.append(current)
+            current, used = [], 0
+        current.append(finding)
+        used += cost
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def post_pr_level(pr: str, findings: list[dict]) -> tuple[int, list[dict]]:
     """Post overflow rows as issue-comment batches; returns (posted_count, rows_not_posted)."""
     if not findings:
         return 0, []
-    # Slice contiguous ascending finding-ID ranges.
     findings = sorted(findings, key=lambda finding: finding["_finding_id"])
     posted = 0
     failed: list[dict] = []
-    for start in range(0, len(findings), MAX_BATCH_ROWS):
-        chunk = findings[start : start + MAX_BATCH_ROWS]
-        proc = _gh(["pr", "comment", str(pr), "--body", render_pr_level_batch(chunk)])
-        if proc.returncode != 0:
+    for chunk in _overflow_chunks(findings):
+        try:
+            proc = _gh(["pr", "comment", str(pr), "--body", render_pr_level_batch(chunk)])
+            ok = proc.returncode == 0
+        except OSError:
+            ok = False
+        if not ok:
             print(
                 f"[warn] gh pr comment failed — pr-level batch chunk of {len(chunk)} finding(s) NOT posted.",
                 file=sys.stderr,
@@ -669,6 +700,7 @@ def post_pr_level(pr: str, findings: list[dict]) -> tuple[int, list[dict]]:
 
 # ── Step 4 — submit ─────────────────────────────────────────────────────────
 
+READ_BACK_SETTLE_SECONDS = 3
 RUN_MARKER_PREFIX = "<!-- swe-workbench:review-run:"
 _ALLOWED_EVENTS = ("APPROVE", "COMMENT")
 MAX_REVIEW_TEXT_CHARS = 65_536
@@ -684,6 +716,7 @@ class SubmitResult:
     posted_pr_level: int
     submitted: bool
     review_url: str
+    event: str = ""  # the event actually submitted; may differ from the requested one
     # Rows whose delivery is not confirmed: everything when the review itself is unconfirmed,
     # otherwise only the overflow rows whose comment batch failed.
     pending_rows: list[dict] = field(default_factory=list)
@@ -800,7 +833,12 @@ def _classify(proc: subprocess.CompletedProcess) -> str:
     POST may have landed server-side even though the client never saw success)."""
     if proc.returncode == 0:
         return "ok"
-    return "rejected" if "422" in (proc.stdout + proc.stderr) else "ambiguous"
+    # Only gh's own status line counts: a timeout (exit 124) echoes the whole argv, and a 5xx
+    # body can carry any digits, so a bare "422" substring would call an ambiguous failure
+    # "rejected" and trigger a blind re-POST.
+    if proc.returncode != 124 and re.search(r"\bHTTP 422\b", proc.stderr):
+        return "rejected"
+    return "ambiguous"
 
 
 def submit_review(
@@ -821,9 +859,11 @@ def submit_review(
         absent -> retry the same payload once. Unreadable, or the retry fails -> unconfirmed.
     Rows the review did not carry are returned as pending_rows for the retry file."""
     inline, rows = list(inline_rows), list(body_rows)
+    reviewed_head = head_sha
+    head_note = ""
 
     def compose() -> tuple[str, list[dict] | None, list[dict]]:
-        summary = f"{summary_fn(len(inline), len(rows)).rstrip()}\n\n{run_marker}\n"
+        summary = f"{summary_fn(len(inline), len(rows)).rstrip()}{head_note}\n\n{run_marker}\n"
         body, overflow = build_review_body(summary, rows)
         return body, [_inline_comment(f) for f in inline] or None, overflow
 
@@ -834,6 +874,16 @@ def submit_review(
     if outcome == "rejected":
         new_head_data, _p = _gh_json(["pr", "view", str(pr), "--json", "headRefOid"])
         head_sha = (new_head_data or {}).get("headRefOid") or head_sha
+        if head_sha != reviewed_head and event != "COMMENT":
+            # Never approve code the reviewer did not look at: the retry targets the new head, so
+            # it can only carry comments.
+            print(
+                f"[warn] PR head moved from {reviewed_head[:7]} to {head_sha[:7]} while the review ran — "
+                f"submitting COMMENT instead of {event}.",
+                file=sys.stderr,
+            )
+            event = "COMMENT"
+            head_note = "\n\n_Submitted as COMMENT: the PR head moved while this review ran._"
         if inline:
             pr_diff = _refetch_pr_diff(pr, pr_diff)
             still_in_diff = [f for f in inline if _line_is_in_diff(f["path"], f["line"], head_sha, pr_diff, script_dir)]
@@ -854,6 +904,11 @@ def submit_review(
         review_url = _extract_review_url(proc.stdout)
     elif outcome == "ambiguous":
         found, url = _read_back(owner, repo, pr, run_marker)
+        if found == "absent" and proc.returncode == 124:
+            # After a client-side timeout the server may still be finishing the request, so one
+            # empty list is weak evidence; give it a moment and look once more.
+            time.sleep(READ_BACK_SETTLE_SECONDS)
+            found, url = _read_back(owner, repo, pr, run_marker)
         if found == "landed":
             outcome, review_url = "ok", url
         elif found == "absent":
@@ -862,7 +917,7 @@ def submit_review(
                 outcome, review_url = "ok", _extract_review_url(proc.stdout)
 
     if outcome != "ok":
-        return SubmitResult(0, 0, False, "", pending_rows=inline + rows)
+        return SubmitResult(0, 0, False, "", event=event, pending_rows=inline + rows)
 
     posted_overflow, failed_overflow = post_pr_level(pr, overflow)
     return SubmitResult(
@@ -870,6 +925,7 @@ def submit_review(
         posted_pr_level=len(rows) - len(overflow) + posted_overflow,
         submitted=True,
         review_url=review_url,
+        event=event,
         pending_rows=failed_overflow,
     )
 
@@ -1036,27 +1092,62 @@ def _row_for_state(row: dict) -> dict:
     return {"key": row.get("_finding_key", ""), **{k: v for k, v in row.items() if not k.startswith("_")}}
 
 
+def _private_dir_problem(directory: Path) -> str:
+    """Why `directory` cannot be trusted to hold the retry file, or "" when it can (a missing
+    directory is fine: it is created 0700). Another user who owns, or can write to, the
+    directory could swap the file under us."""
+    try:
+        status = directory.lstat()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        return str(exc)
+    if not stat.S_ISDIR(status.st_mode):
+        return "not a directory"
+    if status.st_uid != os.getuid():
+        return "owned by another user"
+    if status.st_mode & 0o002:
+        return "world-writable"
+    return ""
+
+
 def load_retry_state(path: str, head_sha: str, caller_tag: str) -> tuple[list[dict], int]:
     """Rows a previous run could not confirm, as (rows, attempts). The file is best-effort
-    carry-over, never trusted input: a symlink, a file owned by someone else, an oversized or
-    unparseable file, or one written for another head or caller yields nothing, and each row
-    must still pass the normal row contract. Rows that did land after all are pruned later by
-    the ordinary key dedup, so a stale entry costs nothing."""
+    carry-over, never trusted input: it is opened without following symlinks and checked on the
+    open descriptor (so nothing can be swapped in between check and read), read with a size cap,
+    and refused when the directory is not private, the file is not ours, or it is oversized,
+    unparseable or written for another head, caller or version. Each row must still pass the
+    normal row contract. Rows that did land after all are pruned later by the ordinary key
+    dedup, so a stale entry costs nothing."""
+    target = Path(path)
+    if _private_dir_problem(target.parent):
+        return [], 0
     try:
-        status = Path(path).lstat()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return [], 0
-    if not stat.S_ISREG(status.st_mode) or status.st_uid != os.getuid() or status.st_size > _MAX_RETRY_FILE_BYTES:
-        return [], 0
     try:
-        data = json.loads(Path(path).read_text())
-    except (OSError, json.JSONDecodeError, ValueError):
+        with os.fdopen(fd, "rb") as handle:
+            status = os.fstat(handle.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_uid != os.getuid():
+                return [], 0
+            raw = handle.read(_MAX_RETRY_FILE_BYTES + 1)
+        if len(raw) > _MAX_RETRY_FILE_BYTES:
+            return [], 0
+        data = json.loads(raw)
+    except (OSError, ValueError, RecursionError):
+        return [], 0
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
         return [], 0
     if (
-        not isinstance(data, dict) or data.get("version") != RETRY_STATE_VERSION
+        data.get("version") != RETRY_STATE_VERSION
         or data.get("head_sha") != head_sha or data.get("caller_tag") != caller_tag
-        or not isinstance(data.get("rows"), list)
     ):
+        if data["rows"]:
+            print(
+                f"[warn] discarding retry state for another head or caller ({len(data['rows'])} row(s)) — {path}",
+                file=sys.stderr,
+            )
         return [], 0
     rows = []
     for item in data["rows"][:_MAX_RETRY_ROWS]:
@@ -1077,6 +1168,13 @@ def write_retry_state(path: str, head_sha: str, caller_tag: str, event: str, att
         "event": event, "attempts": attempts, "rows": [_row_for_state(r) for r in rows],
     }
     tmp_name = ""
+    problem = _private_dir_problem(target.parent)
+    if problem:
+        print(
+            f"[warn] could not write retry state {path}: {target.parent} is not a private directory ({problem})",
+            file=sys.stderr,
+        )
+        return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.tmp-")
@@ -1178,7 +1276,7 @@ def main(argv: list[str] | None = None) -> int:
         skipped_reason = ""
         n_retry = sum(1 for row in in_diff + body_rows if row.get("_from_retry"))
         n_new = len(in_diff) + len(body_rows) - n_retry
-        if should_skip(prior_decision(reviews, args.current_user), event, n_new, n_retry):
+        if should_skip(prior_decision(reviews, args.current_user, args.head_sha), event, n_new, n_retry):
             skipped_reason = "unchanged"
             result = SubmitResult(posted_inline=0, posted_pr_level=0, submitted=False, review_url="")
         else:
@@ -1198,12 +1296,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"workflow-pr-review-post: {exc}", file=sys.stderr)
         return 1
 
+    persisted = False
     if args.retry_state:
         if result.pending_rows:
             attempts = prior_attempts + 1 if retry_rows else 1
-            write_retry_state(args.retry_state, args.head_sha, args.caller_tag, event, attempts, result.pending_rows)
+            persisted = write_retry_state(
+                args.retry_state, args.head_sha, args.caller_tag, event, attempts, result.pending_rows,
+            )
         else:
             clear_retry_state(args.retry_state)
+
+    warnings: list[str] = []
+    if result.pending_rows:
+        n_pending = len(result.pending_rows)
+        if not args.retry_state:
+            warnings.append(f"{n_pending} finding(s) not delivered — no --retry-state was given, so they are not saved.")
+        elif persisted:
+            warnings.append(f"{n_pending} finding(s) not delivered — rerun with the same --retry-state to retry.")
+        else:
+            warnings.append(f"{n_pending} finding(s) not delivered and NOT saved — the retry state could not be written.")
+    if not (result.submitted or skipped_reason):
+        warnings.append("the review was not confirmed — check the PR for a late-landing review, then rerun to retry.")
 
     if args.debug_dir:
         debug_dir = Path(args.debug_dir)
@@ -1223,7 +1336,7 @@ def main(argv: list[str] | None = None) -> int:
             "posted_pr_level": result.posted_pr_level,
             "deduped": deduped,
             "submitted": result.submitted,
-            "event": event,
+            "event": result.event or event,
             "decision": decision,
             "review_url": result.review_url,
             "blocked_by_unresolved": n_blocking,
@@ -1232,10 +1345,7 @@ def main(argv: list[str] | None = None) -> int:
             "skipped_reason": skipped_reason,
             "retry_pending": len(result.pending_rows),
         },
-        "warnings": (
-            [f"{len(result.pending_rows)} finding(s) not delivered — rerun with the same --retry-state to retry."]
-            if result.pending_rows else []
-        ),
+        "warnings": warnings,
     }
     json.dump(envelope, sys.stdout, ensure_ascii=True)
     sys.stdout.write("\n")
