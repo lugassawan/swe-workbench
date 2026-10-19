@@ -1443,7 +1443,7 @@ def test_n_zero_skips_atomic_post_entirely(tmp_path):
 # ── Behavioral: envelope shape ─────────────────────────────────────────────────
 
 
-def test_stdout_is_one_envelope_with_data_holding_ten_fields(tmp_path):
+def test_stdout_is_one_envelope_with_data_holding_twelve_fields(tmp_path):
     stub_dir, state_dir = _write_gh_stub(
         tmp_path,
         [
@@ -1464,7 +1464,7 @@ def test_stdout_is_one_envelope_with_data_holding_ten_fields(tmp_path):
     assert set(payload["data"].keys()) == {
         "posted_inline", "posted_pr_level", "deduped", "submitted",
         "event", "decision", "review_url", "blocked_by_unresolved",
-        "approve_over_open_threads", "override_reason",
+        "approve_over_open_threads", "override_reason", "skipped_reason", "retry_pending",
     }
 
 
@@ -2367,6 +2367,135 @@ def test_fallback_demotes_one_of_two_findings_into_the_body_and_preserves_ordina
     final = _review_posts(state_dir)[-1]
     assert _finding_ids(final["body"]) == [2]
     assert "`src.py:3` — issue on line3" in final["body"]
+
+
+# ── No-op skip: unchanged decision and nothing new ───────────────────────────
+
+
+def _prior(state, *, login="alice", at="2026-01-01T00:00:00Z", review_id=1):
+    return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "body": "earlier"}
+
+
+@pytest.mark.parametrize(
+    "reviews, expected",
+    [
+        ([], None),
+        ([_prior("APPROVED")], "APPROVE"),
+        ([_prior("COMMENTED")], "COMMENT"),
+        ([_prior("CHANGES_REQUESTED")], "CHANGES_REQUESTED"),
+        ([_prior("DISMISSED")], "DISMISSED"),
+        # A later COMMENTED reply does not erase an earlier decisive review.
+        ([_prior("APPROVED", at="2026-01-01T00:00:00Z"), _prior("COMMENTED", at="2026-01-02T00:00:00Z", review_id=2)], "APPROVE"),
+        # The latest decisive review wins, whatever order the API returned them in.
+        ([_prior("CHANGES_REQUESTED", at="2026-01-02T00:00:00Z", review_id=2), _prior("APPROVED", at="2026-01-01T00:00:00Z")], "CHANGES_REQUESTED"),
+        ([_prior("APPROVED", at="2026-01-01T00:00:00Z"), _prior("DISMISSED", at="2026-01-02T00:00:00Z", review_id=2)], "DISMISSED"),
+        # Other people's reviews and unsubmitted drafts are not ours.
+        ([_prior("APPROVED", login="bob")], None),
+        ([{**_prior("APPROVED"), "state": "PENDING", "submitted_at": None}], None),
+    ],
+)
+def test_prior_decision_maps_the_current_users_latest_decisive_review(reviews, expected):
+    assert prs.prior_decision(reviews, "alice") == expected
+
+
+def test_prior_decision_is_none_when_identity_is_unknown():
+    assert prs.prior_decision([_prior("APPROVED")], "") is None
+
+
+@pytest.mark.parametrize(
+    "prior, event, new_rows, retry_rows, skip",
+    [
+        ("COMMENT", "COMMENT", 0, 0, True),
+        ("APPROVE", "APPROVE", 0, 0, True),
+        ("COMMENT", "APPROVE", 0, 0, False),
+        ("APPROVE", "COMMENT", 0, 0, False),
+        ("DISMISSED", "APPROVE", 0, 0, False),
+        ("DISMISSED", "COMMENT", 0, 0, False),
+        ("CHANGES_REQUESTED", "COMMENT", 0, 0, False),
+        (None, "COMMENT", 0, 0, False),
+        ("COMMENT", "COMMENT", 1, 0, False),
+        ("APPROVE", "APPROVE", 0, 2, False),
+    ],
+)
+def test_should_skip_only_when_decision_unchanged_and_nothing_new(prior, event, new_rows, retry_rows, skip):
+    assert prs.should_skip(prior, event, new_rows, retry_rows) is skip
+
+
+def _skip_scenario(tmp_path, reviews, *, findings=(), threads=(), decision="COMMENT", current_user="alice"):
+    result, state_dir = _run_dedup_scenario(
+        tmp_path, findings=list(findings), threads=list(threads), reviews=reviews,
+        extra_args={"--decision": decision, "--author-login": "bob", "--current-user": current_user},
+    )
+    assert result.returncode == 0, result.stderr
+    return result, state_dir
+
+
+def test_unchanged_comment_with_no_new_findings_makes_zero_mutating_calls(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("COMMENTED")])
+    assert _mutating_calls(state_dir) == []
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "ok"
+    data = envelope["data"]
+    assert (data["submitted"], data["skipped_reason"], data["retry_pending"]) == (False, "unchanged", 0)
+    assert (data["event"], data["decision"], data["review_url"]) == ("COMMENT", "COMMENT", "")
+
+
+def test_unchanged_approve_with_no_new_findings_makes_zero_mutating_calls(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("APPROVED")], decision="APPROVE")
+    assert _mutating_calls(state_dir) == []
+    assert (_data(result)["event"], _data(result)["skipped_reason"]) == ("APPROVE", "unchanged")
+
+
+def test_commented_reply_after_an_approval_still_counts_as_approve(tmp_path):
+    reviews = [_prior("APPROVED"), _prior("COMMENTED", at="2026-01-05T00:00:00Z", review_id=2)]
+    result, state_dir = _skip_scenario(tmp_path, reviews, decision="APPROVE")
+    assert _mutating_calls(state_dir) == []
+    assert _data(result)["skipped_reason"] == "unchanged"
+
+
+def test_dismissed_review_then_approve_posts(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("DISMISSED")], decision="APPROVE")
+    assert (_data(result)["submitted"], _data(result)["skipped_reason"]) == (True, "")
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_no_prior_review_posts(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [])
+    assert _data(result)["submitted"] is True
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_decision_change_posts_even_without_new_findings(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("COMMENTED")], decision="APPROVE")
+    assert _data(result)["event"] == "APPROVE"
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_new_findings_with_the_same_decision_post(tmp_path):
+    result, state_dir = _skip_scenario(
+        tmp_path, [_prior("COMMENTED")],
+        findings=[_row(anchor="pr-level", path=None, line=None, issue="brand new")],
+    )
+    assert _data(result)["submitted"] is True
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_skipped_run_adds_no_reaction_even_when_findings_match_a_live_thread(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=2, body=_posted_marked(_row(), "line2"), author="alice")
+    result, state_dir = _skip_scenario(tmp_path, [_prior("COMMENTED")], findings=[_row()], threads=[node])
+    assert _data(result)["deduped"] == 1
+    assert _mutating_calls(state_dir) == []
+
+
+def test_unknown_identity_never_skips(tmp_path):
+    result, state_dir = _skip_scenario(tmp_path, [_prior("COMMENTED")], current_user="")
+    assert (_data(result)["submitted"], _data(result)["skipped_reason"]) == (True, "")
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_posted_run_reports_empty_skipped_reason_and_zero_retry_pending(tmp_path):
+    result, _ = _skip_scenario(tmp_path, [])
+    assert (_data(result)["skipped_reason"], _data(result)["retry_pending"]) == ("", 0)
 
 
 # ── Unit: structured row validation ──────────────────────────────────────────

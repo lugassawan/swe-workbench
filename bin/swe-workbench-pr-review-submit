@@ -503,21 +503,24 @@ def _react(thread: Thread, current_user: str) -> None:
         _gh(["api", "graphql", "-F", f"subjectId={thread.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
 
 
-def dedup_and_react(
+def dedup_findings(
     threads: list[Thread], findings: list[dict], current_user: str, known_keys: set[str] | frozenset = frozenset(),
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, list[Thread]]:
     """Exact key first (any surface, any thread state), then fuzzy matching of inline rows
-    against unresolved threads. A thumbs-up goes only on a live (unresolved, current) match."""
+    against unresolved threads. Returns (survivors, deduped, threads_to_thumbs_up): a thumbs-up
+    is owed only to a live (unresolved, current) match, and is left to the caller so that a
+    run which turns out to be a no-op can skip it."""
     key_threads = _threads_by_key(threads, current_user)
     survivors: list[dict] = []
     deduped = 0
+    to_react: list[Thread] = []
     for finding in findings:
         key = finding.get("_finding_key")
         if key and key in known_keys:
             deduped += 1
             live = next((t for t in key_threads.get(key, []) if not t.is_resolved and not t.is_outdated), None)
             if live is not None:
-                _react(live, current_user)
+                to_react.append(live)
             continue
         if finding.get("anchor") == "inline":
             rendered = render_marked_finding(finding, pr_level=False)
@@ -527,10 +530,54 @@ def dedup_and_react(
             )
             if match is not None:
                 deduped += 1
-                _react(match, current_user)
+                to_react.append(match)
                 continue
         survivors.append(finding)
+    return survivors, deduped, to_react
+
+
+def react_to_threads(threads: list[Thread], current_user: str) -> None:
+    reacted: set[str] = set()
+    for thread in threads:
+        if thread.id not in reacted:
+            reacted.add(thread.id)
+            _react(thread, current_user)
+
+
+def dedup_and_react(
+    threads: list[Thread], findings: list[dict], current_user: str, known_keys: set[str] | frozenset = frozenset(),
+) -> tuple[list[dict], int]:
+    survivors, deduped, to_react = dedup_findings(threads, findings, current_user, known_keys)
+    react_to_threads(to_react, current_user)
     return survivors, deduped
+
+
+_DECISIVE_STATES = {"APPROVED": "APPROVE", "CHANGES_REQUESTED": "CHANGES_REQUESTED", "DISMISSED": "DISMISSED"}
+
+
+def prior_decision(reviews: list[dict], current_user: str) -> str | None:
+    """The current user's standing decision from their submitted reviews: the latest decisive
+    one (a later COMMENTED reply does not erase an approval), else COMMENT if they only ever
+    commented, else None. With identity unknown there is no prior to compare against."""
+    if not current_user:
+        return None
+    mine = [
+        r for r in reviews
+        if ((r.get("user") or {}).get("login") or "") == current_user
+        and r.get("submitted_at") and r.get("state") != "PENDING"
+    ]
+    decisive = sorted((r for r in mine if r.get("state") in _DECISIVE_STATES), key=lambda r: r["submitted_at"])
+    if decisive:
+        return _DECISIVE_STATES[decisive[-1]["state"]]
+    if any(r.get("state") == "COMMENTED" for r in mine):
+        return "COMMENT"
+    return None
+
+
+def should_skip(prior: str | None, event: str, new_rows: int, retry_rows: int) -> bool:
+    """A run is a no-op when it would re-submit the decision already standing, with nothing new
+    to say. DISMISSED and CHANGES_REQUESTED never equal an event, so they always post."""
+    return prior is not None and prior == event and new_rows == 0 and retry_rows == 0
 
 
 def _git_show_line(head_sha: str, path: str, line: int) -> str | None:
@@ -979,7 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
         reviews = fetch_reviews(owner, repo, args.pr) if args.current_user else []
         issue_comments = fetch_issue_comments(owner, repo, args.pr) if args.current_user else []
         known_keys = collect_known_keys(threads, reviews, issue_comments, args.current_user)
-        survivors, deduped = dedup_and_react(threads, findings, args.current_user, known_keys)
+        survivors, deduped, to_react = dedup_findings(threads, findings, args.current_user, known_keys)
         deduped += duplicate_rows
         survivors_inline, pr_level_findings = partition_findings(survivors)
 
@@ -1004,17 +1051,24 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         override_note = args.approve_over_open_threads if override_used else None
-        is_private = _repo_is_private(owner, repo)
 
-        def summary_fn(n_inline: int, pr_level_count: int) -> str:
-            byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
-            return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
+        skipped_reason = ""
+        if should_skip(prior_decision(reviews, args.current_user), event, len(in_diff) + len(body_rows), 0):
+            skipped_reason = "unchanged"
+            result = SubmitResult(posted_inline=0, posted_pr_level=0, submitted=False, review_url="")
+        else:
+            react_to_threads(to_react, args.current_user)
+            is_private = _repo_is_private(owner, repo)
 
-        result = submit_review(
-            owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
-            inline_rows=in_diff, body_rows=body_rows, summary_fn=summary_fn, current_user=args.current_user,
-            pr_diff=pr_diff, script_dir=script_dir,
-        )
+            def summary_fn(n_inline: int, pr_level_count: int) -> str:
+                byline_full = build_byline(args.byline, is_private, n_inline, pr_level_count, deduped)
+                return build_summary(decision, byline_full, is_self_review, override_note=override_note, n_blocking=n_blocking)
+
+            result = submit_review(
+                owner=owner, repo=repo, pr=args.pr, head_sha=args.head_sha, event=event,
+                inline_rows=in_diff, body_rows=body_rows, summary_fn=summary_fn, current_user=args.current_user,
+                pr_diff=pr_diff, script_dir=script_dir,
+            )
     except PostingError as exc:
         print(f"workflow-pr-review-post: {exc}", file=sys.stderr)
         return 1
@@ -1031,7 +1085,7 @@ def main(argv: list[str] | None = None) -> int:
 
     envelope = {
         "schema": "swb.pr-review-submit/1",
-        "status": "ok" if result.submitted else "partial",
+        "status": "ok" if (result.submitted or skipped_reason) else "partial",
         "data": {
             "posted_inline": result.posted_inline,
             "posted_pr_level": result.posted_pr_level,
@@ -1043,6 +1097,8 @@ def main(argv: list[str] | None = None) -> int:
             "blocked_by_unresolved": n_blocking,
             "approve_over_open_threads": bool(args.approve_over_open_threads),
             "override_reason": args.approve_over_open_threads,
+            "skipped_reason": skipped_reason,
+            "retry_pending": 0,
         },
         "warnings": [],
     }

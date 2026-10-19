@@ -92,6 +92,8 @@ EXPECTED_REGISTRY = {
         "blocked_by_unresolved": "int",
         "approve_over_open_threads": "bool",
         "override_reason": "str",
+        "skipped_reason": "str",
+        "retry_pending": "int",
     },
     "swb.pr-review-threads-evidence/1": {
         "owner": "str",
@@ -415,6 +417,7 @@ def test_special_characters_round_trip_in_string_data_fields():
             "review_url": "quote\" backslash\\ newline\n tab\t done",
             "blocked_by_unresolved": 0,
             "approve_over_open_threads": False, "override_reason": "",
+            "skipped_reason": "", "retry_pending": 0,
         },
     )
     result = _run(["swb.pr-review-submit/1"], stdin=json.dumps(envelope))
