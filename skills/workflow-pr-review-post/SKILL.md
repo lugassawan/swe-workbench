@@ -1,6 +1,6 @@
 ---
 name: workflow-pr-review-post
-description: Posting core shared by workflow-pr-review (both first-pass and followup modes) and the specialist /swe-workbench:review PR-mode sub-flow — takes a normalized findings/decision/byline payload, dedupes against existing review threads (±5-line fuzzy match + Jaccard ≥ 0.4), posts new inline or PR-level comments, applies the self-review + diff-scoping decision flip, and submits APPROVE or COMMENT.
+description: Posting core shared by workflow-pr-review and the specialist /swe-workbench:review PR-mode sub-flow — takes a findings/decision/byline payload, dedupes by stable key and fuzzy match (±5-line, Jaccard ≥ 0.4) against threads and earlier reviews, posts one review of inline and PR-level findings (skipped if unchanged), applies the self-review + diff-scoping flip, submits APPROVE or COMMENT.
 orchestrator: true
 ---
 
@@ -38,6 +38,7 @@ contract callers must satisfy, not a check this skill performs itself.
 | `CURRENT_USER`/`AUTHOR_LOGIN` | `--current-user`/`--author-login` | optional; empty = identity unknown (self-review flip and auto-approve both stay suppressed — never guesses) |
 | `FINDINGS[]` row | `--findings-json <path\|->` (JSON array) | each row `{severity, issue, why, fix, anchor}` plus optional `category`; `anchor=inline` rows also carry `{path, line}`, `anchor=pr-level` rows may carry `path` (and `line`, only with `path`) so the headline can locate them. **The script renders the comment body** from these fields (`**<Sev>**[ · <Category>][ · \`path:line\` (pr-level only)] — <issue>`, then `**Why it matters:** <why>` and `**Suggested fix:** <fix>` as separate paragraphs) — callers never pass `body`; a row that does is rejected. `issue`/`why`/`fix` are required non-empty strings; `issue`, `severity` and `category` are single-line, `why`/`fix` may span lines (a value that opens with a code fence, e.g. a ` ```suggestion ` block, is rendered on its own paragraph so GitHub still treats it as a suggestion); `path` must be single-line with no backticks, and a `pr-level` `line` is valid only alongside a `path` — omit both when unknown rather than passing a range or blank. **Inline comment bodies must NOT contain the byline/remark** in any form, so no field may embed it — it is a review-level concern the script builds once. |
 | `CALLER_TAG` | `--caller-tag` | non-empty — `general`, `followup`, or the specialist mode name; also scopes an optional `--debug-dir` dump (`<tag>-threads.json` / `<tag>-payload.json`) so two callers reviewing the same PR concurrently never collide |
+| `SCOPE_SLUG` | — (builds `--retry-state`) | non-empty owner-repo slug the caller already resolved with `swe-workbench-repo-scope`; this skill derives `RETRY_STATE="/tmp/swe-workbench-pr-review/${SCOPE_SLUG}-${PR}-submit-retry.json"` from it, so two repositories' same-numbered PRs never share a retry file |
 | `APPROVE_OVER_OPEN_THREADS` | `--approve-over-open-threads` | optional; empty = no override. When non-empty: a single line, ≤200 chars, must not embed the swe-workbench remark — validated by the script, not this skill |
 
 ## Post
@@ -47,34 +48,59 @@ command -v swe-workbench-pr-review-submit >/dev/null 2>&1 && command -v swe-work
   echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
   exit 1
 }
+RETRY_STATE="/tmp/swe-workbench-pr-review/${SCOPE_SLUG}-${PR}-submit-retry.json"
 RESULT=$(swe-workbench-pr-review-submit \
   --repo "$OWNER/$REPO" --pr "$PR" --head-sha "$HEAD_SHA" --base "$BASE" \
   --decision "$DECISION" --byline "$BYLINE" --caller-tag "$CALLER_TAG" \
   --findings-json "$FINDINGS_JSON_PATH" --blocking-scope "$BLOCKING_SCOPE" \
   --current-user "$CURRENT_USER" --author-login "$AUTHOR_LOGIN" \
   --approve-over-open-threads "$APPROVE_OVER_OPEN_THREADS" \
+  --retry-state "$RETRY_STATE" \
   | swe-workbench-result-check swb.pr-review-submit/1) || exit 1
 ```
 
-This one call replaces the fetch/dedup/pre-validate/assemble/self-review-gate/atomic-submit
-mechanism previously written out as bash+jq prose here: fetches existing review threads
-(paginated), dedups inline findings against them (±5-line fuzzy match + Jaccard ≥ 0.4 overlap of
-the comment text with its headline and `Why it matters:`/`Suggested fix:` labels stripped, any
-author, unresolved only) with a 👍 reaction on match, pre-validates surviving inline
-anchors against the PR diff — demoting out-of-diff/ambiguous rows into one pr-level batch comment
-per 50 findings rather than dropping them — applies the self-review + diff-scoping decision flip, and
-submits: atomically when possible (one `comments[]` POST), with a single bounded retry on a
-confirmed 422 (re-fetches HEAD via `headRefOid`, genuinely re-validates/demotes, retries once) and
-a per-comment fallback otherwise. Every generated finding body carries a provenance marker: each
-PR-level batch begins `<!-- swe-workbench:review-findings -->`, and every generated finding begins
-`<!-- swe-workbench:review-finding:<positive-integer> -->`; address-feedback uses these markers to
-split a valid batch into finding-level triage items. Review summary bodies are not consumed by
-address-feedback. The core never submits APPROVE on self-review — GitHub blocks a self-authored
-`APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of `$DECISION`. A network/5xx failure is **never** blind-retried (no idempotency key for this
-endpoint); the script confirms via a read-your-write check before conceding to the fallback. The
-core owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)` remark (appended to
-the byline on a confirmed-public repo only) — callers' own `BYLINE` stays identity-only and never
-embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for the full rationale, and
+This one call replaces the fetch/dedup/pre-validate/assemble/self-review-gate/submit mechanism
+previously written out as bash+jq prose here, and it delivers a run as **one review**:
+
+- **Dedup.** Every finding carries a stable key (path + the text of its anchor line + normalized
+  content, written as a trailing `finding-key:v1` marker line) that survives line shifts and an
+  inline→PR-level demotion. A finding is dropped when its key already appears in the current
+  user's own earlier bodies — any thread (resolved, unresolved or outdated), earlier review
+  bodies, legacy issue-comment batches — or twice in the same payload; keys in anyone else's
+  bodies are ignored. Inline findings that match no key then go through the fuzzy match (±5-line +
+  Jaccard ≥ 0.4 overlap of the comment text with its headline and labels stripped, any author,
+  unresolved threads only), and a 👍 reaction goes only on a live (unresolved, current) match.
+- **No-op skip.** When the current user's standing decision (their latest approved /
+  changes-requested / dismissed review, else COMMENT if they only ever commented) equals the event
+  this run would submit, and nothing new or carried over survives dedup, the run makes **zero
+  mutations** — no review, reaction or comment — and reports `.data.skipped_reason = "unchanged"`.
+  A dismissed review never equals anything, so a run after a dismissal always posts.
+- **One payload.** Surviving inline anchors are pre-validated against the PR diff; out-of-diff or
+  ambiguous rows are demoted to PR-level, never dropped. The inline comments, the summary and every
+  PR-level row (as an ascending-ID batch after the summary, up to 50 rows / ~60,000 characters) go
+  out in a single `POST .../pulls/{n}/reviews`. Only the overflow beyond that budget is posted
+  afterwards as issue-comment batches — the one allowed second mutation. Every body carries a
+  provenance marker: each batch begins `<!-- swe-workbench:review-findings -->` and every finding
+  `<!-- swe-workbench:review-finding:<positive-integer> -->`; address-feedback uses them to split a
+  valid batch, whether it sits in a review body or an issue comment, into finding-level triage
+  items.
+- **Failure ladder, no per-comment fallback.** Every payload is validated before it is sent. A
+  confirmed 422 re-fetches HEAD and the diff, demotes whatever is now out-of-diff into the body and
+  retries once; a second 422 demotes every inline row into the body for a final body-only POST. A
+  network/5xx failure is **never** blind-retried: every review body carries a fresh random run
+  marker, and the script reads the reviews back and looks for it. Found → landed. Provably absent →
+  the identical payload is retried once. Unreadable, or the retry fails → unconfirmed.
+- **Retry file.** Rows whose delivery is unconfirmed — everything after an unconfirmed review, or
+  only the overflow rows whose comment batch failed — are written to `$RETRY_STATE` (atomic, mode
+  0600) and merged into the next run for the same head and caller; a merged row that landed after
+  all is pruned by the key dedup. The file is deleted once nothing is pending.
+
+The core applies the self-review + diff-scoping decision flip and never submits APPROVE on self-review — GitHub
+blocks a self-authored `APPROVE` outright, so `.data.event` is forced to `COMMENT` regardless of
+`$DECISION`. It owns the ` [swe-workbench](https://github.com/lugassawan/swe-workbench)`
+remark (appended to the byline on a confirmed-public repo only) — callers' own `BYLINE` stays
+identity-only and never embeds it. See `bin/swe-workbench-pr-review-submit`'s module docstring for
+the full rationale, and
 [`shared/docs/gh-api-field-flags.md`](../../shared/docs/gh-api-field-flags.md) /
 [`shared/docs/shell-echo-vs-printf.md`](../../shared/docs/shell-echo-vs-printf.md) for the shell-side pitfalls
 building the payload in Python sidesteps entirely.
@@ -83,7 +109,10 @@ The checker validates the envelope (schema `swb.pr-review-submit/1` — see
 [`shared/docs/runtime-result-contract.md`](../../shared/docs/runtime-result-contract.md)) and
 re-emits it unchanged into `$RESULT`, or the pipeline fails and `|| exit 1` aborts before any
 further step. `.data` carries `posted_inline`, `posted_pr_level`, `deduped`, `submitted`, `event`,
-`decision`, `review_url`, `blocked_by_unresolved`. Every field is report-only here — none of them
+`decision`, `review_url`, `blocked_by_unresolved`, `skipped_reason` (`"unchanged"` for a no-op skip, else
+`""`) and `retry_pending` (rows not yet delivered; `0` on a full success). `.data.submitted = false` with
+`skipped_reason = "unchanged"` and `status: "ok"` is a deliberate skip, not a failure; with `status: "partial"` it
+means the review could not be confirmed. Every field is report-only here — none of them
 gates a branch this skill takes independently of `.data.decision` (a blocking thread already forces
 `decision` to `COMMENT`, see "Semantic shift" below) — so every field is read straight from
 `$RESULT` with `jq` at the point it's used, always `printf '%s' "$RESULT" | jq ...` or `jq
@@ -113,12 +142,15 @@ This skill ends once the review is submitted and offers no follow-up step; addre
 
 | Failure | Signal | Action |
 |---|---|---|
-| A pre-validated finding goes out-of-diff at post time, or the atomic POST 422s outright (stale `commit_id`) | `.data.submitted = false` after a `422`-bearing response, `status: "partial"` | Demoted to the pr-level batch (never dropped); retried once against a re-fetched HEAD, then falls back to the per-comment path |
-| Atomic POST fails on network/5xx | Non-422 failure | Never blind-retried; confirmed via a read-your-write check before falling back |
-| Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: submits the plain decision review directly, no atomic POST attempted. |
-| All findings dedup-matched, or a pr-level batch chunk post fails | `.data.posted_inline = 0` and `.data.posted_pr_level = 0`, or a `[warn]` on stderr | Submit proceeds regardless — inline findings still post/submit; a failed chunk is dropped with a warning and the count reflects the chunks that posted |
+| A pre-validated finding goes out-of-diff at post time, or the POST 422s outright (stale `commit_id`) | a `422`-bearing response | Demoted into the review body (never dropped); retried once against a re-fetched HEAD (`headRefOid`); a second 422 demotes every inline row for one body-only POST |
+| POST fails on network/5xx | Non-422 failure | Never blind-retried; the reviews are read back by run marker — landed means done, provably absent means one retry of the identical payload, unreadable means unconfirmed |
+| Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: the review carries only the summary and any PR-level batch. |
+| Decision unchanged and nothing new | `.data.skipped_reason = "unchanged"`, `.data.submitted = false`, `status: "ok"` | Zero mutations — nothing was posted on purpose. |
+| All findings dedup-matched | `.data.posted_inline = 0` and `.data.posted_pr_level = 0` | Submit proceeds unless the decision is also unchanged (then it is skipped, above). |
+| More PR-level findings than the body holds, and an overflow batch post fails | `[warn]` on stderr, `.data.retry_pending > 0`, `status: "partial"` | The review itself landed; only the failed rows are kept in the retry file for the next run. |
 | Unresolved, non-outdated review thread(s) exist from a prior review | `.data.blocked_by_unresolved > 0` | `APPROVE` force-downgraded to `COMMENT`, severity-blind by design. Resolve the thread(s) — manually, or via `/swe-workbench:address-feedback`'s ADDRESSED/CLARIFIED/DEFERRED triage — to unblock a future `APPROVE`; or pass `APPROVE_OVER_OPEN_THREADS` to submit `APPROVE` anyway for a thread deliberately left open. |
-| Every submit path exhausted with nothing landed | `status: "partial"`, `.data.submitted = false` | The script still exits 0 (never aborts the caller's flow); treat every count in `.data` as best-effort rather than a confirmed post. |
+| Every submit path exhausted with nothing confirmed | `status: "partial"`, `.data.submitted = false`, `.data.retry_pending > 0` | The script still exits 0 (never aborts the caller's flow); treat every count in `.data` as best-effort rather than a confirmed post. The unconfirmed rows wait in `$RETRY_STATE`; re-running the same review merges them. |
+| The outgoing payload fails its pre-POST check (e.g. an oversized body) | exit 1, no envelope, `refusing to post an invalid review payload` on stderr | Nothing was posted. Shorten the offending finding text and rerun. |
 
 ## Common mistakes
 
@@ -126,6 +158,6 @@ This skill ends once the review is submitted and offers no follow-up step; addre
 |---|---|
 | Re-deriving the fetch/dedup/pre-validate/submit mechanism inline instead of calling `swe-workbench-pr-review-submit` | The script is the single source of truth for posting mechanics — every caller invokes it the same way |
 | Passing a byline that embeds the swe-workbench remark or `posted`/`deduped` counts | The script appends both once it knows the real counts and confirmed repo visibility — an embedded byline fails input-contract validation |
-| Assuming pr-level findings dedup across runs | They don't (known v1 limitation) — re-running the same specialist mode on an unchanged PR re-posts the batch |
-| Reading `.data.posted_inline`/etc. before checking `.data.submitted` (or `status`) | A `false` `.data.submitted` (`status: "partial"`) means the fallback exhausted its options; treat the counts as best-effort in that case |
+| Reading `.data.submitted = false` as a failure | Check `.data.skipped_reason` first: `"unchanged"` is a deliberate no-op, not a posting failure |
+| Reading `.data.posted_inline`/etc. before checking `.data.submitted` (or `status`) | A `false` `.data.submitted` with `status: "partial"` means delivery could not be confirmed (the rows wait in the retry file); treat the counts as best-effort in that case |
 | Using `echo "$RESULT" \| jq` instead of `printf '%s' "$RESULT" \| jq` or `jq ... <<<"$RESULT"` | `echo` on a JSON-bearing variable can corrupt it — see `shared/docs/shell-echo-vs-printf.md` |

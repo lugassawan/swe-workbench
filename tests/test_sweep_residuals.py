@@ -814,6 +814,23 @@ class TestRepoScopedStateFileSweep:
             own.unlink(missing_ok=True)
             foreign.unlink(missing_ok=True)
 
+    def test_scoped_sweep_reaps_the_submit_retry_file_of_its_own_repo_only(self, tmp_path):
+        repo = _build_scoped_repo(tmp_path)
+        n = _unique_n()
+        PR_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        own = PR_REVIEW_DIR / f"7-octocat-widgets-{n}-submit-retry.json"
+        foreign = PR_REVIEW_DIR / f"other-repo-{n}-submit-retry.json"
+        own.write_text("{}")
+        foreign.write_text("{}")
+        try:
+            result = _run_script(repo, n, _scoped_env(tmp_path))
+            _assert_contract(result, "0", "1", "0")
+            assert not own.exists(), "a leftover retry file is a residual once the PR is merged"
+            assert foreign.exists(), "a foreign repo's retry file must never be touched"
+        finally:
+            own.unlink(missing_ok=True)
+            foreign.unlink(missing_ok=True)
+
     def test_explicit_repo_state_scope_overrides_mismatching_origin(self, tmp_path):
         repo = _build_scoped_repo(
             tmp_path, "https://github.com/unrelated/project.git"

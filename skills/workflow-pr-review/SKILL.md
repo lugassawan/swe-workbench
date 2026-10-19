@@ -219,7 +219,7 @@ Also scan for `^\*\*Blocking Scope:\s+(NONE|OUT-OF-DIFF-ONLY|IN-DIFF)\*\*$`; par
 
 Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity`, `issue`, `why`, `fix`, `path`, `line` — the reviewer's `Issue`, `Why it matters` and `Suggested fix` columns verbatim, never a composed `body`; the posting script renders the layout; on a `pr-level` row omit `path`/`line` unless the reviewer gave a single `path:<integer>` — a range or blank rejects the whole batch); anchor `inline` when the line is in-diff, `pr-level` otherwise (per the reviewer's own out-of-diff informational marker). Invoke `swe-workbench:workflow-pr-review-post` with:
 
-- `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN` — from Step 1.
+- `PR`, `OWNER`, `REPO`, `HEAD_SHA`, `BASE`, `CURRENT_USER`, `AUTHOR_LOGIN`, `SCOPE_SLUG` — from Step 1 (`SCOPE_SLUG` names the core's retry file).
 - `DECISION`, `BLOCKING_SCOPE` — parsed in Step 5 (`$DECISION` may since have been forced to `COMMENT` by Step 5.5's `AskUserQuestion` — pass whatever it currently holds).
 - `BYLINE` — `$BYLINE` from the mode table above (`` _Reviewed by `swe-workbench:reviewer`_ `` for first-pass, `` _Re-reviewed by `swe-workbench:reviewer`_ `` for followup; identity-only — the core appends the swe-workbench remark itself, conditionally on public repos; see `skills/workflow-pr-review-post/SKILL.md` § Post).
 - `CALLER_TAG` — `$CALLER_TAG` from the mode table above (`general` / `followup`; scopes the core's own threads-cache filename so it never collides with a concurrent run of the other mode or a specialist run on the same PR).
@@ -227,7 +227,7 @@ Parse Step 4's `swe-workbench:reviewer` output into `FINDINGS[]` rows (`severity
 - `APPROVE_OVER_OPEN_THREADS` — whatever Step 5.5 produced (possibly empty: unset when `$DECISION` was never `APPROVE`, when Step 5.5 short-circuited on `nothing_to_verify`, when every thread resolved, or when the `AskUserQuestion` prompt was answered "Submit COMMENT").
 - `FINDINGS[]` — as parsed above.
 
-The core owns thread fetch + dedup, inline/PR-level posting, the self-review gate + diff-scoping flip, submit, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
+The core owns thread/review fetch + key and fuzzy dedup, one-review delivery (inline comments and PR-level findings in a single POST; an unchanged decision with nothing new is skipped without posting), the self-review gate + diff-scoping flip, the retry file, and its own state reap. See `skills/workflow-pr-review-post/SKILL.md` for the full contract, dedup algorithm, and failure modes.
 
 ### Step 7 — Cleanup
 
