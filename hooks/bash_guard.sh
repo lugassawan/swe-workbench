@@ -380,7 +380,7 @@ _push_token_awk='
 '
 
 # The active segment is held in globals because Bash 3.2 has no namerefs.
-# `scan_force_push_text` resets them at every lexical separator.
+# `scan_git_text` resets them at every lexical separator.
 _push_tokens=()
 _push_here=()
 _push_subs=()
@@ -420,24 +420,37 @@ _is_shell_interpreter() {
   return 1
 }
 
-_classify_force_push_segment() {
-  local _prefix _base _t push_text
-  local _i=0 _git_index=-1 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
-  local _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
-  local _consume_next=0 _seen_push=0 _global_value=0 _context_value=0 _dynamic_flag_candidate=0
-  local _consume_flag="" _glued_flag_candidate=0 _skip_tok=0 _tail=""
-  local _flag_cluster_re='^[A-Za-z]*f[A-Za-z]*$'
-  local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
+# Locates the `git` command word of the active segment and walks its global options up to the
+# first token equal to $1. Globals (Bash 3.2 has no namerefs): _git_index (the `git` word),
+# _git_sub_index (the $1 word, -1 when absent), _git_ctx (-C/--git-dir/--work-tree as separate
+# words, original order so `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op),
+# _git_ctx_dynamic, _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx
+# (a GIT_DIR-like assignment before `git`). Returns 1 when the segment is not a git command.
+_parse_git_invocation() {
+  local _want=$1 _prefix _base _t _name
+  local _i=0 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
+  local _global_value=0 _context_value=0 _config_value=0 _ctx_flag=""
+  _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0
+  _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0
 
-  (( ${#_push_tokens[@]} )) || return
+  (( ${#_push_tokens[@]} )) || return 1
   for _prefix in "${_push_tokens[@]}"; do
+    # an assignment is judged on the raw word: stripping a path first would turn `X=/a/b` into `b`
+    if [[ "$_prefix" == [[:alpha:]_]=* || "$_prefix" == [[:alpha:]_][[:alnum:]_]*=* ]]; then
+      _prefix_args=1
+      _name=${_prefix%%=*}
+      case "$_name" in
+        GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CONFIG*) _git_env_ctx=1 ;;
+      esac
+      _i=$((_i + 1))
+      continue
+    fi
     if (( ${#_prefix} > 255 )); then _base=$_prefix; else _base=${_prefix##*/}; fi
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     case "$_base" in
       git)
         if _is_git_continuation "${_push_tokens[_i + 1]-}"; then _found_git=1; break; fi
         (( _prefix_args )) || _prefix_ok=0 ;;
-      [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
       '!'|if|while|until|do|then|else|elif|coproc) ;;
       "$_DYNAMIC_TOKEN") ;;
       -exec|-execdir|-ok|-okdir) _prefix_ok=1; _prefix_args=0 ;;
@@ -451,31 +464,62 @@ _classify_force_push_segment() {
     _i=$((_i + 1))
   done
   (( _push_saw_tab )) && _prefix_ok=1
-  (( _found_git && _prefix_ok )) || return
+  (( _found_git && _prefix_ok )) || return 1
   _git_index=$_i
 
   for ((_i = _git_index; _i < ${#_push_tokens[@]}; _i++)); do
     _t=${_push_tokens[_i]}
-    if (( _seen_push == 0 )); then
-      if (( _global_value )); then
-        (( _context_value && ${#_t} )) && _has_context=1
-        _global_value=0
-        _context_value=0
-        continue
+    if (( _global_value )); then
+      if (( _context_value )); then
+        if (( ${#_t} )); then _git_has_context=1; _git_ctx+=("$_ctx_flag" "$_t"); fi
+        [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _git_ctx_dynamic=1
+      elif (( _config_value )); then
+        _note_config_key "$_t"
       fi
-      case "$_t" in
-        push) _seen_push=1 ;;
-        -c|--config|--config-env|--exec-path|--namespace)
-          _global_value=1 ;;
-        -C|--git-dir|--work-tree)
-          _global_value=1; _context_value=1 ;;
-        --git-dir=*|--work-tree=*|-C?*) _has_context=1 ;;
-        --config=*|--config-env=*|--exec-path=*|--namespace=*|-c*) ;;
-        -*) ;;
-        *) ;;
-      esac
+      _global_value=0; _context_value=0; _config_value=0
       continue
     fi
+    if [[ "$_t" == "$_want" ]]; then _git_sub_index=$_i; break; fi
+    case "$_t" in
+      -c|--config-env) _global_value=1; _config_value=1 ;;
+      --config|--exec-path|--namespace) _global_value=1 ;;
+      -C|--git-dir|--work-tree) _global_value=1; _context_value=1; _ctx_flag=$_t ;;
+      --git-dir=*|--work-tree=*)
+        _git_has_context=1; _git_ctx+=("${_t%%=*}" "${_t#*=}")
+        [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _git_ctx_dynamic=1 ;;
+      -C?*)
+        _git_has_context=1; _git_ctx+=(-C "${_t#-C}")
+        [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _git_ctx_dynamic=1 ;;
+      --config-env=*) _note_config_key "${_t#*=}" ;;
+      -c?*) _note_config_key "${_t#-c}" ;;
+      *) ;;
+    esac
+  done
+  return 0
+}
+
+# core.worktree / core.bare redirect which tree a command operates on; keys are case-insensitive.
+_note_config_key() {
+  local _key=${1%%=*}
+  case "$_key" in
+    [Cc][Oo][Rr][Ee].[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee]|[Cc][Oo][Rr][Ee].[Bb][Aa][Rr][Ee]) _git_cfg_risky=1 ;;
+  esac
+}
+
+_classify_force_push_segment() {
+  local _t push_text
+  local _i _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
+  local _consume_next=0 _dynamic_flag_candidate=0
+  local _consume_flag="" _glued_flag_candidate=0 _skip_tok=0 _tail=""
+  local _flag_cluster_re='^[A-Za-z]*f[A-Za-z]*$'
+  local _protected_ref_re='(^|[[:space:]:+])(refs/heads/)?(main|master|release/[^[:space:]:]*)([[:space:]]|:|$)'
+
+  _parse_git_invocation push || return
+  (( _git_sub_index >= 0 )) || return
+  _has_context=$_git_has_context
+
+  for ((_i = _git_sub_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
+    _t=${_push_tokens[_i]}
     if (( _consume_next )); then
       case "$_t" in
         --force|-f) _has_force=1 ;;
@@ -562,7 +606,7 @@ _classify_force_push_segment() {
   (( _has_refspec )) || printf 'CHECK_CURRENT\n'
 }
 
-MAX_PUSH_SCAN_DEPTH=4
+MAX_GIT_SCAN_DEPTH=4
 
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
@@ -571,7 +615,7 @@ _scan_nested_text() {
   local -a _saved_here=(${_push_here[@]+"${_push_here[@]}"})
   local -a _saved_subs=(${_push_subs[@]+"${_push_subs[@]}"})
   local _saved_saw_tab=$_push_saw_tab
-  scan_force_push_text "$_nested_text" "$((_nested_depth + 1))"
+  scan_git_text "$_nested_text" "$((_nested_depth + 1))"
   _push_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
   _push_here=(${_saved_here[@]+"${_saved_here[@]}"})
   _push_subs=(${_saved_subs[@]+"${_saved_subs[@]}"})
@@ -715,9 +759,9 @@ _scan_known_wrapper_body() {
   fi
 }
 
-scan_force_push_text() {
+scan_git_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value _lex_ok=0
-  if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
+  if (( _scan_depth >= MAX_GIT_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
       'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`]|$)'; then
       printf 'BLOCK\tindeterminate\n'
@@ -789,7 +833,7 @@ while IFS=$'\t' read -r _policy _reason; do
       esac
       ;;
   esac
-done < <(scan_force_push_text "$_bj"; printf 'DONE\n')
+done < <(scan_git_text "$_bj"; printf 'DONE\n')
 if (( ! _scan_done )); then
   echo 'BLOCKED: force-push scan did not complete (internal error)' >&2
   exit 2

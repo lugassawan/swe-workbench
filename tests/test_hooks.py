@@ -1387,6 +1387,20 @@ class TestHeredocAndCandidateEdges:
         assert result.returncode == 2 and "BLOCKED" in result.stderr
 
 
+class TestAssignmentPrefixWithPath:
+    """An env assignment whose value holds a `/` is still an assignment, not a command word."""
+
+    @pytest.mark.parametrize("cmd", [
+        "FOO=/a/b git push --force origin main",
+        "FOO=/a/b BAR=/c/d git push --force origin main",
+    ])
+    def test_path_valued_assignment_does_not_hide_a_force_push(
+        self, guard_script, repo_on, cmd
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(repo_on("feature")))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+
+
 class TestHardResetBlocker:
     @pytest.mark.parametrize("branch", ["main", "master", "release/2025-01"])
     def test_blocked_on_protected_branch(self, guard_script, repo_on, branch):
