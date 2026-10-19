@@ -208,6 +208,27 @@ _push_token_awk='
     }
     return r
   }
+  # End index of the unquoted brace group opening at s[p] when it is expansion (a comma or `..`
+  # at its top level, no unquoted whitespace or operator inside), else 0.
+  function brace_group_end(s, p, n,   d, k, ch, q, expands) {
+    d = 0; q = ""; expands = 0
+    for (k = p; k <= n; k++) {
+      ch = substr(s, k, 1)
+      if (q != "") {
+        if (ch == "\\" && q == "\"") k++
+        else if (ch == q) q = ""
+        continue
+      }
+      if (ch == "\\") { k++; continue }
+      if (ch == "\047" || ch == "\"") { q = ch; continue }
+      if (ch ~ /[ \t\n;|&<>()`]/) return 0
+      if (ch == "{") d++
+      else if (ch == "}") { d--; if (d == 0) return expands ? k : 0 }
+      else if (d == 1 && ch == ",") expands = 1
+      else if (d == 1 && ch == "." && substr(s, k + 1, 1) == ".") expands = 1
+    }
+    return 0
+  }
   function emit_separator() {
     emit_word()
     redirect_target = 0; here_string = 0
@@ -320,6 +341,7 @@ _push_token_awk='
       if (c == "$" && (substr(line, i + 1, 1) == "\047" || substr(line, i + 1, 1) == "\"")) continue
       if (c == "$" && substr(line, i + 1, 1) == "(") {
         subtext = ""; sub_depth = 1; sub_sq = 0; sub_dq = 0
+        sub_w = ""; sub_wcmd = 0; sub_case[1] = 0
         i += 2
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
@@ -352,6 +374,17 @@ _push_token_awk='
               }
             }
           }
+          # `case` and `esac` at command position: inside a case, `)` ends a pattern
+          if (!sub_sq && !sub_dq && sc ~ /[A-Za-z0-9_]/) {
+            if (sub_w == "") sub_wcmd = (subtext ~ /(^|[;&|({])[ \t]*$/ || subtext ~ /(^|[ \t;&|({])(then|do|else|elif)[ \t]+$/)
+            sub_w = sub_w sc
+          } else {
+            if (sub_wcmd) {
+              if (sub_w == "case") sub_case[sub_depth]++
+              else if (sub_w == "esac" && sub_case[sub_depth] > 0) sub_case[sub_depth]--
+            }
+            sub_w = ""; sub_wcmd = 0
+          }
           if (sc == "\\" && !sub_sq) {
             subtext = subtext sc
             if (i < n) { i++; subtext = subtext substr(line, i, 1) }
@@ -359,7 +392,8 @@ _push_token_awk='
           }
           if (sc == "\047" && !sub_dq) { sub_sq = !sub_sq; subtext = subtext sc; continue }
           if (sc == "\"" && !sub_sq) { sub_dq = !sub_dq; subtext = subtext sc; continue }
-          if (!sub_sq && !sub_dq && sc == "(") { sub_depth++; subtext = subtext sc; continue }
+          if (!sub_sq && !sub_dq && sc == "(") { sub_depth++; sub_case[sub_depth] = 0; subtext = subtext sc; continue }
+          if (!sub_sq && !sub_dq && sc == ")" && sub_case[sub_depth] > 0) { subtext = subtext sc; continue }
           if (!sub_sq && !sub_dq && sc == ")") {
             sub_depth--
             if (sub_depth == 0) break
@@ -378,8 +412,10 @@ _push_token_awk='
           sc = substr(line, i, 1)
           if (sc == "\n") sc = ";"
           if (sc == "\\" && i < n) {
-            subtext = subtext sc
-            i++; subtext = subtext substr(line, i, 1)
+            # inside backticks `\\`, `\`` and `\$` lose one backslash; anything else keeps it
+            i++; bq = substr(line, i, 1)
+            if (bq == "\\" || bq == "`" || bq == "$") subtext = subtext bq
+            else subtext = subtext sc bq
             continue
           }
           if (sc == "`") break
@@ -391,6 +427,10 @@ _push_token_awk='
       if (c ~ /[;|&()]/) {
         emit_separator()
         continue
+      }
+      if (c == "{" && substr(word, length(word), 1) != "$") {
+        be = brace_group_end(line, i, n)
+        if (be > 0) { word = word dyn; word_started = 1; i = be; continue }
       }
       if (c == "[" || c == "]" || c == "{" || c == "}") continue
       word = word c; word_started = 1
