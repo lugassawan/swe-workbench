@@ -365,8 +365,8 @@ def test_resolve_event_blocking_downgrade_wins_over_out_of_diff_upgrade():
 def test_resolve_event_self_review_with_blocking_threads_downgrades_decision_too():
     """Self-review already forces `event` to COMMENT regardless of `decision` — but the
     blocking-threads downgrade must still apply to `decision` itself (not just `event`),
-    since callers (e.g. workflow-pr-review-post's CTA suppression) read `decision`, not
-    `event`, to decide whether there's anything left to address."""
+    since callers read `decision`, not `event`, to tell whether anything is left to
+    address."""
     event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice", 1)
     assert is_self is True
     assert decision == "COMMENT", "decision must be downgraded even under self-review"
@@ -394,9 +394,9 @@ def test_resolve_event_override_with_zero_blocking_threads_is_a_no_op():
 def test_resolve_event_override_does_not_defeat_self_review_clamp():
     """The override bypasses exactly the thread-count downgrade — it must never let a
     self-authored review submit as APPROVE. Under self-review, override has zero effect
-    on either `event` or `decision`: callers (e.g. workflow-pr-review-post's CTA
-    suppression) read `decision`, not `event`, to decide whether there's anything left
-    to address, so `decision` must be downgraded too, not just `event`."""
+    on either `event` or `decision`: callers read `decision`, not `event`, to tell
+    whether anything is left to address, so `decision` must be downgraded too, not
+    just `event`."""
     event, decision, is_self, known = prs.resolve_event("APPROVE", "NONE", "alice", "alice", 1, override=True)
     assert is_self is True
     assert event == "COMMENT", "self-review must never submit APPROVE, override or not"
