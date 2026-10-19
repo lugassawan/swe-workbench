@@ -1132,6 +1132,66 @@ def test_plan_marker_arms_from_any_state():
     )
 
 
+_PHASE_CUSTOM_RUN_DRIVER = """
+import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[2]).href);
+const handlers = {};
+const stubPi = { on(name, fn) { handlers[name] = fn; }, registerTool() {} };
+mod.registerPhase(stubPi, process.argv[3]);
+const ctx = { hasUI: true, mode: "non-tui", ui: { notify() {}, confirm: async () => true }, model: undefined };
+const blocked = () => {
+  const r = handlers.tool_call({ toolName: "edit", input: { path: "src/main.ts" } }, { cwd: "/repo" });
+  return r !== undefined && r.block === true;
+};
+// A pi.sendMessage(..., { triggerTurn: true }) run: messageType "custom", no `prompt` field.
+const custom = () => handlers.before_agent_start({ messageType: "custom", message: {}, systemPrompt: "" }, ctx);
+const disarmedCustom = await custom();
+const disarmedCustomArms = blocked();
+const armed = await handlers.before_agent_start(
+  { messageType: "user", prompt: "go\\n<!-- swb-phase: plan -->\\nnow", systemPrompt: "" }, ctx);
+const armedCustom = await custom();
+console.log(JSON.stringify({
+  disarmedCustom: disarmedCustom ?? null,
+  disarmedCustomArms,
+  armedSystemPrompt: armed?.systemPrompt ?? null,
+  armedCustomSystemPrompt: armedCustom?.systemPrompt ?? null,
+}));
+"""
+
+
+@requires_node
+def test_custom_message_run_keeps_phase_section_and_never_arms():
+    """Pi 1.3.0 fires before_agent_start for `sendMessage(..., { triggerTurn: true })` runs with
+    messageType "custom" and no `prompt`. Such a run must not arm plan phase (there is no
+    command text to carry a marker), but an already-armed phase must still govern it — an
+    exception from reading the missing prompt is swallowed by the handler's catch, which
+    would silently drop the phase section from the system prompt."""
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "phase-custom-run-dump.mjs"
+        driver.write_text(_PHASE_CUSTOM_RUN_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [node, "--experimental-strip-types", str(driver), str(PHASE_TS), str(tmp)],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    dumped = json.loads(result.stdout)
+    assert dumped["disarmedCustom"] is None, (
+        "a custom-message run from the disarmed state must leave the system prompt untouched"
+    )
+    assert dumped["disarmedCustomArms"] is False, (
+        "a custom-message run carries no command text and must never arm plan phase"
+    )
+    assert dumped["armedSystemPrompt"], "the user plan turn must append the plan section"
+    assert dumped["armedCustomSystemPrompt"] == dumped["armedSystemPrompt"], (
+        "an armed plan phase must still append its section on a custom-message run — "
+        "a swallowed prompt-read error would drop it"
+    )
+
+
 _PHASE_KICKOFF_DRIVER = """
 import { pathToFileURL } from "node:url";
 const mod = await import(pathToFileURL(process.argv[2]).href);

@@ -79,7 +79,9 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
       if (!ctx.hasUI) return undefined;
       // Latest explicit plan command wins: the marker arms from ANY state (even execute —
       // re-invoking a plan command after approval re-arms), refreshing the flip idempotently.
-      if (extractPhase(event.prompt) === "plan") {
+      // A "custom" run (sendMessage + triggerTurn) has no prompt to carry a marker, so it can
+      // never arm — but the phase section below must still govern it.
+      if (event.messageType !== "custom" && extractPhase(event.prompt) === "plan") {
         phase = "plan";
         // Re-arming plan voids a pending kickoff: the user chose more planning over executing.
         kickoffPending = false;
