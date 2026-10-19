@@ -31,7 +31,7 @@ ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "bin" / "swe-workbench-pr-review-submit"
 
 STUB_BODY = '''#!/usr/bin/env python3
-import json, os, sys
+import json, os, re, sys
 
 state_dir = os.environ["GH_STUB_STATE"]
 responses = json.load(open(os.environ["GH_STUB_RESPONSES"]))
@@ -62,6 +62,17 @@ def route_key(args):
     return " ".join(args[:2])
 
 
+def run_marker():
+    """The run marker the script put in its latest review POST, for `{{RUN_MARKER}}` in a response."""
+    found = ""
+    for name in sorted(os.listdir(state_dir)):
+        if name.startswith(("call-", "route-call-")):
+            stdin = json.load(open(os.path.join(state_dir, name))).get("stdin", "")
+            hits = re.findall(r"<!-- swe-workbench:review-run:[0-9a-f-]+ -->", stdin)
+            found = hits[-1] if hits else found
+    return found
+
+
 key = route_key(argv)
 seq = bump("seq")
 if key in routes:
@@ -80,7 +91,7 @@ else:
     resp = responses[i] if i < len(responses) else {
         "stdout": "", "stderr": f"gh-stub: no response configured for call {i} (argv={argv})", "exit": 99,
     }
-sys.stdout.write(resp.get("stdout", ""))
+sys.stdout.write(resp.get("stdout", "").replace("{{RUN_MARKER}}", run_marker()))
 sys.stderr.write(resp.get("stderr", ""))
 sys.exit(resp.get("exit", 0))
 '''
@@ -892,7 +903,7 @@ def test_failed_pr_diff_fetch_aborts_loudly_instead_of_silent_demotion(tmp_path)
     assert len(calls) == 2, "must abort immediately after the failed pr diff call, no further gh calls"
 
 
-# ── Behavioral: atomic submit / 422 / 5xx / model-A fallback ─────────────────
+# ── Behavioral: atomic submit / 422 / 5xx ladders ─────────────────────────────
 
 
 def test_atomic_post_carries_candidate_count_in_body(tmp_path):
@@ -1030,135 +1041,6 @@ def test_422_retry_falls_back_to_stale_diff_when_refetch_fails(tmp_path):
     assert _data(result)["submitted"] == True
     assert _data(result)["posted_inline"] == 1
     assert "PR diff re-fetch failed during 422 retry — reusing the pre-retry diff: gh: rate limited" in result.stderr
-
-
-def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\n"
-        "index e69de29..1234567 100644\n"
-        "--- a/src.py\n"
-        "+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n"
-        "+line1\n"
-        "+line2\n"
-        "+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
-            {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
-            _review_post_response(),  # final plain review submit
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["posted_inline"] == 1
-    assert _data(result)["submitted"] == True
-    calls = _gh_calls(state_dir)
-    per_comment_calls = [c for c in calls if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
-    assert len(per_comment_calls) == 1
-
-
-def test_5xx_issues_zero_retries_and_one_read_your_write_call(tmp_path):
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\n"
-        "index e69de29..1234567 100644\n"
-        "--- a/src.py\n"
-        "+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n"
-        "+line1\n"
-        "+line2\n"
-        "+line3\n"
-    )
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 503: Service Unavailable", "exit": 1},  # network/5xx
-            {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
-            _review_post_response(),
-        ],
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    calls = _gh_calls(state_dir)
-    # Scoped to payloads carrying comments[] — the model-A fallback's own final decision-only
-    # POST hits the same endpoint with the same flags but is a distinct event, not a retry.
-    atomic_post_calls = [
-        c for c in calls
-        if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"] and "comments" in json.loads(c["stdin"])
-    ]
-    assert len(atomic_post_calls) == 1, "network/5xx must never blind-retry the atomic POST"
-    list_calls = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
-    # One read up front for key dedup, one read-your-write after the ambiguous failure.
-    assert len(list_calls) == 2, f"expected the dedup read plus one read-your-write list call, got {calls}"
-
-
-def test_confirmed_landed_5xx_reports_submitted_without_reposting(tmp_path):
-    head = _init_repo(tmp_path)
-    pr_diff = (
-        "diff --git a/src.py b/src.py\n"
-        "index e69de29..1234567 100644\n"
-        "--- a/src.py\n"
-        "+++ b/src.py\n"
-        "@@ -0,0 +1,3 @@\n"
-        "+line1\n"
-        "+line2\n"
-        "+line3\n"
-    )
-    landed_url = "https://github.com/o/r/pull/1#pullrequestreview-999"
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": pr_diff, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "connection reset by peer", "exit": 1},  # ambiguous network failure
-        ],
-        routes={"GET repos/o/r/pulls/1/reviews": [
-            {"stdout": json.dumps([{"user": {"login": "alice"}, "commit_id": head, "html_url": landed_url}]), "exit": 0},
-        ]},
-    )
-    responses_file = tmp_path / "gh_responses.json"
-    findings = _write_findings(tmp_path, [
-        _row(),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=responses_file,
-    )
-    assert result.returncode == 0, result.stderr
-    assert _data(result)["submitted"] == True
-    assert _data(result)["posted_inline"] == 1
-    assert _data(result)["review_url"] == landed_url
-    calls = _gh_calls(state_dir)
-    post_calls = [c for c in calls if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"]]
-    assert len(post_calls) == 1, "a confirmed read-your-write landing must not trigger a repost"
 
 
 def test_self_review_submits_comment_event_never_approve(tmp_path):
@@ -1488,12 +1370,10 @@ def test_status_is_ok_when_submitted_true(tmp_path):
 
 
 def test_status_is_partial_when_submitted_false(tmp_path):
-    """Every fallback exhausted (double-422 -> per-comment attempt also fails -> no
-    confirmed landing -> final plain submit also fails) leaves submitted=false — the
-    script still exits 0 (never aborts the caller), but status must reflect the
-    genuine partial failure. Same call sequence as
-    test_double_422_falls_through_to_per_comment_model_a, with the last two calls
-    made to fail instead of succeed."""
+    """The whole ladder exhausted (double-422 -> body-only POST fails ambiguously -> read-back
+    finds nothing -> the one retry fails too) leaves submitted=false — the script still exits 0
+    (never aborts the caller), but status must reflect the genuine partial failure. Same call
+    sequence as test_double_422_ends_in_a_single_body_only_post, with the last call failing."""
     head = _init_repo(tmp_path)
     pr_diff = (
         "diff --git a/src.py b/src.py\n"
@@ -1515,8 +1395,8 @@ def test_status_is_partial_when_submitted_false(tmp_path):
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
             {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "stderr": "still failing", "exit": 1},  # per-comment fallback POST fails
-            {"stdout": "", "stderr": "final submit fails too", "exit": 1},  # final plain review submit fails
+            {"stdout": "", "stderr": "HTTP 503: still failing", "exit": 1},  # body-only POST fails ambiguously
+            {"stdout": "", "stderr": "HTTP 503: retry fails too", "exit": 1},  # the one retry (read-back: absent)
         ],
     )
     responses_file = tmp_path / "gh_responses.json"
@@ -2304,71 +2184,6 @@ def test_422_retry_demotes_one_of_two_findings_into_the_body_and_preserves_ordin
     assert "`src.py:3` — issue on line3" in retry["body"]
 
 
-def test_row_demoted_by_failed_per_comment_fallback_lands_in_the_body(tmp_path):
-    """The model-A fallback demotes a row whose individual POST fails — it must land in the
-    review body as a re-render (path:line in the headline), not as the inline body."""
-    head = _init_repo(tmp_path)
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": _PR_DIFF_3_LINES, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
-            {"stdout": _PR_DIFF_3_LINES, "exit": 0},  # re-fetch PR diff alongside HEAD
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST fails
-            _review_post_response(),  # final plain review submit
-        ],
-    )
-    findings = _write_findings(tmp_path, [_row(category="Correctness")])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
-    )
-    assert result.returncode == 0, result.stderr
-    assert (_data(result)["posted_inline"], _data(result)["posted_pr_level"]) == (0, 1)
-    assert _pr_comment_bodies(state_dir) == []
-    assert "**High** · Correctness · `src.py:2` — issue on line2" in _review_posts(state_dir)[-1]["body"]
-
-
-def test_fallback_demotes_one_of_two_findings_into_the_body_and_preserves_ordinals(tmp_path):
-    head = _init_repo(tmp_path)
-    stub_dir, state_dir = _write_gh_stub(
-        tmp_path,
-        [
-            _threads_response([]),
-            {"stdout": _PR_DIFF_3_LINES, "exit": 0},
-            _repo_view_response(True),
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # first atomic POST 422s
-            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
-            {"stdout": _PR_DIFF_3_LINES, "exit": 0},  # re-fetch PR diff alongside HEAD
-            {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "", "exit": 0},  # per-comment fallback POST for finding 1 succeeds
-            {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST for finding 2 fails
-            _review_post_response(),  # final plain review submit
-        ],
-    )
-    findings = _write_findings(tmp_path, [
-        _row(issue="issue on line2", line=2),
-        _row(issue="issue on line3", line=3),
-    ])
-    result = _run(
-        _args(findings, **{"--head-sha": head, "--current-user": "alice"}),
-        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
-    )
-    assert result.returncode == 0, result.stderr
-    assert (_data(result)["posted_inline"], _data(result)["posted_pr_level"]) == (1, 1)
-    per_comment_posts = [c for c in _gh_calls(state_dir) if "/comments" in json.dumps(c["argv"]) and c["argv"][0] == "api"]
-    assert len(per_comment_posts) == 2
-    landed = next(a for a in per_comment_posts[0]["argv"] if a.startswith("body="))
-    assert landed.startswith("body=<!-- swe-workbench:review-finding:1 -->\n")
-    final = _review_posts(state_dir)[-1]
-    assert _finding_ids(final["body"]) == [2]
-    assert "`src.py:3` — issue on line3" in final["body"]
-
-
 # ── No-op skip: unchanged decision and nothing new ───────────────────────────
 
 
@@ -2496,6 +2311,461 @@ def test_unknown_identity_never_skips(tmp_path):
 def test_posted_run_reports_empty_skipped_reason_and_zero_retry_pending(tmp_path):
     result, _ = _skip_scenario(tmp_path, [])
     assert (_data(result)["skipped_reason"], _data(result)["retry_pending"]) == ("", 0)
+
+
+# ── Delivery ladders, payload validation and the retry file ──────────────────
+
+_LANDED_URL = "https://github.com/o/r/pull/1#pullrequestreview-999"
+_READ_FAILED = {"stdout": "", "stderr": "gh: HTTP 502", "exit": 1}
+_HTTP_503 = {"stdout": "", "stderr": "HTTP 503: Service Unavailable", "exit": 1}
+_HTTP_422 = {"stdout": "", "stderr": "HTTP 422: Unprocessable Entity", "exit": 1}
+
+
+def _landed_review(*, user="alice", body="summary\n\n{{RUN_MARKER}}\n"):
+    return {
+        "id": 999, "user": {"login": user}, "state": "COMMENTED", "submitted_at": "2026-01-02T00:00:00Z",
+        "commit_id": "a" * 40, "html_url": _LANDED_URL, "body": body,
+    }
+
+
+def _run_delivery(tmp_path, findings, positional, *, review_reads=None, extra_args=None, head=None):
+    """positional = the calls after the thread read: pr diff, repo view, then the POSTs."""
+    routes = {"GET repos/o/r/pulls/1/reviews": review_reads} if review_reads is not None else None
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [_threads_response([]), *positional], routes=routes)
+    args = {"--current-user": "alice", **({"--head-sha": head} if head else {}), **(extra_args or {})}
+    result = _run(
+        _args(_write_findings(tmp_path, findings), **args),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    return result, state_dir
+
+
+def _retry_path(tmp_path) -> Path:
+    return tmp_path / "state" / "retry.json"
+
+
+def _with_retry(extra_args: dict, tmp_path) -> dict:
+    return {**extra_args, "--retry-state": str(_retry_path(tmp_path))}
+
+
+def _read_retry(tmp_path) -> dict:
+    return json.loads(_retry_path(tmp_path).read_text())
+
+
+def _write_retry(tmp_path, rows, *, head="a" * 40, caller_tag="general", version=1, attempts=1) -> None:
+    _retry_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    _retry_path(tmp_path).write_text(json.dumps({
+        "version": version, "head_sha": head, "caller_tag": caller_tag, "event": "COMMENT",
+        "attempts": attempts, "rows": rows,
+    }))
+
+
+def test_every_review_body_carries_one_unique_run_marker(tmp_path):
+    result, state_dir = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    markers = re.findall(r"(?m)^<!-- swe-workbench:review-run:[0-9a-f-]{36} -->$", payload["body"])
+    assert len(markers) == 1
+    assert prs.new_run_marker() != prs.new_run_marker()
+
+
+def test_double_422_ends_in_a_single_body_only_post(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row(line=2)],
+        [
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True),
+            _HTTP_422,  # atomic POST
+            {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},  # re-fetch diff
+            _HTTP_422,  # the one retry
+            _review_post_response(),  # final body-only POST
+        ],
+        head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    first, retry, final = _review_posts(state_dir)
+    assert "comments" in first and "comments" in retry
+    assert "comments" not in final, "the last resort carries no inline comments"
+    assert _finding_ids(final["body"]) == [1] and "`src.py:2` — issue on line2" in final["body"]
+    data = _data(result)
+    assert (data["submitted"], data["posted_inline"], data["posted_pr_level"], data["retry_pending"]) == (True, 0, 1, 0)
+    assert [c for c in _all_calls(state_dir) if "/pulls/1/comments" in json.dumps(c["argv"])] == [], (
+        "there is no per-comment fallback"
+    )
+
+
+def test_5xx_where_the_read_back_finds_the_marker_counts_as_landed_without_a_retry(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _ndjson([_landed_review()])], head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(_review_posts(state_dir)) == 1, "a landed review must never be re-posted"
+    data = _data(result)
+    assert (data["submitted"], data["posted_inline"], data["review_url"], data["retry_pending"]) == (
+        True, 1, _LANDED_URL, 0,
+    )
+    assert json.loads(result.stdout)["status"] == "ok"
+
+
+def test_5xx_where_the_read_back_finds_no_marker_retries_once(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503, _review_post_response()],
+        review_reads=[_ndjson([]), _ndjson([])], head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    first, retry = _review_posts(state_dir)
+    assert first == retry, "the retry re-sends the identical payload, run marker included"
+    assert (_data(result)["submitted"], _data(result)["posted_inline"]) == (True, 1)
+
+
+def test_a_stale_same_commit_review_from_an_earlier_run_is_not_treated_as_landed(tmp_path):
+    head = _init_repo(tmp_path)
+    earlier_run = _landed_review(body="an earlier review\n\n<!-- swe-workbench:review-run:00000000-0000-4000-8000-000000000000 -->\n")
+    earlier_run["commit_id"] = head
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503, _review_post_response()],
+        review_reads=[_ndjson([]), _ndjson([earlier_run])], head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(_review_posts(state_dir)) == 2, "an unrelated review on the same commit does not confirm this POST"
+
+
+def test_5xx_where_the_read_back_fails_writes_only_the_unconfirmed_rows_and_reports_partial(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row(line=2), _pr_level_row(1)],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(_review_posts(state_dir)) == 1, "an unreadable read-back is not proof the review is absent"
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "partial"
+    assert (envelope["data"]["submitted"], envelope["data"]["retry_pending"]) == (False, 2)
+    assert envelope["warnings"], "a partial run explains itself"
+    state = _read_retry(tmp_path)
+    assert (state["version"], state["head_sha"], state["caller_tag"], state["event"], state["attempts"]) == (
+        1, head, "general", "COMMENT", 1,
+    )
+    assert [row["issue"] for row in state["rows"]] == ["issue on line2", "pr-level 1"]
+    assert all(re.fullmatch(r"[0-9a-f]{16}", row["key"]) for row in state["rows"])
+    assert all(not name.startswith("_") for row in state["rows"] for name in row), "internal fields never persist"
+    assert (_retry_path(tmp_path).stat().st_mode & 0o777) == 0o600
+
+
+def test_a_failed_retry_after_an_absent_read_back_writes_the_retry_file(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503, _HTTP_503],
+        review_reads=[_ndjson([]), _ndjson([])], extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    assert len(_review_posts(state_dir)) == 2
+    assert json.loads(result.stdout)["status"] == "partial"
+    assert len(_read_retry(tmp_path)["rows"]) == 1
+
+
+def test_an_unparseable_read_back_is_unknown_not_absent(tmp_path):
+    head = _init_repo(tmp_path)
+    result, state_dir = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), {"stdout": '{"truncated": ', "exit": 0}], head=head,
+    )
+    assert len(_review_posts(state_dir)) == 1
+    assert json.loads(result.stdout)["status"] == "partial"
+
+
+def test_a_rejected_body_only_post_reports_partial_and_keeps_the_rows(tmp_path):
+    result, state_dir = _run_delivery(
+        tmp_path, [_pr_level_row(1)],
+        [
+            {"stdout": "", "exit": 0}, _repo_view_response(True),
+            _HTTP_422, {"stdout": json.dumps({"headRefOid": "a" * 40}), "exit": 0}, _HTTP_422,
+        ],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    assert json.loads(result.stdout)["status"] == "partial"
+    assert len(_review_posts(state_dir)) == 2
+    assert [row["issue"] for row in _read_retry(tmp_path)["rows"]] == ["pr-level 1"]
+
+
+def test_success_deletes_the_retry_file(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}])
+    result, _ = _run_delivery(
+        tmp_path, [],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    assert _data(result)["submitted"] is True
+    assert not _retry_path(tmp_path).exists()
+
+
+def test_rerun_with_a_matching_head_merges_the_rows_and_prunes_those_that_landed(tmp_path):
+    landed_row, pending_row = _pr_level_row(1), _pr_level_row(2)
+    _write_retry(tmp_path, [{"key": "0" * 16, **landed_row}, {"key": "1" * 16, **pending_row}])
+    earlier = {
+        "id": 5, "user": {"login": "alice"}, "state": "COMMENTED", "submitted_at": "2026-01-01T00:00:00Z",
+        "body": "summary\n\n" + prs.REVIEW_BATCH_MARKER + "\n\n" + _posted_marked(landed_row, "", pr_level=True),
+    }
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        review_reads=[_ndjson([earlier])], extra_args=_with_retry({}, tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    (payload,) = _review_posts(state_dir)
+    assert "pr-level 2" in payload["body"] and "pr-level 1" not in payload["body"]
+    data = _data(result)
+    assert (data["deduped"], data["posted_pr_level"], data["retry_pending"]) == (1, 1, 0)
+    assert not _retry_path(tmp_path).exists()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"head": "b" * 40}, {"caller_tag": "security"}, {"version": 2}],
+    ids=["head-mismatch", "caller-mismatch", "version-mismatch"],
+)
+def test_a_retry_file_for_another_head_caller_or_version_is_discarded(tmp_path, overrides):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], **overrides)
+    result, state_dir = _run_delivery(
+        tmp_path, [],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    (payload,) = _review_posts(state_dir)
+    assert "pr-level 1" not in payload["body"]
+    assert _data(result)["deduped"] == 0
+    assert not _retry_path(tmp_path).exists()
+
+
+def test_a_corrupt_retry_file_is_ignored_and_replaced_on_success(tmp_path):
+    _retry_path(tmp_path).parent.mkdir(parents=True)
+    _retry_path(tmp_path).write_text("{not json")
+    result, _ = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert not _retry_path(tmp_path).exists()
+
+
+def test_retry_attempts_accumulate_across_failed_runs(tmp_path):
+    head = _init_repo(tmp_path)
+    row = _row(issue="carried over")
+    _write_retry(tmp_path, [{"key": "0" * 16, **row}], head=head, attempts=2)
+    result, _ = _run_delivery(
+        tmp_path, [],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], extra_args=_with_retry({}, tmp_path), head=head,
+    )
+    assert json.loads(result.stdout)["status"] == "partial"
+    assert _read_retry(tmp_path)["attempts"] == 3
+    assert [r["issue"] for r in _read_retry(tmp_path)["rows"]] == ["carried over"]
+
+
+def test_overflow_comment_failure_leaves_only_those_rows_in_the_retry_file(tmp_path):
+    rows = [_pr_level_row(index) for index in range(51)]
+    result, state_dir = _run_delivery(
+        tmp_path, rows,
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response(), _HTTP_503],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    envelope = json.loads(result.stdout)
+    assert (envelope["status"], envelope["data"]["submitted"], envelope["data"]["retry_pending"]) == ("partial", True, 1)
+    assert [row["issue"] for row in _read_retry(tmp_path)["rows"]] == ["pr-level 50"]
+
+
+def test_retry_rows_that_all_landed_let_the_run_skip_and_clear_the_file(tmp_path):
+    landed_row = _pr_level_row(1)
+    _write_retry(tmp_path, [{"key": "0" * 16, **landed_row}])
+    earlier = {
+        "id": 5, "user": {"login": "alice"}, "state": "COMMENTED", "submitted_at": "2026-01-01T00:00:00Z",
+        "body": "summary\n\n" + prs.REVIEW_BATCH_MARKER + "\n\n" + _posted_marked(landed_row, "", pr_level=True),
+    }
+    result, state_dir = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        review_reads=[_ndjson([earlier])], extra_args=_with_retry({}, tmp_path),
+    )
+    assert _data(result)["skipped_reason"] == "unchanged"
+    assert _mutating_calls(state_dir) == []
+    assert not _retry_path(tmp_path).exists()
+
+
+def test_a_live_retry_row_prevents_the_skip(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}])
+    earlier = {"id": 5, "user": {"login": "alice"}, "state": "COMMENTED", "submitted_at": "2026-01-01T00:00:00Z", "body": "x"}
+    result, state_dir = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        review_reads=[_ndjson([earlier])], extra_args=_with_retry({}, tmp_path),
+    )
+    assert (_data(result)["submitted"], _data(result)["skipped_reason"]) == (True, "")
+    assert len(_review_posts(state_dir)) == 1
+
+
+def test_without_the_retry_state_flag_nothing_is_written(tmp_path):
+    head = _init_repo(tmp_path)
+    before = {p for p in tmp_path.rglob("*")}
+    result, _ = _run_delivery(
+        tmp_path, [_row()],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], head=head,
+    )
+    assert json.loads(result.stdout)["status"] == "partial"
+    created = {p.name for p in tmp_path.rglob("*")} - {p.name for p in before}
+    assert not any("retry" in name for name in created)
+
+
+def test_empty_retry_state_flag_is_rejected_before_any_gh_call(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    result = _run(
+        _args(_write_findings(tmp_path, []), **{"--retry-state": " "}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    assert result.returncode == 1 and "--retry-state" in result.stderr
+    assert _all_calls(state_dir) == []
+
+
+# ── Unit: retry-state file handling ──────────────────────────────────────────
+
+
+def _state_file(tmp_path, **overrides) -> Path:
+    data = {
+        "version": 1, "head_sha": "a" * 40, "caller_tag": "general", "event": "COMMENT", "attempts": 1,
+        "rows": [{"key": "0" * 16, **_pr_level_row(1)}],
+    }
+    data.update(overrides)
+    path = tmp_path / "retry.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_load_retry_state_returns_validated_rows_tagged_as_carried_over(tmp_path):
+    rows, attempts = prs.load_retry_state(str(_state_file(tmp_path, attempts=4)), "a" * 40, "general")
+    assert attempts == 4
+    assert [row["issue"] for row in rows] == ["pr-level 1"]
+    assert rows[0]["_from_retry"] is True and "key" not in rows[0]
+
+
+def test_load_retry_state_drops_rows_that_fail_the_row_contract(tmp_path):
+    good, bad = _pr_level_row(1), {**_pr_level_row(2), "body": "legacy shape"}
+    path = _state_file(tmp_path, rows=[{"key": "0" * 16, **good}, {"key": "1" * 16, **bad}, "not a row", 7])
+    rows, _ = prs.load_retry_state(str(path), "a" * 40, "general")
+    assert [row["issue"] for row in rows] == ["pr-level 1"]
+
+
+def test_load_retry_state_refuses_a_symlink(tmp_path):
+    real = _state_file(tmp_path)
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    assert prs.load_retry_state(str(link), "a" * 40, "general") == ([], 0)
+
+
+def test_load_retry_state_refuses_an_oversized_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(prs, "_MAX_RETRY_FILE_BYTES", 10)
+    assert prs.load_retry_state(str(_state_file(tmp_path)), "a" * 40, "general") == ([], 0)
+
+
+def test_load_retry_state_missing_file_is_empty(tmp_path):
+    assert prs.load_retry_state(str(tmp_path / "absent.json"), "a" * 40, "general") == ([], 0)
+
+
+def test_write_retry_state_is_private_atomic_and_leaves_no_temp_files(tmp_path):
+    target = tmp_path / "nested" / "retry.json"
+    row = {**_pr_level_row(1), "_finding_key": "f" * 16, "_finding_id": 3, "_from_retry": True}
+    assert prs.write_retry_state(str(target), "a" * 40, "general", "COMMENT", 1, [row]) is True
+    assert (target.stat().st_mode & 0o777) == 0o600
+    assert [p.name for p in target.parent.iterdir()] == ["retry.json"]
+    saved = json.loads(target.read_text())
+    assert saved["rows"][0]["key"] == "f" * 16 and "_finding_id" not in saved["rows"][0]
+
+
+def test_write_retry_state_failure_is_reported_not_raised(tmp_path, capsys):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert prs.write_retry_state(str(blocker / "retry.json"), "a" * 40, "general", "COMMENT", 1, []) is False
+    assert "could not write retry state" in capsys.readouterr().err
+
+
+# ── Unit: payload validation before every POST ───────────────────────────────
+
+
+def _valid_payload(**overrides) -> dict:
+    payload = {
+        "commit_id": "a" * 40, "event": "COMMENT", "body": "summary",
+        "comments": [{"path": "src.py", "line": 2, "side": "RIGHT", "body": "finding"}],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_a_well_formed_payload_validates():
+    prs.validate_review_payload(_valid_payload())
+    prs.validate_review_payload({k: v for k, v in _valid_payload().items() if k != "comments"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _valid_payload(event="REQUEST_CHANGES"),
+        _valid_payload(event=None),
+        _valid_payload(commit_id="abc"),
+        _valid_payload(commit_id="g" * 40),
+        _valid_payload(body=None),
+        _valid_payload(body="x" * 65_537),
+        _valid_payload(comments=[]),
+        _valid_payload(comments="not a list"),
+        _valid_payload(comments=["not an object"]),
+        _valid_payload(comments=[{"path": "", "line": 2, "side": "RIGHT", "body": "b"}]),
+        _valid_payload(comments=[{"path": 3, "line": 2, "side": "RIGHT", "body": "b"}]),
+        _valid_payload(comments=[{"path": "p", "line": 0, "side": "RIGHT", "body": "b"}]),
+        _valid_payload(comments=[{"path": "p", "line": True, "side": "RIGHT", "body": "b"}]),
+        _valid_payload(comments=[{"path": "p", "line": "2", "side": "RIGHT", "body": "b"}]),
+        _valid_payload(comments=[{"path": "p", "line": 2, "side": "LEFT", "body": "b"}]),
+        _valid_payload(comments=[{"path": "p", "line": 2, "side": "RIGHT", "body": "  "}]),
+        _valid_payload(comments=[{"path": "p", "line": 2, "side": "RIGHT", "body": "x" * 65_537}]),
+        _valid_payload(
+            body="a\n" + _key_line(_row(), "x"),
+            comments=[{"path": "p", "line": 2, "side": "RIGHT", "body": "b\n" + _key_line(_row(), "x")}],
+        ),
+    ],
+)
+def test_an_invalid_payload_is_refused(payload):
+    with pytest.raises(prs.PostingError, match="refusing to post an invalid review payload"):
+        prs.validate_review_payload(payload)
+
+
+def test_post_review_validates_before_calling_gh(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("gh must not be called for an invalid payload")
+
+    monkeypatch.setattr(prs, "_gh", boom)
+    with pytest.raises(prs.PostingError):
+        prs._post_review("o", "r", "1", "not-a-sha", "COMMENT", "body", None)
+
+
+def test_an_invalid_payload_posts_nothing_and_exits_nonzero(tmp_path, monkeypatch):
+    """An oversized per-row body can pass row validation yet breach GitHub's limit; the payload
+    gate must stop it before any POST."""
+    huge = _row(why="w" * 70_000)
+    result, state_dir = _run_delivery(
+        tmp_path, [huge],
+        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
+        head=_init_repo(tmp_path),
+    )
+    assert result.returncode == 1
+    assert "refusing to post an invalid review payload" in result.stderr
+    assert result.stdout == ""
+    assert _mutating_calls(state_dir) == []
 
 
 # ── Unit: structured row validation ──────────────────────────────────────────

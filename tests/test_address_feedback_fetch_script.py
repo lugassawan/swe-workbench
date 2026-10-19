@@ -948,6 +948,20 @@ def test_producer_built_review_body_round_trips_through_the_consumer():
     assert projections[0]["body"].startswith("**High** — issue 1")
 
 
+def test_run_marker_in_a_review_body_does_not_disturb_batch_parsing():
+    """The producer stamps a random run marker into the summary of every review body."""
+    run_marker = "<!-- swe-workbench:review-run:0b1c2d3e-0000-4000-8000-000000000000 -->"
+    rows = prs.assign_finding_ids([
+        {"severity": "High", "issue": "issue", "why": "why", "fix": "fix", "anchor": "pr-level"},
+    ])
+
+    body, _ = prs.build_review_body(f"**Review Decision: COMMENT**\n\n{run_marker}\n", rows)
+
+    assert aff._ANY_REVIEW_MARKER_LINE_RE.search(run_marker) is None
+    projections = aff.parse_review_body_batch(_review(9, body))
+    assert [p["finding_id"] for p in projections] == [1]
+
+
 def test_quoted_marker_in_owner_reply_does_not_suppress_other_items():
     """The reply template quotes the first ~100 chars of an item body into the
     owner's own reply — a hostile comment whose opening text contains a handled
