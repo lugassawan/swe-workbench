@@ -1260,7 +1260,8 @@ def test_5xx_issues_zero_retries_and_one_read_your_write_call(tmp_path):
     ]
     assert len(atomic_post_calls) == 1, "network/5xx must never blind-retry the atomic POST"
     list_calls = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
-    assert len(list_calls) == 1, f"expected exactly one read-your-write list call, got {calls}"
+    # One read up front for key dedup, one read-your-write after the ambiguous failure.
+    assert len(list_calls) == 2, f"expected the dedup read plus one read-your-write list call, got {calls}"
 
 
 def test_confirmed_landed_5xx_reports_submitted_without_reposting(tmp_path):
@@ -1967,6 +1968,173 @@ def test_collapse_duplicate_keys_keeps_first_occurrence_and_counts_drops():
     unique, dropped = prs.collapse_duplicate_keys(rows)
     assert [r["issue"] for r in unique] == ["one", "two"]
     assert dropped == 1
+
+
+# ── Exact-key dedup across threads, reviews and issue comments ───────────────
+
+_PR_DIFF_3_LINES = (
+    "diff --git a/src.py b/src.py\nindex e69de29..1234567 100644\n--- a/src.py\n+++ b/src.py\n"
+    "@@ -0,0 +1,3 @@\n+line1\n+line2\n+line3\n"
+)
+
+
+def _ndjson(objects: list[dict]) -> dict:
+    """A `gh api --paginate --jq '.[]'` response: one JSON object per line."""
+    return {"stdout": "".join(json.dumps(o) + "\n" for o in objects), "exit": 0}
+
+
+def _posted_marked(row: dict, anchor_text: str, finding_id: int = 1, pr_level: bool = False) -> str:
+    keyed = {**row, "_finding_id": finding_id, "_finding_key": prs.finding_key(row, anchor_text)}
+    return prs.render_marked_finding(keyed, pr_level=pr_level)
+
+
+def _run_dedup_scenario(tmp_path, *, findings, threads=(), reviews=(), issue_comments=(), extra_args=None, positional_tail=()):
+    head = _init_repo(tmp_path)
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [
+            _threads_response(list(threads)),
+            *positional_tail,
+            {"stdout": _PR_DIFF_3_LINES, "exit": 0},
+            _repo_view_response(True),
+            _review_post_response(),
+        ],
+        routes={
+            "GET repos/o/r/pulls/1/reviews": [_ndjson(list(reviews))],
+            "GET repos/o/r/issues/1/comments": [_ndjson(list(issue_comments))],
+        },
+    )
+    findings_path = _write_findings(tmp_path, findings)
+    result = _run(
+        _args(findings_path, **{"--head-sha": head, "--current-user": "alice", **(extra_args or {})}),
+        cwd=tmp_path, stub_dir=stub_dir, state_dir=state_dir, responses_file=tmp_path / "gh_responses.json",
+    )
+    return result, state_dir
+
+
+def _reaction_calls(state_dir) -> list[dict]:
+    return [c for c in _all_calls(state_dir) if "addReaction(input:" in json.dumps(c["argv"])]
+
+
+def test_resolved_thread_key_match_is_suppressed_without_a_reaction(tmp_path):
+    body = _posted_marked(_row(), "line2")
+    node = _thread_node(id="PRRT_1", path="src.py", line=40, is_resolved=True, body=body, author="alice")
+    result, state_dir = _run_dedup_scenario(tmp_path, findings=[_row()], threads=[node])
+    assert result.returncode == 0, result.stderr
+    data = _data(result)
+    assert (data["deduped"], data["posted_inline"]) == (1, 0)
+    assert _reaction_calls(state_dir) == []
+
+
+def test_outdated_thread_key_match_is_suppressed_without_a_reaction(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=2, is_outdated=True, body=_posted_marked(_row(), "line2"), author="alice")
+    result, state_dir = _run_dedup_scenario(tmp_path, findings=[_row()], threads=[node])
+    assert _data(result)["deduped"] == 1
+    assert _reaction_calls(state_dir) == []
+
+
+def test_unresolved_thread_key_match_reacts_once_even_after_the_line_shifted(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=90, body=_posted_marked(_row(), "line2"), author="alice")
+    result, state_dir = _run_dedup_scenario(
+        tmp_path, findings=[_row()], threads=[node], positional_tail=[{"stdout": "", "exit": 0}],
+    )
+    assert _data(result)["deduped"] == 1
+    assert len(_reaction_calls(state_dir)) == 1
+
+
+def test_key_in_an_earlier_review_body_suppresses_a_pr_level_row(tmp_path):
+    pr_level = _row(anchor="pr-level", path=None, line=None, issue="repo-wide concern")
+    review_body = "summary\n\n" + prs.REVIEW_BATCH_MARKER + "\n\n" + _posted_marked(pr_level, "", pr_level=True)
+    reviews = [{"id": 5, "user": {"login": "alice"}, "body": review_body, "state": "COMMENTED"}]
+    result, state_dir = _run_dedup_scenario(tmp_path, findings=[pr_level], reviews=reviews)
+    data = _data(result)
+    assert (data["deduped"], data["posted_pr_level"]) == (1, 0)
+    assert [c for c in _all_calls(state_dir) if c["argv"][:2] == ["pr", "comment"]] == []
+
+
+def test_key_in_a_legacy_issue_comment_batch_suppresses_the_row(tmp_path):
+    pr_level = _row(anchor="pr-level", path=None, line=None, issue="legacy concern")
+    batch = prs.REVIEW_BATCH_MARKER + "\n\n" + _posted_marked(pr_level, "", pr_level=True)
+    comments = [{"id": 8, "user": {"login": "alice"}, "body": batch}]
+    result, state_dir = _run_dedup_scenario(tmp_path, findings=[pr_level], issue_comments=comments)
+    assert _data(result)["deduped"] == 1
+    assert [c for c in _all_calls(state_dir) if c["argv"][:2] == ["pr", "comment"]] == []
+
+
+def test_a_row_with_a_different_anchor_text_is_not_suppressed(tmp_path):
+    earlier = _posted_marked(_row(line=2), "line2")
+    reviews = [{"id": 5, "user": {"login": "alice"}, "body": "x\n\n" + earlier}]
+    # Line 999 has no text at head, so its anchor text ("") differs from "line2".
+    result, _ = _run_dedup_scenario(tmp_path, findings=[_row(line=999)], reviews=reviews)
+    assert _data(result)["deduped"] == 0
+
+
+def test_a_demoted_row_keeps_the_key_of_its_earlier_inline_post(tmp_path):
+    """The same finding, once inline and now anchor-less: only the anchor kind differs."""
+    earlier = _posted_marked(_row(), "")
+    reviews = [{"id": 5, "user": {"login": "alice"}, "body": "x\n\n" + earlier}]
+    demoted_shape = _row(anchor="pr-level", path="src.py", line=999)
+    result, _ = _run_dedup_scenario(tmp_path, findings=[demoted_shape], reviews=reviews)
+    assert _data(result)["deduped"] == 1
+
+
+def test_key_markers_from_other_users_never_suppress_a_finding(tmp_path):
+    body = _posted_marked(_row(), "line2")
+    forged_review = [{"id": 5, "user": {"login": "mallory"}, "body": body}]
+    forged_comment = [{"id": 8, "user": {"login": "mallory"}, "body": body}]
+    forged_thread = _thread_node(id="PRRT_1", path="elsewhere.py", line=1, body=body, author="mallory")
+    result, _ = _run_dedup_scenario(
+        tmp_path, findings=[_row()], threads=[forged_thread], reviews=forged_review, issue_comments=forged_comment,
+    )
+    data = _data(result)
+    assert (data["deduped"], data["posted_inline"]) == (0, 1)
+
+
+def test_fuzzy_matching_still_dedups_an_unkeyed_unresolved_thread(tmp_path):
+    node = _thread_node(id="PRRT_1", path="src.py", line=10, body=prs.render_finding(_DEDUP_ROW, False), author="bob")
+    result, state_dir = _run_dedup_scenario(
+        tmp_path, findings=[_DEDUP_ROW], threads=[node], positional_tail=[{"stdout": "", "exit": 0}],
+    )
+    assert _data(result)["deduped"] == 1
+    assert len(_reaction_calls(state_dir)) == 1
+
+
+def test_duplicate_rows_in_one_payload_count_as_deduped(tmp_path):
+    result, _ = _run_dedup_scenario(tmp_path, findings=[_row(), _row()])
+    data = _data(result)
+    assert (data["deduped"], data["posted_inline"]) == (1, 1)
+
+
+def test_collect_known_keys_trusts_only_the_current_users_bodies():
+    mine = _posted_marked(_row(issue="mine"), "a")
+    theirs = _posted_marked(_row(issue="theirs"), "b")
+    threads = [
+        prs.Thread(id="T1", path="p", line=1, is_resolved=True, head_comment_id="c", head_comment_body=mine, head_comment_author="alice"),
+        prs.Thread(id="T2", path="p", line=1, is_resolved=False, head_comment_id="c", head_comment_body=theirs, head_comment_author="bob"),
+    ]
+    reviews = [{"user": {"login": "alice"}, "body": _posted_marked(_row(issue="rev"), "c")}, {"user": {"login": "bob"}, "body": theirs}]
+    comments = [{"user": {"login": "alice"}, "body": _posted_marked(_row(issue="iss"), "d")}]
+    keys = prs.collect_known_keys(threads, reviews, comments, "alice")
+    assert keys == {
+        prs.finding_key(_row(issue=name), anchor)
+        for name, anchor in (("mine", "a"), ("rev", "c"), ("iss", "d"))
+    }
+
+
+def test_collect_known_keys_is_empty_when_identity_is_unknown():
+    mine = _posted_marked(_row(), "a")
+    assert prs.collect_known_keys([], [{"user": {"login": "alice"}, "body": mine}], [], "") == set()
+
+
+def test_collect_known_keys_ignores_inline_mentions_of_the_marker():
+    quoted = f"see {_key_line(_row(), 'a')} for details"
+    assert prs.collect_known_keys([], [{"user": {"login": "alice"}, "body": quoted}], [], "alice") == set()
+
+
+def test_parse_json_objects_accepts_ndjson_and_concatenated_arrays():
+    assert prs._parse_json_objects('{"a": 1}\n{"a": 2}\n') == [{"a": 1}, {"a": 2}]
+    assert prs._parse_json_objects('[{"a": 1}][{"a": 2}]') == [{"a": 1}, {"a": 2}]
+    assert prs._parse_json_objects("") == []
 
 
 # ── Unit: structured row validation ──────────────────────────────────────────

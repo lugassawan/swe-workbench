@@ -112,6 +112,7 @@ class Thread:
     head_comment_body: str
     reactor_logins: set[str] = field(default_factory=set)
     is_outdated: bool = False
+    head_comment_author: str = ""
 
 
 def _label_pattern(label: str) -> str:
@@ -387,6 +388,7 @@ def _thread_from_node(node: dict) -> Thread:
         head_comment_body=(head or {}).get("body") or "",
         reactor_logins=reactors,
         is_outdated=bool(node.get("isOutdated")),
+        head_comment_author=((head or {}).get("author") or {}).get("login") or "",
     )
 
 
@@ -426,21 +428,108 @@ mutation($subjectId: ID!) {
 """
 
 
-def dedup_and_react(threads: list[Thread], inline_findings: list[dict], current_user: str) -> tuple[list[dict], int]:
+def _parse_json_objects(text: str) -> list[dict]:
+    """Objects from `gh api --paginate`: one per line (`--jq '.[]'`) or concatenated arrays."""
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    pos = 0
+    while True:
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos >= len(text):
+            return objects
+        try:
+            value, pos = decoder.raw_decode(text, pos)
+        except (json.JSONDecodeError, ValueError):
+            return objects
+        items = value if isinstance(value, list) else [value]
+        objects.extend(item for item in items if isinstance(item, dict))
+
+
+def _fetch_paginated(path: str, what: str) -> list[dict]:
+    proc = _gh(["api", "--paginate", path, "--jq", ".[]"])
+    if proc.returncode != 0:
+        raise PostingError(f"failed to fetch {what}: {proc.stderr.strip() or proc.stdout.strip()}")
+    return _parse_json_objects(proc.stdout)
+
+
+def fetch_reviews(owner: str, repo: str, pr: str) -> list[dict]:
+    return _fetch_paginated(f"repos/{owner}/{repo}/pulls/{pr}/reviews", "PR reviews")
+
+
+def fetch_issue_comments(owner: str, repo: str, pr: str) -> list[dict]:
+    return _fetch_paginated(f"repos/{owner}/{repo}/issues/{pr}/comments", "PR issue comments")
+
+
+_FINDING_KEY_LINE_RE = re.compile(
+    r"(?m)^[ \t]*<!-- swe-workbench:finding-key:v1:([0-9a-f]{16}) -->[ \t]*\r?$"
+)
+
+
+def extract_finding_keys(text: str) -> set[str]:
+    """Keys only count as a marker on their own line, never quoted mid-sentence."""
+    return set(_FINDING_KEY_LINE_RE.findall(text or ""))
+
+
+def collect_known_keys(threads: list[Thread], reviews: list[dict], issue_comments: list[dict], current_user: str) -> set[str]:
+    """Keys the current user already posted, on any surface and in any thread state. Bodies by
+    anyone else are untrusted: a forged marker must not be able to suppress a real finding, so
+    with identity unknown nothing is trusted and only fuzzy matching remains."""
+    if not current_user:
+        return set()
+    keys: set[str] = set()
+    for thread in threads:
+        if thread.head_comment_author == current_user:
+            keys |= extract_finding_keys(thread.head_comment_body)
+    for item in (*reviews, *issue_comments):
+        if ((item.get("user") or {}).get("login") or "") == current_user:
+            keys |= extract_finding_keys(item.get("body") or "")
+    return keys
+
+
+def _threads_by_key(threads: list[Thread], current_user: str) -> dict[str, list[Thread]]:
+    by_key: dict[str, list[Thread]] = {}
+    if not current_user:
+        return by_key
+    for thread in threads:
+        if thread.head_comment_author == current_user:
+            for key in extract_finding_keys(thread.head_comment_body):
+                by_key.setdefault(key, []).append(thread)
+    return by_key
+
+
+def _react(thread: Thread, current_user: str) -> None:
+    if current_user and thread.head_comment_id and current_user not in thread.reactor_logins:
+        _gh(["api", "graphql", "-F", f"subjectId={thread.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
+
+
+def dedup_and_react(
+    threads: list[Thread], findings: list[dict], current_user: str, known_keys: set[str] | frozenset = frozenset(),
+) -> tuple[list[dict], int]:
+    """Exact key first (any surface, any thread state), then fuzzy matching of inline rows
+    against unresolved threads. A thumbs-up goes only on a live (unresolved, current) match."""
+    key_threads = _threads_by_key(threads, current_user)
     survivors: list[dict] = []
     deduped = 0
-    for finding in inline_findings:
-        rendered = render_marked_finding(finding, pr_level=False)
-        match = next(
-            (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
-            None,
-        )
-        if match is None:
-            survivors.append(finding)
+    for finding in findings:
+        key = finding.get("_finding_key")
+        if key and key in known_keys:
+            deduped += 1
+            live = next((t for t in key_threads.get(key, []) if not t.is_resolved and not t.is_outdated), None)
+            if live is not None:
+                _react(live, current_user)
             continue
-        deduped += 1
-        if current_user and match.head_comment_id and current_user not in match.reactor_logins:
-            _gh(["api", "graphql", "-F", f"subjectId={match.head_comment_id}", "-f", f"query={_REACTION_MUTATION}"])
+        if finding.get("anchor") == "inline":
+            rendered = render_marked_finding(finding, pr_level=False)
+            match = next(
+                (t for t in threads if thread_matches(finding["path"], finding["line"], rendered, t)),
+                None,
+            )
+            if match is not None:
+                deduped += 1
+                _react(match, current_user)
+                continue
+        survivors.append(finding)
     return survivors, deduped
 
 
@@ -843,17 +932,20 @@ def main(argv: list[str] | None = None) -> int:
     findings = assign_finding_ids(findings)
     findings = assign_finding_keys(findings, args.head_sha)
     findings, duplicate_rows = collapse_duplicate_keys(findings)
-    inline_findings, pr_level_findings = partition_findings(findings)
     script_dir = _script_dir()
 
     try:
         _check_siblings(script_dir)
         threads = fetch_threads(owner, repo, args.pr)
-        survivors, deduped = dedup_and_react(threads, inline_findings, args.current_user)
+        reviews = fetch_reviews(owner, repo, args.pr) if args.current_user else []
+        issue_comments = fetch_issue_comments(owner, repo, args.pr) if args.current_user else []
+        known_keys = collect_known_keys(threads, reviews, issue_comments, args.current_user)
+        survivors, deduped = dedup_and_react(threads, findings, args.current_user, known_keys)
         deduped += duplicate_rows
+        survivors_inline, pr_level_findings = partition_findings(survivors)
 
         pr_diff = _fetch_pr_diff(args.pr)
-        in_diff, demoted = validate_lines(survivors, pr_diff, args.head_sha, script_dir)
+        in_diff, demoted = validate_lines(survivors_inline, pr_diff, args.head_sha, script_dir)
 
         posted_pr_level = post_pr_level(args.pr, pr_level_findings + demoted)
 
