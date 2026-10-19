@@ -175,6 +175,13 @@ EXPECTED_REGISTRY = {
         "scope_status": "str",
         "gh_version": "str",
     },
+    "swb.redact/1": {
+        "total": "int",
+        "by_category": "list[count_row]",
+        "by_field": "list[count_row]",
+        "summary": "str",
+        "outputs": "list[str]",
+    },
 }
 
 
@@ -295,6 +302,28 @@ def test_list_path_reason_field_valid_and_invalid():
     envelope["data"]["retained_artifacts"] = [{"path": "/tmp/pr-42-review.diff"}]
     problems = rc.validate_envelope("swb.sweep-residuals/1", envelope)
     assert any("retained_artifacts" in problem for problem in problems)
+
+
+def test_list_count_row_field_valid_and_invalid():
+    envelope = _valid_envelope(
+        schema="swb.redact/1",
+        data={
+            "total": 3,
+            "by_category": [{"key": "internal-email", "count": 2}, {"key": "local-path", "count": 1}],
+            "by_field": [{"key": "body", "count": 3}],
+            "summary": "3 replacement(s) — internal-email ×2, local-path ×1",
+            "outputs": ["/tmp/x"],
+        },
+    )
+    assert rc.validate_envelope("swb.redact/1", envelope) == []
+
+    envelope["data"]["by_category"] = []
+    assert rc.validate_envelope("swb.redact/1", envelope) == []
+
+    for bad in ([{"key": "x"}], [{"count": 1}], [{"key": "x", "count": "1"}], [{"key": "x", "count": True}], ["x"]):
+        envelope["data"]["by_category"] = bad
+        problems = rc.validate_envelope("swb.redact/1", envelope)
+        assert any("by_category" in problem for problem in problems), bad
 
 
 def test_warnings_must_be_list_of_code_message_objects():
