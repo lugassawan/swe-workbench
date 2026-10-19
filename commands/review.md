@@ -106,7 +106,7 @@ If the PR number was obtained via auto-detect (user replied `yes` to the prompt 
 3. Run the specialist auditor against `git -C "$WT" diff "origin/$BASE"...HEAD`; print severity-organized findings (unchanged from the existing specialist output above). Pass this scratch boundary: inspect the diff directly when possible; write any materialized diff or ad-hoc artifact under `$RUN_DIR`, never `/tmp` root or an implicit harness scratchpad.
 
    **On auditor error:** call `eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent failed)"` (preserves the worktree for inspection — this is an aborted-mid-scan state, the same terminal intent `swe-workbench:workflow-pr-review` Step 5 uses), reap `$JSON` via `swe-workbench-clean-state-files` and `$RUN_DIR` via `swe-workbench-reap-run-dir`, then stop — there are no findings to prompt on.
-4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (matching the `AskUserQuestion` pattern `swe-workbench:workflow-pr-review-post`'s own Step 5 CTA already uses, for the same reason: a clickable button beats "type a keyword"):
+4. **Prompt:** call the `AskUserQuestion` tool — not a free-text "reply post/skip" prompt (a clickable button beats "type a keyword"):
 
    ```json
    {

@@ -107,30 +107,7 @@ unrelated edit elsewhere in the file can flip a still-valid, never-addressed thr
 silently exempting it from the gate with no explicit action (unlike `isResolved`). Treat an
 outdated-but-unresolved thread as needing manual re-verification, not as settled.
 
-## Step 5 — Address-feedback CTA (conditional)
-
-Call `AskUserQuestion` only when both `CURRENT_USER` and `AUTHOR_LOGIN` are non-empty,
-`CURRENT_USER == AUTHOR_LOGIN` (exact, case-sensitive string equality — the same predicate the core
-applies for its self-review clamp), and the review produced something actionable — `.data.decision = COMMENT`,
-OR `posted > 0`, OR `.data.deduped > 0` (`posted = .data.posted_inline + .data.posted_pr_level`,
-read from `$RESULT` at this point). Suppress silently when either identity is empty or when they differ;
-repository `OWNER` is not an identity input. Evaluate `.data.decision`, not `.data.event`: under self-review `.data.event` is always `COMMENT`, so using it would make every clean review actionable:
-
-```json
-{
-  "questions": [{
-    "question": "Want me to help address this feedback? Start /swe-workbench:address-feedback <N>?",
-    "header": "Next step",
-    "multiSelect": false,
-    "options": [
-      { "label": "Yes — address feedback", "description": "Starts /swe-workbench:address-feedback <N> to drive fixes end-to-end." },
-      { "label": "No thanks",              "description": "Stay here; no further action." }
-    ]
-  }]
-}
-```
-
-Substitute the real PR number for `<N>`. On `Yes — address feedback` → invoke `/swe-workbench:address-feedback <N>`. On `No thanks` (or anything else) → no further action. For a known matching author, also suppress silently when `.data.decision = APPROVE` and `posted = 0` and `.data.deduped = 0` (post-flip evaluation — a clean approval with nothing posted/deduped has nothing to address; a blocking thread already forces `.data.decision` away from `APPROVE`, so it needs no separate check here).
+This skill ends once the review is submitted and offers no follow-up step; addressing feedback is a separate, explicit `/swe-workbench:address-feedback <N>` run.
 
 ## Failure modes
 
