@@ -3275,6 +3275,24 @@ def test_a_permanent_rejection_says_nothing_was_posted_not_to_look_for_a_late_re
     assert "late-landing" not in messages and "nothing was posted" in messages
 
 
+def test_a_422_that_survives_the_whole_ladder_is_reported_as_a_refusal_not_a_late_review(tmp_path):
+    """A confirmed 422 means nothing landed — the same situation as a permanent 4xx — so the operator
+    must not be sent looking for a late-landing review."""
+    result, state_dir = _run_delivery(
+        tmp_path, [_pr_level_row(1)],
+        [
+            {"stdout": "", "exit": 0}, _repo_view_response(True),
+            _HTTP_422, {"stdout": json.dumps({"headRefOid": "a" * 40}), "exit": 0}, _HTTP_422,
+        ],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    _assert_valid_with_codes(result, {"retry_pending", "review_rejected"})
+    messages = " ".join(w["message"] for w in json.loads(result.stdout)["warnings"])
+    assert "late-landing" not in messages and "nothing was posted" in messages
+    assert len(_review_posts(state_dir)) == 2
+    assert [row["issue"] for row in _read_retry(tmp_path)["rows"]] == ["pr-level 1"]
+
+
 def test_retry_state_warnings_carry_a_code(tmp_path, monkeypatch):
     monkeypatch.setattr(prs, "_MAX_RETRY_ROWS", 1)
     rows = [{"key": "0" * 16, **_pr_level_row(1)}, {"key": "1" * 16, **_pr_level_row(2)}]

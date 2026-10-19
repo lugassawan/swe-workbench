@@ -688,7 +688,7 @@ class SubmitResult:
     submitted: bool
     review_url: str
     event: str = ""  # the event actually submitted; may differ from the requested one
-    failure: str = ""  # "permanent" when GitHub refused the review outright, else ""
+    failure: str = ""  # "refused" when GitHub rejected the review outright (permanent 4xx, or a 422 that survived the ladder)
     # Rows whose delivery is not confirmed: everything when the review itself is unconfirmed,
     # otherwise only the overflow rows whose comment batch failed.
     pending_rows: list[dict] = field(default_factory=list)
@@ -894,12 +894,12 @@ def submit_review(
                 outcome, review_url = "ok", _extract_review_url(proc.stdout)
 
     if outcome != "ok":
-        if outcome == "permanent":
+        refused = outcome in ("permanent", "rejected")
+        if refused:
             detail = (proc.stderr.strip() or proc.stdout.strip())[:200]
-            print(f"[warn] review POST failed permanently and was not retried: {detail}", file=sys.stderr)
+            print(f"[warn] review POST was refused and will not be retried: {detail}", file=sys.stderr)
         return SubmitResult(
-            0, 0, False, "", event=event, failure="permanent" if outcome == "permanent" else "",
-            pending_rows=inline + rows,
+            0, 0, False, "", event=event, failure="refused" if refused else "", pending_rows=inline + rows,
         )
 
     posted_overflow, failed_overflow = post_pr_level(pr, overflow)
@@ -1362,11 +1362,11 @@ def main(argv: list[str] | None = None) -> int:
                 "message": f"{n_pending} finding(s) not delivered and NOT saved — the retry state could not be written.",
             })
     if not (result.submitted or skipped_reason):
-        if result.failure == "permanent":
+        if result.failure == "refused":
             warnings.append({
                 "code": "review_rejected",
-                "message": "GitHub refused the review (a permanent error, not retried) — nothing was posted; "
-                           "fix the cause (permissions, auth, target) and rerun.",
+                "message": "GitHub refused the review (a permanent error, or a 422 that survived re-validation) — "
+                           "nothing was posted; fix the cause (permissions, auth, target) and rerun.",
             })
         else:
             warnings.append({

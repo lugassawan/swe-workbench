@@ -77,8 +77,8 @@ def test_posting_core_documents_the_failure_ladder_and_retry_file():
     assert re.search(r"reworded\s+out-of-diff finding counts as new", text)
     assert re.search(r"two\s+`except Exception:` lines", text)
     assert re.search(r"after 5\s+failed attempts", text)
-    assert '.warnings[].code = "review_rejected"' in text
-    assert re.search(r"`\.warnings` is a list of `\{code, message\}` objects", text)
+    assert re.search(r'\.warnings\[\]\.code\s*=\s*"review_rejected"', text)
+    assert re.search(r"`\.warnings`\s+is\s+a\s+list\s+of\s+`\{code,\s+message\}`\s+objects", text)
 
 
 def test_posting_core_documents_address_feedback_provenance_markers():
