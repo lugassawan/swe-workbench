@@ -136,7 +136,7 @@ URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s" + _STOP + r"\[]|\[[0-
 _TLDS = (
     "internal|local|corp|lan|intranet|localdomain|com|net|org|io|dev|ai|cloud|xyz|co|app|tech|me|run"
     "|info|biz|online|site|store|shop|digital|systems|network|group|team|global|tools|club|space|world"
-    "|today|media|email|solutions|agency|studio|software"
+    "|today|media|email|solutions|agency|studio|software|edu|gov|page|live|news|blog"
     "|cn|ru|br|ch|it|es|se|be|kr|tv|gg|ly|uk|eu|us|de|fr|nl|jp|au|ca|sg"
 )
 BARE_HOST_RE = re.compile(
@@ -175,11 +175,13 @@ SERVICE_RE = re.compile(
     re.IGNORECASE,
 )
 CROSS_REPO_RE = re.compile(r"(?<![\w/.-])[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*#\d+\b")
-TICKET_RE = re.compile(r"(?<![\w-])([A-Z][A-Z0-9]{1,9})-\d{1,6}(?![\w-])")
-# Standards and formats that look like tracker keys (UTF-8, SHA-256) but are public wording.
+# Hyphens may touch a key (feature/ACME-123-fix, hotfix-ACME-123); only letters and digits bound it.
+TICKET_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{1,9})-\d{1,6}(?![A-Za-z0-9])")
+# Standards, dates and public trackers that look like tracker keys (UTF-8, Q3-2025, GH-1234) but are public wording.
 PUBLIC_KEY_PREFIXES = frozenset(
     "UTF SHA SHA1 SHA2 SHA3 MD MD5 ISO RFC CVE CWE GHSA PEP BCP STD IEEE IEC ANSI ASCII HTTP TLS SSL AES DES RSA"
-    " TCP UDP HTML CSS JSON XML UTC GMT WCAG ECMA ES ES5 ES6 NFC NFD NFKC NFKD IPV USB COVID H264 GPT".split()
+    " TCP UDP HTML CSS JSON XML UTC GMT WCAG ECMA ES ES5 ES6 NFC NFD NFKC NFKD IPV USB COVID H264 GPT"
+    " Q1 Q2 Q3 Q4 H1 H2 FY GH CP PSR JEP JSR EIP ERC BIP".split()
 )
 
 # Well-known public documentation domains; a host matches itself or any subdomain.
@@ -295,10 +297,18 @@ class Rules:
         return None
 
 
-def _documentation_path(rules: Rules, span: str, start: int, vouched: int) -> list[tuple[int, int]]:
-    """The path portion (before any ? or #) of a URL on a documentation domain, as absolute offsets."""
+def _documentation_path(span: str, start: int, vouched: int) -> list[tuple[int, int]]:
+    """The path portion (before any ? or #) of a documentation-domain or target-repository URL.
+
+    Both are public by construction (a docs page, a file in the public repository); the query and
+    fragment are not, so they stay out of the returned span. Offsets are absolute.
+    """
     host = (urlsplit(span if "://" in span else "//" + span).hostname or "").lower()
-    if not any(host == d or host.endswith("." + d) for d in PUBLIC_DOMAINS):
+    documentation = any(host == d or host.endswith("." + d) for d in PUBLIC_DOMAINS)
+    # Only the target repository is ever vouched past its host on GitHub, so a github.com URL that
+    # got here is a link into it.
+    repository = host in ("github.com", "www.github.com", "api.github.com")
+    if not (documentation or repository):
         return []
     query = re.search(r"[?#]", span[vouched:])
     stop = vouched + query.start() if query else len(span)
@@ -391,7 +401,7 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
             shields.append((start, start + vouched))
             blocked.append((start, start + vouched))
             public_spans.append((start, end))
-            doc_paths.extend(_documentation_path(rules, span, start, vouched))
+            doc_paths.extend(_documentation_path(span, start, vouched))
     for start, end, span in _finditer(BARE_HOST_RE, text, trim=True):
         if _contained((start, end), blocked):
             continue
@@ -401,7 +411,7 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
         else:
             shields.append((start, start + vouched))
             public_spans.append((start, end))
-            doc_paths.extend(_documentation_path(rules, span, start, vouched))
+            doc_paths.extend(_documentation_path(span, start, vouched))
 
     for start, end, span in _finditer(IPV4_RE, text):
         octets = [int(part) for part in span.split(".")]
