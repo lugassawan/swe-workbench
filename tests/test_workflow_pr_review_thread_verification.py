@@ -161,7 +161,7 @@ def test_post_core_post_block_passes_override_flag():
     """The ## Post bash block must invoke swe-workbench-pr-review-submit with --approve-over-open-threads."""
     text = POST_CORE_SKILL.read_text()
     post_start = text.index("## Post")
-    post_section = text[post_start:text.index("## Step 5")]
+    post_section = text[post_start:text.index("## Failure modes")]
     assert '--approve-over-open-threads "$APPROVE_OVER_OPEN_THREADS"' in post_section, (
         "skills/workflow-pr-review-post/SKILL.md ## Post block must pass "
         '--approve-over-open-threads "$APPROVE_OVER_OPEN_THREADS" to swe-workbench-pr-review-submit'

@@ -6,8 +6,7 @@ pre-validates inline anchors against the PR diff, posts pr-level batches,
 applies the self-review + diff-scoping decision flip, and submits the
 review — atomically when possible, with a bounded 422 retry and a
 per-comment fallback when it isn't. This module owns the mechanism only;
-the input contract, the Step 5 AskUserQuestion CTA (main-thread-only, can't
-move into a script), and the failure-mode/common-mistakes documentation
+the input contract and the failure-mode/common-mistakes documentation
 stay in skills/workflow-pr-review-post/SKILL.md.
 
 Prints one JSON envelope to stdout on success (schema `swb.pr-review-submit/1`, see
