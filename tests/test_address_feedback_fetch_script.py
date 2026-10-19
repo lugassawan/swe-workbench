@@ -780,12 +780,12 @@ def _run(pr: str, *, stub_dir: Path, state_dir: Path, responses_file: Path,
     env["GH_STUB_RESPONSES"] = str(responses_file)
     # Fresh non-git cwd by default: no origin -> legacy un-scoped paths (what these
     # tests characterize); scoped runs pass --repo explicitly.
-    if cwd is None:
-        cwd = Path(tempfile.mkdtemp(prefix="aff-nogit-"))
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
-        capture_output=True, text=True, env=env, cwd=str(cwd),
-    )
+    with tempfile.TemporaryDirectory(prefix="aff-nogit-") as fresh:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "--pr", pr, *(extra_args or [])],
+            capture_output=True, text=True, env=env,
+            cwd=str(cwd if cwd is not None else fresh),
+        )
 
 
 def _ok(stdout="", exit=0, stderr=""):

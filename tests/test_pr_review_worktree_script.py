@@ -23,7 +23,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import sys
 from pathlib import Path
 
@@ -407,7 +406,7 @@ def _extract_dec(text: str) -> str:
     return m.group(1)
 
 
-def test_names_matches_sweep_residuals_worktree_contract():
+def test_names_matches_sweep_residuals_worktree_contract(tmp_path):
     """Golden-ratchet, not a runtime dependency (see the script's own header comment
     for why sweep-residuals must never shell out to this command at runtime). The
     `names` output, unioned with one explicit address-feedback-<N> row (owned by
@@ -418,7 +417,8 @@ def test_names_matches_sweep_residuals_worktree_contract():
     The union is asserted explicitly here, not silently -- deleting this line would
     not make the test pass."""
     n = _unique_n()
-    plain = Path(tempfile.mkdtemp(prefix="names-nogit-"))
+    plain = tmp_path / "names-nogit"
+    plain.mkdir()
     legacy_result = subprocess.run(
         ["bash", str(SCRIPT), "names", "--pr", n], capture_output=True, text=True, env=dict(_CLEAN_ENV),
         cwd=str(plain),
