@@ -339,3 +339,10 @@ re-scoped sweep follow-up (#702). All four conditions must still hold together b
 demotion,
 so **no skill can legitimately be demoted yet** — that is a statement about what hasn't been
 measured, not that nothing should be.
+
+### Economy reviewer preloads
+
+Economy reduces only the `swe-workbench:reviewer` preload set to code review, clean code, security, and testing.
+Other declared reviewer skills are listed with absolute `SKILL.md` paths and must be read on
+demand. Protected agents retain all declared preloads. A child can request one semantic retry with
+all declared preloads; provider/quota/process failures never trigger that retry.

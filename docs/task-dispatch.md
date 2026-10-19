@@ -133,3 +133,28 @@ reader could actually resolve. `composeSystemPrompt` now prepends each preloaded
 on-disk directory to its section header — not inlining `examples/` content (that stays on-demand,
 fetched by the dispatched agent's own `read` tool if it decides the pointer is relevant), just
 making the pointer resolvable instead of dead.
+
+## Dispatch profiles
+
+Pi users select the user-global subagent profile with `/swe-workbench-profile economy`,
+`/swe-workbench-profile balanced`, or `/swe-workbench-profile full`. The closed enum is stored in
+`~/.pi/agent/swe-workbench/dispatch-profile.json`; it is not repository configuration. On the
+first interactive child dispatch Pi saves the selection, starts no child, and asks the parent to
+re-evaluate the dispatch. In headless use, select a profile first with the command.
+
+| Profile | Dispatch behavior |
+| --- | --- |
+| Economy | Parent implements work below the existing delegated-implementation gate. Reviewer dispatches use their four core preloads; other reviewer skills remain available by `read`ing their listed `SKILL.md`. Routine effort is reduced one step. |
+| Balanced | Existing selection, declared effort, and complete skill preload behavior. |
+| Full | Complete preloads with maximum declared portable effort. |
+
+Profiles never select a provider or exact model ID: exact-ID model-policy resolution remains the
+only model authority. Economy never suppresses command-mandated consultations, specialist risk
+triggers, verification, or independent review. Protected agents (`swe-workbench:architect`, `swe-workbench:migrator`,
+`swe-workbench:security-auditor`, and `swe-workbench:senior-engineer`) keep their declared effort and complete preloads.
+
+An Economy child may request exactly one semantic full-preload retry by ending with an approved
+`SWB_FULL_PRELOAD_RETRY:` marker. Successful child output is bounded by profile and overflow is
+kept only in a private temporary `0600` artifact. Dispatch details contain local metadata such as
+profile, effort, aggregate usage, and truncation state; they never include prompts, code,
+credentials, repository paths, or remote telemetry.

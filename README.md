@@ -86,3 +86,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT.
+
+### Pi subagent quota profiles
+
+Use `/swe-workbench-profile economy|balanced|full` to choose a user-global Pi subagent profile.
+Economy reduces routine child cost while retaining verification and independent review; Balanced
+preserves existing behavior; Full uses complete preloads. See [task dispatch](docs/task-dispatch.md).
