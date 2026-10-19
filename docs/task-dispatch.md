@@ -157,6 +157,7 @@ An Economy child may request exactly one semantic full-preload retry by ending w
 `SWB_FULL_PRELOAD_RETRY:` marker. Approved reasons are `missing-domain-guidance`,
 `cross-domain-ambiguity`, and `output-contract-conflict`. Successful child output is bounded by
 profile and overflow may be kept in a private temporary `0600` artifact; if artifact creation
-fails, the bounded head/tail response still succeeds. Dispatch details contain local metadata such as
+fails, the bounded head/tail response still succeeds. Artifacts are retained only for the active
+Pi session (up to eight) and are deleted at session shutdown. Dispatch details contain local metadata such as
 profile, effort, aggregate usage, and truncation state; they never include prompts, code,
 credentials, repository paths, or remote telemetry.

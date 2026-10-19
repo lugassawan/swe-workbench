@@ -38,11 +38,13 @@ export function createSessionOutputStore(maxArtifacts = 8): SessionOutputStore {
   }
 
   function truncatedText(text: string, maxChars: number, artifact?: string): string {
-    const headLength = Math.max(1, Math.floor(maxChars * 0.7));
-    const tailLength = Math.max(1, maxChars - headLength);
     const notice = artifact
-      ? `[truncated — showing ${maxChars}/${text.length} chars; complete private output: ${artifact}]`
-      : `[truncated — showing ${maxChars}/${text.length} chars]`;
+      ? `[truncated — complete private output: ${artifact}]`
+      : "[truncated]";
+    if (notice.length + 4 > maxChars) return safeSlice(notice, 0, maxChars);
+    const contentBudget = maxChars - notice.length - 4;
+    const headLength = Math.floor(contentBudget * 0.7);
+    const tailLength = contentBudget - headLength;
     return `${safeSlice(text, 0, headLength)}\n\n${notice}\n\n${safeSlice(text, text.length - tailLength)}`;
   }
 

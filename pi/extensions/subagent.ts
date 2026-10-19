@@ -12,7 +12,7 @@ import { resolveTargetDispatch } from "./dispatch-resolver.ts";
 import { outputContract, parseFullPreloadRetry, resolveDispatchProfile } from "./dispatch-profile.ts";
 import type { DispatchProfileController } from "./dispatch-profile-ui.ts";
 import { runSubagentAttempt } from "./subagent-attempt.ts";
-import { capOutput, createSessionOutputStore } from "./subagent-output.ts";
+import { createSessionOutputStore } from "./subagent-output.ts";
 import { parseNestedTaskJson } from "./subagent-json.ts";
 import { TASK_TOOL_NAME, taskRenderCall, taskRenderResult, sanitizeAgentId } from "./task-call-line.ts";
 
@@ -34,7 +34,7 @@ const TASK_PARAMS_SCHEMA = {
 export function registerSubagent(pi: ExtensionAPI, root: string, profiles?: DispatchProfileController): void {
   if (process.env.SWE_WORKBENCH_PI_TOOLS === "0") return;
   // Direct consumers of this module predate profile registration; the extension entry point
-  // always supplies the persistent controller. Keep their legacy balanced semantics intact.
+  // always supplies the persistent controller. Keep their declared-effort and full-preload semantics.
   const profileController = profiles ?? {
     read: () => ({ kind: "configured" as const, profile: "balanced" as const }),
     ensureSelected: async () => ({ profile: "balanced" as const, selectedNow: false }),

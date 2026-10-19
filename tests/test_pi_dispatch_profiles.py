@@ -67,6 +67,8 @@ console.log(JSON.stringify({
     profiles.parseFullPreloadRetry("SWB_FULL_PRELOAD_RETRY: unknown"),
     profiles.parseFullPreloadRetry("prefix SWB_FULL_PRELOAD_RETRY: missing-domain-guidance"),
     profiles.parseFullPreloadRetry("SWB_FULL_PRELOAD_RETRY: missing-domain-guidance\nmore"),
+    profiles.parseFullPreloadRetry("SWB_FULL_PRELOAD_RETRY: missing-domain-guidance\n"),
+    profiles.parseFullPreloadRetry("SWB_FULL_PRELOAD_RETRY: cross-domain-ambiguity  \n"),
   ],
   guidance: profiles.parentProfileGuidance("economy"),
   allAgents,
@@ -172,6 +174,8 @@ def test_retry_marker_accepts_only_closed_reasons_on_a_standalone_final_line(pro
         None,
         None,
         None,
+        "missing-domain-guidance",
+        "cross-domain-ambiguity",
     ]
 
 

@@ -95,7 +95,7 @@ function effectiveEffort(profile: DispatchProfile, agent: string, declaredEffort
 }
 
 function preloadPlan(profile: DispatchProfile, agent: string, skillIds: readonly string[]) {
-  if (profile !== "economy" || agent !== "reviewer" || PROTECTED_AGENTS.has(agent)) {
+  if (profile !== "economy" || agent !== "reviewer") {
     return { preloadSkillIds: skillIds, onDemandSkillIds: [] as readonly string[] };
   }
   return {
@@ -144,7 +144,7 @@ export function outputContract(family: OutputFamily, capChars: number, allowRetr
     advisory: "recommendation, evidence anchors, risks, and unresolved decisions",
   };
   const retry = allowRetry
-    ? ` If full domain guidance is required, end with exactly SWB_FULL_PRELOAD_RETRY: <${FULL_PRELOAD_RETRY_REASONS.join("|")}>.`
+    ? ` If full domain guidance is required, end with the line SWB_FULL_PRELOAD_RETRY: followed by exactly one of ${FULL_PRELOAD_RETRY_REASONS.join(", ")}.`
     : "";
   return `Return ${shape[family]}. Keep the response within ${capChars} characters.${retry}`;
 }
