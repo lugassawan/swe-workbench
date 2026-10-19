@@ -27,6 +27,14 @@ class TestPyprojectPythonpath:
             "pyproject.toml pythonpath must include 'tests'"
         )
 
+    def test_pyproject_pythonpath_includes_bin(self):
+        """Loader-based tests exec bin/ scripts that import swe_workbench_runtime; without bin/
+        on the path they pass or fail depending on which test happened to run first."""
+        content = PYPROJECT.read_text()
+        assert '"bin"' in content or "'bin'" in content, (
+            "pyproject.toml pythonpath must include 'bin'"
+        )
+
     def test_pyproject_pythonpath_includes_scripts(self):
         content = PYPROJECT.read_text()
         assert '"scripts"' in content or "'scripts'" in content, (

@@ -23,7 +23,8 @@ Registry field kinds are a closed, intentionally small vocabulary: "str", "int",
 objects — the shape `swe-workbench-sweep-residuals` uses for retained/failed
 records), and "list[candidate]" (a list of dead-code candidate records — the
 shape `swe-workbench-dead-code-scan` emits; see that script for the field
-set). A field kind outside this vocabulary is a bug in this module's own
+set), and "list[count_row]" (a list of {"key": str, "count": int} objects — the
+per-category and per-field tallies `swe-workbench-redact` emits). A field kind outside this vocabulary is a bug in this module's own
 REGISTRY, not a caller error — it raises rather than silently passing validation.
 """
 
@@ -159,6 +160,13 @@ REGISTRY: dict[str, dict[str, str]] = {
         "scope_status": "str",
         "gh_version": "str",
     },
+    "swb.redact/1": {
+        "total": "int",
+        "by_category": "list[count_row]",
+        "by_field": "list[count_row]",
+        "summary": "str",
+        "outputs": "list[str]",
+    },
 }
 
 _STATUSES = {"ok", "partial", "failed"}
@@ -202,6 +210,14 @@ def _type_ok(kind: str, value: object) -> bool:
                 and isinstance(r.get("reason"), str)
                 for r in v["references"]
             )
+            for v in value
+        )
+    if kind == "list[count_row]":
+        return isinstance(value, list) and all(
+            isinstance(v, dict)
+            and isinstance(v.get("key"), str)
+            and isinstance(v.get("count"), int)
+            and not isinstance(v.get("count"), bool)
             for v in value
         )
     raise AssertionError(f"swe-workbench-result-check: unregistered field kind {kind!r} in REGISTRY")

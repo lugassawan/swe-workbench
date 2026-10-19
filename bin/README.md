@@ -20,7 +20,7 @@ The scripts in this directory that carry a `#!/usr/bin/env python3` shebang inst
 `swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-cleanup-merged`, `swe-workbench-issue-preflight`, `swe-workbench-lsp`,
 `swe-workbench-memory`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
-`swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, and
+`swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, `swe-workbench-redact`, and
 `swe-workbench-result-check`. `comment-scan` is a pure
 diff-in/findings-out function (no git calls of its own; see `shared/agents/comment-scan.md` for the
 canonical diff command); `pr-review-submit` does call `git`/`gh` but needed Python's JSON and
@@ -50,7 +50,12 @@ Python's `json`/`re`/`fcntl`, where bash would need `jq` as a second escaping en
 nothing on stdout, never a silent "clean". `issue-preflight` classifies free-form `gh` stderr
 (unknown flag vs. logged out vs. repo not found, plus a token-scope read) into a closed
 `failure_kind` set so the calling prose never interprets gh's wording; bash would need a regex
-cascade over merged stdout+stderr and `jq` for the envelope. Same bare-command convention applies;
+cascade over merged stdout+stderr and `jq` for the envelope. `redact` resolves overlapping
+matches from a dozen pattern families (leftmost-longest with a category priority), validates IPv6
+candidates with `ipaddress`, NFKC-normalizes before matching, and writes outputs atomically — a
+deterministic text sanitizer that bash would have to approximate with `sed` and a second regex
+dialect, and that fails closed (non-zero exit, empty stdout, no output file left behind) like
+`result-check`. Same bare-command convention applies;
 only the interpreter differs.
 
 ## Result contract
