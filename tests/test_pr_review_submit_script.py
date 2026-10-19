@@ -35,16 +35,51 @@ import json, os, sys
 
 state_dir = os.environ["GH_STUB_STATE"]
 responses = json.load(open(os.environ["GH_STUB_RESPONSES"]))
-count_file = os.path.join(state_dir, "count")
-i = int(open(count_file).read()) if os.path.exists(count_file) else 0
-open(count_file, "w").write(str(i + 1))
+routes_file = os.environ.get("GH_STUB_ROUTES", "")
+routes = json.load(open(routes_file)) if routes_file and os.path.exists(routes_file) else {}
 argv = sys.argv[1:]
 stdin_data = sys.stdin.read()
-with open(os.path.join(state_dir, f"call-{i}.json"), "w") as f:
-    json.dump({"argv": argv, "stdin": stdin_data}, f)
-resp = responses[i] if i < len(responses) else {
-    "stdout": "", "stderr": f"gh-stub: no response configured for call {i} (argv={argv})", "exit": 99,
-}
+
+
+def bump(name):
+    path = os.path.join(state_dir, name)
+    n = int(open(path).read()) if os.path.exists(path) else 0
+    open(path, "w").write(str(n + 1))
+    return n
+
+
+def route_key(args):
+    if args and args[0] == "api":
+        method, path, i = "GET", "", 1
+        while i < len(args):
+            if args[i] in ("--method", "-X") and i + 1 < len(args):
+                method, i = args[i + 1], i + 2
+                continue
+            if not args[i].startswith("-") and not path:
+                path = args[i]
+            i += 1
+        return f"{method} {path}"
+    return " ".join(args[:2])
+
+
+key = route_key(argv)
+seq = bump("seq")
+if key in routes:
+    # Route-keyed responses are consumed in order (the last one repeats) and logged apart from
+    # the positional queue, so adding a read never shifts the call-N.json indices.
+    n = bump("route-count-" + key.replace("/", "_").replace(" ", "_"))
+    route_i = bump("route-log-count")
+    with open(os.path.join(state_dir, f"route-call-{route_i}.json"), "w") as f:
+        json.dump({"argv": argv, "stdin": stdin_data, "route": key, "seq": seq}, f)
+    seq_resp = routes[key]
+    resp = seq_resp[min(n, len(seq_resp) - 1)]
+else:
+    i = bump("count")
+    with open(os.path.join(state_dir, f"call-{i}.json"), "w") as f:
+        json.dump({"argv": argv, "stdin": stdin_data, "seq": seq}, f)
+    resp = responses[i] if i < len(responses) else {
+        "stdout": "", "stderr": f"gh-stub: no response configured for call {i} (argv={argv})", "exit": 99,
+    }
 sys.stdout.write(resp.get("stdout", ""))
 sys.stderr.write(resp.get("stderr", ""))
 sys.exit(resp.get("exit", 0))
@@ -81,9 +116,21 @@ def _init_repo(tmp_path: Path, contents: str = "line1\nline2\nline3\n", filename
     return _git(["rev-parse", "HEAD"], cwd=tmp_path).stdout.strip()
 
 
-def _write_gh_stub(tmp_path: Path, responses: list[dict]) -> tuple[Path, Path]:
+_EMPTY_LIST_READ = [{"stdout": "", "exit": 0}]
+# Reads every run now makes; served by route so they never shift the positional queue.
+_DEFAULT_ROUTES = {
+    "GET repos/o/r/pulls/1/reviews": _EMPTY_LIST_READ,
+    "GET repos/o/r/issues/1/comments": _EMPTY_LIST_READ,
+}
+
+
+def _write_gh_stub(tmp_path: Path, responses: list[dict], routes: dict[str, list[dict]] | None = None) -> tuple[Path, Path]:
     """Writes the gh stub + its canned responses (at tmp_path/gh_responses.json,
-    the fixed path every test's own `responses_file` variable points at)."""
+    the fixed path every test's own `responses_file` variable points at).
+
+    `routes` maps "METHOD path" (or "cmd subcmd" for non-api calls) to a response sequence
+    that is checked before the positional queue; it overrides the empty-list defaults for
+    the review and issue-comment list reads."""
     stub_dir = tmp_path / "stubs"
     stub_dir.mkdir(exist_ok=True)
     stub = stub_dir / "gh"
@@ -92,6 +139,7 @@ def _write_gh_stub(tmp_path: Path, responses: list[dict]) -> tuple[Path, Path]:
     state_dir = tmp_path / "gh_state"
     state_dir.mkdir(exist_ok=True)
     (tmp_path / "gh_responses.json").write_text(json.dumps(responses))
+    (tmp_path / "gh_routes.json").write_text(json.dumps({**_DEFAULT_ROUTES, **(routes or {})}))
     return stub_dir, state_dir
 
 
@@ -109,11 +157,43 @@ def _gh_calls(state_dir: Path) -> list[dict]:
     return calls
 
 
+def _routed_calls(state_dir: Path) -> list[dict]:
+    """Calls served by a route (not the positional queue), in arrival order."""
+    calls = []
+    i = 0
+    while (state_dir / f"route-call-{i}.json").exists():
+        calls.append(json.loads((state_dir / f"route-call-{i}.json").read_text()))
+        i += 1
+    return calls
+
+
+def _all_calls(state_dir: Path) -> list[dict]:
+    """Positional and routed calls merged into arrival order."""
+    return sorted(_gh_calls(state_dir) + _routed_calls(state_dir), key=lambda call: call["seq"])
+
+
+def _is_mutating(call: dict) -> bool:
+    argv = call["argv"]
+    if argv[:2] == ["pr", "comment"] or argv[:2] == ["pr", "review"]:
+        return True
+    if argv[:1] != ["api"]:
+        return False
+    text = json.dumps(argv)
+    if "mutation" in text:
+        return True
+    return any(flag in argv for flag in ("--method", "-X")) and "GET" not in argv
+
+
+def _mutating_calls(state_dir: Path) -> list[dict]:
+    return [call for call in _all_calls(state_dir) if _is_mutating(call)]
+
+
 def _run(args: list[str], *, cwd: Path, stub_dir: Path, state_dir: Path, responses_file: Path, stdin: str | None = None):
     env = dict(_CLEAN_ENV)
     env["PATH"] = f"{stub_dir}:{env.get('PATH', '/usr/bin:/bin')}"
     env["GH_STUB_STATE"] = str(state_dir)
     env["GH_STUB_RESPONSES"] = str(responses_file)
+    env["GH_STUB_ROUTES"] = str(responses_file.with_name("gh_routes.json"))
     return subprocess.run(
         [str(SCRIPT), *args],
         input=stdin, capture_output=True, text=True,
@@ -205,6 +285,52 @@ def _write_findings(tmp_path: Path, findings: list[dict]) -> Path:
     path = tmp_path / "findings.json"
     path.write_text(json.dumps(findings))
     return path
+
+
+# ── Stub infra: route-keyed responses leave positional indices alone ──────────
+
+
+def _stub_call(stub_dir, state_dir, tmp_path, *argv):
+    env = dict(_CLEAN_ENV)
+    env.update(
+        GH_STUB_STATE=str(state_dir),
+        GH_STUB_RESPONSES=str(tmp_path / "gh_responses.json"),
+        GH_STUB_ROUTES=str(tmp_path / "gh_routes.json"),
+    )
+    return subprocess.run([str(stub_dir / "gh"), *argv], capture_output=True, text=True, env=env, input="")
+
+
+def test_routed_reads_do_not_consume_or_shift_the_positional_queue(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(
+        tmp_path,
+        [{"stdout": "first", "exit": 0}],
+        routes={"GET repos/o/r/pulls/1/reviews": [{"stdout": "a", "exit": 0}, {"stdout": "b", "exit": 0}]},
+    )
+    reviews = ("api", "--paginate", "repos/o/r/pulls/1/reviews")
+    assert _stub_call(stub_dir, state_dir, tmp_path, *reviews).stdout == "a"
+    assert _stub_call(stub_dir, state_dir, tmp_path, "pr", "diff", "1").stdout == "first"
+    assert _stub_call(stub_dir, state_dir, tmp_path, *reviews).stdout == "b"
+    assert _stub_call(stub_dir, state_dir, tmp_path, *reviews).stdout == "b", "last route response repeats"
+    assert [c["argv"][:2] for c in _gh_calls(state_dir)] == [["pr", "diff"]]
+    assert len(_routed_calls(state_dir)) == 3
+    assert [c["argv"][0] for c in _all_calls(state_dir)] == ["api", "pr", "api", "api"]
+
+
+def test_default_routes_serve_empty_review_and_issue_comment_lists(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [])
+    for path in ("repos/o/r/pulls/1/reviews", "repos/o/r/issues/1/comments"):
+        proc = _stub_call(stub_dir, state_dir, tmp_path, "api", path)
+        assert (proc.returncode, proc.stdout) == (0, "")
+    assert _gh_calls(state_dir) == []
+
+
+def test_post_calls_are_classified_as_mutating_and_reads_are_not(tmp_path):
+    stub_dir, state_dir = _write_gh_stub(tmp_path, [{"stdout": "", "exit": 0}] * 3)
+    _stub_call(stub_dir, state_dir, tmp_path, "api", "repos/o/r/pulls/1/reviews")
+    _stub_call(stub_dir, state_dir, tmp_path, "api", "--method", "POST", "repos/o/r/pulls/1/reviews", "--input", "-")
+    _stub_call(stub_dir, state_dir, tmp_path, "pr", "comment", "1", "--body", "x")
+    _stub_call(stub_dir, state_dir, tmp_path, "pr", "diff", "1")
+    assert [c["argv"][:2] for c in _mutating_calls(state_dir)] == [["api", "--method"], ["pr", "comment"]]
 
 
 # ── Existence ────────────────────────────────────────────────────────────────
@@ -1073,7 +1199,6 @@ def test_double_422_falls_through_to_per_comment_model_a(tmp_path):
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
             {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
             {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
             _review_post_response(),  # final plain review submit
         ],
@@ -1113,7 +1238,6 @@ def test_5xx_issues_zero_retries_and_one_read_your_write_call(tmp_path):
             {"stdout": pr_diff, "exit": 0},
             _repo_view_response(True),
             {"stdout": "", "stderr": "HTTP 503: Service Unavailable", "exit": 1},  # network/5xx
-            {"stdout": "[]", "exit": 0},  # read-your-write: nothing landed
             {"stdout": "", "exit": 0},  # per-comment fallback POST succeeds
             _review_post_response(),
         ],
@@ -1135,10 +1259,7 @@ def test_5xx_issues_zero_retries_and_one_read_your_write_call(tmp_path):
         if "/reviews" in json.dumps(c["argv"]) and "--input" in c["argv"] and "comments" in json.loads(c["stdin"])
     ]
     assert len(atomic_post_calls) == 1, "network/5xx must never blind-retry the atomic POST"
-    list_calls = [
-        c for c in calls
-        if c["argv"][0] == "api" and c["argv"][1] == "repos/o/r/pulls/1/reviews" and len(c["argv"]) == 2
-    ]
+    list_calls = [c for c in _routed_calls(state_dir) if c["route"] == "GET repos/o/r/pulls/1/reviews"]
     assert len(list_calls) == 1, f"expected exactly one read-your-write list call, got {calls}"
 
 
@@ -1162,8 +1283,10 @@ def test_confirmed_landed_5xx_reports_submitted_without_reposting(tmp_path):
             {"stdout": pr_diff, "exit": 0},
             _repo_view_response(True),
             {"stdout": "", "stderr": "connection reset by peer", "exit": 1},  # ambiguous network failure
-            {"stdout": json.dumps([{"user": {"login": "alice"}, "commit_id": head, "html_url": landed_url}]), "exit": 0},
         ],
+        routes={"GET repos/o/r/pulls/1/reviews": [
+            {"stdout": json.dumps([{"user": {"login": "alice"}, "commit_id": head, "html_url": landed_url}]), "exit": 0},
+        ]},
     )
     responses_file = tmp_path / "gh_responses.json"
     findings = _write_findings(tmp_path, [
@@ -1536,7 +1659,6 @@ def test_status_is_partial_when_submitted_false(tmp_path):
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
             {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
             {"stdout": "", "stderr": "still failing", "exit": 1},  # per-comment fallback POST fails
             {"stdout": "", "stderr": "final submit fails too", "exit": 1},  # final plain review submit fails
         ],
@@ -2172,7 +2294,6 @@ def test_row_demoted_by_failed_per_comment_fallback_renders_pr_level_with_locati
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
             {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
             {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST fails
             {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
             _review_post_response(),  # final plain review submit
@@ -2214,7 +2335,6 @@ def test_fallback_demotes_one_of_two_findings_and_preserves_ordinals(tmp_path):
             {"stdout": json.dumps({"headRefOid": head}), "exit": 0},  # re-fetch HEAD (unchanged)
             {"stdout": pr_diff, "exit": 0},  # re-fetch PR diff alongside HEAD
             {"stdout": "", "stderr": "HTTP 422", "exit": 1},  # retry POST 422s again
-            {"stdout": "[]", "exit": 0},  # read-your-write list: nothing landed
             {"stdout": "", "exit": 0},  # per-comment fallback POST for finding 1 succeeds
             {"stdout": "", "stderr": "HTTP 500", "exit": 1},  # per-comment fallback POST for finding 2 fails
             {"stdout": "", "exit": 0},  # pr comment carrying the demoted row
