@@ -49,6 +49,19 @@ if ! cmd=$(jq -r '.tool_input.command // ""'); then
   exit 2
 fi
 
+# A preprocessing program that cannot run (awk or tr missing, killed) must not read as "nothing to
+# guard": every stage below captures its output through this on failure.
+_fail_closed() {
+  echo "BLOCKED: guard preprocessing failed ($1) — blocking by default" >&2
+  exit 2
+}
+
+# The awk stages are quadratic on long text, so past this size the comment stripper and the
+# lexer are skipped and the push scan answers with its coarse grep.
+MAX_EXACT_SCAN_BYTES=65536
+_oversize=0
+(( ${#cmd} > MAX_EXACT_SCAN_BYTES )) && _oversize=1
+
 # Strip shell comments per-line BEFORE folding newlines or joining backslash
 # continuations. A `#` comment ends at its line's newline; folding first would
 # let an early comment swallow a destructive command on a later line (e.g.
@@ -66,7 +79,8 @@ fi
 # commit message — otherwise a '#'-starting continuation line would swallow
 # real command text that follows the closing quote on the SAME line (#501
 # re-review finding).
-_nc=$(printf '%s' "$cmd" | LC_ALL=C awk '
+# shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
+_comment_awk='
 BEGIN { in_sq = 0; in_dq = 0 }
 {
   line = $0; out = ""; n = length(line)
@@ -78,7 +92,12 @@ BEGIN { in_sq = 0; in_dq = 0 }
     out = out c
   }
   print out
-}')
+}'
+if (( _oversize )); then
+  _nc=$cmd
+else
+  _nc=$(printf '%s' "$cmd" | LC_ALL=C awk "$_comment_awk") || _fail_closed awk
+fi
 
 # Join backslash-continued lines AFTER comment-stripping (see above), still
 # BEFORE quote tracking and fast-gate normalization. Real bash removes a
@@ -102,14 +121,14 @@ _bj=$(printf '%s' "$_nc" | LC_ALL=C awk '
   line = $0; ll = length(line); nb = 0
   while (nb < ll && substr(line, ll - nb, 1) == "\\") nb++
   if (nb % 2 == 1) printf "%s", substr(line, 1, ll - 1); else print line
-}')
+}') || _fail_closed awk
 
 # Normalise separators AND newlines/tabs/backticks to spaces so rm/git after
 # ; | & \n \t \` are still detected — the fast-gate `case` and the grep
 # detectors must share ONE separator alphabet (gate saw ';|&', grep saw
 # [[:space:]]).
 # shellcheck disable=SC2016  # backtick in tr's SET1 is a literal char, not command substitution
-_norm=$(printf '%s' "$_bj" | tr ';|&\n\t`' '      ')
+_norm=$(printf '%s' "$_bj" | tr ';|&\n\t`' '      ') || _fail_closed tr
 
 # Fully normalise BEFORE the fast gate, not after: turning "(" and ")" into SPACES (not
 # deleting them) handles $(...), <(...), >(...), and bare (...) uniformly, since whatever
@@ -117,7 +136,7 @@ _norm=$(printf '%s' "$_bj" | tr ';|&\n\t`' '      ')
 # Deleting quotes/brackets/backslashes closes quote-wrapped/backslash-escaped rm ("rm", 'rm',
 # \rm). Gate and detector now both run on this SAME normalized text ($norm), closing the same
 # class of gate/detector divergence for quote-wrapped rm.
-norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\\\")
+norm=$(printf '%s' "$_norm" | tr '()' '  ' | tr -d "'\"[]{}\\\\") || _fail_closed tr
 
 # The "pi" token in the gate is matched with an explicit case-insensitive character class
 # ([Pp][Ii]), not `shopt -s nocasematch` — that shopt would apply to the WHOLE case
@@ -563,6 +582,9 @@ _classify_force_push_segment() {
 }
 
 MAX_PUSH_SCAN_DEPTH=4
+# Why the coarse grep ran instead of the lexer: nesting too deep (default) or text too large.
+_limit_reason=indeterminate
+(( _oversize )) && _limit_reason=oversize
 
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
@@ -720,7 +742,7 @@ scan_force_push_text() {
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
       'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`]|$)'; then
-      printf 'BLOCK\tindeterminate\n'
+      printf 'BLOCK\t%s\n' "$_limit_reason"
     fi
     return
   fi
@@ -762,6 +784,7 @@ while IFS=$'\t' read -r _policy _reason; do
         dynamic-destination) echo 'BLOCKED: force push with a dynamic destination or flag cannot be checked; spell the branch literally or use --force-with-lease' >&2 ;;
         context-destination) echo 'BLOCKED: force push into another repository (-C/--git-dir/--work-tree) cannot be attributed to a branch; name the refspec literally' >&2 ;;
         indeterminate) echo 'BLOCKED: force push nested too deeply to scan; spell the push directly or use --force-with-lease' >&2 ;;
+        oversize) echo 'BLOCKED: force push in a command too large to scan exactly; split the command or use --force-with-lease' >&2 ;;
         *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
       esac
       exit 2
@@ -789,7 +812,7 @@ while IFS=$'\t' read -r _policy _reason; do
       esac
       ;;
   esac
-done < <(scan_force_push_text "$_bj"; printf 'DONE\n')
+done < <(scan_force_push_text "$_bj" "$(( _oversize ? MAX_PUSH_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
 if (( ! _scan_done )); then
   echo 'BLOCKED: force-push scan did not complete (internal error)' >&2
   exit 2
@@ -828,7 +851,12 @@ fi
 # filesystem; the -p/--print flag check stays case-sensitive.
 case "$norm" in
   [Pp][Ii]\ *|*\ [Pp][Ii]\ *|*/[Pp][Ii]\ *)
-    pi_seg=$(printf '%s' "$_bj" | LC_ALL=C awk "$_segment_awk")
+    # Oversize text skips the segmenter: `pi` and a print flag anywhere in it count as one segment.
+    if (( _oversize )); then
+      pi_seg=$norm
+    else
+      pi_seg=$(printf '%s' "$_bj" | LC_ALL=C awk "$_segment_awk") || _fail_closed awk
+    fi
     if printf '%s\n' "$pi_seg" | grep -iE '(^|[[:space:]])([^[:space:]]*/)?pi[[:space:]]' \
        | grep -Eq '(^|[[:space:]])(-p|--print)([[:space:]]|=|$)'; then
       echo 'BLOCKED: nested non-interactive pi session (subagent recursion guard)' >&2

@@ -1786,3 +1786,83 @@ class TestDifferentialFixtures:
     def test_branch_fixture_verdict(self, guard_script, branch_repos, branch, cmd, expect_blocked):
         result = run_guard(guard_script, cmd, cwd=str(branch_repos[branch]))
         _assert_verdict(result, cmd, expect_blocked, branch)
+
+
+# ──────────────────────────────────────────────
+# Scan infrastructure — tool failure policy and the oversize cap. These cannot be shared
+# fixture rows: the payloads are larger than the Pi driver's argv allows, and the tests
+# change which programs the guard can run.
+# ──────────────────────────────────────────────
+
+_OVERSIZE_FILLER = "a" * 200_000
+
+
+@pytest.fixture
+def awkless_path(tmp_path):
+    """A PATH holding everything the guard runs except awk."""
+    shim = tmp_path / "awkless-bin"
+    shim.mkdir()
+    for tool in ("jq", "tr", "grep", "git", "bash", "env", "cat"):
+        found = shutil.which(tool)
+        assert found, f"{tool} must exist to build the shim"
+        (shim / tool).symlink_to(found)
+    assert not (shim / "awk").exists()
+    return str(shim)
+
+
+class TestScanToolFailure:
+    @pytest.mark.parametrize("cmd", [
+        "rm -rf /",
+        "git push --force origin main",
+        "ls -la",
+    ])
+    def test_missing_awk_blocks_instead_of_allowing(self, guard_script, awkless_path, cmd):
+        result = run_guard(guard_script, cmd, env={"PATH": awkless_path})
+        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
+            f"a guard that cannot run awk must fail closed for {cmd!r}: "
+            f"exit {result.returncode}: {result.stderr!r}"
+        )
+
+
+class TestOversizeCommand:
+    def _timed(self, guard_script, cmd):
+        start = time.monotonic()
+        result = run_guard(guard_script, cmd)
+        return result, time.monotonic() - start
+
+    def test_oversize_benign_command_is_allowed_quickly(self, guard_script):
+        result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}")
+        assert result.returncode == 0 and result.stderr == ""
+        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+
+    def test_oversize_command_with_unrelated_git_is_allowed(self, guard_script):
+        result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; git status")
+        assert result.returncode == 0 and result.stderr == ""
+        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+
+    @pytest.mark.parametrize("tail", [
+        "git push --force origin main",
+        "git push -f origin feature/x",
+        "git push origin +main",
+    ])
+    def test_oversize_force_push_blocks_on_any_branch(self, guard_script, tail):
+        result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+        assert "too large" in result.stderr
+        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+
+    def test_oversize_rm_is_still_blocked(self, guard_script):
+        result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; rm -rf /")
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+
+    @pytest.mark.parametrize("tail", ["pi -p x", "pi --print x"])
+    def test_oversize_pi_print_is_blocked(self, guard_script, tail):
+        result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
+        assert result.returncode == 2 and "BLOCKED" in result.stderr
+        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+
+    def test_command_under_the_cap_still_uses_the_exact_scan(self, guard_script):
+        # 60 KB stays below the cap, so the full lexer decides and a feature-branch force push passes.
+        result = run_guard(guard_script, f"echo {'a' * 60_000}; git push --force origin feature/x")
+        assert result.returncode == 0, result.stderr
