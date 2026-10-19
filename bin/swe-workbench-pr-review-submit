@@ -671,7 +671,7 @@ def post_pr_level(pr: str, findings: list[dict]) -> tuple[int, list[dict]]:
 
 # ── Step 4 — submit ─────────────────────────────────────────────────────────
 
-READ_BACK_SETTLE_SECONDS = 2
+READ_BACK_SETTLE_SECONDS = 3
 RUN_MARKER_PREFIX = "<!-- swe-workbench:review-run:"
 _ALLOWED_EVENTS = ("APPROVE", "COMMENT")
 MAX_REVIEW_TEXT_CHARS = 65_536
@@ -688,6 +688,7 @@ class SubmitResult:
     submitted: bool
     review_url: str
     event: str = ""  # the event actually submitted; may differ from the requested one
+    failure: str = ""  # "permanent" when GitHub refused the review outright, else ""
     # Rows whose delivery is not confirmed: everything when the review itself is unconfirmed,
     # otherwise only the overflow rows whose comment batch failed.
     pending_rows: list[dict] = field(default_factory=list)
@@ -896,7 +897,10 @@ def submit_review(
         if outcome == "permanent":
             detail = (proc.stderr.strip() or proc.stdout.strip())[:200]
             print(f"[warn] review POST failed permanently and was not retried: {detail}", file=sys.stderr)
-        return SubmitResult(0, 0, False, "", event=event, pending_rows=inline + rows)
+        return SubmitResult(
+            0, 0, False, "", event=event, failure="permanent" if outcome == "permanent" else "",
+            pending_rows=inline + rows,
+        )
 
     posted_overflow, failed_overflow = post_pr_level(pr, overflow)
     return SubmitResult(
@@ -1074,6 +1078,7 @@ class RetryState:
     attempts: int = 0
     event: str = ""
     warning: str = ""
+    warning_code: str = ""
 
 
 def _row_for_state(row: dict) -> dict:
@@ -1142,8 +1147,9 @@ def load_retry_state(path: str, head_sha: str, caller_tag: str) -> RetryState:
                 file=sys.stderr,
             )
         return RetryState()
-    warning = ""
+    warning = warning_code = ""
     if len(data["rows"]) > _MAX_RETRY_ROWS:
+        warning_code = "retry_truncated"
         warning = (
             f"retry state held {len(data['rows'])} rows; {len(data['rows']) - _MAX_RETRY_ROWS} row(s) "
             f"were not carried over (cap {_MAX_RETRY_ROWS})."
@@ -1158,9 +1164,13 @@ def load_retry_state(path: str, head_sha: str, caller_tag: str) -> RetryState:
     attempts = data.get("attempts")
     attempts = attempts if _is_positive_int(attempts) else 0
     if rows and attempts >= MAX_RETRY_ATTEMPTS:
-        return RetryState(warning=f"giving up on {len(rows)} carried finding(s) after {attempts} failed attempts — they are dropped.")
+        return RetryState(
+            warning=f"giving up on {len(rows)} carried finding(s) after {attempts} failed attempts — they are dropped.",
+            warning_code="retry_given_up",
+        )
     event = data.get("event")
-    return RetryState(rows=rows, attempts=attempts, event=event if event in _ALLOWED_EVENTS else "", warning=warning)
+    return RetryState(rows=rows, attempts=attempts, event=event if event in _ALLOWED_EVENTS else "",
+                      warning=warning, warning_code=warning_code)
 
 
 def write_retry_state(path: str, head_sha: str, caller_tag: str, event: str, attempts: int, rows: list[dict]) -> bool:
@@ -1330,20 +1340,39 @@ def main(argv: list[str] | None = None) -> int:
         else:
             clear_retry_state(args.retry_state)
 
-    warnings: list[str] = []
+    warnings: list[dict] = []
     if retry.warning:
-        warnings.append(retry.warning)
+        warnings.append({"code": retry.warning_code, "message": retry.warning})
         print(f"[warn] {retry.warning}", file=sys.stderr)
     if result.pending_rows:
         n_pending = len(result.pending_rows)
         if not args.retry_state:
-            warnings.append(f"{n_pending} finding(s) not delivered — no --retry-state was given, so they are not saved.")
+            warnings.append({
+                "code": "retry_not_requested",
+                "message": f"{n_pending} finding(s) not delivered — no --retry-state was given, so they are not saved.",
+            })
         elif persisted:
-            warnings.append(f"{n_pending} finding(s) not delivered — rerun with the same --retry-state to retry.")
+            warnings.append({
+                "code": "retry_pending",
+                "message": f"{n_pending} finding(s) not delivered — rerun with the same --retry-state to retry.",
+            })
         else:
-            warnings.append(f"{n_pending} finding(s) not delivered and NOT saved — the retry state could not be written.")
+            warnings.append({
+                "code": "retry_not_saved",
+                "message": f"{n_pending} finding(s) not delivered and NOT saved — the retry state could not be written.",
+            })
     if not (result.submitted or skipped_reason):
-        warnings.append("the review was not confirmed — check the PR for a late-landing review, then rerun to retry.")
+        if result.failure == "permanent":
+            warnings.append({
+                "code": "review_rejected",
+                "message": "GitHub refused the review (a permanent error, not retried) — nothing was posted; "
+                           "fix the cause (permissions, auth, target) and rerun.",
+            })
+        else:
+            warnings.append({
+                "code": "review_unconfirmed",
+                "message": "the review was not confirmed — check the PR for a late-landing review, then rerun to retry.",
+            })
 
     if args.debug_dir:
         debug_dir = Path(args.debug_dir)

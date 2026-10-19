@@ -2881,7 +2881,7 @@ def test_an_unconfirmed_review_with_no_rows_still_explains_itself(tmp_path):
     )
     envelope = json.loads(result.stdout)
     assert (envelope["status"], envelope["data"]["retry_pending"]) == ("partial", 0)
-    assert any("not confirmed" in warning for warning in envelope["warnings"])
+    assert any("not confirmed" in warning["message"] for warning in envelope["warnings"])
 
 
 def test_a_retry_state_write_failure_is_reported_in_the_envelope(tmp_path):
@@ -2893,8 +2893,8 @@ def test_a_retry_state_write_failure_is_reported_in_the_envelope(tmp_path):
         review_reads=[_ndjson([]), _READ_FAILED], extra_args={"--retry-state": str(blocker / "retry.json")},
     )
     warnings = json.loads(result.stdout)["warnings"]
-    assert any("NOT saved" in warning for warning in warnings), warnings
-    assert not any("rerun with the same --retry-state" in warning for warning in warnings)
+    assert any("NOT saved" in warning["message"] for warning in warnings), warnings
+    assert not any("rerun with the same --retry-state" in warning["message"] for warning in warnings)
 
 
 def test_unconfirmed_rows_without_a_retry_state_flag_do_not_promise_a_retry(tmp_path):
@@ -2904,7 +2904,7 @@ def test_unconfirmed_rows_without_a_retry_state_flag_do_not_promise_a_retry(tmp_
         review_reads=[_ndjson([]), _READ_FAILED],
     )
     warnings = json.loads(result.stdout)["warnings"]
-    assert warnings and not any("rerun with the same --retry-state" in warning for warning in warnings)
+    assert warnings and not any("rerun with the same --retry-state" in warning["message"] for warning in warnings)
 
 
 @pytest.mark.parametrize("overrides", [{"head": "b" * 40}, {"caller_tag": "security"}], ids=["head", "caller"])
@@ -3131,21 +3131,6 @@ def test_collect_known_keys_ignores_pending_reviews():
     assert prs.collect_known_keys([], [pending, submitted], [], "alice") == {prs.finding_key(_row(issue="other"), "b")}
 
 
-def test_a_non_utf8_file_does_not_crash_key_assignment(tmp_path):
-    head = _init_repo(tmp_path)
-    (tmp_path / "src.py").write_bytes(b"line1\nl\xe9ine2\nline3\n")
-    _git(["add", "src.py"], cwd=tmp_path)
-    _git(["commit", "-m", "latin-1 file"], cwd=tmp_path)
-    head = _git(["rev-parse", "HEAD"], cwd=tmp_path).stdout.strip()
-    result, state_dir = _run_delivery(
-        tmp_path, [_row(line=1)],
-        [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
-        head=head,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "Traceback" not in result.stderr
-
-
 @pytest.mark.parametrize(
     "stderr, expected",
     [
@@ -3199,13 +3184,130 @@ def test_a_given_up_retry_file_is_announced_in_the_envelope_and_cleared(tmp_path
         tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
         extra_args=_with_retry({}, tmp_path),
     )
-    assert any("giving up" in warning for warning in json.loads(result.stdout)["warnings"])
+    assert any("giving up" in warning["message"] for warning in json.loads(result.stdout)["warnings"])
     assert not _retry_path(tmp_path).exists()
 
 
 def test_the_stored_event_round_trips_through_load(tmp_path):
     state = prs.load_retry_state(str(_state_file(tmp_path, event="COMMENT")), "a" * 40, "general")
     assert (state.event, len(state.rows)) == ("COMMENT", 1)
+
+
+# ── Warnings are contract objects ────────────────────────────────────────────
+
+
+def _checked(result):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "bin" / "swe-workbench-result-check"), "swb.pr-review-submit/1"],
+        input=result.stdout, capture_output=True, text=True, env=dict(_CLEAN_ENV),
+    )
+
+
+def _assert_valid_with_codes(result, expected):
+    assert result.returncode == 0, result.stderr
+    checked = _checked(result)
+    assert checked.returncode == 0, f"result-check rejected the envelope: {checked.stderr}"
+    warnings = json.loads(result.stdout)["warnings"]
+    assert all(isinstance(w, dict) and w["code"] and w["message"] for w in warnings), warnings
+    assert {w["code"] for w in warnings} == set(expected), warnings
+
+
+def test_unconfirmed_review_with_retry_rows_passes_the_result_check(tmp_path):
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)], [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], extra_args=_with_retry({}, tmp_path),
+    )
+    _assert_valid_with_codes(result, {"retry_pending", "review_unconfirmed"})
+
+
+def test_unconfirmed_review_without_rows_passes_the_result_check(tmp_path):
+    result, _ = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED],
+    )
+    _assert_valid_with_codes(result, {"review_unconfirmed"})
+
+
+def test_unsaved_rows_without_the_flag_pass_the_result_check(tmp_path):
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)], [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED],
+    )
+    _assert_valid_with_codes(result, {"retry_not_requested", "review_unconfirmed"})
+
+
+def test_a_retry_state_write_failure_passes_the_result_check(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)], [{"stdout": "", "exit": 0}, _repo_view_response(True), _HTTP_503],
+        review_reads=[_ndjson([]), _READ_FAILED], extra_args={"--retry-state": str(blocker / "retry.json")},
+    )
+    _assert_valid_with_codes(result, {"retry_not_saved", "review_unconfirmed"})
+
+
+def test_a_failed_overflow_batch_passes_the_result_check(tmp_path):
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(index) for index in range(51)],
+        [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response(), _HTTP_503],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    _assert_valid_with_codes(result, {"retry_pending"})
+
+
+def test_a_given_up_retry_file_passes_the_result_check(tmp_path):
+    _write_retry(tmp_path, [{"key": "0" * 16, **_pr_level_row(1)}], attempts=prs.MAX_RETRY_ATTEMPTS)
+    result, _ = _run_delivery(
+        tmp_path, [], [{"stdout": "", "exit": 0}, _repo_view_response(True), _review_post_response()],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    _assert_valid_with_codes(result, {"retry_given_up"})
+
+
+def test_a_permanent_rejection_says_nothing_was_posted_not_to_look_for_a_late_review(tmp_path):
+    forbidden = {"stdout": "", "stderr": "gh: Resource not accessible by integration (HTTP 403)", "exit": 1}
+    result, _ = _run_delivery(
+        tmp_path, [_pr_level_row(1)], [{"stdout": "", "exit": 0}, _repo_view_response(True), forbidden],
+        extra_args=_with_retry({}, tmp_path),
+    )
+    _assert_valid_with_codes(result, {"retry_pending", "review_rejected"})
+    messages = " ".join(w["message"] for w in json.loads(result.stdout)["warnings"])
+    assert "late-landing" not in messages and "nothing was posted" in messages
+
+
+def test_retry_state_warnings_carry_a_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(prs, "_MAX_RETRY_ROWS", 1)
+    rows = [{"key": "0" * 16, **_pr_level_row(1)}, {"key": "1" * 16, **_pr_level_row(2)}]
+    assert prs.load_retry_state(str(_state_file(tmp_path, rows=rows)), "a" * 40, "general").warning_code == "retry_truncated"
+    capped = _state_file(tmp_path, attempts=prs.MAX_RETRY_ATTEMPTS)
+    assert prs.load_retry_state(str(capped), "a" * 40, "general").warning_code == "retry_given_up"
+
+
+def test_the_settle_delay_is_long_enough_to_outlast_a_gateway_timeout_tail():
+    """It is the only guard against re-POSTing while the first POST is still completing."""
+    assert prs.READ_BACK_SETTLE_SECONDS >= 3
+
+
+def test_a_non_utf8_file_still_posts_an_inline_comment_with_a_stable_key(tmp_path):
+    keys = []
+    for name in ("first", "second"):
+        workdir = tmp_path / name
+        workdir.mkdir()
+        _init_repo(workdir)
+        (workdir / "src.py").write_bytes(b"line1\nl\xe9ine2\nline3\n")
+        _git(["add", "src.py"], cwd=workdir)
+        _git(["commit", "-m", "latin-1 file"], cwd=workdir)
+        head = _git(["rev-parse", "HEAD"], cwd=workdir).stdout.strip()
+        result, state_dir = _run_delivery(
+            workdir, [_row(line=1)],  # an ASCII line in a file that also holds a Latin-1 byte
+            [{"stdout": _PR_DIFF_3_LINES, "exit": 0}, _repo_view_response(True), _review_post_response()],
+            head=head,
+        )
+        assert result.returncode == 0, result.stderr
+        (payload,) = _review_posts(state_dir)
+        assert len(payload["comments"]) == 1, "the ASCII line is anchored inline, not demoted or crashed"
+        keys.append(_KEY_MARKER_RE.search(payload["comments"][0]["body"]).group(1))
+    assert keys[0] == keys[1], "the key must be deterministic across runs on the same bytes"
 
 
 # ── Unit: structured row validation ──────────────────────────────────────────

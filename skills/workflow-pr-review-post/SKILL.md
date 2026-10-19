@@ -128,7 +128,9 @@ further step. `.data` carries `posted_inline`, `posted_pr_level`, `deduped`, `su
 `""`) and `retry_pending` (rows not yet delivered; `0` on a full success). `.data.submitted = false` with
 `skipped_reason = "unchanged"` and `status: "ok"` is a deliberate skip, not a failure; with `status: "partial"` it
 means the review could not be confirmed (`.warnings` says what to do, and `retry_pending` may be `0` when the
-review carried no rows). Every field is report-only here — none of them
+review carried no rows). `.warnings` is a list of `{code, message}` objects — `retry_pending`, `retry_not_saved`,
+`retry_not_requested`, `retry_truncated`, `retry_given_up`, `review_unconfirmed`, `review_rejected` — so the
+envelope always passes the checker, even on a partial outcome. Every field is report-only here — none of them
 gates a branch this skill takes independently of `.data.decision` (a blocking thread already forces
 `decision` to `COMMENT`, see "Semantic shift" below) — so every field is read straight from
 `$RESULT` with `jq` at the point it's used, always `printf '%s' "$RESULT" | jq ...` or `jq
@@ -159,7 +161,8 @@ This skill ends once the review is submitted and offers no follow-up step; addre
 | Failure | Signal | Action |
 |---|---|---|
 | A pre-validated finding goes out-of-diff at post time, or the POST 422s outright (stale `commit_id`) | a `422`-bearing response | Demoted into the review body (never dropped); retried once against a re-fetched HEAD (`headRefOid`); a second 422 demotes every inline row for one body-only POST |
-| POST fails on network/5xx or a timeout | Anything but an `HTTP 422` status | Never blind-retried; the reviews are read back by run marker — landed means done, absent means one retry of the identical payload, unreadable means unconfirmed |
+| POST fails on network/5xx or a timeout | A non-HTTP failure, a 5xx, or `HTTP 408/425/429` | Never blind-retried; the reviews are read back by run marker — landed means done, absent means one retry of the identical payload, unreadable means unconfirmed |
+| GitHub refuses the review outright (401/403/404 or another 4xx besides 408/422/425/429) | `.warnings[].code = "review_rejected"`, `status: "partial"` | No read-back and no retry — nothing was posted. The rows wait in `$RETRY_STATE`; fix the permission, auth or target and rerun. |
 | Self-review, or `comments[]` is empty (`N == 0`) | `CURRENT_USER == AUTHOR_LOGIN`, or no inline survivors after dedup + pre-validate | Self-review always submits `.data.event = COMMENT`. Empty: the review carries only the summary and any PR-level batch. |
 | Decision unchanged and nothing new | `.data.skipped_reason = "unchanged"`, `.data.submitted = false`, `status: "ok"` | Zero mutations — nothing was posted on purpose. |
 | All findings dedup-matched | `.data.posted_inline = 0` and `.data.posted_pr_level = 0` | Submit proceeds unless the decision is also unchanged (then it is skipped, above). |
