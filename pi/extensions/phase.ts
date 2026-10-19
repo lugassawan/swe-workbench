@@ -77,10 +77,8 @@ export function registerPhase(pi: ExtensionAPI, _root: string): void {
       // Plan phase never arms headless: ctx.ui.notify has no surface there, and a `-p` run
       // must behave as if the feature did not exist.
       if (!ctx.hasUI) return undefined;
-      // Latest explicit plan command wins: the marker arms from ANY state (even execute —
-      // re-invoking a plan command after approval re-arms), refreshing the flip idempotently.
-      // A "custom" run (sendMessage + triggerTurn) has no prompt to carry a marker, so it can
-      // never arm — but the phase section below must still govern it.
+      // Latest explicit plan command wins, arming from ANY state and refreshing the flip idempotently.
+      // A "custom" run (triggerTurn) has no prompt, so it never arms; the section below still governs it.
       if (event.messageType !== "custom" && extractPhase(event.prompt) === "plan") {
         phase = "plan";
         // Re-arming plan voids a pending kickoff: the user chose more planning over executing.

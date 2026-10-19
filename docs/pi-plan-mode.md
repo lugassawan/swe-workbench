@@ -53,9 +53,10 @@ its handler bodies self-wrap per the runner's no-try/catch contract.
 - One full-context re-bill at the flip; the stable section invalidates at most twice per run.
 - Thinking-level split and `defaultModel` flip: follow-up tunings, not v1.
 - Headless: no arming, gate, flip, or section; `submit_plan` throws actionable text without a UI.
-- The approval kickoff lands as an extension-source user-role transcript line — the only
-  public-path auto-start in the current SDK; a silent custom message's continuation would
-  inherit the approval turn's plan-governed forced prompt instead.
+- The approval kickoff lands as an extension-source user-role transcript line through the
+  public prompt path. A silent custom message's continuation would inherit the approval
+  turn's plan-governed forced prompt instead; since Pi 1.2 such a `triggerTurn` start also
+  re-enters `before_agent_start` as a `"custom"` run, which never arms plan phase.
 - A kickoff-send failure is swallowed by the SDK's extension wrapper; recovery is the
   retryable state — the pending flag and execute phase persist, and any user message
   completes the start.
