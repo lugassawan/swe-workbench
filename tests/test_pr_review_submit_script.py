@@ -2999,6 +2999,34 @@ def test_an_unparseable_review_list_aborts_instead_of_hiding_the_latest_review(t
     assert _mutating_calls(state_dir) == []
 
 
+def test_a_directory_swapped_in_after_the_private_check_fails_the_write(tmp_path, monkeypatch, capsys):
+    """The check runs before mkdir; a directory another user creates in that window must be caught
+    by a second check, not trusted — otherwise the rows are 'saved' where they can never be loaded."""
+    answers = iter(["", "owned by another user"])
+    monkeypatch.setattr(prs, "_private_dir_problem", lambda _directory: next(answers))
+    target = tmp_path / "late" / "retry.json"
+    assert prs.write_retry_state(str(target), "a" * 40, "general", "COMMENT", 1, []) is False
+    assert "not a private directory" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_a_refused_retry_directory_is_announced_on_load(tmp_path, capsys):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    assert prs.load_retry_state(str(_state_file(shared)), "a" * 40, "general") == ([], 0)
+    assert "not a private directory" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("returncode, expected", [(124, True), (137, True), (1, False), (0, False)])
+def test_both_timeout_exit_codes_count_as_a_timeout(returncode, expected):
+    assert prs._is_timeout(_proc(returncode)) is expected
+
+
+def test_a_killed_gh_is_ambiguous_even_if_its_stderr_mentions_http_422():
+    assert prs._classify(_proc(137, "", "partial output ... (HTTP 422)")) == "ambiguous"
+
+
 # ── Unit: structured row validation ──────────────────────────────────────────
 
 

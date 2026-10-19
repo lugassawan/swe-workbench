@@ -828,6 +828,11 @@ def build_review_body(summary: str, rows: list[dict]) -> tuple[str, list[dict]]:
     return head + _BATCH_SEPARATOR.join(fitting), ordered[len(fitting):]
 
 
+def _is_timeout(proc: subprocess.CompletedProcess) -> bool:
+    """gh-timeout exits 124 on SIGTERM and 137 when it had to SIGKILL a gh that ignored it."""
+    return proc.returncode in (124, 137)
+
+
 def _classify(proc: subprocess.CompletedProcess) -> str:
     """"ok", "rejected" (a confirmed 422: nothing landed), or "ambiguous" (network/5xx: the
     POST may have landed server-side even though the client never saw success)."""
@@ -836,7 +841,7 @@ def _classify(proc: subprocess.CompletedProcess) -> str:
     # Only gh's own status line counts: a timeout (exit 124) echoes the whole argv, and a 5xx
     # body can carry any digits, so a bare "422" substring would call an ambiguous failure
     # "rejected" and trigger a blind re-POST.
-    if proc.returncode != 124 and re.search(r"\bHTTP 422\b", proc.stderr):
+    if not _is_timeout(proc) and re.search(r"\bHTTP 422\b", proc.stderr):
         return "rejected"
     return "ambiguous"
 
@@ -904,7 +909,7 @@ def submit_review(
         review_url = _extract_review_url(proc.stdout)
     elif outcome == "ambiguous":
         found, url = _read_back(owner, repo, pr, run_marker)
-        if found == "absent" and proc.returncode == 124:
+        if found == "absent" and _is_timeout(proc):
             # After a client-side timeout the server may still be finishing the request, so one
             # empty list is weak evidence; give it a moment and look once more.
             time.sleep(READ_BACK_SETTLE_SECONDS)
@@ -1120,7 +1125,12 @@ def load_retry_state(path: str, head_sha: str, caller_tag: str) -> tuple[list[di
     normal row contract. Rows that did land after all are pruned later by the ordinary key
     dedup, so a stale entry costs nothing."""
     target = Path(path)
-    if _private_dir_problem(target.parent):
+    problem = _private_dir_problem(target.parent)
+    if problem:
+        print(
+            f"[warn] ignoring retry state {path}: {target.parent} is not a private directory ({problem})",
+            file=sys.stderr,
+        )
         return [], 0
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -1177,6 +1187,13 @@ def write_retry_state(path: str, head_sha: str, caller_tag: str, event: str, att
         return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        problem = _private_dir_problem(target.parent)  # a directory created by someone else in the gap
+        if problem:
+            print(
+                f"[warn] could not write retry state {path}: {target.parent} is not a private directory ({problem})",
+                file=sys.stderr,
+            )
+            return False
         fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.tmp-")
         with os.fdopen(fd, "w") as handle:
             json.dump(payload, handle, ensure_ascii=True)
