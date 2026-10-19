@@ -167,3 +167,9 @@ primitive) and why exact ids strengthen that boundary rather than weaken it.
 ## Philosophy
 
 Model tier is a budget decision, not a quality signal. Haiku is not "worse" — it is the right tool for mechanical tasks. Defaulting everything to sonnet is wasteful; defaulting everything to haiku is brittle. Assign deliberately, measure, and adjust.
+
+### Pi dispatch profiles
+
+The Pi dispatch-profile enum (`economy`, `balanced`, `full`) is a user-global scheduling policy,
+not a model override. It may alter the reviewed effort/preload policy but cannot override provider
+selection or exact model IDs, which remain governed by `MODEL_POLICY` and the active model pool.

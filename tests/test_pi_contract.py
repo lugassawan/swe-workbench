@@ -37,6 +37,7 @@ SHARED_DIR = ROOT / "shared"
 EXTENSIONS_DIR = ROOT / "pi" / "extensions"
 HOOKS_DIR = ROOT / "hooks"
 PI_EXTENSIONS_INDEX = ROOT / "pi" / "extensions" / "index.ts"
+DISPATCH_PROFILE_TS = EXTENSIONS_DIR / "dispatch-profile.ts"
 
 
 _PI_YAML_CORE_SCALAR_TAGS = frozenset(
@@ -702,6 +703,13 @@ def test_no_shell_true_under_extensions():
         str(p.relative_to(ROOT)) for p in _EXTENSION_TS_FILES if re.search(r"shell\s*:\s*true", p.read_text(encoding="utf-8"))
     ]
     assert not violations, f"shell: true is forbidden under pi/extensions/ — found in: {violations}"
+
+
+def test_dispatch_profile_is_sdk_free():
+    """Profile resolution is pure domain policy, not a Pi/process adapter."""
+    text = DISPATCH_PROFILE_TS.read_text(encoding="utf-8")
+    assert "pi-coding-agent" not in text
+    assert "node:child_process" not in text
 
 
 def test_extension_ts_files_excluding_index_stay_under_line_cap():

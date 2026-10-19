@@ -144,15 +144,27 @@ export function translateToolTokens(tokens: readonly string[]): string[] {
   return translated;
 }
 
-/** Composes an agent's system prompt: its own body, followed by each preloaded skill's
- *  (frontmatter-stripped) body in `skills:` order. `dir` is each skill's absolute on-disk
- *  directory — stated in the section header (not inlined content) so a relative pointer the
- *  skill's own body makes (e.g. "see `examples/` for...") is resolvable by a dispatched child
- *  that has `read`, instead of being a dead reference with no path context. Pure string
- *  composition. */
+export interface SkillBody {
+  readonly id: string;
+  readonly body: string;
+  readonly dir: string;
+}
+
+export interface OnDemandSkill {
+  readonly id: string;
+  readonly path: string;
+}
+
+export interface PromptAdditions {
+  readonly onDemandSkills?: readonly OnDemandSkill[];
+  readonly outputContract?: string;
+}
+
+/** Composes an agent body, preloaded skills, and optional bounded dispatch guidance. */
 export function composeSystemPrompt(
   spec: Pick<AgentSpec, "body">,
-  skills: ReadonlyArray<{ readonly id: string; readonly body: string; readonly dir: string }>,
+  skills: readonly SkillBody[],
+  additions: PromptAdditions = {},
 ): string {
   const sections = [spec.body.trim()];
   for (const skill of skills) {
@@ -162,6 +174,11 @@ export function composeSystemPrompt(
         skill.body.trim(),
     );
   }
+  if (additions.onDemandSkills?.length) {
+    const entries = additions.onDemandSkills.map((skill) => `- ${skill.id}: \`${skill.path}\``).join("\n");
+    sections.push(`## On-demand skills\nUse the \`read\` tool on the relevant \`SKILL.md\` before analysis; do not assume omitted guidance.\n\n${entries}`);
+  }
+  if (additions.outputContract) sections.push(`## Return contract\n\n${additions.outputContract}`);
   return sections.join("\n\n---\n\n");
 }
 
@@ -184,6 +201,11 @@ export function readSkillBody(root: string, skillId: string): string {
  *  against. Pure path join — does not check the directory exists. */
 export function skillDir(root: string, skillId: string): string {
   return join(root, "skills", bareSkillId(skillId));
+}
+
+/** Absolute path to a skill's entry file for on-demand child reads. */
+export function skillPath(root: string, skillId: string): string {
+  return join(skillDir(root, skillId), "SKILL.md");
 }
 
 /** Lists agent ids (basenames, no .md) under agents/ — for a "not found, available: ..." error. */

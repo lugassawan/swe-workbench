@@ -36,6 +36,7 @@ import { existsSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerAskUser } from "./ask-user.ts";
+import { registerDispatchProfile } from "./dispatch-profile-ui.ts";
 import { binScriptsSection } from "./bin-scripts.ts";
 import { registerGuards } from "./guards.ts";
 import { registerHandoff } from "./handoff.ts";
@@ -151,5 +152,6 @@ export default function (pi: ExtensionAPI): void {
   registerPhase(pi, root);
   registerMemoryRecord(pi, root);
   registerAskUser(pi);
-  registerSubagent(pi, root);
+  const profiles = registerDispatchProfile(pi);
+  registerSubagent(pi, root, profiles);
 }
