@@ -216,7 +216,7 @@ def test_deny_term_does_not_match_inside_a_longer_word(mod):
         "docs at https://docs.python.org/3/library/pathlib.html are fine",
         "also docs.python.org and pypi.org and nodejs.org",
         "read https://docs.github.com/en/rest and https://cli.github.com/manual",
-        "version 0.1.42.1 shipped",
+        "version 0.9.8.7 shipped",
         "at 12:30:45 the job ran",
         "loopback 127.0.0.1 and ::1 and localhost",
         "config under ~/.claude/plugins/cache works",
