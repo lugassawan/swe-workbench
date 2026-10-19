@@ -6,7 +6,6 @@ on multi-remote clones (e.g. after `gh repo fork` adds sibling remotes).
 """
 import re
 import shlex
-import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -97,8 +96,8 @@ class TestExtractionRoundTrip:
 
     def _run(self, fake_url: str) -> str:
         """Stub `git` on PATH to return fake_url, then run the extraction snippet."""
-        stub_dir = Path(tempfile.mkdtemp(prefix="gh_repo_stub_"))
-        try:
+        with tempfile.TemporaryDirectory(prefix="gh_repo_stub_") as d:
+            stub_dir = Path(d)
             stub = stub_dir / "git"
             stub.write_text(
                 f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(fake_url)}\n"
@@ -113,8 +112,6 @@ class TestExtractionRoundTrip:
             )
             assert result.returncode == 0, f"snippet failed: {result.stderr}"
             return result.stdout.strip()
-        finally:
-            shutil.rmtree(stub_dir, ignore_errors=True)
 
     def test_ssh_url_with_git_suffix(self):
         assert self._run("git@github.com:lugassawan/swe-workbench.git") == "lugassawan/swe-workbench"
