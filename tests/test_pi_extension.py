@@ -3201,6 +3201,14 @@ const out = {
       { id: "swe-workbench:b", body: "Skill B body.", dir: "/fake/skills/b" },
     ],
   ),
+  composeAdditions: mod.composeSystemPrompt(
+    { body: "Agent body." },
+    [{ id: "swe-workbench:core", body: "Core skill body.", dir: "/fake/skills/core" }],
+    {
+      onDemandSkills: [{ id: "swe-workbench:deferred", path: "/fake/skills/deferred/SKILL.md" }],
+      outputContract: "Return a concise result.",
+    },
+  ),
 };
 console.log(JSON.stringify(out));
 """
@@ -3296,6 +3304,24 @@ def test_compose_system_prompt_with_multiple_skills_preserves_order(agent_spec_r
     b_idx = composed.index("Skill B body.")
     assert body_idx < a_idx < b_idx, "skills must appear after the agent body, in skills: order"
     assert "swe-workbench:a" in composed and "swe-workbench:b" in composed
+
+
+@requires_node
+def test_compose_system_prompt_lists_on_demand_ids_and_absolute_skill_paths_without_bodies(agent_spec_result):
+    composed = agent_spec_result["composeAdditions"]
+    assert "## On-demand skills" in composed
+    assert "swe-workbench:deferred" in composed
+    assert "/fake/skills/deferred/SKILL.md" in composed
+    assert "Core skill body." in composed
+    assert "deferred skill body" not in composed.lower()
+    assert "read" in composed
+
+
+@requires_node
+def test_compose_system_prompt_appends_role_output_contract_once(agent_spec_result):
+    composed = agent_spec_result["composeAdditions"]
+    assert composed.count("## Return contract") == 1
+    assert composed.endswith("Return a concise result.")
 
 
 @requires_node
