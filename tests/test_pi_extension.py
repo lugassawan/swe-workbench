@@ -86,6 +86,7 @@ const stubPi = {
   registerTool(tool) {
     registeredToolNames.push(tool.name);
   },
+  registerCommand() {},
   // Mirrors the real SDK's isAllowedTool: a registered tool this session's own argv excludes
   // (simulated here via config.excludedTools) is filtered out of the active set even though
   // registerTool() was called for it — see index.ts's getPreamble() for why this matters.
@@ -471,6 +472,9 @@ def test_empty_bin_dir_degrades_gracefully(tmp_path_factory):
         "model-policy.ts",
         "task-call-line.ts",
         "dispatch-resolver.ts",
+        "dispatch-profile.ts",
+        "dispatch-profile-store.ts",
+        "dispatch-profile-ui.ts",
         "subagent-json.ts",
         "subagent.ts",
         "memory-guidance.ts",
