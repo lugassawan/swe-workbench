@@ -7,7 +7,7 @@ Reads each SRC draft, replaces anything private with an unnumbered bracketed
 placeholder, and writes the sanitized text to DST. Drafts are never modified, so an
 edit loop can always re-run from the original. Placeholders:
   [redacted-token] [internal-email] [internal-host] [internal-ip] [local-path]
-  [memory-ref] [internal-service] [internal-repo] [internal-org] [local-user]
+  [memory-ref] [internal-service] [internal-repo] [internal-org] [internal-ticket] [local-user]
 Existing placeholders are left alone, so re-running over a sanitized file changes nothing.
 
 Options:
@@ -18,7 +18,7 @@ Options:
   --allow TERM           keep this exact span or exact host (a restored false positive);
                          never applies to credentials
   --deny CATEGORY=TERM   always redact TERM; CATEGORY is one of
-                         org, repo, service, memory, user, host
+                         org, repo, service, memory, user, host, ticket
   --deny-file PATH       --deny entries, one CATEGORY=TERM per line ('#' comments)
   --preserve-file PATH   user-authored public text, one span per line; matches inside a
                          preserved span are skipped, except credentials
@@ -72,7 +72,9 @@ SERVICE = "internal-service"
 REPO = "internal-repo"
 ORG = "internal-org"
 USER = "local-user"
+TICKET = "internal-ticket"
 PRIORITY = {
+    TICKET: 6,
     CREDENTIAL: 0,
     EMAIL: 1,
     HOST: 2,
@@ -91,6 +93,7 @@ DENY_ALIASES = {
     "memory": MEMORY,
     "user": USER,
     "host": HOST,
+    "ticket": TICKET,
 }
 DENY_CATEGORIES = frozenset(DENY_ALIASES.values())
 # A user-preserved span never exempts machine-identifying text, only wording that can be a false positive.
@@ -128,8 +131,12 @@ SCP_REMOTE_RE = re.compile(
 )
 _STOP = "<>\"'`)\\]"  # characters that end a URL or path token
 URL_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://(?:[^\s" + _STOP + r"\[]|\[[0-9A-Fa-f:.]*\])*")
+# A curated list, not every TLD: names that double as file extensions or code (.sh, .py, .rs, .md) are
+# left out. A name immediately followed by "(" is a call (logger.info(...)), not a host.
 _TLDS = (
     "internal|local|corp|lan|intranet|localdomain|com|net|org|io|dev|ai|cloud|xyz|co|app|tech|me|run"
+    "|info|biz|online|site|store|shop|digital|systems|network|group|team|global|tools|club|space|world"
+    "|today|media|email|solutions|agency|studio|software"
     "|cn|ru|br|ch|it|es|se|be|kr|tv|gg|ly|uk|eu|us|de|fr|nl|jp|au|ca|sg"
 )
 BARE_HOST_RE = re.compile(
@@ -137,7 +144,7 @@ BARE_HOST_RE = re.compile(
     + _TLDS
     + "|"
     + _TLDS.upper()
-    + r")(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])(?::\d{1,5})?(?:/[^\s"
+    + r")(?![A-Za-z0-9-])(?!\()(?!\.[A-Za-z0-9])(?::\d{1,5})?(?:/[^\s"
     + _STOP
     + r"]*)?"
 )
@@ -168,6 +175,12 @@ SERVICE_RE = re.compile(
     re.IGNORECASE,
 )
 CROSS_REPO_RE = re.compile(r"(?<![\w/.-])[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*#\d+\b")
+TICKET_RE = re.compile(r"(?<![\w-])([A-Z][A-Z0-9]{1,9})-\d{1,6}(?![\w-])")
+# Standards and formats that look like tracker keys (UTF-8, SHA-256) but are public wording.
+PUBLIC_KEY_PREFIXES = frozenset(
+    "UTF SHA SHA1 SHA2 SHA3 MD MD5 ISO RFC CVE CWE GHSA PEP BCP STD IEEE IEC ANSI ASCII HTTP TLS SSL AES DES RSA"
+    " TCP UDP HTML CSS JSON XML UTC GMT WCAG ECMA ES ES5 ES6 NFC NFD NFKC NFKD IPV USB COVID H264 GPT".split()
+)
 
 # Well-known public documentation domains; a host matches itself or any subdomain.
 PUBLIC_DOMAINS = (
@@ -282,6 +295,16 @@ class Rules:
         return None
 
 
+def _documentation_path(rules: Rules, span: str, start: int, vouched: int) -> list[tuple[int, int]]:
+    """The path portion (before any ? or #) of a URL on a documentation domain, as absolute offsets."""
+    host = (urlsplit(span if "://" in span else "//" + span).hostname or "").lower()
+    if not any(host == d or host.endswith("." + d) for d in PUBLIC_DOMAINS):
+        return []
+    query = re.search(r"[?#]", span[vouched:])
+    stop = vouched + query.start() if query else len(span)
+    return [(start + vouched, start + stop)]
+
+
 def _prefix_end(endpoint: str, segments: int) -> int:
     """End offset of the authority plus its first `segments` path segments."""
     pattern = r"(?:[A-Za-z][A-Za-z0-9+.-]*://)?[^/?#]*" + r"/[^/?#]+" * segments
@@ -355,6 +378,7 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
             found.append((start, end, EMAIL))
 
     public_spans: list[tuple[int, int]] = []  # whole URLs on a vouched host, tail included
+    doc_paths: list[tuple[int, int]] = []  # path (not query/fragment) of documentation-domain URLs
     blocked: list[tuple[int, int]] = []  # spans a bare-host match inside must not re-trigger on
     for start, end, span in _finditer(URL_RE, text, trim=True):
         if not span.split("://", 1)[1]:
@@ -367,6 +391,7 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
             shields.append((start, start + vouched))
             blocked.append((start, start + vouched))
             public_spans.append((start, end))
+            doc_paths.extend(_documentation_path(rules, span, start, vouched))
     for start, end, span in _finditer(BARE_HOST_RE, text, trim=True):
         if _contained((start, end), blocked):
             continue
@@ -376,6 +401,7 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
         else:
             shields.append((start, start + vouched))
             public_spans.append((start, end))
+            doc_paths.extend(_documentation_path(rules, span, start, vouched))
 
     for start, end, span in _finditer(IPV4_RE, text):
         octets = [int(part) for part in span.split(".")]
@@ -407,9 +433,15 @@ def _candidates(text: str, rules: Rules) -> tuple[list[tuple[int, int, str]], li
                 found.append((start, end, MEMORY))
 
     for start, end, span in _finditer(SERVICE_RE, text):
-        # A documentation URL's own path (".../rest-api") is public wording, not a private service id.
-        if not rules.allows(span) and not _contained((start, end), public_spans):
+        # Only a documentation domain's own path (".../rest-api") is public wording; a query, a
+        # fragment, a repository URL or a loopback URL can all carry a private service id.
+        if not rules.allows(span) and not _contained((start, end), doc_paths):
             found.append((start, end, SERVICE))
+
+    for match in TICKET_RE.finditer(text):
+        span = match.group(0)
+        if match.group(1) not in PUBLIC_KEY_PREFIXES and not rules.allows(span):
+            found.append((match.start(), match.end(), TICKET))
 
     for start, end, span in _finditer(CROSS_REPO_RE, text):
         slug = span.split("#", 1)[0].lower()

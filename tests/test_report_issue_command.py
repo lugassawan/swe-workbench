@@ -450,6 +450,7 @@ PLACEHOLDERS = (
     "[internal-service]",
     "[internal-repo]",
     "[internal-org]",
+    "[internal-ticket]",
     "[local-user]",
 )
 
