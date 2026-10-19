@@ -277,6 +277,53 @@ def test_parse_review_finding_batch_preserves_horizontal_rules_inside_a_finding(
     assert [projection["body"] for projection in projections] == ["first\n\n---\n\nstill first", "second"]
 
 
+# ── Unit: trailing finding-key marker is hidden from display ────────────────
+
+_KEY_LINE = "<!-- swe-workbench:finding-key:v1:0123456789abcdef -->"
+
+
+def test_strip_finding_key_markers_removes_only_the_marker_line():
+    assert aff.strip_finding_key_markers(f"body text\n{_KEY_LINE}") == "body text"
+    assert aff.strip_finding_key_markers(f"body text\r\n{_KEY_LINE}\r\n") == "body text"
+    assert aff.strip_finding_key_markers("no marker here") == "no marker here"
+
+
+def test_strip_finding_key_markers_leaves_an_inline_mention_alone():
+    inline = f"quoting {_KEY_LINE} inside a sentence"
+    assert aff.strip_finding_key_markers(inline) == inline
+
+
+def test_key_marker_is_not_a_review_marker():
+    assert aff._ANY_REVIEW_MARKER_LINE_RE.search(_KEY_LINE) is None
+
+
+def test_parse_review_finding_batch_strips_key_markers_from_projected_bodies():
+    comment = _pr_comment(
+        42, _review_finding_batch((2, f"first body\n{_KEY_LINE}"), (7, f"second body\n{_KEY_LINE}"))
+    )
+
+    projections = aff.parse_review_finding_batch(comment)
+
+    assert [projection["body"] for projection in projections] == ["first body", "second body"]
+
+
+def test_thread_bodies_have_the_key_marker_stripped_before_display():
+    node = {"id": "T", "comments": {"nodes": [{"id": "c", "body": f"finding text\n{_KEY_LINE}"}]}}
+
+    cleaned = aff.strip_thread_key_markers(node)
+
+    assert cleaned["comments"]["nodes"][0]["body"] == "finding text"
+    assert node["comments"]["nodes"][0]["body"].endswith(_KEY_LINE), "input node must not be mutated"
+
+
+def test_legacy_projection_of_a_malformed_batch_hides_the_key_marker():
+    comment = _pr_comment(9, f"<!-- swe-workbench:review-findings -->\n\nbroken\n{_KEY_LINE}")
+
+    projected = aff.project_legacy_pr_comment(comment)
+
+    assert _KEY_LINE not in projected["body"]
+
+
 # ── Unit: compute_pr_comment_eligibility (ported jq-program fixtures) ────────
 
 

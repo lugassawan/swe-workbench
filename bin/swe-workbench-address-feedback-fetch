@@ -64,6 +64,9 @@ _ANY_REVIEW_MARKER_LINE_RE = re.compile(r"(?m)^<!-- swe-workbench:review-(?:find
 _LEADING_PROVENANCE_MARKER_RE = re.compile(
     r"\A[ \t\r]*<!-- swe-workbench:review-(?:findings|finding:[1-9][0-9]*) -->[ \t]*\r?\n"
 )
+# The producer's dedup key rides as a trailing line outside the `review-` marker namespace;
+# it is bookkeeping, never display text.
+_FINDING_KEY_LINE_RE = re.compile(r"(?m)^[ \t]*<!-- swe-workbench:finding-key:v1:[0-9a-f]{16} -->[ \t]*(?:\r?\n|\Z)")
 _BATCH_SEPARATOR = "\n\n---\n\n"
 # Match the producer's batch cap to bound projected triage items.
 MAX_BATCH_SECTIONS = 50
@@ -105,6 +108,21 @@ def compute_thread_eligibility(node: dict, current_user: str) -> tuple[bool, str
     if any(((r.get("author") or {}).get("login") or "") == current_user for r in replies):
         return False, "already-clarified"
     return True, None
+
+
+def strip_finding_key_markers(body: str) -> str:
+    return _FINDING_KEY_LINE_RE.sub("", body).rstrip()
+
+
+def strip_thread_key_markers(node: dict) -> dict:
+    """Return a copy of a thread node with key markers removed from every comment body."""
+    comments = (node.get("comments") or {}).get("nodes") or []
+    cleaned = [
+        {**comment, "body": strip_finding_key_markers(comment["body"])}
+        if isinstance(comment.get("body"), str) else comment
+        for comment in comments
+    ]
+    return {**node, "comments": {**(node.get("comments") or {}), "nodes": cleaned}}
 
 
 def _split_batch_sections(content: str) -> list[str]:
@@ -153,7 +171,7 @@ def parse_review_finding_batch(comment: dict) -> list[dict] | None:
         if marker is None:
             return None
         finding_id = int(marker.group(1))
-        finding_body = section[marker.end():].strip()
+        finding_body = strip_finding_key_markers(section[marker.end():]).strip()
         if finding_id <= previous_id or not finding_body or _ANY_REVIEW_MARKER_LINE_RE.search(finding_body):
             return None
         previous_id = finding_id
@@ -177,7 +195,7 @@ def _strip_leading_provenance_markers(body: str) -> str:
 def project_legacy_pr_comment(comment: dict) -> dict:
     """Add explicit triage identity; hide marker-only batch prefixes in display text."""
     comment_id = comment["id"]
-    body = comment["body"]
+    body = strip_finding_key_markers(comment["body"])
     if _is_batch_shaped(comment):
         body = _strip_leading_provenance_markers(body)
     return {
@@ -393,7 +411,7 @@ def fetch_threads(owner: str, repo: str, pr: str, current_user: str, script_dir:
             raise FetchError(f"unexpected reviewThreads response shape: {exc}") from exc
         for node in rt.get("nodes") or []:
             eligible, skip_reason = compute_thread_eligibility(node, current_user)
-            threads.append({**node, "eligible": eligible, "skip_reason": skip_reason})
+            threads.append({**strip_thread_key_markers(node), "eligible": eligible, "skip_reason": skip_reason})
         page = rt.get("pageInfo") or {}
         if not page.get("hasNextPage"):
             break
