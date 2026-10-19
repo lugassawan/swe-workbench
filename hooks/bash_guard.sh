@@ -4,8 +4,13 @@
 # Blocks:
 #   - rm -rf against /, /*, ~, $HOME, /Users[/<user>], /home[/<user>]
 #   - git push --force / -f to main/master/release/*
-#   - a force push with a dynamic destination or flag, a target in another repository (-C,
-#     --git-dir, --work-tree), or nesting too deep to scan, on any branch
+#   - a force push with a dynamic destination or flag (an unquoted brace group included), a target
+#     in another repository (-C, --git-dir, --work-tree), nesting too deep to scan, or a command
+#     over 64 KB that mentions one, on any branch. The exception: a word that is exactly
+#     `$(git branch --show-current)` (or the rev-parse / symbolic-ref spelling) is the current
+#     branch, so it blocks only on a protected one
+#   - a push or `pi` check whose awk or tr preprocessing fails: blocked, never skipped (an
+#     environment without awk blocks every command, as a jq failure already does)
 #   - git reset --hard on main/master/release/*
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
@@ -29,8 +34,13 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# Accepted gaps: brace expansion, glob refspecs and unique-prefix long options; a bare substitution
-# that is the force flag with an implicit destination; function/coproc NAME bodies; unlisted wrappers.
+# Accepted gaps: function/coproc NAME bodies; unlisted wrappers; brace expansion in the rm and pi
+# detectors (`rm -rf {/,}`); bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
+# or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
+# bash 4 and later.
+# Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
+# non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
+# substitution; `ssh host echo "…git push -f…"` and other wrapper argument text is code.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
 # (quoted text is literal, substitutions are scanned); a remote literally
 # named main/master over-blocks. The push-token scan trusts a small allowlist of known
