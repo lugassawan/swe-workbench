@@ -18,7 +18,7 @@ Every script documents itself: run `swe-workbench-<name> --help` for usage, argu
 The scripts in this directory that carry a `#!/usr/bin/env python3` shebang instead of
 `#!/usr/bin/env bash` are `swe-workbench-address-feedback-fetch`, `swe-workbench-comment-scan`,
 `swe-workbench-dead-code-scan`, `swe-workbench-handoff`, `swe-workbench-cleanup-merged`, `swe-workbench-issue-preflight`, `swe-workbench-lsp`,
-`swe-workbench-memory`,
+`swe-workbench-memory`, `swe-workbench-plan-evidence`,
 `swe-workbench-pr-review-submit`, `swe-workbench-pr-review-threads`,
 `swe-workbench-pr-title-drift`, `swe-workbench-preflight-commit`, `swe-workbench-redact`, and
 `swe-workbench-result-check`. `comment-scan` is a pure
@@ -55,7 +55,8 @@ matches from a dozen pattern families (leftmost-longest with a category priority
 candidates with `ipaddress`, NFKC-normalizes before matching, and writes outputs atomically — a
 deterministic text sanitizer that bash would have to approximate with `sed` and a second regex
 dialect, and that fails closed (non-zero exit, empty stdout, no output file left behind) like
-`result-check`. Same bare-command convention applies;
+`result-check`. `plan-evidence` emits lists of records (sibling worktrees, overlapping paths) that
+bash could only build with `jq`. Same bare-command convention applies;
 only the interpreter differs.
 
 ## Result contract

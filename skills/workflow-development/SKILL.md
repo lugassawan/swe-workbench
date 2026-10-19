@@ -8,7 +8,7 @@ orchestrator: true
 
 Single source of truth for how development work flows. Three modes:
 
-- **Mode A (Plan Writing):** Embed a `## Workflow` section into plans using `templates/plan-workflow-section.md`
+- **Mode A (Plan Writing):** Embed an `## Evidence` section (`templates/plan-evidence-section.md`) and a `## Workflow` section (`templates/plan-workflow-section.md`) into plans
 - **Mode B (Implementation):** Guide step-by-step execution through all 5 phases
 - **Mode C (Orchestration):** Coordinate multiple parallel agents across dependency rounds — see `orchestration.md`
 
@@ -186,6 +186,8 @@ Two existing skills provide deeper verification when warranted — invoke ad hoc
 ## Plan-Time Behavior (Mode A)
 
 **Gate:** Before rendering the Workflow section, confirm the plan introduces file edits (fix / make / implement). If the plan is a pure design recommendation or analysis with no codebase changes, return without modifying the plan.
+
+**Evidence first:** run `swe-workbench-plan-evidence --cited-file <each file the plan edits or cites>` (read-only: it never refreshes remote state at plan time) and render `templates/plan-evidence-section.md` as a `## Evidence` section **above** `## Workflow`, substituting each `[[evidence:KEY]]` from the envelope. **Before saving, grep your rendered draft for `[[evidence:`** the same way as `[[detect:` below. On drift `overlap`, re-read **only** the listed paths and amend the plan before approval; never rescan the repo. On `unknown`, record the open assumption instead.
 
 When writing or finalizing a plan, add a `## Workflow` section using the template at `templates/plan-workflow-section.md`. Substitute every `[[detect:KEY]]` marker with concrete values from Project Detection. **Before saving, grep your rendered draft for `[[detect:` — if any match remains, you skipped Project Detection; redo it.**
 

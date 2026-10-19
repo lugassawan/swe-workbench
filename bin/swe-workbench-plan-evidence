@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Read-only evidence snapshot for plans: which revision was inspected, whether the
+target branch has drifted since, and which sibling worktrees touch the files a plan
+cites.
+
+Prints one JSON envelope to stdout (schema ``swb.plan-evidence/1``, see
+shared/docs/runtime-result-contract.md):
+
+``{"schema": "swb.plan-evidence/1", "status": "ok|partial", "data": {"head": str,
+"dirty": bool, "target": str, "local_target_sha": str, "remote_target_sha": str,
+"base": str, "drift": "none|changed|overlap|unknown", "cited_files": [...],
+"changed_paths": [...], "overlapping_paths": [...], "worktrees": [{"path", "branch",
+"head", "overlapping_paths"}]}, "warnings": [...]}``.
+
+Drift is `git diff --name-only <base> <target>` where ``<target>`` is the commit
+``git ls-remote origin refs/heads/<target>`` reports and ``<base>`` is ``--since`` or
+the merge-base of HEAD and that commit:
+- ``overlap``: at least one changed path is a cited file
+- ``changed``: paths changed, none cited
+- ``none``: nothing changed
+- ``unknown``: the remote commit is not present locally (``target-not-fetched``) or the
+  remote could not be queried (``ls-remote-failed``); status is ``partial``. Absent
+  shas are the empty string, never null.
+
+Nothing is written to the repository unless ``--fetch`` is passed, and ``--fetch`` is
+only for a caller already committed to touching the network (implementation start,
+never plan time). An absent or unreachable origin is a warning, not an error. Not
+inside a git work tree, or a requested ``--fetch`` that fails, exits non-zero with
+nothing on stdout.
+
+Usage: swe-workbench-plan-evidence [--target BRANCH] [--cited-file PATH]...
+                                   [--since SHA] [--fetch]
+  --target BRANCH     branch to compare against (default: origin/HEAD's branch, else main)
+  --cited-file PATH   file the plan edits or cites; repeatable. Repo-relative, ./-prefixed
+                      or absolute paths are accepted.
+  --since SHA         diff base overriding the merge-base (the revision a plan inspected)
+  --fetch             first run an explicit-refspec fetch of the target branch
+
+Exit codes: 0 evidence collected (including drift unknown) | 1 could not collect
+| 2 bad invocation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from typing import Optional
+
+SCHEMA = "swb.plan-evidence/1"
+GIT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+
+
+class EvidenceError(Exception):
+    pass
+
+
+def git(args: list[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, env=GIT_ENV, cwd=cwd
+    )
+
+
+def git_out(args: list[str], cwd: Optional[str] = None) -> Optional[str]:
+    result = git(args, cwd)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def resolve_target(explicit: Optional[str]) -> str:
+    if explicit:
+        return explicit
+    ref = git_out(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    prefix = "refs/remotes/origin/"
+    if ref and ref.startswith(prefix):
+        return ref[len(prefix):]
+    return "main"
+
+
+def normalize_cited(paths: list[str], toplevel: str) -> list[str]:
+    top = os.path.realpath(toplevel)
+    cited: list[str] = []
+    for raw in paths:
+        path = raw
+        if os.path.isabs(path):
+            path = os.path.relpath(os.path.realpath(path), top)
+        path = os.path.normpath(path).replace(os.sep, "/")
+        if path not in cited:
+            cited.append(path)
+    return cited
+
+
+def commit_present(sha: str) -> bool:
+    return bool(sha) and git(["cat-file", "-e", f"{sha}^{{commit}}"]).returncode == 0
+
+
+def diff_names(base: str, tip: str) -> list[str]:
+    out = git_out(["diff", "--name-only", base, tip])
+    return [line for line in out.splitlines() if line] if out else []
+
+
+def merge_base(a: str, b: str) -> str:
+    return git_out(["merge-base", a, b]) or ""
+
+
+def list_worktrees() -> list[dict]:
+    out = git_out(["worktree", "list", "--porcelain"]) or ""
+    records: list[dict] = []
+    for block in out.split("\n\n"):
+        record = {"path": "", "branch": "", "head": ""}
+        for line in block.splitlines():
+            key, _, value = line.partition(" ")
+            if key == "worktree":
+                record["path"] = value
+            elif key == "HEAD":
+                record["head"] = value
+            elif key == "branch":
+                record["branch"] = value.removeprefix("refs/heads/")
+        if record["path"]:
+            records.append(record)
+    return records
+
+
+def collect(args: argparse.Namespace) -> dict:
+    toplevel = git_out(["rev-parse", "--show-toplevel"])
+    if not toplevel:
+        raise EvidenceError("not inside a git work tree")
+    os.chdir(toplevel)
+
+    target = resolve_target(args.target)
+    cited = normalize_cited(args.cited_file, toplevel)
+    warnings: list[dict] = []
+
+    if args.fetch:
+        refspec = f"+refs/heads/{target}:refs/remotes/origin/{target}"
+        fetched = git(["fetch", "origin", refspec])
+        if fetched.returncode != 0:
+            raise EvidenceError(f"git fetch origin {refspec} failed: {fetched.stderr.strip()}")
+
+    head = git_out(["rev-parse", "HEAD"]) or ""
+    dirty = bool(git_out(["status", "--porcelain"]))
+    local_sha = (
+        git_out(["rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{target}"])
+        or git_out(["rev-parse", "--verify", "--quiet", f"refs/heads/{target}"])
+        or ""
+    )
+
+    remote_sha = ""
+    listed = git(["ls-remote", "origin", f"refs/heads/{target}"])
+    if listed.returncode == 0 and listed.stdout.strip():
+        remote_sha = listed.stdout.split()[0]
+    else:
+        reason = listed.stderr.strip() or f"origin has no refs/heads/{target}"
+        warnings.append({
+            "code": "ls-remote-failed",
+            "message": f"could not read origin's {target}: {reason}",
+            "subject": target,
+        })
+
+    drift = "unknown"
+    base = args.since or ""
+    changed: list[str] = []
+    if remote_sha and not commit_present(remote_sha):
+        warnings.append({
+            "code": "target-not-fetched",
+            "message": f"origin's {target} ({remote_sha[:7]}) is not present locally; drift not computed",
+            "subject": target,
+        })
+    elif remote_sha:
+        base = args.since or merge_base("HEAD", remote_sha)
+        if base:
+            changed = diff_names(base, remote_sha)
+            overlap = [p for p in changed if p in cited]
+            drift = "overlap" if overlap else ("changed" if changed else "none")
+
+    # Worktrees are measured against the best target commit available, so the
+    # inventory still works when drift itself is unknown.
+    compare_sha = remote_sha if commit_present(remote_sha) else local_sha
+    here = os.path.realpath(toplevel)
+    worktrees = []
+    for wt in list_worktrees():
+        if os.path.realpath(wt["path"]) == here:
+            continue
+        touched: list[str] = []
+        if compare_sha and wt["head"]:
+            wt_base = merge_base(compare_sha, wt["head"])
+            if wt_base:
+                touched = [p for p in diff_names(wt_base, wt["head"]) if p in cited]
+        worktrees.append({**wt, "overlapping_paths": touched})
+
+    return {
+        "schema": SCHEMA,
+        "status": "partial" if warnings else "ok",
+        "data": {
+            "head": head,
+            "dirty": dirty,
+            "target": target,
+            "local_target_sha": local_sha,
+            "remote_target_sha": remote_sha,
+            "base": base,
+            "drift": drift,
+            "cited_files": cited,
+            "changed_paths": changed,
+            "overlapping_paths": [p for p in changed if p in cited],
+            "worktrees": worktrees,
+        },
+        "warnings": warnings,
+    }
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="swe-workbench-plan-evidence",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--target")
+    parser.add_argument("--cited-file", action="append", default=[])
+    parser.add_argument("--since")
+    parser.add_argument("--fetch", action="store_true")
+    args = parser.parse_args(argv)
+
+    try:
+        envelope = collect(args)
+    except EvidenceError as exc:
+        print(f"swe-workbench-plan-evidence: {exc}", file=sys.stderr)
+        return 1
+    json.dump(envelope, sys.stdout, ensure_ascii=True)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
