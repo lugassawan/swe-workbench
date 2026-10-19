@@ -16,7 +16,12 @@ from pathlib import Path
 import pytest
 
 from conftest import _CLEAN_ENV
-from pi_guard_fixtures import BASH_GUARD_FIXTURES
+from pi_guard_fixtures import (
+    BASH_GUARD_BRANCH_FIXTURES,
+    BASH_GUARD_FIXTURES,
+    SHARED_FIXTURE_BRANCHES,
+    make_branch_repo,
+)
 
 GUARD = Path(__file__).parent.parent / "hooks" / "bash_guard.sh"
 
@@ -1737,15 +1742,47 @@ class TestSkillAutoloadHookWiring:
 # both suites re-verify against it.
 # ──────────────────────────────────────────────
 
+@pytest.fixture(scope="module")
+def branch_repos(tmp_path_factory):
+    """One committed temp repo per branch the fixtures run under."""
+    branches = set(SHARED_FIXTURE_BRANCHES) | set(BASH_GUARD_BRANCH_FIXTURES)
+    return {
+        branch: make_branch_repo(
+            tmp_path_factory.mktemp("fixture-repo") / "repo", branch, _CLEAN_ENV
+        )
+        for branch in sorted(branches)
+    }
+
+
+def _assert_verdict(result, cmd, expect_blocked, where):
+    if expect_blocked:
+        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
+            f"expected BLOCKED for {cmd!r} on {where}, got exit {result.returncode}: {result.stderr!r}"
+        )
+    else:
+        assert result.returncode == 0 and result.stderr == "", (
+            f"expected ALLOWED for {cmd!r} on {where}, got exit {result.returncode}: {result.stderr!r}"
+        )
+
+
 class TestDifferentialFixtures:
     @pytest.mark.parametrize("cmd,expect_blocked", BASH_GUARD_FIXTURES)
     def test_direct_invocation_matches_expected_verdict(self, guard_script, cmd, expect_blocked):
         result = run_guard(guard_script, cmd)
-        if expect_blocked:
-            assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-                f"expected BLOCKED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
-            )
-        else:
-            assert result.returncode == 0 and result.stderr == "", (
-                f"expected ALLOWED for {cmd!r}, got exit {result.returncode}: {result.stderr!r}"
-            )
+        _assert_verdict(result, cmd, expect_blocked, "the default cwd")
+
+    @pytest.mark.parametrize("branch", SHARED_FIXTURE_BRANCHES)
+    @pytest.mark.parametrize("cmd,expect_blocked", BASH_GUARD_FIXTURES)
+    def test_shared_verdict_holds_on_every_branch(
+        self, guard_script, branch_repos, branch, cmd, expect_blocked
+    ):
+        result = run_guard(guard_script, cmd, cwd=str(branch_repos[branch]))
+        _assert_verdict(result, cmd, expect_blocked, branch)
+
+    @pytest.mark.parametrize(
+        "branch,cmd,expect_blocked",
+        [(b, c, e) for b, rows in BASH_GUARD_BRANCH_FIXTURES.items() for c, e in rows],
+    )
+    def test_branch_fixture_verdict(self, guard_script, branch_repos, branch, cmd, expect_blocked):
+        result = run_guard(guard_script, cmd, cwd=str(branch_repos[branch]))
+        _assert_verdict(result, cmd, expect_blocked, branch)

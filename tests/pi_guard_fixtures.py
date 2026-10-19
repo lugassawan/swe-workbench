@@ -11,7 +11,30 @@ against it, or CI fails on whichever one goes stale.
 
 Each entry is (command, expect_blocked). expect_blocked=True means exit 2 + "BLOCKED" in
 stderr directly, or {block: true} through the Pi adapter.
+
+BASH_GUARD_FIXTURES verdicts must hold on every branch in SHARED_FIXTURE_BRANCHES; a verdict
+that depends on the current branch belongs in BASH_GUARD_BRANCH_FIXTURES, keyed by branch name.
+Both suites run each branch's rows with the guard's cwd set to a committed temp repo on it.
 """
+
+import subprocess
+from collections.abc import Mapping
+from pathlib import Path
+
+SHARED_FIXTURE_BRANCHES: tuple[str, ...] = ("main", "feature/x")
+
+
+def make_branch_repo(dest: Path, branch: str, env: Mapping[str, str]) -> Path:
+    """A committed temp repo on `branch`, so `git rev-parse --abbrev-ref HEAD` resolves."""
+    dest.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=dest, env=env, check=True)
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.email=t@t.com",
+         "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "init"],
+        cwd=dest, env=env, check=True,
+    )
+    return dest
+
 
 BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("rm -rf /", True),
@@ -167,3 +190,13 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
         False,
     ),
 ]
+
+# Verdicts that depend on the branch the guard runs on.
+BASH_GUARD_BRANCH_FIXTURES: dict[str, list[tuple[str, bool]]] = {
+    "main": [
+        ("git push origin --force 2>&1", True),
+    ],
+    "feature/x": [
+        ("git push origin --force 2>&1", False),
+    ],
+}
