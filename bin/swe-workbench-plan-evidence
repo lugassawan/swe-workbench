@@ -12,28 +12,38 @@ shared/docs/runtime-result-contract.md):
 "changed_paths": [...], "overlapping_paths": [...], "worktrees": [{"path", "branch",
 "head", "overlapping_paths"}]}, "warnings": [...]}``.
 
-Drift is `git diff --name-only <base> <target>` where ``<target>`` is the commit
-``git ls-remote origin refs/heads/<target>`` reports and ``<base>`` is ``--since`` or
-the merge-base of HEAD and that commit:
+Drift is the changed-path list between ``<base>`` and ``<target>``, where ``<target>``
+is the commit ``git ls-remote origin refs/heads/<target>`` reports and ``<base>`` is the
+merge-base of that commit with ``--since`` (else with HEAD):
 - ``overlap``: at least one changed path is a cited file
 - ``changed``: paths changed, none cited
 - ``none``: nothing changed
-- ``unknown``: the remote commit is not present locally (``target-not-fetched``) or the
-  remote could not be queried (``ls-remote-failed``); status is ``partial``. Absent
-  shas are the empty string, never null.
+- ``unknown``: drift could not be computed; status is ``partial`` with one of the
+  warning codes ``target-not-fetched`` (remote commit absent locally),
+  ``ls-remote-failed`` (origin unreachable or timed out), ``target-missing-on-origin``,
+  ``since-unreachable`` (``--since`` names no commit), ``merge-base-unavailable``
+  (unrelated or shallow history) or ``diff-failed``. Absent shas are the empty string,
+  never null.
 
-Nothing is written to the repository unless ``--fetch`` is passed, and ``--fetch`` is
-only for a caller already committed to touching the network (implementation start,
-never plan time). An absent or unreachable origin is a warning, not an error. Not
-inside a git work tree, or a requested ``--fetch`` that fails, exits non-zero with
-nothing on stdout.
+The sibling inventory covers committed changes since each worktree forked from the
+target plus its uncommitted changes to cited files; prunable entries are skipped.
+
+Nothing is written to the repository unless ``--fetch`` is passed (and git runs with
+``GIT_OPTIONAL_LOCKS=0`` so a status check never takes the index lock), and ``--fetch``
+is only for a caller already committed to touching the network (implementation start,
+never plan time). Network calls run in their own session with a hard timeout and an
+ssh ``BatchMode`` default, so a black-holed network or a credential prompt degrades to
+a warning instead of stalling. An absent or unreachable origin is a warning, not an
+error. Not inside a git work tree, or a requested ``--fetch`` that fails, exits
+non-zero with nothing on stdout.
 
 Usage: swe-workbench-plan-evidence [--target BRANCH] [--cited-file PATH]...
                                    [--since SHA] [--fetch]
   --target BRANCH     branch to compare against (default: origin/HEAD's branch, else main)
   --cited-file PATH   file the plan edits or cites; repeatable. Repo-relative, ./-prefixed
                       or absolute paths are accepted.
-  --since SHA         diff base overriding the merge-base (the revision a plan inspected)
+  --since SHA         revision the plan inspected; the diff base becomes its merge-base
+                      with the target
   --fetch             first run an explicit-refspec fetch of the target branch
 
 Exit codes: 0 evidence collected (including drift unknown) | 1 could not collect
@@ -45,22 +55,50 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 from typing import Optional
 
 SCHEMA = "swb.plan-evidence/1"
-GIT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+NETWORK_TIMEOUT_S = 20.0
+DEFAULT_SSH_COMMAND = "ssh -o BatchMode=yes -o ConnectTimeout=10"
 
 
 class EvidenceError(Exception):
     pass
 
 
-def git(args: list[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], capture_output=True, text=True, env=GIT_ENV, cwd=cwd
+def git_env() -> dict[str, str]:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
+    env.setdefault("GIT_SSH_COMMAND", DEFAULT_SSH_COMMAND)
+    return env
+
+
+def git(
+    args: list[str], cwd: Optional[str] = None, timeout: Optional[float] = None
+) -> subprocess.CompletedProcess:
+    if timeout is None:
+        return subprocess.run(
+            ["git", *args], capture_output=True, text=True, env=git_env(), cwd=cwd
+        )
+    # Own session: a hung ssh child dies with git, and no tty prompt can attach.
+    proc = subprocess.Popen(
+        ["git", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=git_env(),
+        cwd=cwd,
+        start_new_session=True,
     )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        return subprocess.CompletedProcess(proc.args, 124, "", f"timed out after {timeout:g}s")
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
 
 def git_out(args: list[str], cwd: Optional[str] = None) -> Optional[str]:
@@ -95,13 +133,47 @@ def commit_present(sha: str) -> bool:
     return bool(sha) and git(["cat-file", "-e", f"{sha}^{{commit}}"]).returncode == 0
 
 
-def diff_names(base: str, tip: str) -> list[str]:
-    out = git_out(["diff", "--name-only", base, tip])
-    return [line for line in out.splitlines() if line] if out else []
+def resolve_commit(rev: str) -> str:
+    """Full sha for a revision, or "" — a caller-supplied value never reaches git as an option."""
+    return git_out(["rev-parse", "--verify", "--quiet", "--end-of-options", f"{rev}^{{commit}}"]) or ""
+
+
+def diff_names(base: str, tip: str) -> Optional[list[str]]:
+    """Changed paths between two commits, or None when git could not diff.
+
+    NUL-separated and rename-free: non-ASCII names arrive unquoted, and a renamed
+    file reports its old path as well as its new one.
+    """
+    result = git(["diff", "--name-only", "--no-renames", "-z", base, tip, "--"])
+    if result.returncode != 0:
+        return None
+    return [p for p in result.stdout.split("\0") if p]
 
 
 def merge_base(a: str, b: str) -> str:
     return git_out(["merge-base", a, b]) or ""
+
+
+def dirty_cited(path: str, cited: list[str]) -> list[str]:
+    """Cited files with uncommitted changes (tracked or untracked) in another worktree."""
+    if not cited or not os.path.isdir(path):
+        return []
+    result = git(["--literal-pathspecs", "status", "--porcelain", "-z", "--", *cited], cwd=path)
+    if result.returncode != 0:
+        return []
+    found: list[str] = []
+    tokens = result.stdout.split("\0")
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        i += 1
+        if len(token) < 4:
+            continue
+        if token[0] in "RC":
+            i += 1  # the rename/copy source follows as its own token
+        if token[3:] in cited:
+            found.append(token[3:])
+    return found
 
 
 def list_worktrees() -> list[dict]:
@@ -109,6 +181,7 @@ def list_worktrees() -> list[dict]:
     records: list[dict] = []
     for block in out.split("\n\n"):
         record = {"path": "", "branch": "", "head": ""}
+        prunable = False
         for line in block.splitlines():
             key, _, value = line.partition(" ")
             if key == "worktree":
@@ -117,9 +190,15 @@ def list_worktrees() -> list[dict]:
                 record["head"] = value
             elif key == "branch":
                 record["branch"] = value.removeprefix("refs/heads/")
-        if record["path"]:
+            elif key == "prunable":
+                prunable = True
+        if record["path"] and not prunable:
             records.append(record)
     return records
+
+
+def warn(warnings: list[dict], code: str, message: str, subject: str) -> None:
+    warnings.append({"code": code, "message": message, "subject": subject})
 
 
 def collect(args: argparse.Namespace) -> dict:
@@ -134,7 +213,7 @@ def collect(args: argparse.Namespace) -> dict:
 
     if args.fetch:
         refspec = f"+refs/heads/{target}:refs/remotes/origin/{target}"
-        fetched = git(["fetch", "origin", refspec])
+        fetched = git(["fetch", "origin", refspec], timeout=NETWORK_TIMEOUT_S)
         if fetched.returncode != 0:
             raise EvidenceError(f"git fetch origin {refspec} failed: {fetched.stderr.strip()}")
 
@@ -146,33 +225,43 @@ def collect(args: argparse.Namespace) -> dict:
         or ""
     )
 
+    since_sha = ""
+    if args.since:
+        since_sha = resolve_commit(args.since)
+        if not since_sha:
+            warn(warnings, "since-unreachable", "--since names no commit in this repository", args.since)
+
     remote_sha = ""
-    listed = git(["ls-remote", "origin", f"refs/heads/{target}"])
-    if listed.returncode == 0 and listed.stdout.strip():
-        remote_sha = listed.stdout.split()[0]
+    listed = git(["ls-remote", "origin", f"refs/heads/{target}"], timeout=NETWORK_TIMEOUT_S)
+    if listed.returncode != 0:
+        warn(warnings, "ls-remote-failed", f"git ls-remote origin failed (exit {listed.returncode})", target)
+    elif not listed.stdout.strip():
+        warn(warnings, "target-missing-on-origin", f"origin has no branch {target}", target)
     else:
-        reason = listed.stderr.strip() or f"origin has no refs/heads/{target}"
-        warnings.append({
-            "code": "ls-remote-failed",
-            "message": f"could not read origin's {target}: {reason}",
-            "subject": target,
-        })
+        remote_sha = listed.stdout.split()[0]
 
     drift = "unknown"
-    base = args.since or ""
+    base = ""
     changed: list[str] = []
     if remote_sha and not commit_present(remote_sha):
-        warnings.append({
-            "code": "target-not-fetched",
-            "message": f"origin's {target} ({remote_sha[:7]}) is not present locally; drift not computed",
-            "subject": target,
-        })
-    elif remote_sha:
-        base = args.since or merge_base("HEAD", remote_sha)
-        if base:
-            changed = diff_names(base, remote_sha)
-            overlap = [p for p in changed if p in cited]
-            drift = "overlap" if overlap else ("changed" if changed else "none")
+        warn(
+            warnings,
+            "target-not-fetched",
+            f"origin's {target} ({remote_sha[:7]}) is not present locally; drift not computed",
+            target,
+        )
+    elif remote_sha and not (args.since and not since_sha):
+        base = merge_base(since_sha or "HEAD", remote_sha)
+        if not base:
+            warn(warnings, "merge-base-unavailable", "no common ancestor with the target; drift not computed", target)
+        else:
+            names = diff_names(base, remote_sha)
+            if names is None:
+                warn(warnings, "diff-failed", "git could not diff the base against the target", target)
+            else:
+                changed = names
+                overlap = [p for p in changed if p in cited]
+                drift = "overlap" if overlap else ("changed" if changed else "none")
 
     # Worktrees are measured against the best target commit available, so the
     # inventory still works when drift itself is unknown.
@@ -185,8 +274,11 @@ def collect(args: argparse.Namespace) -> dict:
         touched: list[str] = []
         if compare_sha and wt["head"]:
             wt_base = merge_base(compare_sha, wt["head"])
-            if wt_base:
-                touched = [p for p in diff_names(wt_base, wt["head"]) if p in cited]
+            names = diff_names(wt_base, wt["head"]) if wt_base else None
+            touched = [p for p in names or [] if p in cited]
+        for path in dirty_cited(wt["path"], cited):
+            if path not in touched:
+                touched.append(path)
         worktrees.append({**wt, "overlapping_paths": touched})
 
     return {

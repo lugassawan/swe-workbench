@@ -5,4 +5,4 @@
 - **Before proposing a new name, schema, config key or resolver**, Grep for an existing mechanism and cite what you found, or the scoped negative.
 - **Newly introduced identifiers** (command, skill, script, flag, env var) get a one-Grep collision check before you propose them.
 - **Dependency versions** are confirmed against the authoritative registry (WebFetch or Bash, whichever you have). Otherwise mark the version an "open assumption".
-- **End your response with a short `Evidence` subsection:** scope searched, sources, open assumptions.
+- **Close the body of your response with a short `Evidence` subsection:** scope searched, sources, open assumptions. Any final-line citation another rule requires still comes after it.

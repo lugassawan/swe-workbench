@@ -101,6 +101,11 @@ class TestPhase1Recheck:
         assert "--fetch" in bullet
         assert "--since" in bullet
 
+    def test_refresh_bullet_reuses_the_plans_target_and_never_stalls(self):
+        bullet = _phase1_refresh_bullet()
+        assert "--target <target from ## Evidence>" in bullet
+        assert "unknown" in bullet and "open assumption" in bullet
+
     def test_refresh_bullet_follows_enter_worktree_bullet(self):
         lines = _read(WORKFLOW_TEMPLATE).splitlines()
         enter = next(i for i, l in enumerate(lines) if l.startswith("- **Enter worktree:**"))
@@ -114,6 +119,9 @@ class TestEvidenceDisciplineSplice:
         assert "not found in" in text
         assert "open assumption" in text
         assert "file:line" in text
+
+    def test_evidence_subsection_is_not_a_competing_final_line(self):
+        assert "End your response" not in _read(SHARED)
 
     def test_each_planning_agent_splices_it_before_the_canary_block(self):
         for agent in PLANNING_AGENTS:
