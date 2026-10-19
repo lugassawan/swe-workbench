@@ -281,14 +281,14 @@ def test_report_issue_attaches_version_footer():
 
 
 def test_report_issue_footer_names_both_harnesses():
-    """Both footer occurrences (memory-synthesis branch and delegation step 7) must
+    """Both footer occurrences (memory-synthesis branch and delegation step 6) must
     parameterise the harness name rather than hardcoding 'Claude Code'."""
     text = REPORT_ISSUE_MD.read_text()
     count = text.count("<harness> <cli-version>")
     assert count == 2, (
         "commands/report-issue.md must parameterise 'Claude Code <cli-version>' as "
         f"'<harness> <cli-version>' in both footer occurrences (Branch B synthesis + "
-        f"delegation step 7) — found {count}"
+        f"delegation step 6) — found {count}"
     )
     assert "Claude Code <cli-version>" not in text, (
         "commands/report-issue.md must not hardcode 'Claude Code <cli-version>' in the "
@@ -414,7 +414,7 @@ def test_report_issue_has_redaction_pass():
     """commands/report-issue.md must include a redaction sub-step in the draft step."""
     text = REPORT_ISSUE_MD.read_text()
     assert "Redaction pass" in text, (
-        "commands/report-issue.md must include a 'Redaction pass' instruction in step 7"
+        "commands/report-issue.md must include a 'Redaction pass' instruction in step 6"
     )
 
 
@@ -428,7 +428,8 @@ def test_report_issue_redaction_has_allowlist():
         "commands/report-issue.md must include a 'NEVER redact' directive in the allowlist"
     )
     never_redact_pos = text.find("NEVER redact")
-    allowlist_end = text.find("Redact when NOT allowlisted", never_redact_pos)
+    allowlist_end = text.find("Placeholders", never_redact_pos)
+    assert allowlist_end != -1, "the allowlist must be followed by the 'Placeholders' vocabulary"
     allowlist_block = text[never_redact_pos:allowlist_end]
     assert "swe-workbench" in allowlist_block, (
         "commands/report-issue.md must name 'swe-workbench' as an allowlisted token"
@@ -439,24 +440,30 @@ def test_report_issue_redaction_has_allowlist():
     )
 
 
+PLACEHOLDERS = (
+    "[redacted-token]",
+    "[internal-email]",
+    "[internal-host]",
+    "[internal-ip]",
+    "[local-path]",
+    "[memory-ref]",
+    "[internal-service]",
+    "[internal-repo]",
+    "[internal-org]",
+    "[local-user]",
+)
+
+
 def test_report_issue_redaction_has_placeholder_vocabulary():
-    """commands/report-issue.md must define placeholder vocabulary for all required categories."""
+    """The prose must name the script's full bracketed placeholder vocabulary, and the old
+    countless prose placeholders ('an internal service') must be gone."""
     text = REPORT_ISSUE_MD.read_text()
-    assert "[internal-email]" in text, (
-        "commands/report-issue.md must specify '[internal-email]' as a redaction placeholder"
-    )
-    assert "[internal-host]" in text, (
-        "commands/report-issue.md must specify '[internal-host]' as a redaction placeholder"
-    )
-    assert "[internal-ip]" in text, (
-        "commands/report-issue.md must specify '[internal-ip]' as a redaction placeholder"
-    )
-    assert "an internal service" in text, (
-        "commands/report-issue.md must specify 'an internal service' as a redaction placeholder"
-    )
-    assert "[redacted-token]" in text, (
-        "commands/report-issue.md must specify '[redacted-token]' as a placeholder for API keys/tokens"
-    )
+    for placeholder in PLACEHOLDERS:
+        assert placeholder in text, (
+            f"commands/report-issue.md must list {placeholder} in the placeholder vocabulary"
+        )
+    for stale in ("an internal service", "a downstream consumer", "an internal repository"):
+        assert stale not in text, f"prose placeholder {stale!r} cannot be counted — it must be gone"
 
 
 def test_report_issue_preview_shows_redaction_status():
@@ -464,6 +471,9 @@ def test_report_issue_preview_shows_redaction_status():
     text = REPORT_ISSUE_MD.read_text()
     assert "Redacted:" in text, (
         "commands/report-issue.md must include a 'Redacted:' line in the preview gate block"
+    )
+    assert "data.summary" in text, (
+        "the Redacted: line must be the redactor's own data.summary (categories and counts only)"
     )
 
 
@@ -684,4 +694,121 @@ def test_report_issue_synthesize_edge_too_few_entries():
     lower = branch_b.lower()
     assert "fewer than" in lower or "too few" in lower, (
         "Branch B must document a fallback for when there are too few memory entries to cluster"
+    )
+
+
+# --- Deterministic redaction assertions ---
+
+def _delegation_text(text):
+    start = text.find("Delegate to the `swe-workbench:product-manager` subagent")
+    assert start != -1, "commands/report-issue.md must keep the delegation block"
+    return text[start:]
+
+
+def _joined(block):
+    """Fold shell line continuations so a multi-line command can be matched as one."""
+    return re.sub(r"\\\n\s*", " ", block)
+
+
+def test_report_issue_runs_the_redactor_through_the_result_checker():
+    block = _joined(_delegation_text(REPORT_ISSUE_MD.read_text()))
+    assert "command -v swe-workbench-redact" in block, (
+        "the redactor must be guarded by the standard command -v preflight"
+    )
+    assert "swe-workbench-redact --target-repo lugassawan/swe-workbench" in block
+    assert "| swe-workbench-result-check swb.redact/1" in block
+    assert "--field title " in block and "--field body " in block, (
+        "the title is sanitized too, not just the body"
+    )
+    assert "--preserve-file" in block, (
+        "text the user explicitly typed reaches the redactor via --preserve-file"
+    )
+
+
+def test_report_issue_redactor_bash_uses_placeholder_paths():
+    """Literal /tmp paths in a bash block trip the unenumerated-tmp-write gate."""
+    block = _delegation_text(REPORT_ISSUE_MD.read_text())
+    bash_blocks = re.findall(r"```bash\n(.*?)```", block, re.DOTALL)
+    redact_blocks = [b for b in bash_blocks if "swe-workbench-redact" in b]
+    assert redact_blocks, "the redactor invocation must sit in a bash block"
+    for b in redact_blocks:
+        assert "/tmp/" not in b, "use <placeholder> paths in the redactor bash block"
+
+
+def test_report_issue_duplicate_scan_follows_redaction_and_uses_the_sanitized_title():
+    block = _delegation_text(REPORT_ISSUE_MD.read_text())
+    redaction_pos = block.find("**Redaction pass")
+    scan_pos = block.find("**Duplicate scan.**")
+    assert redaction_pos != -1 and scan_pos != -1
+    assert redaction_pos < scan_pos, (
+        "the duplicate scan sends keywords to GitHub, so it must run after the redactor"
+    )
+    scan = block[scan_pos:block.find("**Preview gate.**", scan_pos)]
+    assert "sanitized title" in scan, "scan keywords must come from the sanitized title only"
+    assert "from the thought" not in scan
+
+
+def test_report_issue_branch_b_redacts_every_pick_in_one_call():
+    branch_b = _joined(_branch_b_slice(REPORT_ISSUE_MD.read_text()))
+    assert "swe-workbench-redact" in branch_b
+    assert "--field title-<n>" in branch_b and "--field body-<n>" in branch_b, (
+        "Branch B passes one title-<n>/body-<n> pair per pick"
+    )
+    assert "one call" in branch_b
+    step5 = branch_b[branch_b.find("5. **Draft"):branch_b.find("6. **Turn 1")]
+    assert "Redaction pass" not in step5, (
+        "Branch B sanitizes the picks at Turn 2, once files exist — not at digest time"
+    )
+
+
+def test_report_issue_cmd_sidecar_reads_the_sanitized_title_from_its_file():
+    text = REPORT_ISSUE_MD.read_text()
+    delegation = _delegation_text(text)
+    branch_b = _branch_b_slice(text)
+    for label, block in (("delegation step 8", delegation), ("Branch B step 7", branch_b)):
+        assert '--title "$(cat ' in block, (
+            f"{label}: the .cmd sidecar must read the sanitized title back with $(cat <title-path>) "
+            "so it is never re-typed"
+        )
+        assert '--title "..."' not in block and '--title "<title>"' not in block, (
+            f"{label}: the title must not be re-typed into the command"
+        )
+
+
+def test_report_issue_edits_rerun_the_redactor_and_require_a_fresh_confirm():
+    text = REPORT_ISSUE_MD.read_text()
+    for label, block in (("delegation", _delegation_text(text)), ("Branch B", _branch_b_slice(text))):
+        assert "fresh `confirm`" in block, f"{label}: any edit must require a fresh `confirm`"
+        assert "re-runs the redactor" in block or "re-run the redactor" in block, (
+            f"{label}: any edit must re-run the redactor from the draft files"
+        )
+    delegation = _delegation_text(text)
+    assert "--allow" in delegation, "a restored false positive goes back to the redactor as --allow"
+    assert "credentials can never be restored" in delegation.lower()
+
+
+def test_report_issue_themed_evidence_never_cites_memory_entries():
+    branch_b = _branch_b_slice(REPORT_ISSUE_MD.read_text())
+    body_spec = branch_b[branch_b.find("**Synthesis issue body**"):]
+    assert "Themed evidence" in body_spec
+    assert "paraphrase" in body_spec
+    assert "never cite memory entry names or types" in body_spec
+    assert "by `name` + `type`" not in body_spec
+
+
+def test_report_issue_footer_is_appended_after_redaction():
+    block = _delegation_text(REPORT_ISSUE_MD.read_text())
+    assert "to the sanitized body" in block, (
+        "the plugin-generated footer is public by construction and is appended after redaction"
+    )
+
+
+def test_report_issue_cleanup_reaps_the_draft_and_title_files_too():
+    text = REPORT_ISSUE_MD.read_text()
+    step9 = _delegation_step9_slice(text)
+    for suffix in (".draft.md", ".title.draft", ".title", ".preserve"):
+        assert suffix in step9, f"step 9 must reap the {suffix} file"
+    branch_b = _branch_b_slice(text)
+    assert ".draft.md" in branch_b and ".title.draft" in branch_b, (
+        "Branch B must reap each pick's draft and title files too"
     )

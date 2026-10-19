@@ -18,7 +18,7 @@ The user wants to capture: $ARGUMENTS
 
 Delegate to the `swe-workbench:product-manager` subagent. Its response must deliver all of the following before any issue is filed:
 
-1. **Auth + repo detection.** Run `gh auth status`, then `gh repo view --json nameWithOwner -q '.nameWithOwner'`. Surface the detected repo in the preview as `Filing into: <owner>/<repo>`. If either command fails, bail with a clear single-line message ("Repo detection failed: <reason>. Run `gh repo view` to diagnose.") and stop.
+1. **Auth + repo detection.** Run `gh auth status`, then `gh repo view --json nameWithOwner,visibility`. Surface the detected `nameWithOwner` in the preview as `Filing into: <owner>/<repo>`. Record the `visibility`: the redactor (step 6) runs on every draft **unless visibility is affirmatively `PRIVATE` or `INTERNAL`**, so a `PUBLIC` repo, a missing field and any other or unknown value all redact. If `gh` rejects the `visibility` field (an older `gh`), retry with `--json nameWithOwner` and treat the visibility as unknown. If either command otherwise fails, bail with a clear single-line message ("Repo detection failed: <reason>. Run `gh repo view` to diagnose.") and stop.
 
 2. **Restatement.** One sentence in the user's domain language confirming the thought. If the thought is ambiguous, ask exactly one clarifying question before continuing.
 
@@ -37,25 +37,41 @@ Delegate to the `swe-workbench:product-manager` subagent. Its response must deli
    c. **No template chosen:** map by commit-tag — `[feat]` → `enhancement`, `[bug]` → `bug`, `[chore]` → `documentation` — then apply the same chain against the repo's label list. If no commit-tag is recognisable in the user's input, proceed directly to step d.
    d. **No match found:** omit `--label`; record this so the preview can warn the user ("No matching label found; filing without label").
 
-6. **Duplicate scan.** `gh issue list --search "<2-3 keywords>" --state open --limit 5`. Surface matches. Ask before drafting if any look duplicative.
+6. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`. Write the title as one line. Obtain a Unix timestamp once (`date +%s`) and reuse it for every file below — never re-derive or re-glob. The files that get filed are `<title-path>` = `/tmp/capture-<repo-slug>-<unix-timestamp>.title` and `<body-path>` = `/tmp/capture-<repo-slug>-<unix-timestamp>.md`.
 
-7. **Draft.** With a template: fill its sections, prepend `## Product framing`. Without a template: use `## Problem` / `## Value` / `## Acceptance criteria` / `## Impact / Effort` / `## Additional context`.
+   **Redaction pass (privacy guard).** A public issue is public text, so a deterministic script sanitizes it — never redact by eye. Skip this pass only when step 1 found the repo affirmatively `PRIVATE` or `INTERNAL`; then write the title straight to `<title-path>` and the body to `<body-path>` (below) with the `Write` tool and go on to step 7. Otherwise, with the `Write` tool (not a Bash heredoc), write the title to `/tmp/capture-<repo-slug>-<unix-timestamp>.title.draft` and the body to `/tmp/capture-<repo-slug>-<unix-timestamp>.draft.md`. The script never overwrites a draft, so an edit can always re-run from it. If the user typed their own thought intending it to be public, also write that text — one span per line — to `/tmp/capture-<repo-slug>-<unix-timestamp>.preserve`. Then:
+   ```bash
+   command -v swe-workbench-redact >/dev/null 2>&1 || {
+     echo "swe-workbench runtime commands not on PATH — reinstall or update the swe-workbench plugin." >&2
+     exit 1
+   }
+   REDACTED=$(swe-workbench-redact --target-repo <nameWithOwner> \
+     --preserve-file <preserve-path> \
+     --field title <title-draft-path> <title-path> --field body <body-draft-path> <body-path> \
+     | swe-workbench-result-check swb.redact/1) || exit 1
+   ```
+   Drop `--preserve-file` when no `.preserve` file was written. The redactor writes the sanitized `<title-path>` and `<body-path>`. A non-zero exit means nothing was written: report the failure and stop — never file an unsanitized draft. Read `.data.summary` with `printf '%s' "$REDACTED" | jq -r '.data.summary'` and print each `.warnings[]` as a one-line warning. The script keeps the target repo's own URLs and `#N` references, this plugin's names and public documentation domains; it replaces credentials, emails, other URLs and hosts, IPs, local paths, memory references, service ids, other org/repo names and the local username, using the placeholders `[redacted-token]`, `[internal-email]`, `[internal-host]`, `[internal-ip]`, `[local-path]`, `[memory-ref]`, `[internal-service]`, `[internal-repo]`, `[internal-org]` and `[local-user]`. Text the user explicitly typed as public is protected by `--preserve-file` — except credentials, which are always replaced.
 
-8. **Preview gate.** Obtain a Unix timestamp once (`date +%s`) and reuse it — never re-derive or re-glob. Write the body to `/tmp/capture-<repo-slug>-<unix-timestamp>.md` using the `Write` tool (not a Bash heredoc). Also write a one-line command to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --title "..." --body-file <path> --label "<matched-label>"`; when no label was matched, write `gh issue create --title "..." --body-file <path>` (no `--label` segment). Then print:
+7. **Duplicate scan.** Extract 2–3 keywords: from the **sanitized title** (`<title-path>`) when the redactor ran — never the raw thought or the draft, because the keywords are sent to GitHub — and from the drafted title otherwise. Skip any word that belongs to a `[placeholder]`. `gh issue list --search "<2-3 keywords>" --state open --limit 5`. Surface matches. Ask before previewing if any look duplicative.
+
+8. **Preview gate.** Reuse the timestamp from step 6. Write a one-line command to `/tmp/capture-<repo-slug>-<unix-timestamp>.cmd` using the `Write` tool: when a label was matched, write `gh issue create --title "$(cat <title-path>)" --body-file <body-path> --label "<matched-label>"`; when no label was matched, write `gh issue create --title "$(cat <title-path>)" --body-file <body-path>` (no `--label` segment). The title is read back from its file, so a sanitized title is never re-typed. Then print:
    ```
    Filing into: <owner>/<repo>
    Template: <chosen template> | none — default body
-   Title: <drafted title>
+   Title: <sanitized title>
    Label: <chosen label> | none — no matching label found
+   Redacted: <data.summary — categories and counts only, never the removed values> | skipped — private repository
    Possibly related: <#N list, or "none">
 
    Body:
-   <code-fenced body>
+   <code-fenced sanitized body>
 
-   Command: gh issue create --title "<title>" --body-file <path> --label "<chosen-label>"
+   Command: gh issue create --title "$(cat <title-path>)" --body-file <body-path> --label "<chosen-label>"
 
    Reply 'confirm' to file, or edit any of the above (including the label) and I'll redraft.
    ```
    When no label was matched, drop the `--label "<chosen-label>"` segment from the `Command:` line. **Wait for the user to reply `confirm`. Do NOT run `gh issue create` on this turn.**
 
-9. **File on confirm.** Only when the user replies `confirm`, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/capture-<repo-slug>-<unix-timestamp>.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths from step 8). On failure, leave the files for retry.
+   **Edit loop.** Any edit — a user change to the title or body, `restore X`, or an agent redraft — is applied to the *draft* files (`.title.draft` / `.draft.md`; on a private repo, the `<title-path>` / `<body-path>` files directly). When the redactor ran, the agent then re-runs the redactor with the step 6 command and re-renders this preview; every edit requires a fresh `confirm`, never file immediately after one. `restore X` names a placeholder or the text it replaced (resolve it from the draft; never print a removed value into the preview), and the term goes back to the redactor as `--allow <term>`. Credentials can never be restored.
+
+9. **File on confirm.** Only when the user replies `confirm` after the last edit, read the command from the `.cmd` sidecar written in step 8 and run it exactly as written — do not regenerate the title or path. Return the issue URL. After a successful `gh issue create`, delete the temp files: `swe-workbench-clean-state-files "/tmp/capture-<repo-slug>-<unix-timestamp>.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.title" "/tmp/capture-<repo-slug>-<unix-timestamp>.draft.md" "/tmp/capture-<repo-slug>-<unix-timestamp>.title.draft" "/tmp/capture-<repo-slug>-<unix-timestamp>.preserve" "/tmp/capture-<repo-slug>-<unix-timestamp>.cmd" 2>/dev/null` (substituting the actual paths; a file that was never written is fine). On failure, leave the files for retry.
