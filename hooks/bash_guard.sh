@@ -38,11 +38,15 @@
 # Accepted gaps: brace expansion, glob refspecs and unique-prefix long options (push only; the reset
 # scan accepts --ha/--har/--hard); a bare substitution that is the force flag with an implicit
 # destination; function/coproc NAME bodies; unlisted wrappers.
-# Reset-only gaps: git aliases (including `-c alias.x=...`); a compound `cd x && git reset --hard`
-# judges the hook's cwd, not x (the sequenced-step rule still blocks it on a protected cwd); GIT_*
-# variables in the hook's own environment; a `git branch keep` earlier in the same command is not
-# credited; the dirty check is stat-based, so touched-but-unchanged files over-block (run `git status`
-# and retry). The read-only git calls in the verdict never forward the user's `-c` values and switch
+# Reset-only gaps: git aliases (including `-c alias.x=...`); a compound `cd x && git reset --hard`,
+# `env -C x`, `docker exec` or `ssh` judges the hook's cwd, not the place the reset runs (the
+# sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables in the hook's
+# own environment; the subcommand itself spelled through an expansion (`git ${S:-reset} --hard`);
+# a `git branch keep` earlier in the same command is not credited; the dirty check is stat-based, so
+# touched-but-unchanged files over-block (run `git status` and retry); a fetch before the reset is
+# judged against the refs as they were before it ran; a hostile repository config that blocks git
+# (a FIFO include) hangs the hook. A leading expansion or substitution in a reset argument, a
+# `~` in a -C path, and an unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed. The read-only git calls in the verdict never forward the user's `-c` values and switch
 # off fsmonitor and clean/process filter drivers, because config can execute code before approval.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
 # (quoted text is literal, substitutions are scanned); a remote literally
@@ -417,6 +421,8 @@ _is_wrapper_prefix() {
 _is_git_continuation() {
   case "$1" in
     ''|-*) return 0 ;;
+    # an expansion or substitution in this slot can spell a global option
+    '$'*|"$_DYNAMIC_TOKEN"*) return 0 ;;
     add|am|annotate|apply|archive|bisect|blame|branch|bundle|cat-file|checkout|cherry|cherry-pick|\
     clean|clone|commit|config|credential|describe|diff|difftool|fast-export|fast-import|fetch|\
     filter-branch|for-each-ref|format-patch|fsck|gc|grep|hash-object|help|init|log|ls-files|\
@@ -443,8 +449,8 @@ _parse_git_invocation() {
   local _want=$1 _prefix _base _t _name
   local _i=0 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
   local _global_value=0 _context_value=0 _config_value=0 _ctx_flag=""
-  _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0; _git_subcmd=""
-  _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0
+  _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0; _git_subcmd=""; _git_subcmd_index=-1
+  _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0; _git_has_cfg=0; _git_via_runner=0
 
   (( ${#_push_tokens[@]} )) || return 1
   for _prefix in "${_push_tokens[@]}"; do
@@ -472,7 +478,9 @@ _parse_git_invocation() {
           _prefix_args=1
         else
           (( _prefix_args )) || _prefix_ok=0
-        fi ;;
+        fi
+        # arguments that come from stdin or a file are not in the text (find's `{}` is a path)
+        case "$_base" in xargs|parallel) _git_via_runner=1 ;; esac ;;
     esac
     _i=$((_i + 1))
   done
@@ -494,9 +502,13 @@ _parse_git_invocation() {
     fi
     if [[ -n "$_want" && "$_t" == "$_want" ]]; then _git_sub_index=$_i; break; fi
     # the first word that is no option nor an option's value names the subcommand
-    [[ -z "$_git_subcmd" && "$_i" -gt "$_git_index" && "$_t" != -* ]] && _git_subcmd=$_t
+    if [[ -z "$_git_subcmd" && "$_i" -gt "$_git_index" && "$_t" != -* ]]; then
+      _git_subcmd=$_t; _git_subcmd_index=$_i
+    fi
+    # a word led by a parameter expansion, or a flag holding one, can spell any option
+    if [[ "$_t" == *'$'* && ( "$_t" == '$'* || "$_t" == -* ) ]]; then _git_ctx_dynamic=1; fi
     case "$_t" in
-      -c|--config-env) _global_value=1; _config_value=1 ;;
+      -c|--config-env) _global_value=1; _config_value=1; _git_has_cfg=1 ;;
       --config|--exec-path|--namespace) _global_value=1 ;;
       -C|--git-dir|--work-tree) _global_value=1; _context_value=1; _ctx_flag=$_t ;;
       --git-dir=*|--work-tree=*)
@@ -505,8 +517,8 @@ _parse_git_invocation() {
       -C?*)
         _git_has_context=1; _git_ctx+=(-C "${_t#-C}")
         [[ "$_t" == *"$_DYNAMIC_TOKEN"* ]] && _git_ctx_dynamic=1 ;;
-      --config-env=*) _note_config_key "${_t#*=}" ;;
-      -c?*) _note_config_key "${_t#-c}" ;;
+      --config-env=*) _git_has_cfg=1; _note_config_key "${_t#*=}" ;;
+      -c?*) _git_has_cfg=1; _note_config_key "${_t#-c}" ;;
       *) ;;
     esac
   done
@@ -516,6 +528,8 @@ _parse_git_invocation() {
 # core.worktree / core.bare redirect which tree a command operates on; keys are case-insensitive.
 _note_config_key() {
   local _key=${1%%=*}
+  # a key spelled through an expansion could be either
+  [[ "$_key" == *'$'* ]] && _git_cfg_risky=1
   case "$_key" in
     [Cc][Oo][Rr][Ee].[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee]|[Cc][Oo][Rr][Ee].[Bb][Aa][Rr][Ee]) _git_cfg_risky=1 ;;
   esac
@@ -629,23 +643,34 @@ _git_prior_mutation=0
 # CHECK_RESET <seq> <submodules> <dynamic-target> <target> <context joined by \x1f> for
 # _reset_verdict to judge against the real repository.
 _classify_reset_segment() {
-  local _i _t _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0
-  local _joined="" _c _n=0 _sep=$'\x1f'
+  local _i _t _o _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0 _eoo=0
+  local _joined="" _c _n=0 _sep=$'\x1f' _has_gd=0 _has_wt=0
 
   _parse_git_invocation reset || return
   (( _git_sub_index >= 0 )) || return
   for ((_i = _git_sub_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
     _t=${_push_tokens[_i]}
+    # after --end-of-options the next word is the target, even when it opens with a dash
+    if (( _eoo )); then
+      _eoo=0
+      if (( ! _have_target )); then _have_target=1; _target=$_t; fi
+      [[ "$_t" == -* ]] && { printf 'BLOCK\treset-unsafe-arg\n'; return; }
+      continue
+    fi
     [[ "$_t" == -- ]] && break
-    # a word that opens with a substitution (or is a flag holding one) may spell the hard flag
-    if [[ "$_t" == *"$_DYNAMIC_TOKEN"* && ( "$_t" == "$_DYNAMIC_TOKEN"* || "$_t" == -* ) ]]; then
+    if [[ "$_t" == --end-of-options ]]; then _eoo=1; continue; fi
+    # a word that opens with a substitution or expansion (or is a flag holding one) may spell
+    # the hard flag
+    if [[ ( "$_t" == *"$_DYNAMIC_TOKEN"* || "$_t" == *'$'* ) && ( "$_t" == "$_DYNAMIC_TOKEN"* || "$_t" == '$'* || "$_t" == -* ) ]]; then
       _maybe=1
     fi
     if [[ "$_t" == -* ]]; then
       case "$_t" in
-        --recurse-submodules) _submod=1 ;;
         --soft|--mixed|--keep|--merge) _mode_flag=1 ;;
       esac
+      # git accepts a unique prefix of --recurse-submodules (`--rec` and up), with or without a value
+      _o=${_t%%=*}
+      if [[ "$_o" == --rec* && ${#_o} -ge 5 && "--recurse-submodules" == "$_o"* ]]; then _submod=1; fi
       # git accepts any unique prefix of a long option; `--h` alone is ambiguous with --help
       if [[ "$_t" == --* && ${#_t} -ge 4 && "--hard" == "$_t"* ]]; then _hard=1; fi
       continue
@@ -658,30 +683,79 @@ _classify_reset_segment() {
   if (( _git_cfg_risky )); then printf 'BLOCK\treset-config\n'; return; fi
   if (( _git_ctx_dynamic )); then printf 'BLOCK\treset-dynamic-context\n'; return; fi
   (( _have_target )) || _target=HEAD
-  if [[ "$_target" == *"$_DYNAMIC_TOKEN"* || ( $_maybe == 1 && $_hard == 0 ) ]]; then
+  # a target read from stdin, a file or `{}` is not in the text either
+  if [[ "$_target" == *"$_DYNAMIC_TOKEN"* || "$_target" == *'$'* || $_git_via_runner == 1 \
+        || ( $_maybe == 1 && $_hard == 0 ) ]]; then
     _dyn=1
     _target=HEAD
   fi
+  # --work-tree alone keeps the repository of the cwd but resets another tree's files
+  for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do
+    case "$_c" in --git-dir) _has_gd=1 ;; --work-tree) _has_wt=1 ;; esac
+  done
+  if (( _has_wt && ! _has_gd )); then printf 'BLOCK\treset-work-tree\n'; return; fi
   # a control character would corrupt the record below; a leading dash would read as a git option
   for _c in ${_git_ctx[@]+"${_git_ctx[@]}"} "$_target"; do
     if [[ "$_c" == *[[:cntrl:]]* ]]; then printf 'BLOCK\treset-unsafe-arg\n'; return; fi
     # odd positions hold a -C/--git-dir/--work-tree value
-    if (( _n % 2 == 1 )) && [[ "$_c" == -* ]]; then printf 'BLOCK\treset-unsafe-arg\n'; return; fi
+    # a leading tilde is expanded or not depending on quoting the scan cannot see
+    if (( _n % 2 == 1 )) && [[ "$_c" == -* || "$_c" == '~'* ]]; then printf 'BLOCK\treset-unsafe-arg\n'; return; fi
     _n=$((_n + 1))
   done
   for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do _joined="$_joined${_joined:+$_sep}$_c"; done
   printf 'CHECK_RESET\t%s\t%s\t%s\t%s\t%s\n' "$_git_prior_mutation" "$_submod" "$_dyn" "$_target" "$_joined"
 }
 
-# The segment mutates the repository unless it is a git call that only reads (or fetches).
+# The segment mutates the repository unless it is a git call that only reads. A fetch that can
+# prune or force-update refs, a remote edit, config handed in with -c, and output redirected to a
+# file are not reads: the reset after them is judged against refs that no longer exist.
 _note_segment_effect() {
+  local _i _t _ro=0
   (( ${#_push_tokens[@]} )) || return 0
-  if _parse_git_invocation ""; then
+  if _parse_git_invocation "" && (( ! _git_has_cfg )); then
     case "$_git_subcmd" in
-      fetch|remote|status|log|show|diff|rev-parse) return 0 ;;
+      status|log|show|diff|rev-parse|fetch|remote) _ro=1 ;;
     esac
+    for ((_i = _git_subcmd_index + 1; _i < ${#_push_tokens[@]} && _ro; _i++)); do
+      _t=${_push_tokens[_i]}
+      case "$_t" in --output|--output=*|--ext-diff|--textconv) _ro=0 ;; esac
+      case "$_git_subcmd" in
+        fetch) case "$_t" in -p|--prune*|-f|--force|--update-head-ok|--refmap*|+*|*:*) _ro=0 ;; esac ;;
+        remote) if (( _i == _git_subcmd_index + 1 )); then
+                  case "$_t" in -v|--verbose|show|get-url) ;; *) _ro=0 ;; esac
+                fi ;;
+      esac
+    done
   fi
+  (( _ro )) && return 0
   _git_prior_mutation=1
+}
+
+# One segment, classified in the order its commands run. `find -exec A ; -exec B` runs A and then
+# B, so each part sees what the parts before it did (the leading `find` itself reads only).
+_classify_segment() {
+  local -a _all=(${_push_tokens[@]+"${_push_tokens[@]}"})
+  local _n=${#_all[@]} _i _start=0 _split=0
+  for ((_i = 1; _i < _n; _i++)); do
+    case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) _split=1 ;; esac
+  done
+  if (( ! _split )); then
+    _classify_force_push_segment
+    _classify_reset_segment
+    _note_segment_effect
+    return
+  fi
+  for ((_i = 1; _i <= _n; _i++)); do
+    if (( _i < _n )); then
+      case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) ;; *) continue ;; esac
+    fi
+    _push_tokens=("${_all[@]:_start:_i - _start}")
+    _classify_force_push_segment
+    _classify_reset_segment
+    (( _start == 0 )) || _note_segment_effect
+    _start=$_i
+  done
+  _push_tokens=("${_all[@]}")
 }
 
 MAX_GIT_SCAN_DEPTH=4
@@ -758,6 +832,12 @@ _scan_known_wrapper_body() {
     break
   done
 
+  # Substitutions in the arguments run before the command they feed, so they are scanned first.
+  for _body in ${_push_subs[@]+"${_push_subs[@]}"}; do
+    if (( _p >= 0 || _cmdword )); then _scan_wrapper_operand "$_body" "$_depth"
+    else _scan_nested_text "$_body" "$_depth"; fi
+  done
+
   # A body that was itself handed to a wrapper has no visible prefix, but is still all arguments.
   # A tab anywhere in the segment, quoted or not, also makes the segment a wrapper call.
   if (( _p >= 0 || _NESTED_WRAPPER_BODY || _push_saw_tab )); then
@@ -825,10 +905,6 @@ _scan_known_wrapper_body() {
     fi
   fi
 
-  for _body in ${_push_subs[@]+"${_push_subs[@]}"}; do
-    if (( _p >= 0 || _cmdword )); then _scan_wrapper_operand "$_body" "$_depth"
-    else _scan_nested_text "$_body" "$_depth"; fi
-  done
   # A here-string is code only for a shell or a wrapper running one; `cat <<< 'text'` is data.
   if (( _p >= 0 || _consumer || _cmdword )); then
     for _body in ${_push_here[@]+"${_push_here[@]}"}; do
@@ -862,9 +938,7 @@ scan_git_text() {
       EOS) _lex_ok=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
-        _classify_force_push_segment
-        _classify_reset_segment
-        _note_segment_effect
+        _classify_segment
         _push_tokens=()
         _push_here=()
         _push_subs=()
@@ -873,9 +947,7 @@ scan_git_text() {
     esac
   done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
-  _classify_force_push_segment
-  _classify_reset_segment
-  _note_segment_effect
+  _classify_segment
   (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'
 }
 
@@ -897,7 +969,7 @@ _reset_data_loss() {
   local _branch=$1 _what=$2
   {
     echo "BLOCKED: git reset --hard on protected branch '$_branch' would discard $_what."
-    echo "  Keep the work first: run \`git switch -c <name>\` as its own command, then \`git branch -f $_branch origin/$_branch\`."
+    echo "  Keep the work first: run \`git switch -c <name>\` as its own command, then point '$_branch' where you want it, e.g. \`git branch -f $_branch origin/$_branch\`."
     echo '  Undo a commit but keep its changes: `git reset --soft HEAD~1` (staged) or `git reset HEAD~1`.'
     echo '  Throw edits away deliberately: `git restore --staged --worktree .` (plus `git clean -fd` for untracked files) or `git stash -u`.'
   } >&2
@@ -908,8 +980,8 @@ _reset_data_loss() {
 _reset_verdict() {
   local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5
   local -a _rctx=() _filter_off=() _flat=()
-  local _i _v _k _d _rc _branch _sha
-  local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref)'
+  local _i _v _k _d _rc _branch _sha _top
+  local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref; quote a target that contains { }, e.g. '"'"'@{u}'"'"')'
   local _dirty='uncommitted changes (run `git status` first; stat-only differences also count)'
 
   if [[ -n "$_ctxj" ]]; then
@@ -920,10 +992,8 @@ _reset_verdict() {
     _k=${_flat[_i]}
     _v=${_flat[_i + 1]}
     case "$_k" in -C|--git-dir|--work-tree) ;; *) _reset_block "$_unresolved" ;; esac
-    if [[ -z "$_v" || "$_v" == -* || "$_v" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
-    # the shell would have expanded a leading ~ before git ever saw the path
-    # shellcheck disable=SC2088 # the tilde is literal text from the command, matched on purpose
-    case "$_v" in '~') _v=$HOME ;; '~/'*) _v=$HOME/${_v#'~/'} ;; esac
+    # a leading tilde is expanded by the shell or not depending on quoting the scan cannot see
+    if [[ -z "$_v" || "$_v" == -* || "$_v" == '~'* || "$_v" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
     _rctx+=("$_k" "$_v")
   done
 
@@ -940,10 +1010,12 @@ _reset_verdict() {
     _filter_off+=(-c "filter.$_d.clean=" -c "filter.$_d.process=" -c "filter.$_d.required=false")
   done < <(_rgit config --name-only --get-regexp '^filter\..*\.(clean|process)$')
 
+  # the full ref: `--short` prints `heads/main` when a tag named `main` exists
   _rc=0
-  _branch=$(_rgit symbolic-ref -q --short HEAD) || _rc=$?
+  _branch=$(_rgit symbolic-ref -q HEAD) || _rc=$?
   if (( _rc == 1 )); then return 0; fi
-  if (( _rc != 0 )) || [[ -z "$_branch" ]]; then _reset_block "$_unresolved"; fi
+  if (( _rc != 0 )) || [[ "$_branch" != refs/heads/?* ]]; then _reset_block "$_unresolved"; fi
+  _branch=${_branch#refs/heads/}
   case "$_branch" in main|master|release/*) ;; *) return 0 ;; esac
 
   if (( _dyn )); then
@@ -962,13 +1034,25 @@ _reset_verdict() {
   [[ -n "$_sha" ]] || _reset_block "$_unresolved"
 
   _rc=0
-  _rgit diff-index --cached --quiet HEAD -- || _rc=$?
+  # submodule content is not touched by a flat reset, and inspecting it would read the submodule's own config
+  _rgit diff-index --cached --quiet --ignore-submodules=all HEAD -- || _rc=$?
   if (( _rc == 1 )); then _reset_data_loss "$_branch" "$_dirty"; fi
   (( _rc == 0 )) || _reset_block "$_unresolved"
   _rc=0
-  _rgit diff-files --quiet || _rc=$?
+  _rgit diff-files --quiet --ignore-submodules=all || _rc=$?
   if (( _rc == 1 )); then _reset_data_loss "$_branch" "$_dirty"; fi
   (( _rc == 0 )) || _reset_block "$_unresolved"
+
+  # a file the target adds and the work tree already holds is untracked: the reset overwrites it
+  _top=$(_rgit rev-parse --show-toplevel) || _top=""
+  [[ -n "$_top" ]] || _reset_block "$_unresolved"
+  _rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" -- >/dev/null \
+    || _reset_block "$_unresolved"
+  while IFS= read -r -d '' _v; do
+    if [[ -e "$_top/$_v" || -L "$_top/$_v" ]]; then
+      _reset_data_loss "$_branch" 'untracked files that the target commit would overwrite'
+    fi
+  done < <(_rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" --)
 
   _rc=0
   _v=$(_rgit rev-list --max-count=1 HEAD --not "$_sha" --exclude="$_branch" --branches --remotes --tags) || _rc=$?
@@ -989,7 +1073,8 @@ while IFS=$'\t' read -r _policy _reason; do
         reset-env) echo 'BLOCKED: git reset --hard with GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR/GIT_CONFIG* set points at a repository that cannot be checked; unset it or use -C' >&2 ;;
         reset-config) echo 'BLOCKED: git reset --hard with -c core.worktree/core.bare redirects the work tree and cannot be checked; drop the override' >&2 ;;
         reset-dynamic-context) echo 'BLOCKED: git reset --hard with a dynamic -C/--git-dir/--work-tree value cannot be checked; spell the path literally' >&2 ;;
-        reset-unsafe-arg) echo 'BLOCKED: git reset --hard with a control character or a dash-led path/target cannot be checked safely; spell it plainly' >&2 ;;
+        reset-unsafe-arg) echo 'BLOCKED: git reset --hard with a control character, a dash-led value, or a ~ path cannot be checked safely; spell the absolute path plainly' >&2 ;;
+        reset-work-tree) echo 'BLOCKED: git reset --hard with --work-tree but no --git-dir resets another tree under this directory'"'"'s repository; add --git-dir or use -C' >&2 ;;
         indeterminate-reset) echo 'BLOCKED: git reset --hard nested too deeply to scan; spell the reset directly' >&2 ;;
         dynamic-destination) echo 'BLOCKED: force push with a dynamic destination or flag cannot be checked; spell the branch literally or use --force-with-lease' >&2 ;;
         context-destination) echo 'BLOCKED: force push into another repository (-C/--git-dir/--work-tree) cannot be attributed to a branch; name the refspec literally' >&2 ;;

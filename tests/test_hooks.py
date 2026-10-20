@@ -1696,15 +1696,17 @@ class TestHardResetSequencing:
         _g(feature, "init", "-q", "-b", "feature/z")
         _allowed(run_guard(guard_script, cmd, cwd=str(feature)))
 
-    def test_tilde_in_a_context_path_is_expanded_like_the_shell_would(
-        self, guard_script, synced_repo_on, tmp_path
+    @pytest.mark.parametrize("spelling", ["-C ~/{n}", "-C~/{n}", "-C '~/{n}'", "--git-dir=~/{n}/.git"])
+    def test_tilde_in_a_context_path_is_never_guessed_at(
+        self, guard_script, synced_repo_on, tmp_path, spelling
     ):
+        # whether the shell expands a tilde depends on quoting the scan cannot see, so the guard
+        # must not pick a repository for it: a literal `~` directory could stand in for $HOME
         repo = synced_repo_on("main")
-        assert repo.parent == tmp_path
-        cmd = f"git -C ~/{repo.name} reset --hard"
-        _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path), env={"HOME": str(tmp_path)}))
-        _dirty(repo)
-        _blocked(run_guard(guard_script, cmd, cwd=str(tmp_path), env={"HOME": str(tmp_path)}))
+        cmd = f"git {spelling.format(n=repo.name)} reset --hard"
+        result = run_guard(guard_script, cmd, cwd=str(tmp_path), env={"HOME": str(tmp_path)})
+        _blocked(result)
+        assert "~" in result.stderr
 
     def test_nesting_too_deep_to_scan_is_blocked_even_on_a_clean_branch(
         self, guard_script, synced_repo_on
@@ -1716,6 +1718,176 @@ class TestHardResetSequencing:
         result = run_guard(guard_script, cmd, cwd=str(repo))
         _blocked(result)
         assert "too deeply" in result.stderr
+
+
+@pytest.fixture
+def losing_repo(synced_repo_on):
+    """A main whose last commit is unpushed: `reset --hard HEAD~1` loses it."""
+    repo = synced_repo_on("main")
+    _commit(repo, "extra")
+    return repo
+
+
+class TestHardResetBypassClosures:
+    """Spellings and sequences that hid a data-losing reset from the text scan."""
+
+    @pytest.fixture
+    def elsewhere(self, tmp_path):
+        d = tmp_path / "elsewhere"
+        d.mkdir()
+        return d
+
+    def test_fixture_loses_data_when_spelled_plainly(self, guard_script, losing_repo, elsewhere):
+        cmd = f"git -C {losing_repo} reset --hard HEAD~1"
+        _blocked(run_guard(guard_script, cmd, cwd=str(elsewhere)))
+
+    @pytest.mark.parametrize("cmd", [
+        "git -C __R__ reset ${X:---hard} HEAD~1",
+        "git -C __R__ reset $X HEAD~1",
+        "git ${C:--C} __R__ reset --hard HEAD~1",
+        "git -c $K=v -C __R__ reset --hard HEAD~1",
+        "echo HEAD~1 | xargs git -C __R__ reset --hard",
+        "xargs -a /dev/null git -C __R__ reset --hard",
+    ])
+    def test_expansions_and_piped_targets_are_not_taken_at_face_value(
+        self, guard_script, synced_repo_on, elsewhere, cmd
+    ):
+        repo = synced_repo_on("main")
+        _commit(repo, "extra")
+        _g(repo, "branch", "keep")
+        # alone, `reset --hard HEAD~1` is fine here (commit kept on `keep`); the spellings above
+        # hide the flag, the context or the target, so they cannot be judged and must not pass
+        _blocked(run_guard(guard_script, cmd.replace("__R__", str(repo)), cwd=str(elsewhere)))
+
+    def test_tag_named_like_the_branch_does_not_hide_the_protected_branch(
+        self, guard_script, losing_repo, elsewhere
+    ):
+        _g(losing_repo, "tag", "main", "origin/main")
+        cmd = f"git -C {losing_repo} reset --hard HEAD~1"
+        _blocked(run_guard(guard_script, cmd, cwd=str(elsewhere)))
+
+    def test_dash_led_target_after_end_of_options_is_not_skipped(
+        self, guard_script, synced_repo_on, elsewhere
+    ):
+        repo = synced_repo_on("main")
+        _g(repo, "update-ref", "refs/heads/-old", "origin/main")
+        cmd = f"git -C {repo} reset --hard --end-of-options -old"
+        _blocked(run_guard(guard_script, cmd, cwd=str(elsewhere)))
+
+    @pytest.mark.parametrize("flag", ["--recurse-submodules=yes", "--recurse-submodules=true", "--rec", "--recurse"])
+    def test_submodule_recursion_spelled_any_way_is_blocked(
+        self, guard_script, synced_repo_on, flag
+    ):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, f"git reset --hard {flag}", cwd=str(repo)))
+
+    def test_dirty_submodule_is_not_inspected_and_does_not_block_a_flat_reset(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        # a plain reset leaves submodule content alone, and inspecting it would read the
+        # submodule's own config and attributes (filter drivers) inside the hook
+        sub = tmp_path / "subsrc"
+        sub.mkdir()
+        _g(sub, "init", "-q", "-b", "main")
+        _commit(sub, "s")
+        repo = synced_repo_on("main")
+        _g(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub), "sub")
+        _g(repo, "commit", "-qm", "add sub")
+        _g(repo, "push", "-q")
+        (repo / "sub" / "s").write_text("edited inside the submodule")
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+
+    def test_untracked_file_the_target_would_overwrite_is_data(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _commit(repo, "f.txt")
+        _g(repo, "push", "-q")
+        _g(repo, "reset", "-q", "--hard", "HEAD~1")
+        (repo / "f.txt").write_text("precious, never committed")
+        result = run_guard(guard_script, "git reset --hard origin/main", cwd=str(repo))
+        _blocked(result)
+        assert "untracked" in result.stderr
+
+    def test_untracked_file_elsewhere_is_left_alone_by_reset_and_allowed(
+        self, guard_script, synced_repo_on
+    ):
+        repo = synced_repo_on("main")
+        (repo / "scratch.txt").write_text("untracked and untouched by reset --hard")
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+
+    def test_work_tree_without_git_dir_cannot_be_attributed(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        repo = synced_repo_on("main")
+        feature = tmp_path / "feat"
+        feature.mkdir()
+        _g(feature, "init", "-q", "-b", "feature/w")
+        _commit(feature, "w")
+        result = run_guard(guard_script, f"git --work-tree={repo} reset --hard", cwd=str(feature))
+        _blocked(result)
+
+    def test_quoted_upstream_shorthand_is_resolved(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, "git reset --hard '@{u}'", cwd=str(repo)))
+
+    def test_unquoted_upstream_shorthand_loses_its_braces_and_says_to_quote_it(
+        self, guard_script, synced_repo_on
+    ):
+        repo = synced_repo_on("main")
+        result = run_guard(guard_script, "git reset --hard @{u}", cwd=str(repo))
+        _blocked(result)
+        assert "quote" in result.stderr
+
+
+class TestHardResetEarlierStepsInOneLine:
+    """Whatever runs before the reset in the same command line counts, in execution order."""
+
+    @pytest.fixture
+    def kept(self, synced_repo_on):
+        repo = synced_repo_on("main")
+        _commit(repo, "extra")
+        _g(repo, "branch", "keep")  # alone, `reset --hard HEAD~1` is fine: `keep` holds the commit
+        return repo
+
+    def test_fixture_allows_the_reset_alone(self, guard_script, kept, tmp_path):
+        _allowed(run_guard(guard_script, f"git -C {kept} reset --hard HEAD~1", cwd=str(tmp_path)))
+
+    def test_second_find_exec_sees_what_the_first_one_did(self, guard_script, kept, tmp_path):
+        cmd = (f'find . -maxdepth 0 -exec git -C {kept} branch -D keep ";" '
+               f'-exec git -C {kept} reset --hard HEAD~1 ";"')
+        _blocked(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    def test_read_only_first_find_exec_does_not_count(self, guard_script, kept, tmp_path):
+        cmd = (f'find . -maxdepth 0 -exec git -C {kept} status ";" '
+               f'-exec git -C {kept} reset --hard HEAD~1 ";"')
+        _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    def test_env_assignment_in_a_later_find_exec_is_seen(self, guard_script, kept, tmp_path):
+        cmd = (f'find . -maxdepth 0 -exec git status ";" '
+               f'-exec env GIT_DIR={kept}/.git GIT_WORK_TREE={kept} git reset --hard HEAD~1 ";"')
+        _blocked(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    def test_substitution_runs_before_the_wrapped_command(self, guard_script, kept, tmp_path):
+        cmd = f'bash -c "git -C {kept} reset --hard HEAD~1" _ $(git -C {kept} branch -D keep)'
+        _blocked(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    @pytest.mark.parametrize("before", [
+        "git remote rm origin",
+        "git remote add other /nowhere",
+        "git fetch --prune",
+        "git fetch --update-head-ok . +refs/remotes/origin/main:refs/heads/main",
+        "git -c diff.external=./x diff",
+        "git diff --output=out.txt",
+    ])
+    def test_calls_that_can_move_refs_or_run_code_are_not_read_only(
+        self, guard_script, kept, tmp_path, before
+    ):
+        cmd = f"{before.replace('git ', f'git -C {kept} ', 1)} && git -C {kept} reset --hard HEAD~1"
+        _blocked(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    @pytest.mark.parametrize("before", ["git fetch", "git remote -v", "git remote show origin", "git status", "git log -1"])
+    def test_plain_read_only_calls_still_do_not_count(self, guard_script, kept, tmp_path, before):
+        cmd = f"{before.replace('git ', f'git -C {kept} ', 1)} && git -C {kept} reset --hard HEAD~1"
+        _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
 
 
 # ──────────────────────────────────────────────
