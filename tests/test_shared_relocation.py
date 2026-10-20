@@ -12,6 +12,7 @@ EXPECTED_SHARED_AGENT_STEMS = {
     "comment-discipline",
     "comment-scan",
     "docs-discipline",
+    "evidence-discipline",
     "external-repo-reading",
     "language-skill-required",
     "languages",

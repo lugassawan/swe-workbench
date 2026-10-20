@@ -23,8 +23,11 @@ Registry field kinds are a closed, intentionally small vocabulary: "str", "int",
 objects — the shape `swe-workbench-sweep-residuals` uses for retained/failed
 records), and "list[candidate]" (a list of dead-code candidate records — the
 shape `swe-workbench-dead-code-scan` emits; see that script for the field
-set), and "list[count_row]" (a list of {"key": str, "count": int} objects — the
-per-category and per-field tallies `swe-workbench-redact` emits). A field kind outside this vocabulary is a bug in this module's own
+set), "list[count_row]" (a list of {"key": str, "count": int} objects — the
+per-category and per-field tallies `swe-workbench-redact` emits), and
+"list[worktree]" (a list of {"path": str, "branch": str, "head": str,
+"overlapping_paths": list[str]} objects — the sibling-worktree inventory
+`swe-workbench-plan-evidence` emits). A field kind outside this vocabulary is a bug in this module's own
 REGISTRY, not a caller error — it raises rather than silently passing validation.
 """
 
@@ -163,6 +166,19 @@ REGISTRY: dict[str, dict[str, str]] = {
         "scope_status": "str",
         "gh_version": "str",
     },
+    "swb.plan-evidence/1": {
+        "head": "str",
+        "dirty": "bool",
+        "target": "str",
+        "local_target_sha": "str",
+        "remote_target_sha": "str",
+        "base": "str",
+        "drift": "str",
+        "cited_files": "list[str]",
+        "changed_paths": "list[str]",
+        "overlapping_paths": "list[str]",
+        "worktrees": "list[worktree]",
+    },
     "swb.redact/1": {
         "total": "int",
         "by_category": "list[count_row]",
@@ -222,6 +238,16 @@ def _type_ok(kind: str, value: object) -> bool:
             and isinstance(v.get("key"), str)
             and isinstance(v.get("count"), int)
             and not isinstance(v.get("count"), bool)
+            for v in value
+        )
+    if kind == "list[worktree]":
+        return isinstance(value, list) and all(
+            isinstance(v, dict)
+            and isinstance(v.get("path"), str)
+            and isinstance(v.get("branch"), str)
+            and isinstance(v.get("head"), str)
+            and isinstance(v.get("overlapping_paths"), list)
+            and all(isinstance(p, str) for p in v["overlapping_paths"])
             for v in value
         )
     raise AssertionError(f"swe-workbench-result-check: unregistered field kind {kind!r} in REGISTRY")

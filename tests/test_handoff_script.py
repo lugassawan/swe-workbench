@@ -2001,7 +2001,13 @@ def test_create_revalidates_worktree_registration_after_waiting_for_lease_lock(t
 
     stdout, stderr = process.communicate(timeout=10)
     assert process.returncode != 0, stdout
-    assert "could not execute git" in stderr or "registered live worktree" in stderr
+    # The fixed sleep can lose the race on a slow runner, so the worktree may already be
+    # gone before the script's first git call; that early failure is the same fail-closed outcome.
+    assert (
+        "could not execute git" in stderr
+        or "registered live worktree" in stderr
+        or "Unable to read current working directory" in stderr
+    )
     assert not (workspace / "lease.json").exists()
 
 

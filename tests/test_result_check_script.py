@@ -180,6 +180,19 @@ EXPECTED_REGISTRY = {
         "scope_status": "str",
         "gh_version": "str",
     },
+    "swb.plan-evidence/1": {
+        "head": "str",
+        "dirty": "bool",
+        "target": "str",
+        "local_target_sha": "str",
+        "remote_target_sha": "str",
+        "base": "str",
+        "drift": "str",
+        "cited_files": "list[str]",
+        "changed_paths": "list[str]",
+        "overlapping_paths": "list[str]",
+        "worktrees": "list[worktree]",
+    },
     "swb.redact/1": {
         "total": "int",
         "by_category": "list[count_row]",
@@ -307,6 +320,38 @@ def test_list_path_reason_field_valid_and_invalid():
     envelope["data"]["retained_artifacts"] = [{"path": "/tmp/pr-42-review.diff"}]
     problems = rc.validate_envelope("swb.sweep-residuals/1", envelope)
     assert any("retained_artifacts" in problem for problem in problems)
+
+
+def test_list_worktree_field_valid_and_invalid():
+    data = {
+        "head": "a" * 40,
+        "dirty": False,
+        "target": "main",
+        "local_target_sha": "a" * 40,
+        "remote_target_sha": "",
+        "base": "",
+        "drift": "unknown",
+        "cited_files": [],
+        "changed_paths": [],
+        "overlapping_paths": [],
+        "worktrees": [
+            {"path": "/w", "branch": "feature/x", "head": "b" * 40, "overlapping_paths": ["a.md"]}
+        ],
+    }
+    envelope = _valid_envelope(schema="swb.plan-evidence/1", data=data)
+    assert rc.validate_envelope("swb.plan-evidence/1", envelope) == []
+
+    good = data["worktrees"][0]
+    for bad in (
+        [{**good, "overlapping_paths": "a.md"}],
+        [{**good, "overlapping_paths": [1]}],
+        [{k: v for k, v in good.items() if k != "branch"}],
+        [{**good, "head": None}],
+        ["x"],
+    ):
+        envelope["data"]["worktrees"] = bad
+        problems = rc.validate_envelope("swb.plan-evidence/1", envelope)
+        assert any("worktrees" in problem for problem in problems), bad
 
 
 def test_list_count_row_field_valid_and_invalid():
