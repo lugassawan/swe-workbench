@@ -19,8 +19,8 @@ export interface GuardRunOptions {
   readonly interpreter: string;
   readonly scriptPath: string;
   readonly payload: Record<string, unknown>;
-  /** bash_guard.sh runs `git rev-parse --abbrev-ref HEAD` against this, not any `.cwd` in the
-   *  JSON payload. */
+  /** The hook process's working directory. bash_guard.sh judges git commands against the payload's
+   *  `.cwd` when it carries one, and falls back to this. */
   readonly cwd: string;
   readonly pluginRoot: string;
   readonly signal: AbortSignal | undefined;

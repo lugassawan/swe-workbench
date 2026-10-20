@@ -8,8 +8,9 @@
 #     --git-dir, --work-tree), or nesting too deep to scan, on any branch
 #   - git reset --hard on main/master/release/* only when it would lose data: uncommitted changes, or
 #     commits no other branch, tag or remote keeps. The target is the repository named by -C /
-#     --git-dir / --work-tree (else the hook's cwd); feature branches and a detached HEAD are never
-#     judged. Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
+#     --git-dir / --work-tree (else the payload's cwd, or the hook's own without one; a payload cwd
+#     that no longer exists blocks); feature branches and a detached HEAD are never judged.
+#     Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
 #     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare, --recurse-submodules,
 #     and an earlier step of the same command that may have changed the repository (run it as its own
 #     command first). Quoted text such as `echo 'git reset --hard'` is data and is not judged, and
@@ -23,7 +24,7 @@
 # "git", or "pi". This is the common case (ls, cat, echo, make, npm, …) and
 # removes the per-call grep tax flagged in #233.
 #
-# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal; compound cd (cwd not in hook payload);
+# Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal; compound cd (only the session cwd is known);
 # IFS/word-splitting substitution (e.g. rm${IFS}-rf, pi${IFS}-p) — a shared limitation of the
 # regex/tr token-matching approach across all three detectors (rm, git, pi), not specific to any one.
 # A backslash-escaped quote (e.g. `\"`) inside an already-open double-quoted string desyncs the
@@ -44,7 +45,7 @@
 #   - code assembled from data: `echo 'git reset --hard' | bash`, `source <(echo '...')`,
 #     `x='...'; eval "$x"`, `$x` or `bash -c "$x"`; the subcommand spelled through an expansion
 #     (`git ${S:-reset} --hard`). The push scan shares this limit.
-#   - somewhere other than the hook's cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
+#   - somewhere other than the session cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
 #     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
 #     in the hook's own environment; git aliases, including `-c alias.x=...`.
 #   - state the verdict cannot credit or see: a `git branch keep` earlier in the same command; a fetch
@@ -72,7 +73,9 @@
 
 set -u
 
-if ! cmd=$(jq -r '.tool_input.command // ""'); then
+# Read once: .cwd is extracted from the same payload, but only after the fast gate.
+IFS= read -r -d '' payload || true
+if ! cmd=$(jq -r '.tool_input.command // ""' <<< "$payload"); then
   echo 'bash_guard: jq parse error — blocking by default' >&2
   exit 2
 fi
@@ -1031,6 +1034,13 @@ _reset_verdict() {
     if [[ -z "$_v" || "$_v" == -* || "$_v" == '~'* || "$_v" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
     _rctx+=("$_k" "$_v")
   done
+  # only an all-absolute context is independent of the session cwd
+  if (( _session_cwd_bad )); then
+    (( ${#_rctx[@]} )) || _reset_block "$_cwd_gone"
+    for ((_i = 1; _i < ${#_rctx[@]}; _i += 2)); do
+      [[ "${_rctx[_i]}" == /* ]] || _reset_block "$_cwd_gone"
+    done
+  fi
 
   if ! _rgit rev-parse --git-dir >/dev/null; then
     # nothing named a repository and the cwd is none: git fails on its own, or a `cd` came first (documented gap)
@@ -1133,6 +1143,14 @@ _scan_and_judge() {
   exit 0
 }
 
+# The current-branch checks read the cwd's repository.
+_current_branch_cwd() {
+  if (( _session_cwd_bad )); then
+    echo "BLOCKED: force push of the current branch $_cwd_gone" >&2
+    exit 2
+  fi
+}
+
 _judge_record() {
   case "$_policy" in
     BLOCK)
@@ -1157,6 +1175,7 @@ _judge_record() {
       _reset_verdict "$_rseq" "$_rsub" "$_rdyn" "$_rtarget" "${_rctx-}"
       ;;
     CHECK_CURRENT_MAYBE)
+      _current_branch_cwd
       branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
       case "$branch" in
         main|master|release/*)
@@ -1166,6 +1185,7 @@ _judge_record() {
       esac
       ;;
     CHECK_CURRENT)
+      _current_branch_cwd
       branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
       case "$branch" in
         main|master|release/*)
@@ -1185,6 +1205,18 @@ _judge_record() {
 # (a FIFO include), and the hook must answer before its caller kills it (Pi at 5 s). The job gets its
 # own process group (set -m) so the watchdog's signal can kill every git it started. The watchdog's
 # stdio is detached so a caller waiting for the hook's output to close is not held up by it.
+# The session's cwd from the payload, entered here so the job inherits it and a relative -C or
+# --git-dir resolves as it will for the user. A present cwd that is relative or no longer exists
+# (a deleted worktree) cannot be entered: a verdict that depends on the cwd then blocks.
+_session_cwd_bad=0
+_session_cwd=$(jq -r '.cwd // empty' <<< "$payload") || _session_cwd=.
+if [[ -n "$_session_cwd" ]]; then
+  if [[ "$_session_cwd" != /* || ! -d "$_session_cwd" ]] || ! CDPATH='' cd -P -- "$_session_cwd" 2>/dev/null; then
+    _session_cwd_bad=1
+  fi
+fi
+_cwd_gone='cannot be checked: the session'"'"'s working directory no longer exists or is not an absolute path; cd to an existing directory and retry'
+
 _budget=3
 if [[ "${SWE_WORKBENCH_GUARD_GIT_BUDGET-}" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   _bint=${BASH_REMATCH[1]}

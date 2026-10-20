@@ -29,8 +29,12 @@ def guard_script():
     return GUARD
 
 
-def run_guard(script, cmd, *, cwd=None, env=None, timeout=None):
-    payload = json.dumps({"tool_input": {"command": cmd}})
+def run_guard(script, cmd, *, cwd=None, env=None, timeout=None, payload_cwd=None):
+    """`cwd` is the hook process's directory; `payload_cwd` is the session cwd the payload carries."""
+    body = {"tool_input": {"command": cmd}}
+    if payload_cwd is not None:
+        body["cwd"] = payload_cwd
+    payload = json.dumps(body)
     merged_env = dict(_CLEAN_ENV)
     if env is not None:
         merged_env.update(env)
@@ -2108,6 +2112,96 @@ class TestHardResetEarlierStepsInOneLine:
     def test_plain_read_only_calls_still_do_not_count(self, guard_script, kept, tmp_path, before):
         cmd = f"{before.replace('git ', f'git -C {kept} ', 1)} && git -C {kept} reset --hard HEAD~1"
         _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+
+def _feature_repo(path):
+    """A repository on a feature branch at `path`: a reset there is never judged."""
+    path.mkdir(parents=True)
+    _g(path, "init", "-q", "-b", "feature/x")
+    _commit(path, "README")
+    return path
+
+
+class TestSessionCwdFromPayload:
+    """The payload's cwd, not the hook process's, is the repository a cwd-relative git command
+    touches; a payload cwd that cannot be entered blocks only the verdicts that depend on it."""
+
+    def test_payload_cwd_on_dirty_main_blocks_from_a_feature_process_cwd(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        main = synced_repo_on("main")
+        _dirty(main)
+        feature = _feature_repo(tmp_path / "feat")
+        result = run_guard(guard_script, "git reset --hard", cwd=str(feature), payload_cwd=str(main))
+        _blocked(result)
+        assert "uncommitted" in result.stderr
+
+    def test_payload_cwd_on_feature_allows_from_a_dirty_main_process_cwd(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        main = synced_repo_on("main")
+        _dirty(main)
+        feature = _feature_repo(tmp_path / "feat")
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(main), payload_cwd=str(feature)))
+
+    def test_relative_context_resolves_against_the_payload_cwd(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        # `-C repo` names tmp_path/repo (dirty main) from the process cwd, but
+        # tmp_path/feat/repo (a feature branch) from the payload cwd
+        main = synced_repo_on("main")
+        _dirty(main)
+        _feature_repo(tmp_path / "feat" / main.name)
+        _allowed(run_guard(
+            guard_script, f"git -C {main.name} reset --hard",
+            cwd=str(tmp_path), payload_cwd=str(tmp_path / "feat"),
+        ))
+
+    @pytest.mark.parametrize("payload_cwd", ["gone", "relative"])
+    def test_unusable_payload_cwd_blocks_an_implicit_cwd_reset(
+        self, guard_script, synced_repo_on, tmp_path, payload_cwd
+    ):
+        # the relative one names a clean synced main from the process cwd, which would allow it
+        main = synced_repo_on("main")
+        cwd = str(tmp_path / "gone") if payload_cwd == "gone" else main.name
+        result = run_guard(guard_script, "git reset --hard", cwd=str(tmp_path), payload_cwd=cwd)
+        _blocked(result)
+        assert "cd to an existing directory" in result.stderr
+
+    def test_missing_payload_cwd_judges_an_absolute_context_normally(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        main = synced_repo_on("main")
+        gone = str(tmp_path / "gone")
+        _allowed(run_guard(guard_script, f"git -C {main} reset --hard", cwd=str(tmp_path), payload_cwd=gone))
+        _dirty(main)
+        result = run_guard(guard_script, f"git -C {main} reset --hard", cwd=str(tmp_path), payload_cwd=gone)
+        _blocked(result)
+        assert "uncommitted" in result.stderr
+
+    @pytest.mark.parametrize("ctx", ["-C {name}", "--git-dir={name}/.git --work-tree={main}"])
+    def test_missing_payload_cwd_blocks_any_relative_context(
+        self, guard_script, synced_repo_on, tmp_path, ctx
+    ):
+        main = synced_repo_on("main")
+        cmd = f"git {ctx.format(name=main.name, main=main)} reset --hard"
+        result = run_guard(guard_script, cmd, cwd=str(tmp_path), payload_cwd=str(tmp_path / "gone"))
+        _blocked(result)
+        assert "cd to an existing directory" in result.stderr
+
+    @pytest.mark.parametrize("cmd", ["git push --force", "git push -f origin"])
+    def test_missing_payload_cwd_blocks_a_current_branch_force_push(
+        self, guard_script, tmp_path, cmd
+    ):
+        feature = _feature_repo(tmp_path / "feat")
+        result = run_guard(guard_script, cmd, cwd=str(feature), payload_cwd=str(tmp_path / "gone"))
+        _blocked(result)
+        assert "cd to an existing directory" in result.stderr
+
+    @pytest.mark.parametrize("cmd", ["git push --force origin feature/x", "git status", "ls -la"])
+    def test_missing_payload_cwd_leaves_cwd_free_commands_alone(self, guard_script, tmp_path, cmd):
+        feature = _feature_repo(tmp_path / "feat")
+        _allowed(run_guard(guard_script, cmd, cwd=str(feature), payload_cwd=str(tmp_path / "gone")))
 
 
 @pytest.fixture

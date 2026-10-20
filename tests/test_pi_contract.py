@@ -1641,7 +1641,7 @@ const writeEvent = { input: { content: "x", path: "y" } };
 const editEvent = { input: { path: "y", edits: [{ oldText: "a", newText: "b" }] } };
 
 const fields = {
-  "bash_guard.sh": flatten(mod.bashPayload(bashEvent)),
+  "bash_guard.sh": flatten(mod.bashPayload(bashEvent, "cwd-value")),
   "secret_guard.py": [
     ...flatten(mod.writePayload(writeEvent)),
     ...flatten(mod.editPayloads(editEvent)[0]),
@@ -1651,7 +1651,9 @@ const fields = {
   "skill_autoload_hint.sh": flatten(mod.skillHintPayload("path-value", "session-value")),
 };
 
-console.log(JSON.stringify({ dispatch: mod.GUARD_DISPATCH, fields }));
+const bashPayload = mod.bashPayload(bashEvent, "cwd-value");
+
+console.log(JSON.stringify({ dispatch: mod.GUARD_DISPATCH, fields, bashPayload }));
 """
 
 
@@ -1707,7 +1709,7 @@ def test_guard_dispatch_fail_postures_are_pinned(guard_dispatch):
 
 # Every JSON field path each hook actually reads, verified against hooks/*.sh|py source below.
 REFERENCED_FIELDS = {
-    "bash_guard.sh": {"tool_input.command"},
+    "bash_guard.sh": {"cwd", "tool_input.command"},
     "secret_guard.py": {"tool_name", "tool_input.content", "tool_input.file_path", "tool_input.new_string"},
     "workflow_resume_hint.sh": {"cwd", "source"},
     "memory_hint.sh": {"cwd", "harness"},
@@ -1723,6 +1725,13 @@ def test_referenced_fields_are_a_subset_of_adapter_payload_fields(cc_payload_dum
             f"{hook} reads field(s) {referenced - carried} that the adapter's payload for it "
             "never carries — that field would silently always read empty on Pi"
         )
+
+
+@requires_node
+def test_bash_payload_carries_the_session_cwd(cc_payload_dump):
+    """bash_guard.sh judges git commands against the payload's cwd, so the adapter must pass the
+    session cwd through verbatim rather than leave the hook on its spawn directory."""
+    assert cc_payload_dump["bashPayload"] == {"cwd": "cwd-value", "tool_input": {"command": "x"}}
 
 
 def test_referenced_fields_actually_appear_in_hook_source():
