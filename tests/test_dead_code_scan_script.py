@@ -45,10 +45,10 @@ def _env(**extra):
     return env
 
 
-def _run(args, *, cwd=None, env=None, stdin=None):
+def _run(args, *, cwd=None, env=None, stdin=None, timeout=None):
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, cwd=cwd, env=env or _env(), input=stdin,
+        capture_output=True, text=True, cwd=cwd, env=env or _env(), input=stdin, timeout=timeout,
     )
 
 
@@ -1582,8 +1582,43 @@ def test_reviewer_rule_11_pins_the_scanner_contract():
         ln for ln in (ROOT / "agents" / "reviewer.md").read_text().splitlines() if ln.startswith("11. **Dead-code lens")
     )
     for needle in (
-        "--funnel grep --diff-from -", "--src-prefix=a/ --dst-prefix=b/", "pipefail", "diff_relation",
+        "--funnel grep --diff-from -", "--src-prefix=a/ --dst-prefix=b/ --no-color --no-ext-diff", "pipefail", "diff_relation",
+        "never reaches the posted review", "**Low** finding row",
         "`scoped_paths`", "`watched_symbols`", "`scanned_files`", "file-cap", "diff-path-unresolved",
         "DEAD-CODE-SCAN:", "dead-code lens unavailable",
     ):
         assert needle in rule, needle
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX named pipes")
+@pytest.mark.parametrize("name", ["evil.py", "evil"])  # the extensionless one is opened for its shebang
+def test_symlink_to_a_fifo_never_blocks_either_mode(tmp_path, name):
+    os.mkfifo(tmp_path / "pipe")
+    (tmp_path / name).symlink_to(tmp_path / "pipe")
+    _write(tmp_path, "src/mod.py", "def lonely():\n    return 1\n")
+    diff = _unified({}, {"src/mod.py": "def lonely():\n    return 1\n"})
+    repo = _run(["--root", str(tmp_path), "--funnel", "grep"], timeout=20)
+    scoped = _run(["--root", str(tmp_path), "--funnel", "grep", "--diff-from", "-"], stdin=diff, timeout=20)
+    for proc in (repo, scoped):
+        assert proc.returncode == 0, proc.stderr
+        assert [r["symbol"] for r in json.loads(proc.stdout)["data"]["candidates"]] == ["lonely"]
+
+
+def test_symlink_to_a_file_outside_the_root_is_not_scanned(tmp_path):
+    _write(tmp_path / "outside", "secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n")
+    root = tmp_path / "repo"
+    _write(root, "src/mod.py", "def lonely():\n    return 1\n")
+    (root / "src" / "escape.py").symlink_to(tmp_path / "outside" / "secret.py")
+    _rc, envelope = _scan(root)
+    assert [r["symbol"] for r in envelope["data"]["candidates"]] == ["lonely"]
+    assert envelope["data"]["scanned_files"] == 1
+
+
+def test_lone_carriage_return_does_not_shift_line_numbers(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_bytes(b"x = 1\rpass\ny = 2\n\ndef late():\n    return 1\n")
+    _rc, envelope = _scan(tmp_path)
+    assert [(r["symbol"], r["line"]) for r in envelope["data"]["candidates"]] == [("late", 4)]
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,3 +1,5 @@\n x = 1\rpass\n y = 2\n \n+def late():\n+    return 1\n"
+    _rc, scoped, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["line"], r["diff_relation"]) for r in scoped["data"]["candidates"]] == [("late", 4, "added")]

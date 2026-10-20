@@ -56,6 +56,7 @@ import os
 import posixpath
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -284,19 +285,25 @@ def _is_exported(ext: str, matched: str, name: str) -> bool:
     return matched.lstrip().startswith("export ")
 
 
+def _read_source(path: Path) -> str:
+    """Source text with line endings untouched: read_text() would turn a lone CR
+    into a line break and shift every later line number away from git's."""
+    return path.read_bytes().decode("utf-8", errors="replace")
+
+
 def parse_file(root: Path, path: Path) -> FileRecord | None:
     ext = _source_ext(path)
     if not ext:
         return None
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _read_source(path)
     except OSError:
         return None
     return parse_text(path.relative_to(root).as_posix(), ext, text)
 
 
 def parse_text(rel: str, ext: str, text: str) -> FileRecord:
-    # "\n" only: splitlines() also breaks on \f, \v, \x1c-\x1e, \x85 and  ,
+    # "\n" only: splitlines() also breaks on \f, \v, \x1c-\x1e, \x85 and \u2028,
     # which would shift every later line number away from the diff's.
     lines = text.split("\n")
     if lines[-1] == "":
@@ -364,13 +371,31 @@ def parse_text(rel: str, ext: str, text: str) -> FileRecord:
     return record
 
 
+def _readable_inside(path: Path, real_root: Path) -> bool:
+    """A regular file that stays inside the root once symlinks are followed. A
+    checkout can hold a symlink to a FIFO or device (which blocks or never ends
+    on read) or to a file outside the root; neither is scanned."""
+    try:
+        mode = os.lstat(path).st_mode  # one syscall for the overwhelmingly common regular file
+        if stat.S_ISREG(mode):
+            return True
+        return stat.S_ISLNK(mode) and path.is_file() and path.resolve().is_relative_to(real_root)
+    except OSError:
+        return False
+
+
 def walk_files(root: Path, max_files: int, warnings: list) -> list[Path]:
     files: list[Path] = []
     capped = False
+    real_root = root.resolve()
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
+            suffix = path.suffix.lower()
+            # Vet before _source_ext, which opens extensionless files for their shebang.
+            if (name in MANIFEST_NAMES or suffix in SOURCE_EXTS or not suffix) and not _readable_inside(path, real_root):
+                continue
             if name in MANIFEST_NAMES or _source_ext(path):
                 files.append(path)
                 if len(files) >= max_files:
@@ -1082,7 +1107,7 @@ def scan_scoped(root: Path, scope: Scope, max_files: int, warnings: list) -> tup
         if rel in changed or not ext:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _read_source(path)
         except OSError:
             continue
         scanned += 1
