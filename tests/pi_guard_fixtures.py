@@ -126,6 +126,17 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("/usr/local/bin/docker exec dev git push --force origin main", True),
     ("/usr/local/bin/podman exec dev git push --force origin main", True),
     ("/usr/local/bin/kubectl exec pod -- git push --force origin main", True),
+    # Hard resets whose repository cannot be resolved are blocked whatever the current branch is;
+    # a soft reset and quoted text are not judged at all.
+    ("git -C /nonexistent-swb reset --hard", True),
+    ("git -c a=b -C /nonexistent-swb reset --hard", True),
+    ("git --no-pager -C /nonexistent-swb reset --hard", True),
+    ("git --git-dir=/nonexistent-swb/.git reset --hard", True),
+    ('git -C "$(echo x)" reset --hard', True),
+    ("GIT_DIR=/x git reset --hard", True),
+    ("bash -c 'git -C /nonexistent-swb reset --hard'", True),
+    ("git -C /nonexistent-swb reset --soft HEAD~1", False),
+    ("echo 'git reset --hard'", False),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
