@@ -2936,3 +2936,28 @@ class TestPushSubcommandIsTheFirstNonOptionWord:
     ):
         repo = synced_repo_on("main")
         _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+
+class TestSubcommandsThatRunTheirRemainingWords:
+    """`submodule foreach`, `bisect run` and `for-each-repo` run the words after them, so an
+    unquoted reset or push there is still judged."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git submodule foreach git reset --hard",
+        "git submodule --quiet foreach --recursive git reset --hard",
+        "git bisect run git reset --hard",
+        "git for-each-repo --config=maintenance.repo reset --hard",
+    ], ids=["submodule-foreach", "submodule-foreach-flags", "bisect-run", "for-each-repo"])
+    def test_unquoted_reset_is_judged(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "git submodule foreach git push --force origin main",
+        "git bisect run git push --force origin main",
+        "git for-each-repo --config=maintenance.repo push --force origin main",
+    ], ids=["submodule-foreach", "bisect-run", "for-each-repo"])
+    def test_unquoted_force_push_is_judged(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))

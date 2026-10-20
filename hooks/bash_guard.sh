@@ -86,9 +86,12 @@
 #     before the reset (judged against the refs as they were); a switch to a remote-tracking name
 #     (`git checkout -b x origin/main`); edits to an `--assume-unchanged` file.
 #   - over-blocks, on purpose: the dirty check is stat-based, so touched-but-unchanged files block
-#     (run `git status` and retry); the subcommand matches at any argument position (`git commit -m x
-#     reset --hard`); a leading expansion or substitution in a reset argument, a `~` in a -C path and
-#     an unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed.
+#     (run `git status` and retry); the subcommand is the first word after git's global options, but
+#     an unknown option or an expansion before it, or a subcommand that runs the rest of its words
+#     (`submodule foreach`, `bisect run`, `for-each-repo`), matches `reset` at any later position;
+#     a bare `--exec-path` and `--config` (no-ops or errors in git) count as unknown options and
+#     block; a leading expansion or substitution in a reset argument, a `~` in a -C path and an
+#     unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed.
 # The read-only git calls in the verdict never forward the user's `-c` values and switch off
 # fsmonitor and clean/process filter drivers, because config can execute code before approval.
 # The scan and the verdicts run as one job with a 3 s budget (SWE_WORKBENCH_GUARD_GIT_BUDGET lowers
@@ -563,11 +566,11 @@ _is_git_continuation() {
     '$'*|"$_DYNAMIC_TOKEN"*) return 0 ;;
     add|am|annotate|apply|archive|bisect|blame|branch|bundle|cat-file|checkout|cherry|cherry-pick|\
     clean|clone|commit|config|credential|describe|diff|difftool|fast-export|fast-import|fetch|\
-    filter-branch|for-each-ref|format-patch|fsck|gc|grep|hash-object|help|init|log|ls-files|\
-    ls-remote|ls-tree|maintenance|merge|mergetool|mv|name-rev|notes|pull|push|range-diff|rebase|\
-    reflog|remote|repack|replace|request-pull|reset|restore|rev-list|rev-parse|revert|rm|\
-    send-email|shortlog|show|show-branch|sparse-checkout|stash|status|submodule|svn|switch|\
-    symbolic-ref|tag|update-ref|var|version|worktree) return 0 ;;
+    filter-branch|for-each-ref|for-each-repo|format-patch|fsck|gc|grep|hash-object|help|init|\
+    log|ls-files|ls-remote|ls-tree|maintenance|merge|mergetool|mv|name-rev|notes|pull|push|\
+    range-diff|rebase|reflog|remote|repack|replace|request-pull|reset|restore|rev-list|rev-parse|\
+    revert|rm|send-email|shortlog|show|show-branch|sparse-checkout|stash|status|submodule|svn|\
+    switch|symbolic-ref|tag|update-ref|var|version|worktree) return 0 ;;
   esac
   return 1
 }
@@ -587,8 +590,9 @@ _is_shell_interpreter() {
 # subcommand, the first word that is no option nor an option's value. Globals (Bash 3.2 has no
 # namerefs): _git_index (the `git` word), _git_sub_index (the subcommand when it is $1, -1
 # otherwise), _git_ctx (-C/--git-dir/--work-tree as separate words, original order so
-# `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op), _git_ctx_dynamic, _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx
-# (a GIT_DIR-like assignment before `git`). Returns 1 when the segment is not a git command.
+# `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op), _git_ctx_dynamic,
+# _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx (a GIT_DIR-like
+# assignment before `git`). Returns 1 when the segment is not a git command.
 _parse_git_invocation() {
   local _want=$1 _prefix _base _t _name
   local _i=0 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
@@ -662,7 +666,12 @@ _parse_git_invocation() {
           # the first word that is no option nor an option's value names the subcommand
           _git_subcmd=$_t; _git_subcmd_index=$_i
           [[ -n "$_want" && "$_t" == "$_want" ]] && _git_sub_index=$_i
-          break ;;
+          case "$_t" in
+            # these run the rest of their words as a command (`submodule foreach git reset
+            # --hard`, `bisect run ...`, `for-each-repo --config=k reset --hard`): any position
+            submodule|bisect|for-each-repo) _any_position=1 ;;
+            *) break ;;
+          esac ;;
       esac
     fi
     if (( _any_position )); then
