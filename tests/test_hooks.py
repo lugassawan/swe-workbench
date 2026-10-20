@@ -2072,12 +2072,14 @@ _MORE_CODE_FROM_DATA = [
     "x='git reset --hard'; bash <<< \"$x\"",
     "x='git reset --hard'; bash <<EOF\n$x\nEOF",
     "echo 'git reset --ha' | bash",
+    "echo 'git reset --h' | bash",
+    "echo 'git reset --har' | bash",
 ]
 
 
 class TestHardResetCodeFromData:
     """Code assembled from data runs text the scan never sees. A command that mentions
-    `reset ... --ha` and runs such code blocks on a protected branch, whatever would be lost."""
+    `reset ... --h` and runs such code blocks on a protected branch, whatever would be lost."""
 
     @pytest.mark.parametrize("cmd", _CODE_FROM_DATA + _MORE_CODE_FROM_DATA)
     def test_blocked_on_a_dirty_protected_branch(self, guard_script, synced_repo_on, cmd):
@@ -2100,6 +2102,15 @@ class TestHardResetCodeFromData:
         # nothing would be lost, but the code that runs cannot be read: not a loss check
         repo = synced_repo_on("main")
         _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo 'git reset --help' | bash",
+        "echo 'git reset --hello' | bash",
+    ])
+    def test_other_long_options_are_not_a_hard_reset(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
 
     def test_blocked_on_release_branch(self, guard_script, synced_repo_on):
         repo = synced_repo_on("release/1.0")
@@ -2324,6 +2335,8 @@ class TestHardResetCreditsAnEarlierBranch:
         "git -c x.y=z branch keep && {reset}",
         "X=1 git branch keep && {reset}",
         "sudo git branch keep && {reset}",
+        "./git branch keep && {reset}",
+        "/usr/bin/env git branch keep && {reset}",
         "bash -c 'git branch keep' && {reset}",
         "git branch keep && bash -c '{reset}'",
         "git --no-pager branch keep && {reset}",

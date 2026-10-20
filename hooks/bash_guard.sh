@@ -26,7 +26,7 @@
 #     commits, so only the uncommitted and untracked checks apply, while no branch of that name
 #     exists yet and nothing after the reset may change the repository. Quoted text such as
 #     `echo 'git reset --hard'` is data and is not judged, but code assembled from data in a
-#     command that mentions `reset ... --ha` (`| bash`, `eval`, `$x`, `bash -c "$x"`,
+#     command that mentions `reset ... --h` (`| bash`, `eval`, `$x`, `bash -c "$x"`,
 #     `source <(...)`) blocks on a protected branch, loss or not. A reset that is
 #     nested too deep to scan, or sits in a command over 64 KB, blocks on any branch.
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
@@ -85,8 +85,8 @@
 #
 # Reset-only gaps (the text scan cannot see these; the old whole-text grep caught some of them):
 #   - the subcommand spelled through an expansion (`git ${S:-reset} --hard`); code assembled
-#     from data is only caught by its `reset ... --ha` text (above), so `reset --h` hidden in
-#     assembled text and `sudo -u x $CMD` pass, and `echo 'git reset --hard' | bash -n` on a
+#     from data is only caught by its `reset ... --h` text (above), so `sudo -u x $CMD`
+#     passes, and `echo 'git reset --hard' | bash -n` on a
 #     protected branch over-blocks. The push scan shares the expansion gap.
 #   - somewhere other than the session cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
 #     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
@@ -944,6 +944,7 @@ _credit_branch_segment() {
   (( ! ${#_seg_here[@]} && ! ${#_seg_subhere_body[@]} )) || return 1
   _parse_git_invocation "" || return 1
   (( _git_index == 0 && _git_subcmd_index > 0 )) || return 1
+  [[ "${_seg_tokens[0]}" == git ]] || return 1
   (( ! _git_has_cfg && ! _git_env_ctx && ! _git_via_runner )) || return 1
   (( ! _git_ctx_dynamic )) || return 1
   # only -C/--git-dir/--work-tree between `git` and the subcommand
@@ -1143,7 +1144,7 @@ _classify_segment() {
 }
 
 # Code assembled from data (`echo '...' | bash`, `eval "$x"`, `$x`) runs text the scan
-# never sees as code. When the command mentions `reset ... --ha` anywhere, a segment that
+# never sees as code. When the command mentions `reset ... --h` anywhere, a segment that
 # runs such code emits one CHECK_RESET with dynamic target 2: the verdict blocks it on a
 # protected branch only.
 _text_mentions_reset=0
@@ -1721,9 +1722,10 @@ _reset_verdict() {
 _scan_and_judge() {
   local -a _records=()
   local _line _policy _reason _rseq _rsub _rdyn _rtarget _rcred _rctx _i _last_post=-1
-  # the depth-cap grep, relaxed: any `reset ... --ha` in the text, quoted or not
+  # the depth-cap grep, relaxed: any `reset ... --h` in the text, quoted or not
+  # (`--h` is a prefix of --hard; `--help` and `--hello` are not)
   if [[ "$_bj" == *reset* ]] && printf '%s\n' "$_bj" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' \
-      | grep -Eq 'reset([[:space:]].*)?[[:space:]]--ha'; then
+      | grep -Eq 'reset([[:space:]].*)?[[:space:]]--h(a|[^[:alnum:]_-]|$)'; then
     _text_mentions_reset=1
   fi
   while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj" "$(( _oversize ? MAX_GIT_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
@@ -1777,10 +1779,6 @@ _judge_record() {
   esac
 }
 
-# One bounded job instead of a timeout at every git call: a repository config can make git hang
-# (a FIFO include), and the hook must answer before its caller kills it (Pi at 5 s). The job gets its
-# own process group (set -m) so the watchdog's signal can kill every git it started. The watchdog's
-# stdio is detached so a caller waiting for the hook's output to close is not held up by it.
 # The session's cwd from the payload, entered here so the job inherits it and a relative -C or
 # --git-dir resolves as it will for the user. A present cwd that is relative or no longer exists
 # (a deleted worktree) cannot be entered: a verdict that depends on the cwd then blocks.
@@ -1793,6 +1791,13 @@ if [[ -n "$_session_cwd" ]]; then
 fi
 _cwd_gone='cannot be checked: the session'"'"'s working directory no longer exists or is not an absolute path; cd to an existing directory and retry'
 
+# One bounded job instead of a timeout at every git call: a repository config can make git hang
+# (a FIFO include), and the hook must answer before its caller kills it (Pi at 5 s). The job gets its
+# own process group (set -m) so the watchdog's signal can kill every git it started. The watchdog's
+# stdio is detached so a caller waiting for the hook's output to close is not held up by it.
+# Job control prints notices ("Terminated", "setpgid") on the shell's stderr, so stderr
+# is parked on fd 9 and silenced meanwhile; only the job gets the real one back, and it
+# is restored before anything else prints.
 _budget=3
 if [[ "${SWE_WORKBENCH_GUARD_GIT_BUDGET-}" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   _bint=${BASH_REMATCH[1]}
@@ -1810,8 +1815,9 @@ trap '_scanned=1' USR2
 # the job and the watchdog sit in their own process groups, so a caller killing the hook would
 # leave them running
 trap 'kill -KILL -- -"$_vpid" -"$_wpid" 2>/dev/null; exit 2' TERM INT HUP
+exec 9>&2 2>/dev/null
 set -m
-_scan_and_judge </dev/null &
+_scan_and_judge </dev/null 2>&9 &
 _vpid=$!
 ( sleep "$_budget"; kill -USR1 $$ ) </dev/null >/dev/null 2>&1 &
 _wpid=$!
@@ -1829,6 +1835,7 @@ kill -TERM -"$_wpid" 2>/dev/null
 wait "$_wpid" 2>/dev/null
 wait "$_vpid" 2>/dev/null
 set +m
+exec 2>&9 9>&-
 case "$_vrc" in
   0) ;;
   2) exit 2 ;;

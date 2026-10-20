@@ -291,7 +291,7 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git commit -m x reset --hard -C /nonexistent-swb", False),
     ("git -C /nonexistent-swb commit -m x reset --hard", False),
     ("git help reset --hard", False),
-    # an unknown global option before the subcommand may take it as a value: still judged
+    # a global option's separate value is not the subcommand, so the reset is still judged
     ("git --attr-source HEAD -C /nonexistent-swb reset --hard", True),
     # a force push into a repository that cannot be resolved blocks on any branch
     ("git -C /nonexistent-swb push --force", True),
