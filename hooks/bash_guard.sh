@@ -42,7 +42,9 @@
 # `env -C x`, `docker exec` or `ssh` judges the hook's cwd, not the place the reset runs (the
 # sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables in the hook's
 # own environment; the subcommand itself spelled through an expansion (`git ${S:-reset} --hard`);
-# a `git branch keep` earlier in the same command is not credited; the dirty check is stat-based, so
+# a `git branch keep` earlier in the same command is not credited; a switch to a remote-tracking
+# name (`git checkout -b x origin/main`) is not treated as a switch to a protected branch; edits to an
+# `--assume-unchanged` file (reset ignores that bit) are not seen; the dirty check is stat-based, so
 # touched-but-unchanged files over-block (run `git status` and retry); a fetch before the reset is
 # judged against the refs as they were before it ran; a hostile repository config that blocks git
 # (a FIFO include) hangs the hook. A leading expansion or substitution in a reset argument, a
@@ -638,13 +640,25 @@ _classify_force_push_segment() {
 # Set once any earlier segment of the scan may have changed the repository. It is never reset, so
 # a mutation inside a nested scan still counts for a reset that follows.
 _git_prior_mutation=0
+# Set when an earlier segment may have switched to a protected branch, so the branch read at hook
+# time is not the one the reset will run on.
+_git_prior_switch=0
+
+_git_switch_token_risky() {
+  case "$1" in
+    main|master|release/*|refs/heads/main|refs/heads/master|refs/heads/release/*|-|@*) return 0 ;;
+    *'$'*|*"$_DYNAMIC_TOKEN"*) return 0 ;;
+  esac
+  return 1
+}
 
 # Scanner half of the hard-reset check (no I/O): BLOCK for input that cannot be resolved, or
 # CHECK_RESET <seq> <submodules> <dynamic-target> <target> <context joined by \x1f> for
 # _reset_verdict to judge against the real repository.
 _classify_reset_segment() {
   local _i _t _o _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0 _eoo=0
-  local _joined="" _c _n=0 _sep=$'\x1f' _has_gd=0 _has_wt=0
+  local _joined="" _c _n=0 _sep=$'\x1f' _has_gd=0 _has_wt=0 _seqv=$_git_prior_mutation
+  (( _git_prior_switch )) && _seqv=2
 
   _parse_git_invocation reset || return
   (( _git_sub_index >= 0 )) || return
@@ -657,12 +671,13 @@ _classify_reset_segment() {
       [[ "$_t" == -* ]] && { printf 'BLOCK\treset-unsafe-arg\n'; return; }
       continue
     fi
-    [[ "$_t" == -- ]] && break
+    [[ "$_t" == -- || "$_t" == ';' ]] && break
     if [[ "$_t" == --end-of-options ]]; then _eoo=1; continue; fi
     # a word that opens with a substitution or expansion (or is a flag holding one) may spell
     # the hard flag
     if [[ ( "$_t" == *"$_DYNAMIC_TOKEN"* || "$_t" == *'$'* ) && ( "$_t" == "$_DYNAMIC_TOKEN"* || "$_t" == '$'* || "$_t" == -* ) ]]; then
       _maybe=1
+      _mode_flag=0  # git applies the last mode flag, so an earlier --soft does not cover this word
     fi
     if [[ "$_t" == -* ]]; then
       case "$_t" in
@@ -703,7 +718,7 @@ _classify_reset_segment() {
     _n=$((_n + 1))
   done
   for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do _joined="$_joined${_joined:+$_sep}$_c"; done
-  printf 'CHECK_RESET\t%s\t%s\t%s\t%s\t%s\n' "$_git_prior_mutation" "$_submod" "$_dyn" "$_target" "$_joined"
+  printf 'CHECK_RESET\t%s\t%s\t%s\t%s\t%s\n' "$_seqv" "$_submod" "$_dyn" "$_target" "$_joined"
 }
 
 # The segment mutates the repository unless it is a git call that only reads. A fetch that can
@@ -712,6 +727,14 @@ _classify_reset_segment() {
 _note_segment_effect() {
   local _i _t _ro=0
   (( ${#_push_tokens[@]} )) || return 0
+  if _parse_git_invocation ""; then
+    case "$_git_subcmd" in
+      checkout|switch|rebase|bisect)
+        for ((_i = _git_subcmd_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
+          if _git_switch_token_risky "${_push_tokens[_i]}"; then _git_prior_switch=1; fi
+        done ;;
+    esac
+  fi
   if _parse_git_invocation "" && (( ! _git_has_cfg )); then
     case "$_git_subcmd" in
       status|log|show|diff|rev-parse|fetch|remote) _ro=1 ;;
@@ -997,7 +1020,14 @@ _reset_verdict() {
     _rctx+=("$_k" "$_v")
   done
 
-  _rgit rev-parse --git-dir >/dev/null || _reset_block "$_unresolved"
+  if ! _rgit rev-parse --git-dir >/dev/null; then
+    # nothing named a repository and the cwd is none: git fails on its own, or a `cd` came first (documented gap)
+    (( ${#_rctx[@]} )) && _reset_block "$_unresolved"
+    return 0
+  fi
+  if (( _seq == 2 )); then
+    _reset_block "follows a command that may switch to a protected branch, so the branch cannot be read yet; run the switch as its own command first, then reset"
+  fi
   while IFS= read -r _k; do
     case "$_k" in
       *.clean) _d=${_k%.clean} ;;

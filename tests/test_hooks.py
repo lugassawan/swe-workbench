@@ -1442,12 +1442,16 @@ RESET_SPELLINGS = [
     "git -C {repo} -c a=b reset --hard {t}",
     "git --git-dir={repo}/.git --work-tree={repo} reset --hard {t}",
     "git reset {t} --har",
+    "git reset --ha {t}",
+    "git -C{repo} reset --hard {t}",
+    "git -C {parent} -C {name} reset --hard {t}",
+    "git --git-dir {repo}/.git --work-tree {repo} reset --hard {t}",
     "bash -c 'git -C {repo} reset --hard {t}'",
 ]
 
 
 def _spell(template, repo, target="HEAD"):
-    return template.format(repo=repo, t=target)
+    return template.format(repo=repo, t=target, parent=repo.parent, name=repo.name)
 
 
 def _dirty(repo):
@@ -1505,7 +1509,7 @@ class TestHardResetBlocker:
         _dirty(repo)
         _allowed(run_guard(guard_script, _spell(template, repo), cwd=str(repo)))
 
-    @pytest.mark.parametrize("template", [t for t in RESET_SPELLINGS if "{repo}" in t])
+    @pytest.mark.parametrize("template", [t for t in RESET_SPELLINGS if "{repo}" in t or "{parent}" in t])
     def test_context_flag_judges_the_target_repository_not_the_cwd(
         self, guard_script, synced_repo_on, tmp_path, template
     ):
@@ -1626,15 +1630,69 @@ class TestHardResetVerdict:
         _g(repo, "push", "-q")
         _g(repo, "config", "filter.evil.clean", f"sh -c 'touch {clean_marker}; cat'")
         _g(repo, "config", "core.fsmonitor", str(fsmon))
-        # same-second mtime: a racily-clean entry forces git to look at file content
-        (repo / "README").write_text("init")
-        # the fixture is only meaningful if bare git really would run both programs
+
+        def make_racy():
+            # a file as new as the index is "racily clean": git must read its content, through the filter
+            (repo / "README").write_text("init")
+            idx_ns = (repo / ".git" / "index").stat().st_mtime_ns
+            os.utime(repo / "README", ns=(idx_ns, idx_ns))
+
+        # the fixture is only meaningful if the bare commands the hook runs would fire both programs
+        make_racy()
+        _g(repo, "diff-files", "--quiet", check=False)
+        assert clean_marker.exists(), "fixture: diff-files did not run the clean filter"
         _g(repo, "status", "--porcelain", check=False)
-        assert clean_marker.exists() and fsmon_marker.exists()
+        assert fsmon_marker.exists(), "fixture: status did not run fsmonitor"
         clean_marker.unlink()
         fsmon_marker.unlink()
-        run_guard(guard_script, "git reset --hard", cwd=str(repo))
+        make_racy()
+        result = run_guard(guard_script, "git reset --hard", cwd=str(repo))
+        assert result.returncode in (0, 2)
         assert not clean_marker.exists() and not fsmon_marker.exists()
+
+    def test_filter_driver_name_that_cannot_be_switched_off_fails_closed(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        # `-c` splits a key at its first `=`, so the override for a driver named `a=b` would miss it
+        repo = synced_repo_on("main")
+        marker = tmp_path / "eq-marker"
+        (repo / ".gitattributes").write_text("README filter=a=b\n")
+        _g(repo, "add", ".gitattributes")
+        _g(repo, "commit", "-qm", "attrs")
+        _g(repo, "push", "-q")
+        _g(repo, "config", "filter.a=b.clean", f"sh -c 'touch {marker}; cat'")
+        (repo / "README").write_text("init")
+        idx_ns = (repo / ".git" / "index").stat().st_mtime_ns
+        os.utime(repo / "README", ns=(idx_ns, idx_ns))
+        _blocked(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+        assert not marker.exists()
+
+    def test_staged_only_change_is_data(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _g(repo, "add", "README")
+        result = run_guard(guard_script, "git reset --hard", cwd=str(repo))
+        _blocked(result)
+        assert "uncommitted" in result.stderr
+
+    def test_submodule_recursion_from_config_is_blocked(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _g(repo, "config", "submodule.recurse", "true")
+        _blocked(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+
+    @pytest.mark.parametrize("assign", [
+        "GIT_DIR=x", "GIT_WORK_TREE=x", "GIT_INDEX_FILE=x", "GIT_COMMON_DIR=x",
+        "GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS=x", "GIT_DIR=/x/y",
+    ])
+    def test_every_repository_redirecting_variable_fails_closed(
+        self, guard_script, synced_repo_on, assign
+    ):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, f"{assign} git reset --hard", cwd=str(repo)))
+
+    def test_dash_led_context_value_is_blocked(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, "git -C --version reset --hard", cwd=str(repo)))
 
     def test_context_value_cannot_smuggle_a_config_flag(self, guard_script, synced_repo_on, tmp_path):
         repo = synced_repo_on("main")
@@ -1829,6 +1887,40 @@ class TestHardResetBypassClosures:
         repo = synced_repo_on("main")
         _allowed(run_guard(guard_script, "git reset --hard '@{u}'", cwd=str(repo)))
 
+    @pytest.mark.parametrize("cmd", [
+        "git reset --soft $(echo --hard)",
+        "git reset --mixed $(echo --hard)",
+        "git reset --keep $X",
+    ])
+    def test_an_earlier_mode_flag_does_not_cover_a_word_that_may_spell_hard(
+        self, guard_script, synced_repo_on, cmd
+    ):
+        # git applies the last mode flag: `--soft --hard` is a hard reset
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    def test_a_later_mode_flag_does_cover_it(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, "git reset $(echo HEAD) --soft", cwd=str(repo)))
+
+    @pytest.mark.parametrize("tail", ["';'", "{} \\;"])
+    def test_the_semicolon_ending_a_find_exec_is_not_the_target(
+        self, guard_script, synced_repo_on, tmp_path, tail
+    ):
+        repo = synced_repo_on("main")
+        cmd = f"find . -maxdepth 0 -exec git -C {repo} reset --hard {tail}"
+        _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    def test_a_non_repository_cwd_with_no_explicit_target_has_nothing_to_judge(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        repo = synced_repo_on("main")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _allowed(run_guard(guard_script, f"cd {repo} && git reset --hard", cwd=str(outside)))
+
     def test_unquoted_upstream_shorthand_loses_its_braces_and_says_to_quote_it(
         self, guard_script, synced_repo_on
     ):
@@ -1860,6 +1952,29 @@ class TestHardResetEarlierStepsInOneLine:
         cmd = (f'find . -maxdepth 0 -exec git -C {kept} status ";" '
                f'-exec git -C {kept} reset --hard HEAD~1 ";"')
         _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    @pytest.fixture
+    def on_feature(self, synced_repo_on):
+        """cwd is a feature branch while the local main still holds an unpushed commit."""
+        repo = synced_repo_on("main")
+        _commit(repo, "extra")
+        _g(repo, "switch", "-q", "-c", "feature/q")
+        return repo
+
+    @pytest.mark.parametrize("switch", [
+        "git switch main", "git checkout main", "git checkout -q main", "git switch -",
+        "git checkout $(echo main)", "git checkout refs/heads/main",
+    ])
+    def test_switching_to_a_protected_branch_first_makes_the_cwd_branch_stale(
+        self, guard_script, on_feature, switch
+    ):
+        result = run_guard(guard_script, f"{switch} && git reset --hard origin/main", cwd=str(on_feature))
+        _blocked(result)
+        assert "switch" in result.stderr
+
+    def test_switching_to_another_feature_branch_is_still_allowed(self, guard_script, on_feature):
+        cmd = "git checkout -q feature/other && git reset --hard HEAD"
+        _allowed(run_guard(guard_script, cmd, cwd=str(on_feature)))
 
     def test_env_assignment_in_a_later_find_exec_is_seen(self, guard_script, kept, tmp_path):
         cmd = (f'find . -maxdepth 0 -exec git status ";" '
