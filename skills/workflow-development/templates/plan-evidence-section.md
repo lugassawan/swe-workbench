@@ -9,7 +9,7 @@ Render this `## Evidence` section **above** `## Workflow`. Substitute each `[[ev
 | `[[evidence:target]]` | `data.target` | the branch name |
 | `[[evidence:target-sha]]` | `data.remote_target_sha` | the sha; when empty, write `unavailable` |
 | `[[evidence:drift]]` | `data.drift` | `none`, `changed`, `overlap` or `unknown` |
-| `[[evidence:worktrees]]` | `data.worktrees` | one `branch @ path` per entry with a non-empty `overlapping_paths`, else `none overlap` |
+| `[[evidence:worktrees]]` | `data.worktrees` | one `branch @ <short head>` per entry with a non-empty `overlapping_paths`, else `none overlap`; never print the absolute `path` |
 
 The prose rows (sources, negative findings, introduced identifiers, open assumptions) come from agent outputs and the orchestrator's own reads, not from the script.
 

@@ -32,7 +32,7 @@ Nothing is written to the repository unless ``--fetch`` is passed (and git runs 
 ``GIT_OPTIONAL_LOCKS=0`` so a status check never takes the index lock), and ``--fetch``
 is only for a caller already committed to touching the network (implementation start,
 never plan time). Network calls run in their own session with a hard timeout and an
-ssh ``BatchMode`` default, so a black-holed network or a credential prompt degrades to
+ssh ``BatchMode`` default (skipped when GIT_SSH, GIT_SSH_COMMAND or core.sshCommand is set), so a black-holed network or a credential prompt degrades to
 a warning instead of stalling. An absent or unreachable origin is a warning, not an
 error. Not inside a git work tree, or a requested ``--fetch`` that fails, exits
 non-zero with nothing on stdout.
@@ -53,6 +53,7 @@ Exit codes: 0 evidence collected (including drift unknown) | 1 could not collect
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import signal
@@ -69,36 +70,64 @@ class EvidenceError(Exception):
     pass
 
 
+@functools.cache
+def user_configured_ssh() -> bool:
+    """True when the user already chose an ssh transport (env or core.sshCommand)."""
+    if os.environ.get("GIT_SSH_COMMAND") or os.environ.get("GIT_SSH"):
+        return True
+    configured = subprocess.run(
+        ["git", "config", "--get", "core.sshCommand"], capture_output=True, text=True
+    )
+    return configured.returncode == 0 and bool(configured.stdout.strip())
+
+
 def git_env() -> dict[str, str]:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
-    env.setdefault("GIT_SSH_COMMAND", DEFAULT_SSH_COMMAND)
+    if not user_configured_ssh():
+        env["GIT_SSH_COMMAND"] = DEFAULT_SSH_COMMAND
     return env
 
 
 def git(
     args: list[str], cwd: Optional[str] = None, timeout: Optional[float] = None
 ) -> subprocess.CompletedProcess:
+    # surrogateescape: a path that is not valid UTF-8 must not crash the decode.
+    text = {"text": True, "encoding": "utf-8", "errors": "surrogateescape"}
     if timeout is None:
         return subprocess.run(
-            ["git", *args], capture_output=True, text=True, env=git_env(), cwd=cwd
+            ["git", *args], capture_output=True, env=git_env(), cwd=cwd, **text
         )
     # Own session: a hung ssh child dies with git, and no tty prompt can attach.
     proc = subprocess.Popen(
         ["git", *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         env=git_env(),
         cwd=cwd,
         start_new_session=True,
+        **text,
     )
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
+        stop_group(proc)
         return subprocess.CompletedProcess(proc.args, 124, "", f"timed out after {timeout:g}s")
     return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+def stop_group(proc: subprocess.Popen) -> None:
+    """SIGTERM the process group so git can drop its temp files, SIGKILL if it lingers."""
+    for sig, grace in ((signal.SIGTERM, 2.0), (signal.SIGKILL, None)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            break
+        try:
+            proc.communicate(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    proc.communicate()
 
 
 def git_out(args: list[str], cwd: Optional[str] = None) -> Optional[str]:
@@ -226,7 +255,7 @@ def collect(args: argparse.Namespace) -> dict:
     )
 
     since_sha = ""
-    if args.since:
+    if args.since is not None:
         since_sha = resolve_commit(args.since)
         if not since_sha:
             warn(warnings, "since-unreachable", "--since names no commit in this repository", args.since)
@@ -250,7 +279,7 @@ def collect(args: argparse.Namespace) -> dict:
             f"origin's {target} ({remote_sha[:7]}) is not present locally; drift not computed",
             target,
         )
-    elif remote_sha and not (args.since and not since_sha):
+    elif remote_sha and not (args.since is not None and not since_sha):
         base = merge_base(since_sha or "HEAD", remote_sha)
         if not base:
             warn(warnings, "merge-base-unavailable", "no common ancestor with the target; drift not computed", target)

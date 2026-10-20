@@ -57,6 +57,7 @@ Call this out even when the minimal fix does not address it. Silence signals the
 - Repro
 - Hypotheses (with falsification)
 - Root cause (+ evidence)
+- Evidence subsection (scope searched, sources, open assumptions — closes the body, per the evidence-discipline rule below)
 - Minimal fix (diff summary + what it deliberately does NOT touch + placement choice if a new type was introduced)
 - Regression test (name + location)
 - SOLID / Clean-Arch risks (or "none — principle is clean")

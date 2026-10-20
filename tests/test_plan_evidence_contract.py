@@ -60,6 +60,11 @@ class TestEvidenceTemplate:
     def test_names_the_unknown_drift_assumption(self):
         assert "target not fetched" in _read(EVIDENCE_TEMPLATE)
 
+    def test_worktree_row_renders_branch_and_short_head_never_absolute_paths(self):
+        text = _read(EVIDENCE_TEMPLATE)
+        assert "`branch @ <short head>`" in text
+        assert "branch @ path" not in text
+
     def test_introduced_identifiers_table_has_all_columns(self):
         text = _read(EVIDENCE_TEMPLATE)
         for column in ("collision check", "prior-art check", "version source"):

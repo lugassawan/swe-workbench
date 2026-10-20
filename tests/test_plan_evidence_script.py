@@ -273,7 +273,10 @@ def _load_module():
     return mod
 
 
-def test_git_env_disables_prompts_and_optional_locks():
+def test_git_env_disables_prompts_and_optional_locks(tmp_path, monkeypatch):
+    for name in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path)
     env = _load_module().git_env()
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["GIT_OPTIONAL_LOCKS"] == "0"
@@ -381,7 +384,8 @@ def test_network_call_that_hangs_degrades_to_a_warning(tmp_path, monkeypatch):
     _git(["remote", "add", "origin", "ssh://hung.invalid/repo.git"], cwd=repo)
     for name in [k for k in os.environ if k.startswith("GIT_")]:
         monkeypatch.delenv(name)
-    monkeypatch.setenv("GIT_SSH_COMMAND", "sleep 5")
+    # git appends the ssh arguments; the trailing "#" turns them into a shell comment
+    monkeypatch.setenv("GIT_SSH_COMMAND", "sleep 5 #")
     mod = _load_module()
     mod.NETWORK_TIMEOUT_S = 0.5
     monkeypatch.chdir(repo)
@@ -392,3 +396,85 @@ def test_network_call_that_hangs_degrades_to_a_warning(tmp_path, monkeypatch):
     assert envelope["status"] == "partial"
     assert envelope["data"]["drift"] == "unknown"
     assert "ls-remote-failed" in [w["code"] for w in envelope["warnings"]]
+
+
+# ── Review-thread edge cases ────────────────────────────────────────────────
+
+
+def _clean_process_env(monkeypatch):
+    for name in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(name)
+
+
+def test_configured_core_ssh_command_is_not_shadowed(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    _git(["init", "-b", "main", str(repo)], cwd=tmp_path)
+    _git(["config", "core.sshCommand", "ssh -i /deploy/key"], cwd=repo)
+    _clean_process_env(monkeypatch)
+    monkeypatch.chdir(repo)
+    assert "GIT_SSH_COMMAND" not in _load_module().git_env()
+
+
+def test_git_ssh_variable_is_not_shadowed(monkeypatch):
+    _clean_process_env(monkeypatch)
+    monkeypatch.setenv("GIT_SSH", "/usr/local/bin/my-ssh")
+    assert "GIT_SSH_COMMAND" not in _load_module().git_env()
+
+
+def test_non_utf8_path_on_target_does_not_crash(tmp_path):
+    _, clone, pusher = _make_origin_and_clone(tmp_path)
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        input=b"x\n", capture_output=True, cwd=str(pusher), env=dict(_CLEAN_ENV), check=True,
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "update-index", "--add", "--cacheinfo", b"100644," + blob.encode() + b",caf\xe9.md"],
+        cwd=str(pusher), env=dict(_CLEAN_ENV), check=True,
+    )
+    _git(["commit", "-m", "latin-1 name"], cwd=pusher)
+    _git(["push", "origin", "main"], cwd=pusher)
+    _git(["fetch", "origin"], cwd=clone)
+    result = _run(["--cited-file", "README.md"], cwd=clone)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)["data"]
+    assert data["drift"] == "changed"
+    assert len(data["changed_paths"]) == 1
+
+
+def test_empty_since_is_unknown_not_none(tmp_path):
+    _, clone, _ = _make_origin_and_clone(tmp_path)
+    env = _evidence(["--since", "", "--cited-file", "README.md"], cwd=clone)
+    assert env["data"]["drift"] == "unknown"
+    assert "since-unreachable" in [w["code"] for w in env["warnings"]]
+
+
+def test_timeout_asks_politely_before_killing_and_tolerates_a_vanished_group(tmp_path, monkeypatch):
+    import signal
+
+    repo = tmp_path / "hung"
+    _git(["init", "-b", "main", str(repo)], cwd=tmp_path)
+    _configure(repo)
+    _commit(repo, "README.md", "hello\n", "initial")
+    _git(["remote", "add", "origin", "ssh://hung.invalid/repo.git"], cwd=repo)
+    _clean_process_env(monkeypatch)
+    monkeypatch.setenv("GIT_SSH_COMMAND", "sleep 2 #")
+    mod = _load_module()
+    mod.NETWORK_TIMEOUT_S = 0.5
+    monkeypatch.chdir(repo)
+    sent = []
+    real_killpg = os.killpg
+
+    def recording_killpg(pgid, sig):
+        sent.append(sig)
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(mod.os, "killpg", recording_killpg)
+    mod.collect(mod.argparse.Namespace(target=None, cited_file=[], since=None, fetch=False))
+    assert sent[0] == signal.SIGTERM
+
+    def vanished(pgid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(mod.os, "killpg", vanished)
+    envelope = mod.collect(mod.argparse.Namespace(target=None, cited_file=[], since=None, fetch=False))
+    assert envelope["data"]["drift"] == "unknown"
