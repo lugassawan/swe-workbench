@@ -190,6 +190,27 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ('$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
     ('if $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n); then :; fi', True),
     ('! $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
+    # `<<WORD` inside (( )) or ${ } is not a heredoc: the push after it still runs.
+    ("(( 1 <<EOT\n)); git push -f origin main\nEOT", True),
+    ("(( 1 <<'EOT'\n)); git push -f origin main\nEOT", True),
+    ("echo ${x:+a <<EOT\n}; git push -f origin main\nEOT", True),
+    # `case` opens a case only as a command word followed by blanks; `case=1` is an assignment, and
+    # `if`, `while`, `!` and `time` still leave command position.
+    ("git push $(case=1; true) origin main -f", True),
+    ("git push $(case-x; true) origin main -f", True),
+    ("git push $(if case x in x) true;; esac; then :; fi) origin main -f", True),
+    ("git push $(! case x in x) true;; esac) origin main -f", True),
+    ("git push $(time case x in x) true;; esac) origin main -f", True),
+    # The `cat` heredoc shortcut applies only when `cat` is the whole substitution; a nested
+    # `$(cat <<'EOT'…)` is a command word whose output runs.
+    ("x=$(echo x; $(cat <<'EOT'\ngit push -f origin main\nEOT\n))", True),
+    ("x=$(true && $(cat <<'EOT'\ngit push -f origin main\nEOT\n))", True),
+    ("x=$($(cat <<'EOT'\ngit push -f origin main\nEOT\n) --x)", True),
+    ("x=$(cat <<'EOT'\ngit push -f origin main\nEOT\n)", False),
+    # A current-branch query leading the command can still be a wrapper's name.
+    ("$(git branch --show-current) git push -f origin main", True),
+    # A word after git is never a shell interpreter, even `.`.
+    ("git commit . -m \"$(cat <<'EOT'\nnever run git push --force origin main\nEOT\n)\"", False),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),

@@ -1812,30 +1812,45 @@ _OVERSIZE_FILLER = "a" * 200_000
 
 
 @pytest.fixture
-def awkless_path(tmp_path):
-    """A PATH holding everything the guard runs except awk."""
-    shim = tmp_path / "awkless-bin"
-    shim.mkdir()
-    for tool in ("jq", "tr", "grep", "git", "bash", "env", "cat"):
-        found = shutil.which(tool)
-        assert found, f"{tool} must exist to build the shim"
-        (shim / tool).symlink_to(found)
-    assert not (shim / "awk").exists()
-    return str(shim)
+def path_without(tmp_path):
+    """Factory for a PATH holding everything the guard runs except one tool."""
+    def _make(missing: str) -> str:
+        shim = tmp_path / f"no-{missing}-bin"
+        shim.mkdir()
+        for tool in ("jq", "awk", "tr", "grep", "git", "bash", "env", "cat"):
+            if tool == missing:
+                continue
+            found = shutil.which(tool)
+            assert found, f"{tool} must exist to build the shim"
+            (shim / tool).symlink_to(found)
+        assert not (shim / missing).exists()
+        return str(shim)
+    return _make
 
 
 class TestScanToolFailure:
+    @pytest.mark.parametrize("missing", ["awk", "tr"])
     @pytest.mark.parametrize("cmd", [
         "rm -rf /",
         "git push --force origin main",
         "ls -la",
     ])
-    def test_missing_awk_blocks_instead_of_allowing(self, guard_script, awkless_path, cmd):
-        result = run_guard(guard_script, cmd, env={"PATH": awkless_path})
+    def test_missing_tool_blocks_instead_of_allowing(self, guard_script, path_without, missing, cmd):
+        result = run_guard(guard_script, cmd, env={"PATH": path_without(missing)})
         assert result.returncode == 2 and "BLOCKED" in result.stderr, (
-            f"a guard that cannot run awk must fail closed for {cmd!r}: "
+            f"a guard that cannot run {missing} must fail closed for {cmd!r}: "
             f"exit {result.returncode}: {result.stderr!r}"
         )
+
+
+class TestBraceRun:
+    @pytest.mark.parametrize("count", [4000, 8000])
+    def test_a_run_of_open_braces_stays_linear(self, guard_script, count):
+        start = time.monotonic()
+        result = run_guard(guard_script, "git push origin " + "{" * count)
+        elapsed = time.monotonic() - start
+        assert result.returncode == 0, result.stderr
+        assert elapsed < 3, f"{count} braces took {elapsed:.2f}s"
 
 
 class TestOversizeCommand:

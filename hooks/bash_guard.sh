@@ -6,7 +6,7 @@
 #   - git push --force / -f to main/master/release/*
 #   - a force push with a dynamic destination or flag (an unquoted brace group included), a target
 #     in another repository (-C, --git-dir, --work-tree), nesting too deep to scan, or a command
-#     over 64 KB that mentions one, on any branch. The exception: a word that is exactly
+#     over 64 KB that spells one literally, on any branch. The exception: a word that is exactly
 #     `$(git branch --show-current)` (or the rev-parse / symbolic-ref spelling) is the current
 #     branch, so it blocks only on a protected one
 #   - a push or `pi` check whose awk or tr preprocessing fails: blocked, never skipped (an
@@ -39,10 +39,14 @@
 # or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
 # bash 4 and later.
 # Also accepted: a substitution is only read as the force flag when it is the first positional
-# (`git push origin $(echo --force)` passes); a heredoc assigned to a variable and run later
-# (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`) is data; the current-branch query is assumed to run
-# where the push does, so `cd other &&` and `GIT_DIR=other` prefixes are not followed; a command
-# word spelled by a brace group or substitution (`{git,} push -f origin main`) is not recognised.
+# (`git push origin $(echo --force)` passes), and a substitution flag next to a substitution
+# destination (`git push $(echo --force) origin $(echo main)`) passes too; a heredoc assigned to a
+# variable and run later (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`) is data; the current-branch
+# query is assumed to run where the push does, so `cd other &&`, an earlier `git checkout` or
+# `switch`, and `GIT_DIR=other` prefixes are not followed; a command word spelled by a brace group
+# or substitution (`{git,} push -f origin main`) is not recognised; an odd quote inside a heredoc
+# body desyncs the comment stripper, and a bare-delimiter `cat <<EOF` heredoc inside `$(` is
+# lexed as code, so a lone quote in its text can hide a later push.
 # Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
 # non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
 # substitution; `ssh host echo "…git push -f…"` and other wrapper argument text is code.
@@ -223,12 +227,14 @@ _push_token_awk='
     }
     return r
   }
-  # End index of the unquoted brace group opening at s[p] when it is expansion (a comma or `..`
-  # at its top level, no unquoted whitespace or operator inside), else 0.
-  function brace_group_end(s, p, n,   d, k, ch, q, expands) {
-    d = 0; q = ""; expands = 0
-    for (k = p; k <= n; k++) {
-      ch = substr(s, k, 1)
+  # End index of the unquoted brace group opening at line[p] when it is expansion (a comma or `..`
+  # at its top level, no unquoted whitespace or operator inside), else 0. The look-ahead is
+  # bounded so a run of `{` stays linear; a group still open at the bound that already holds a
+  # comma counts as expansion.
+  function brace_group_end(p, n,   d, k, ch, q, expands, lim) {
+    d = 0; q = ""; expands = 0; lim = (p + 256 < n) ? p + 256 : n
+    for (k = p; k <= lim; k++) {
+      ch = substr(line, k, 1)
       if (q != "") {
         if (ch == "\\" && q == "\"") k++
         else if (ch == q) q = ""
@@ -240,9 +246,9 @@ _push_token_awk='
       if (ch == "{") d++
       else if (ch == "}") { d--; if (d == 0) return expands ? k : 0 }
       else if (d == 1 && ch == ",") expands = 1
-      else if (d == 1 && ch == "." && substr(s, k + 1, 1) == ".") expands = 1
+      else if (d == 1 && ch == "." && substr(line, k + 1, 1) == ".") expands = 1
     }
-    return 0
+    return (expands && lim < n) ? lim : 0
   }
   function emit_separator() {
     emit_word()
@@ -255,7 +261,7 @@ _push_token_awk='
     } else emit_word()
     redirect_target = 1
   }
-  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; wcount = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
+  BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; wcount = 0; arith = 0; pe = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
   END {
     line = buf; gsub(/\001/, "\n", line); n = length(line)
@@ -315,7 +321,7 @@ _push_token_awk='
       if (c == ">" || c == "<") {
         if (substr(line, i + 1, 1) == "(") { emit_word(); continue }
         if (c == "<" && substr(line, i, 3) == "<<<") here_string = 1
-        if (c == "<" && substr(line, i, 2) == "<<" && substr(line, i, 3) != "<<<" && hd_nl == 0) {
+        if (c == "<" && substr(line, i, 2) == "<<" && substr(line, i, 3) != "<<<" && hd_nl == 0 && arith == 0 && pe == 0) {
           # a quoted-delimiter heredoc whose start line ends there (a pipe or && would let the
           # body reach another consumer) is data: skip it so its quotes cannot desync the lexer
           hj = i + 2; hstrip = 0
@@ -373,8 +379,9 @@ _push_token_awk='
           if (sc == "\n") {
             sc = ";"
             # the output of cat is data only when nothing follows the delimiter (a pipe makes it code)
-            # and `cat <<` is real syntax at command position, not text inside a quoted word
-            if (!sub_sq && !sub_dq && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
+            # and `cat <<` is the whole outermost substitution (a nested `$(cat ...)` is a command word
+            # whose output runs, and text before it is a command of its own), not text inside a quoted word
+            if (!sub_sq && !sub_dq && sub_depth == 1 && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /^[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
               match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/)
               hd = substr(subtext, RSTART, RLENGTH)
               if (match(hd, /[\047"][A-Za-z_][A-Za-z0-9_]*[\047"]/)) {
@@ -402,11 +409,12 @@ _push_token_awk='
           }
           # `case` and `esac` at command position: inside a case, `)` ends a pattern
           if (!sub_sq && !sub_dq && sc ~ /[A-Za-z0-9_]/) {
-            if (sub_w == "") sub_wcmd = (subtext ~ /(^|[;&|({])[ \t]*$/ || subtext ~ /(^|[ \t;&|({])(then|do|else|elif)[ \t]+$/)
+            if (sub_w == "") sub_wcmd = (subtext ~ /(^|[;&|({])[ \t]*$/ || subtext ~ /(^|[ \t;&|({])(then|do|else|elif|if|while|until|time|!)[ \t]+$/)
             sub_w = sub_w sc
           } else {
             if (sub_wcmd) {
-              if (sub_w == "case") sub_case[sub_depth]++
+              # `case` opens a case only before a blank (`case=1` and `case-x` are not)
+              if (sub_w == "case" && sc ~ /[ \t]/) sub_case[sub_depth]++
               else if (sub_w == "esac" && sub_case[sub_depth] > 0) sub_case[sub_depth]--
             }
             sub_w = ""; sub_wcmd = 0
@@ -450,12 +458,17 @@ _push_token_awk='
         finish_subst()
         continue
       }
+      # `<<` is a shift, not a heredoc, inside (( )) and ${ }
+      if (c == "(") { if (arith > 0 || substr(line, i + 1, 1) == "(") arith++ }
+      else if (c == ")" && arith > 0) arith--
       if (c ~ /[;|&()]/) {
         emit_separator()
         continue
       }
+      if (c == "{" && substr(word, length(word), 1) == "$") pe++
+      else if (c == "}" && pe > 0) pe--
       if (c == "{" && substr(word, length(word), 1) != "$") {
-        be = brace_group_end(line, i, n)
+        be = brace_group_end(i, n)
         if (be > 0) { word = word dyn; word_started = 1; i = be; continue }
       }
       if (c == "[" || c == "]" || c == "{" || c == "}") continue
@@ -532,7 +545,7 @@ _classify_force_push_segment() {
         (( _prefix_args )) || _prefix_ok=0 ;;
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) _prefix_args=1 ;;
       '!'|if|while|until|do|then|else|elif|coproc) ;;
-      "$_DYNAMIC_TOKEN") ;;
+      "$_DYNAMIC_TOKEN"|"$_CURRENT_BRANCH_TOKEN") ;;
       -exec|-execdir|-ok|-okdir) _prefix_ok=1; _prefix_args=0 ;;
       *)
         if _is_wrapper_prefix "$_base"; then
@@ -723,14 +736,13 @@ _scan_known_wrapper_body() {
     _tok=${_push_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
-    if _is_shell_interpreter "$_base"; then
-      _consumer=1
-      (( _interp >= 0 )) || _interp=$_i
-    fi
+    _is_shell_interpreter "$_base" && _consumer=1
     case "$_tok" in
       -exec|-execdir|-ok|-okdir) _p=-1; _wp=-1; _g=-1; _after=0; continue ;;
     esac
     (( _g < 0 )) || continue
+    # only words before `git` can be the shell that runs a substitution's output
+    if _is_shell_interpreter "$_base"; then (( _interp >= 0 )) || _interp=$_i; fi
     _isgit=0
     if [[ "$_base" == git ]] && _is_git_continuation "${_push_tokens[_i + 1]-}"; then _isgit=1; fi
     case "$_base" in
@@ -744,7 +756,7 @@ _scan_known_wrapper_body() {
         # an assignment prefix makes everything after it arguments
         (( _p >= 0 )) || _p=$_i
         _after=1 ;;
-      '!'|if|while|until|do|then|else|elif|coproc|"$_DYNAMIC_TOKEN") ;;
+      '!'|if|while|until|do|then|else|elif|coproc|"$_DYNAMIC_TOKEN"|"$_CURRENT_BRANCH_TOKEN") ;;
       *)
         if _is_wrapper_prefix "$_base"; then
           (( _p >= 0 )) || _p=$_i
