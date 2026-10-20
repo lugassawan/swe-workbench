@@ -741,6 +741,61 @@ def test_edit_guard_checks_one_payload_per_edits_element_and_short_circuits(guar
     )
 
 
+_SESSION_CWD_DRIVER = """
+import { pathToFileURL } from "node:url";
+
+const [, , guardsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
+const { registerGuards } = await import(pathToFileURL(guardsPath).href);
+const { runGuard: realRunGuard } = await import(pathToFileURL(config.guardRunnerPath).href);
+
+const handlers = {};
+const stubPi = { on(event, handler) { handlers[event] = handler; }, sendMessage() {} };
+// The hook process runs somewhere else, so only the payload's cwd can name the session's repo.
+const runGuard = (options) => realRunGuard({ ...options, cwd: config.spawnCwd });
+registerGuards(stubPi, config.root, { runGuard });
+
+const ctx = { hasUI: false, cwd: config.cwd, signal: undefined, ui: { notify() {} } };
+const result = await handlers["tool_call"](
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "git reset --hard" } },
+  ctx,
+);
+console.log(JSON.stringify({ result: result ?? null }));
+"""
+
+
+def _fixture_git(repo, *args):
+    subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.email=t@t.com", "-c", "user.name=T", *args],
+        cwd=repo, env=_CLEAN_ENV, check=True, capture_output=True,
+    )
+
+
+@requires_node
+def test_bash_guard_judges_the_session_cwd_from_the_payload(tmp_path, tmp_path_factory):
+    """ctx.cwd is a dirty main and the hook is spawned in a feature repo: the reset must still be
+    judged against ctx.cwd, which reaches the hook only through the payload's cwd."""
+    repos = {}
+    for name, branch in (("main", "main"), ("feature", "feature/x")):
+        repo = tmp_path / name
+        repo.mkdir()
+        _fixture_git(repo, "init", "-q", "-b", branch)
+        (repo / "README").write_text("init")
+        _fixture_git(repo, "add", "README")
+        _fixture_git(repo, "commit", "-qm", "init")
+        repos[name] = repo
+    (repos["main"] / "README").write_text("edited")
+    config = {
+        "root": str(ROOT),
+        "guardRunnerPath": str(GUARD_RUNNER_TS),
+        "cwd": str(repos["main"]),
+        "spawnCwd": str(repos["feature"]),
+    }
+    out = _run_node(_SESSION_CWD_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-session-cwd")
+    assert out["result"] is not None and out["result"]["block"] is True, out
+    assert "uncommitted" in out["result"]["reason"]
+
+
 _SESSION_START_DRIVER = """
 import { pathToFileURL } from "node:url";
 

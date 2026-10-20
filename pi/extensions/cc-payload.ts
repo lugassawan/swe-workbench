@@ -18,7 +18,7 @@ import type {
 export type FailPosture = "open" | "closed";
 
 export interface GuardSpec {
-  /** null for bash_guard.sh, which reads only .tool_input.command and never checks tool_name. */
+  /** null for bash_guard.sh, which reads only .tool_input.command and .cwd and never checks tool_name. */
   readonly ccToolName: "Write" | "Edit" | null;
   readonly interpreter: string;
   readonly scriptRelPath: string;
@@ -48,8 +48,9 @@ export const GUARD_DISPATCH: Record<"bash" | "write" | "edit", GuardSpec> = {
   },
 };
 
-export function bashPayload(event: BashToolCallEvent): Record<string, unknown> {
-  return { tool_input: { command: event.input.command } };
+/** `cwd` is the session's working directory: bash_guard.sh judges git commands against it. */
+export function bashPayload(event: BashToolCallEvent, cwd: string): Record<string, unknown> {
+  return { cwd, tool_input: { command: event.input.command } };
 }
 
 export function writePayload(event: WriteToolCallEvent): Record<string, unknown> {

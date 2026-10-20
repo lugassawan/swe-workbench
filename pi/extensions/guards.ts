@@ -110,7 +110,7 @@ export function registerGuards(pi: ExtensionAPI, root: string, options: Register
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "bash") {
-      return checkGuard(GUARD_DISPATCH.bash, bashPayload(event as BashToolCallEvent), ctx);
+      return checkGuard(GUARD_DISPATCH.bash, bashPayload(event as BashToolCallEvent, ctx.cwd), ctx);
     }
     if (event.toolName === "write") {
       return checkGuard(GUARD_DISPATCH.write, writePayload(event as WriteToolCallEvent), ctx);

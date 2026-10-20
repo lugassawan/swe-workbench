@@ -286,6 +286,19 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("bash -c 'git -C /nonexistent-swb reset --hard'", True),
     ("git -C /nonexistent-swb reset --soft HEAD~1", False),
     ("echo 'git reset --hard'", False),
+    # the subcommand is the first non-option word, so `reset --hard` after another subcommand
+    # is data; none of these depend on the branch or on a repository that exists
+    ("git commit -m x reset --hard -C /nonexistent-swb", False),
+    ("git -C /nonexistent-swb commit -m x reset --hard", False),
+    ("git help reset --hard", False),
+    # a global option's separate value is not the subcommand, so the reset is still judged
+    ("git --attr-source HEAD -C /nonexistent-swb reset --hard", True),
+    # a force push into a repository that cannot be resolved blocks on any branch
+    ("git -C /nonexistent-swb push --force", True),
+    # push long options resolve by unique prefix, as git's parse-options does
+    ("git push --mirr origin", True),
+    # an ambiguous prefix (--force, --force-with-lease, --force-if-includes) is rejected by git
+    ("git push --forc origin main", False),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
