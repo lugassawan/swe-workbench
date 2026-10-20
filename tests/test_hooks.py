@@ -1311,7 +1311,7 @@ class TestSubstitutionAndFlagHardening:
         words stop splitting, so the lexer must spell its whitespace set out.
         """
         text = GUARD.read_text()
-        start = text.index("_push_token_awk='")
+        start = text.index("_seg_token_awk='")
         end = text.index("\n'\n", start)
         assert "[[:" not in text[start:end]
 

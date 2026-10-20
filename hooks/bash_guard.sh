@@ -165,7 +165,7 @@ if echo "$norm" | grep -Eq \
   exit 2
 fi
 
-# Quote- and escape-aware shell segmenter for the pi detector (the push scan has its own
+# Quote- and escape-aware shell segmenter for the pi detector (the push and reset scans share the
 # lexer below). A literal tab folds to a space.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _segment_awk='
@@ -186,9 +186,10 @@ _segment_awk='
     if (in_sq || in_dq) printf "%s ", out; else print out
   }'
 
-# Push-only lexer: redirects are syntax; empty quoted words and live substitutions stay in their word.
+# Lexer shared by the push and reset scans: redirects are syntax; empty quoted words and live
+# substitutions stay in their word.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
-_push_token_awk='
+_seg_token_awk='
   function emit_word() {
     if (!word_started) return
     if (redirect_target) { if (here_string) print "HERE\t" word; redirect_target = 0; here_string = 0 }
@@ -407,10 +408,10 @@ _push_token_awk='
 
 # The active segment is held in globals because Bash 3.2 has no namerefs.
 # `scan_git_text` resets them at every lexical separator.
-_push_tokens=()
-_push_here=()
-_push_subs=()
-_push_saw_tab=0
+_seg_tokens=()
+_seg_here=()
+_seg_subs=()
+_seg_saw_tab=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
 # Set while a wrapper's code operand is re-scanned: everything before `git` there is an argument.
 _NESTED_WRAPPER_BODY=0
@@ -461,8 +462,8 @@ _parse_git_invocation() {
   _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0; _git_subcmd=""; _git_subcmd_index=-1
   _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0; _git_has_cfg=0; _git_via_runner=0
 
-  (( ${#_push_tokens[@]} )) || return 1
-  for _prefix in "${_push_tokens[@]}"; do
+  (( ${#_seg_tokens[@]} )) || return 1
+  for _prefix in "${_seg_tokens[@]}"; do
     # an assignment is judged on the raw word: stripping a path first would turn `X=/a/b` into `b`
     if [[ "$_prefix" == [[:alpha:]_]=* || "$_prefix" == [[:alpha:]_][[:alnum:]_]*=* ]]; then
       _prefix_args=1
@@ -479,7 +480,7 @@ _parse_git_invocation() {
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     case "$_base" in
       git)
-        if _is_git_continuation "${_push_tokens[_i + 1]-}"; then _found_git=1; break; fi
+        if _is_git_continuation "${_seg_tokens[_i + 1]-}"; then _found_git=1; break; fi
         (( _prefix_args )) || _prefix_ok=0 ;;
       '!'|if|while|until|do|then|else|elif|coproc) ;;
       "$_DYNAMIC_TOKEN") ;;
@@ -495,12 +496,12 @@ _parse_git_invocation() {
     esac
     _i=$((_i + 1))
   done
-  (( _push_saw_tab )) && _prefix_ok=1
+  (( _seg_saw_tab )) && _prefix_ok=1
   (( _found_git && _prefix_ok )) || return 1
   _git_index=$_i
 
-  for ((_i = _git_index; _i < ${#_push_tokens[@]}; _i++)); do
-    _t=${_push_tokens[_i]}
+  for ((_i = _git_index; _i < ${#_seg_tokens[@]}; _i++)); do
+    _t=${_seg_tokens[_i]}
     if (( _global_value )); then
       if (( _context_value )); then
         if (( ${#_t} )); then _git_has_context=1; _git_ctx+=("$_ctx_flag" "$_t"); fi
@@ -558,8 +559,8 @@ _classify_force_push_segment() {
   (( _git_sub_index >= 0 )) || return
   _has_context=$_git_has_context
 
-  for ((_i = _git_sub_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
-    _t=${_push_tokens[_i]}
+  for ((_i = _git_sub_index + 1; _i < ${#_seg_tokens[@]}; _i++)); do
+    _t=${_seg_tokens[_i]}
     if (( _consume_next )); then
       case "$_t" in
         --force|-f) _has_force=1 ;;
@@ -615,7 +616,7 @@ _classify_force_push_segment() {
       *) if (( _seen_positional )); then _has_refspec=1; else _seen_positional=1; fi ;;
     esac
   done
-  push_text=$(printf ' %s' "${_push_tokens[@]}")
+  push_text=$(printf ' %s' "${_seg_tokens[@]}")
   # A substitution-led word that can finish a force flag counts next to a literal protected ref;
   # a glued one with no refspec checks the current branch (a bare one is a normal push).
   if (( ! _has_force && _dynamic_flag_candidate )); then
@@ -671,8 +672,8 @@ _classify_reset_segment() {
 
   _parse_git_invocation reset || return
   (( _git_sub_index >= 0 )) || return
-  for ((_i = _git_sub_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
-    _t=${_push_tokens[_i]}
+  for ((_i = _git_sub_index + 1; _i < ${#_seg_tokens[@]}; _i++)); do
+    _t=${_seg_tokens[_i]}
     # after --end-of-options the next word is the target, even when it opens with a dash
     if (( _eoo )); then
       _eoo=0
@@ -735,12 +736,12 @@ _classify_reset_segment() {
 # file are not reads: the reset after them is judged against refs that no longer exist.
 _note_segment_effect() {
   local _i _t _ro=0
-  (( ${#_push_tokens[@]} )) || return 0
+  (( ${#_seg_tokens[@]} )) || return 0
   if _parse_git_invocation ""; then
     case "$_git_subcmd" in
       checkout|switch|rebase|bisect)
-        for ((_i = _git_subcmd_index + 1; _i < ${#_push_tokens[@]}; _i++)); do
-          if _git_switch_token_risky "${_push_tokens[_i]}"; then _git_prior_switch=1; fi
+        for ((_i = _git_subcmd_index + 1; _i < ${#_seg_tokens[@]}; _i++)); do
+          if _git_switch_token_risky "${_seg_tokens[_i]}"; then _git_prior_switch=1; fi
         done ;;
     esac
   fi
@@ -748,8 +749,8 @@ _note_segment_effect() {
     case "$_git_subcmd" in
       status|log|show|diff|rev-parse|fetch|remote) _ro=1 ;;
     esac
-    for ((_i = _git_subcmd_index + 1; _i < ${#_push_tokens[@]} && _ro; _i++)); do
-      _t=${_push_tokens[_i]}
+    for ((_i = _git_subcmd_index + 1; _i < ${#_seg_tokens[@]} && _ro; _i++)); do
+      _t=${_seg_tokens[_i]}
       case "$_t" in --output|--output=*|--ext-diff|--textconv) _ro=0 ;; esac
       case "$_git_subcmd" in
         fetch) case "$_t" in -p|--prune*|-f|--force|--update-head-ok|--refmap*|+*|*:*) _ro=0 ;; esac ;;
@@ -766,7 +767,7 @@ _note_segment_effect() {
 # One segment, classified in the order its commands run. `find -exec A ; -exec B` runs A and then
 # B, so each part sees what the parts before it did (the leading `find` itself reads only).
 _classify_segment() {
-  local -a _all=(${_push_tokens[@]+"${_push_tokens[@]}"})
+  local -a _all=(${_seg_tokens[@]+"${_seg_tokens[@]}"})
   local _n=${#_all[@]} _i _start=0 _split=0
   for ((_i = 1; _i < _n; _i++)); do
     case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) _split=1 ;; esac
@@ -781,13 +782,13 @@ _classify_segment() {
     if (( _i < _n )); then
       case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) ;; *) continue ;; esac
     fi
-    _push_tokens=("${_all[@]:_start:_i - _start}")
+    _seg_tokens=("${_all[@]:_start:_i - _start}")
     _classify_force_push_segment
     _classify_reset_segment
     (( _start == 0 )) || _note_segment_effect
     _start=$_i
   done
-  _push_tokens=("${_all[@]}")
+  _seg_tokens=("${_all[@]}")
 }
 
 MAX_GIT_SCAN_DEPTH=4
@@ -795,15 +796,15 @@ MAX_GIT_SCAN_DEPTH=4
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
   # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
-  local -a _saved_tokens=(${_push_tokens[@]+"${_push_tokens[@]}"})
-  local -a _saved_here=(${_push_here[@]+"${_push_here[@]}"})
-  local -a _saved_subs=(${_push_subs[@]+"${_push_subs[@]}"})
-  local _saved_saw_tab=$_push_saw_tab
+  local -a _saved_tokens=(${_seg_tokens[@]+"${_seg_tokens[@]}"})
+  local -a _saved_here=(${_seg_here[@]+"${_seg_here[@]}"})
+  local -a _saved_subs=(${_seg_subs[@]+"${_seg_subs[@]}"})
+  local _saved_saw_tab=$_seg_saw_tab
   scan_git_text "$_nested_text" "$((_nested_depth + 1))"
-  _push_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
-  _push_here=(${_saved_here[@]+"${_saved_here[@]}"})
-  _push_subs=(${_saved_subs[@]+"${_saved_subs[@]}"})
-  _push_saw_tab=$_saved_saw_tab
+  _seg_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
+  _seg_here=(${_saved_here[@]+"${_saved_here[@]}"})
+  _seg_subs=(${_saved_subs[@]+"${_saved_subs[@]}"})
+  _seg_saw_tab=$_saved_saw_tab
 }
 
 # A word holding whitespace or a quoted newline is a candidate command string.
@@ -821,10 +822,10 @@ _scan_wrapper_operand() {
 # After a wrapper prefix every quoted string before the first `git` word is code (a shell's
 # `$0` args excepted); words after `git` are data unless git itself runs them.
 _scan_known_wrapper_body() {
-  local _depth=$1 _n=${#_push_tokens[@]} _i _j _k _m _tok _base _body _args
+  local _depth=$1 _n=${#_seg_tokens[@]} _i _j _k _m _tok _base _body _args
   local _p=-1 _g=-1 _after=0 _end _runner=0 _prev="" _consumer=0 _isgit _cmdword=0
   for ((_i = 0; _i < _n; _i++)); do
-    _tok=${_push_tokens[_i]}
+    _tok=${_seg_tokens[_i]}
     if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
     [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
     _is_shell_interpreter "$_base" && _consumer=1
@@ -833,12 +834,12 @@ _scan_known_wrapper_body() {
     esac
     (( _g < 0 )) || continue
     _isgit=0
-    if [[ "$_base" == git ]] && _is_git_continuation "${_push_tokens[_i + 1]-}"; then _isgit=1; fi
+    if [[ "$_base" == git ]] && _is_git_continuation "${_seg_tokens[_i + 1]-}"; then _isgit=1; fi
     case "$_base" in
       git)
         if (( _isgit )); then
           _g=$_i
-        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _push_saw_tab )); then
+        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _seg_saw_tab )); then
           _g=$_n
         fi ;;
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*)
@@ -850,14 +851,14 @@ _scan_known_wrapper_body() {
         if _is_wrapper_prefix "$_base"; then
           (( _p >= 0 )) || _p=$_i
           _after=1
-        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _push_saw_tab )); then
+        elif (( ! _after && ! _NESTED_WRAPPER_BODY && ! _seg_saw_tab )); then
           _g=$_n
         fi ;;
     esac
   done
   (( _g < _n )) || _g=-1
   for ((_i = 0; _i < _n; _i++)); do
-    case "${_push_tokens[_i]}" in
+    case "${_seg_tokens[_i]}" in
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;;
       "$_DYNAMIC_TOKEN") _cmdword=1 ;;
     esac
@@ -865,35 +866,35 @@ _scan_known_wrapper_body() {
   done
 
   # Substitutions in the arguments run before the command they feed, so they are scanned first.
-  for _body in ${_push_subs[@]+"${_push_subs[@]}"}; do
+  for _body in ${_seg_subs[@]+"${_seg_subs[@]}"}; do
     if (( _p >= 0 || _cmdword )); then _scan_wrapper_operand "$_body" "$_depth"
     else _scan_nested_text "$_body" "$_depth"; fi
   done
 
   # A body that was itself handed to a wrapper has no visible prefix, but is still all arguments.
   # A tab anywhere in the segment, quoted or not, also makes the segment a wrapper call.
-  if (( _p >= 0 || _NESTED_WRAPPER_BODY || _push_saw_tab )); then
+  if (( _p >= 0 || _NESTED_WRAPPER_BODY || _seg_saw_tab )); then
     _end=$(( _g >= 0 ? _g : _n ))
     for ((_i = (_p >= 0 ? _p : 0); _i < _end; _i++)); do
-      _tok=${_push_tokens[_i]}
+      _tok=${_seg_tokens[_i]}
       if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
       case "$_base" in
         bash|sh|zsh|dash|ksh|fish|su)
           for ((_j = _i + 1; _j < _n; _j++)); do
-            case "${_push_tokens[_j]}" in
+            case "${_seg_tokens[_j]}" in
               --command=*)
-                _scan_wrapper_operand "${_push_tokens[_j]#*=}" "$_depth"
+                _scan_wrapper_operand "${_seg_tokens[_j]#*=}" "$_depth"
                 break ;;
               -c*|--command|-[!-]*c*)
                 for ((_k = _j + 1; _k < _n; _k++)); do
-                  if _has_code_text "${_push_tokens[_k]}"; then
-                    _body=${_push_tokens[_k]}
+                  if _has_code_text "${_seg_tokens[_k]}"; then
+                    _body=${_seg_tokens[_k]}
                     _scan_wrapper_operand "$_body" "$_depth"
                     # arguments after the script are $0 $1 ...; rescan them in place when it uses them
                     case "$_body" in
                       *\$[0-9@*]*|*\$\{[0-9@*]*)
                         _args=""
-                        for ((_m = _k + 1; _m < _n; _m++)); do _args="$_args ${_push_tokens[_m]}"; done
+                        for ((_m = _k + 1; _m < _n; _m++)); do _args="$_args ${_seg_tokens[_m]}"; done
                         [[ -n "$_args" ]] && _scan_wrapper_operand "$_body$_args" "$_depth" ;;
                     esac
                     break
@@ -913,7 +914,7 @@ _scan_known_wrapper_body() {
 
   if (( _g >= 0 )); then
     for ((_i = _g + 1; _i < _n; _i++)); do
-      _tok=${_push_tokens[_i]}
+      _tok=${_seg_tokens[_i]}
       case "$_tok" in
         foreach|filter-branch|run|-x|--exec|--exec=*|--extcmd|--extcmd=*|--tree-filter|\
         --index-filter|--msg-filter|--env-filter|--commit-filter|--parent-filter|--tag-name-filter|\
@@ -928,7 +929,7 @@ _scan_known_wrapper_body() {
     done
     if (( _runner )); then
       for ((_i = _g + 1; _i < _n; _i++)); do
-        _tok=${_push_tokens[_i]}
+        _tok=${_seg_tokens[_i]}
         _has_code_text "$_tok" || continue
         if [[ "$_tok" == -O?* ]]; then _tok=${_tok#-O}
         elif [[ "$_tok" == -*=* ]]; then _tok=${_tok#*=}; fi
@@ -939,7 +940,7 @@ _scan_known_wrapper_body() {
 
   # A here-string is code only for a shell or a wrapper running one; `cat <<< 'text'` is data.
   if (( _p >= 0 || _consumer || _cmdword )); then
-    for _body in ${_push_here[@]+"${_push_here[@]}"}; do
+    for _body in ${_seg_here[@]+"${_seg_here[@]}"}; do
       _scan_wrapper_operand "$_body" "$_depth"
     done
   fi
@@ -957,27 +958,27 @@ scan_git_text() {
     fi
     return
   fi
-  _push_tokens=()
-  _push_here=()
-  _push_subs=()
-  _push_saw_tab=0
+  _seg_tokens=()
+  _seg_here=()
+  _seg_subs=()
+  _seg_saw_tab=0
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
-      WORD) _push_tokens+=("$_value") ;;
-      NEST) _push_subs+=("$_value") ;;
-      HERE) _push_here+=("$_value") ;;
-      TAB) _push_saw_tab=1 ;;
+      WORD) _seg_tokens+=("$_value") ;;
+      NEST) _seg_subs+=("$_value") ;;
+      HERE) _seg_here+=("$_value") ;;
+      TAB) _seg_saw_tab=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
         _classify_segment
-        _push_tokens=()
-        _push_here=()
-        _push_subs=()
-        _push_saw_tab=0
+        _seg_tokens=()
+        _seg_here=()
+        _seg_subs=()
+        _seg_saw_tab=0
         ;;
     esac
-  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" "$_push_token_awk")
+  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" "$_seg_token_awk")
   _scan_known_wrapper_body "$_scan_depth"
   _classify_segment
   (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'
