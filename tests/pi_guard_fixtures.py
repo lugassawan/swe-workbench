@@ -188,6 +188,8 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ('sudo $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
     ('FOO=1 sudo $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
     ('$(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
+    ('if $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n); then :; fi', True),
+    ('! $(cat <<\'EOT\'\ngit push --force origin main\nEOT\n)', True),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),

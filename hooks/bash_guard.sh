@@ -38,6 +38,11 @@
 # detectors (`rm -rf {/,}`); bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
 # or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
 # bash 4 and later.
+# Also accepted: a substitution is only read as the force flag when it is the first positional
+# (`git push origin $(echo --force)` passes); a heredoc assigned to a variable and run later
+# (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`) is data; the current-branch query is assumed to run
+# where the push does, so `cd other &&` and `GIT_DIR=other` prefixes are not followed; a command
+# word spelled by a brace group or substitution (`{git,} push -f origin main`) is not recognised.
 # Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
 # non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
 # substitution; `ssh host echo "…git push -f…"` and other wrapper argument text is code.
@@ -68,9 +73,9 @@ _fail_closed() {
 
 # The awk stages are quadratic on long text, so past this size the comment stripper and the
 # lexer are skipped and the push scan answers with its coarse grep.
-MAX_EXACT_SCAN_BYTES=65536
+MAX_EXACT_SCAN_CHARS=65536
 _oversize=0
-(( ${#cmd} > MAX_EXACT_SCAN_BYTES )) && _oversize=1
+(( ${#cmd} > MAX_EXACT_SCAN_CHARS )) && _oversize=1
 
 # Strip shell comments per-line BEFORE folding newlines or joining backslash
 # continuations. A `#` comment ends at its line's newline; folding first would
@@ -604,6 +609,8 @@ _classify_force_push_segment() {
     [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
     case "$_t" in
       --force|-f) _has_force=1 ;;
+      # git accepts any unambiguous prefix of a long option; `--forc` and `--fo` are ambiguous
+      # with --force-with-lease and --follow-tags, so git rejects them and they need no arm
       --al|--all|--b|--br|--bra|--bran|--branc|--branch|--branche|--branches) _pushes_all_refs=1 ;;
       --m|--mi|--mir|--mirr|--mirro|--mirror) _has_force=1; _pushes_all_refs=1 ;;
       --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
@@ -752,6 +759,7 @@ _scan_known_wrapper_body() {
   for ((_i = 0; _i < _n; _i++)); do
     case "${_push_tokens[_i]}" in
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;;
+      '!'|if|while|until|do|then|else|elif|coproc) continue ;;
       "$_DYNAMIC_TOKEN") _cmdword=1 ;;
     esac
     _cmdidx=$_i
@@ -874,7 +882,7 @@ scan_force_push_text() {
   local _scan_text=$1 _scan_depth=${2:-0} _kind _value _lex_ok=0
   if (( _scan_depth >= MAX_PUSH_SCAN_DEPTH )); then
     if printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
-      'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--mirror|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`]|$)'; then
+      'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--m(i(r(r(or?)?)?)?)?|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`,]|$)'; then
       printf 'BLOCK\t%s\n' "$_limit_reason"
     fi
     return

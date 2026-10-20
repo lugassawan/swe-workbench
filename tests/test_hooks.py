@@ -1858,6 +1858,10 @@ class TestOversizeCommand:
         "git push --force origin main",
         "git push -f origin feature/x",
         "git push origin +main",
+        "git push {--force,} origin main",
+        "git push --mirro origin",
+        "git push --m origin",
+        "git push -f origin :",
     ])
     def test_oversize_force_push_blocks_on_any_branch(self, guard_script, tail):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
