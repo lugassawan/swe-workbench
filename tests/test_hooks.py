@@ -2858,3 +2858,81 @@ class TestAwkImplementation:
         assert "mawk" in (result.stdout + result.stderr).lower(), (
             f"awk on PATH is not mawk: {result.stdout!r} {result.stderr!r}"
         )
+
+
+# Global options git takes with their value as the next word; `{repo}` is the repository.
+SEPARATE_VALUE_GLOBALS = [
+    "-C {repo}",
+    "-c a.b=c",
+    "--git-dir {repo}/.git",
+    "--work-tree {repo}",
+    "--namespace x",
+    "--super-prefix x/",
+    "--config-env a.b=HOME",
+    "--attr-source HEAD",
+    "--shallow-file x",
+]
+
+
+class TestResetSubcommandIsTheFirstNonOptionWord:
+    """A hard reset is judged only when `reset` is git's subcommand, not any later word."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git commit -m x reset --hard",
+        "git log --grep reset --hard",
+        "git help reset --hard",
+    ], ids=["commit-message", "log-grep-value", "help-topic"])
+    def test_reset_as_another_subcommands_argument_is_allowed(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("glob", SEPARATE_VALUE_GLOBALS)
+    def test_reset_after_a_separate_value_global_is_judged(self, guard_script, synced_repo_on, glob):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        cmd = f"git {glob.format(repo=repo)} reset --hard"
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "git --unknown-opt reset --hard",
+        "git --unknown-opt value reset --hard",
+        "git $OPTS reset --hard",
+        "git --exec-path reset --hard",
+    ], ids=["unknown-flag", "unknown-flag-with-value", "expansion", "exec-path"])
+    def test_an_unrecognised_word_before_the_subcommand_falls_back_to_any_position(
+        self, guard_script, synced_repo_on, cmd
+    ):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+
+class TestPushSubcommandIsTheFirstNonOptionWord:
+    """A force push is judged only when `push` is git's subcommand, not any later word."""
+
+    @pytest.mark.parametrize("cmd", [
+        "git commit -m x push --force origin main",
+        "git log --grep push --force origin main",
+        "git help push --force origin main",
+    ], ids=["commit-message", "log-grep-value", "help-topic"])
+    def test_push_as_another_subcommands_argument_is_allowed(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("glob", ["--attr-source HEAD", "--super-prefix x/", "--shallow-file x",
+                                      "--namespace x"])
+    def test_push_after_a_separate_value_global_is_judged(self, guard_script, synced_repo_on, glob):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, f"git {glob} push --force origin main", cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "git --unknown-opt push --force origin main",
+        "git --unknown-opt value push --force origin main",
+        "git $OPTS push --force origin main",
+    ], ids=["unknown-flag", "unknown-flag-with-value", "expansion"])
+    def test_an_unrecognised_word_before_the_subcommand_falls_back_to_any_position(
+        self, guard_script, synced_repo_on, cmd
+    ):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))

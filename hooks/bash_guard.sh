@@ -584,15 +584,15 @@ _is_shell_interpreter() {
 }
 
 # Locates the `git` command word of the active segment and walks its global options up to the
-# first token equal to $1. Globals (Bash 3.2 has no namerefs): _git_index (the `git` word),
-# _git_sub_index (the $1 word, -1 when absent), _git_ctx (-C/--git-dir/--work-tree as separate
-# words, original order so `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op),
-# _git_ctx_dynamic, _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx
+# subcommand, the first word that is no option nor an option's value. Globals (Bash 3.2 has no
+# namerefs): _git_index (the `git` word), _git_sub_index (the subcommand when it is $1, -1
+# otherwise), _git_ctx (-C/--git-dir/--work-tree as separate words, original order so
+# `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op), _git_ctx_dynamic, _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx
 # (a GIT_DIR-like assignment before `git`). Returns 1 when the segment is not a git command.
 _parse_git_invocation() {
   local _want=$1 _prefix _base _t _name
   local _i=0 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
-  local _global_value=0 _context_value=0 _config_value=0 _ctx_flag=""
+  local _global_value=0 _context_value=0 _config_value=0 _ctx_flag="" _any_position=0
   _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0; _git_subcmd=""; _git_subcmd_index=-1
   _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0; _git_has_cfg=0; _git_via_runner=0
 
@@ -634,7 +634,7 @@ _parse_git_invocation() {
   (( _found_git && _prefix_ok )) || return 1
   _git_index=$_i
 
-  for ((_i = _git_index; _i < ${#_seg_tokens[@]}; _i++)); do
+  for ((_i = _git_index + 1; _i < ${#_seg_tokens[@]}; _i++)); do
     _t=${_seg_tokens[_i]}
     if (( _global_value )); then
       if (( _context_value )); then
@@ -646,16 +646,34 @@ _parse_git_invocation() {
       _global_value=0; _context_value=0; _config_value=0
       continue
     fi
-    if [[ -n "$_want" && "$_t" == "$_want" ]]; then _git_sub_index=$_i; break; fi
-    # the first word that is no option nor an option's value names the subcommand
-    if [[ -z "$_git_subcmd" && "$_i" -gt "$_git_index" && "$_t" != -* ]]; then
-      _git_subcmd=$_t; _git_subcmd_index=$_i
+    if (( ! _any_position )); then
+      # A word the scan cannot place keeps the old match at any position: an unknown option may
+      # take the next word as its value, and an expansion may spell options, so the subcommand is
+      # unknown and a later reset or push must still be judged.
+      case "$_t" in
+        -c|-C|--config-env|--git-dir|--work-tree|--namespace|--super-prefix|--attr-source|\
+        --shallow-file|-c?*|-C?*|--config-env=*|--git-dir=*|--work-tree=*|--namespace=*|\
+        --super-prefix=*|--attr-source=*|--shallow-file=*|--exec-path=*|-p|--paginate|-P|\
+        --no-pager|--bare|--no-replace-objects|--no-lazy-fetch|--no-optional-locks|--no-advice|\
+        --literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs) ;;
+        # a bare --exec-path prints and exits and --config is no git option: neither takes a value
+        -*|*'$'*|*"$_DYNAMIC_TOKEN"*|*"$_CURRENT_BRANCH_TOKEN"*) _any_position=1 ;;
+        *)
+          # the first word that is no option nor an option's value names the subcommand
+          _git_subcmd=$_t; _git_subcmd_index=$_i
+          [[ -n "$_want" && "$_t" == "$_want" ]] && _git_sub_index=$_i
+          break ;;
+      esac
+    fi
+    if (( _any_position )); then
+      if [[ -n "$_want" && "$_t" == "$_want" ]]; then _git_sub_index=$_i; break; fi
+      if [[ -z "$_git_subcmd" && "$_t" != -* ]]; then _git_subcmd=$_t; _git_subcmd_index=$_i; fi
     fi
     # a word led by a parameter expansion, or a flag holding one, can spell any option
     if [[ "$_t" == *'$'* && ( "$_t" == '$'* || "$_t" == -* ) ]]; then _git_ctx_dynamic=1; fi
     case "$_t" in
       -c|--config-env) _global_value=1; _config_value=1; _git_has_cfg=1 ;;
-      --config|--exec-path|--namespace) _global_value=1 ;;
+      --namespace|--super-prefix|--attr-source|--shallow-file) _global_value=1 ;;
       -C|--git-dir|--work-tree) _global_value=1; _context_value=1; _ctx_flag=$_t ;;
       --git-dir=*|--work-tree=*)
         _git_has_context=1; _git_ctx+=("${_t%%=*}" "${_t#*=}")
