@@ -557,6 +557,17 @@ def test_diff_scoped_rows_with_diff_relation_accepted():
     assert rc.validate_envelope("swb.dead-code-scan/1", envelope) == []
 
 
+def test_diff_relation_must_be_a_string_when_present():
+    for bad in (5, None, ["added"], True):
+        envelope = _scan_envelope([_candidate_row(diff_relation=bad)])
+        assert rc.validate_envelope("swb.dead-code-scan/1", envelope) != [], f"diff_relation={bad!r}"
+
+
+def test_row_without_diff_relation_still_validates():
+    assert "diff_relation" not in _candidate_row()
+    assert rc.validate_envelope("swb.dead-code-scan/1", _scan_envelope([_candidate_row()])) == []
+
+
 def test_candidate_list_non_dict_entry_rejected():
     envelope = _scan_envelope(["orphan_fn"])
     assert rc.validate_envelope("swb.dead-code-scan/1", envelope) != []

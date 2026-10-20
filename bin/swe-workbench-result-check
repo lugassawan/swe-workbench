@@ -206,6 +206,7 @@ def _type_ok(kind: str, value: object) -> bool:
             and isinstance(v.get("note"), str)
             and isinstance(v.get("detected_by"), str)
             and isinstance(v.get("test_only"), bool)
+            and isinstance(v.get("diff_relation", ""), str)  # absent on rows from pre-diff-scope producers
             and isinstance(v.get("references"), list)
             and all(
                 isinstance(r, dict)

@@ -1,6 +1,6 @@
 """Tests for bin/swe-workbench-dead-code-scan.
 
-Full-repo dead/test-only code scanner emitting the standard JSON envelope
+Dead/test-only code scanner (whole-repo or diff-scoped) emitting the standard JSON envelope
 (shared/docs/runtime-result-contract.md). Hermetic tests force the grep funnel
 and stub the LSP sibling via SWB_DEAD_CODE_LSP_BIN; native-tool tests skip when
 the tool is absent. Unit tests import the module directly (SourceFileLoader,
@@ -1457,3 +1457,133 @@ def test_scoped_scan_ignores_diff_paths_outside_the_root(tmp_path):
     _rc, envelope, _ = _scan_diff(root, diff)
     assert envelope["data"]["candidates"] == []
     assert envelope["data"]["scoped_paths"] == 0
+
+
+def _new_file_diff(path: str, body: str = "def planted():\n    return 1\n", prefix: str = "b/") -> str:
+    lines = body.splitlines()
+    return f"--- /dev/null\n+++ {prefix}{path}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{ln}\n" for ln in lines)
+
+
+def test_symlinked_directory_cannot_lead_the_scan_outside_the_root(tmp_path):
+    _write(tmp_path / "outside", "secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "link").symlink_to(tmp_path / "outside")
+    _rc, envelope, _ = _scan_diff(root, _new_file_diff("link/secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n"))
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+    assert [w["code"] for w in envelope["warnings"]] == ["diff-path-unresolved"]
+
+
+def test_absolute_diff_path_is_never_read(tmp_path):
+    outside = _write(tmp_path / "outside", "abs.py", "def planted():\n    return 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    diff = f"--- /dev/null\n+++ {outside}\n@@ -0,0 +1,2 @@\n+def planted():\n+    return 1\n"
+    _rc, envelope, _ = _scan_diff(root, diff)
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+@pytest.mark.parametrize(
+    "path, prefix",
+    [("src/mod.py", "i/"), ("src/mod.py", "w/"), ("\"\\303\\251.py\"", "")],  # mnemonic prefixes; a C-quoted name
+)
+def test_changed_path_that_resolves_to_no_file_is_reported_not_silently_clean(tmp_path, path, prefix):
+    _write(tmp_path, "src/mod.py", "def planted():\n    return 1\n")
+    _rc, envelope, _ = _scan_diff(tmp_path, _new_file_diff(path, prefix=prefix))
+    assert envelope["status"] == "partial"
+    assert [w["code"] for w in envelope["warnings"]] == ["diff-path-unresolved"]
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+def test_dot_slash_diff_path_is_normalised(tmp_path):
+    _write(tmp_path, "src/mod.py", "def planted():\n    return 1\n")
+    _rc, envelope, _ = _scan_diff(tmp_path, _new_file_diff("./src/mod.py"))
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("planted", "added")]
+    assert envelope["warnings"] == []
+
+
+def test_deleted_and_non_source_paths_do_not_warn(tmp_path):
+    diff = (
+        "--- a/src/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x = 1\n"
+        + _new_file_diff("docs/notes.md", "hello\n")
+    )
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert envelope["warnings"] == []
+    assert envelope["status"] == "ok"
+
+
+def test_removed_identifiers_ignore_comments_excluded_dirs_and_non_script_files(tmp_path):
+    _write(tmp_path, "bin/tool", "#!/usr/bin/env python3\nprint(1)\n")
+    _write(tmp_path, "LICENSE", "text\n")
+    diff = (
+        "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,3 +1,1 @@\n-# mentions comment_only\n-    call_removed()\n keep\n"
+        "--- a/dist/bundle.js\n+++ b/dist/bundle.js\n@@ -1,1 +1,0 @@\n-excluded_removed()\n"
+        "--- a/LICENSE\n+++ b/LICENSE\n@@ -1,1 +1,0 @@\n-license_word\n"
+        "--- a/bin/tool\n+++ b/bin/tool\n@@ -1,1 +1,0 @@\n-script_removed()\n"
+    )
+    scope = _load_module().derive_scope(diff, tmp_path)
+    assert scope.removed_idents == {"call_removed", "script_removed"}
+
+
+def test_extensionless_paths_are_not_tracked_without_a_root():
+    diff = "--- a/bin/tool\n+++ b/bin/tool\n@@ -1,1 +1,0 @@\n-script_removed()\n"
+    assert _load_module().derive_scope(diff).removed_idents == set()
+
+
+def test_deleted_comment_does_not_orphan_an_unrelated_unused_def(tmp_path):
+    _write(tmp_path, "src/util.py", "def process():\n    return 1\n")
+    _write(tmp_path, "src/m.py", "x = 1\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,1 @@\n-# drop the process step\n x = 1\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert envelope["data"]["candidates"] == []
+
+
+def test_line_numbers_follow_newlines_only_not_form_feeds(tmp_path):
+    _write(tmp_path, "src/m.py", "x = 1\n\x0c\ndef ff():\n    return 1\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,4 @@\n x = 1\n \x0c\n+def ff():\n+    return 1\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    rows = envelope["data"]["candidates"]
+    assert [(r["symbol"], r["line"], r["diff_relation"]) for r in rows] == [("ff", 3, "added")]
+
+
+def test_combined_diff_is_refused_not_read_as_empty(tmp_path):
+    rc, _envelope, proc = _scan_diff(tmp_path, "diff --cc src/m.py\nindex 1,2..3\n--- a/src/m.py\n+++ b/src/m.py\n")
+    assert rc != 0
+    assert proc.stdout == ""
+
+
+def test_modified_signature_of_an_unused_def_is_added_not_orphaned(tmp_path):
+    _write(tmp_path, "src/m.py", "def foo(a, b):\n    return a\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,2 @@\n-def foo(a):\n+def foo(a, b):\n     return a\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("foo", "added")]
+
+
+def test_parser_handles_crlf_no_newline_markers_and_hunk_headers_without_counts():
+    module = _load_module()
+    crlf = "--- a/m.py\r\n+++ b/m.py\r\n@@ -1,2 +1,3 @@\r\n keep\r\n+def added():\r\n \r\n"
+    assert module.derive_scope(crlf).added_lines == {"m.py": {2}}
+    marker = "--- a/m.py\n+++ b/m.py\n@@ -1,1 +1,1 @@\n-old()\n\\ No newline at end of file\n+new()\n\\ No newline at end of file\n"
+    scope = module.derive_scope(marker)
+    assert scope.added_lines == {"m.py": {1}} and scope.removed_idents == {"old"}
+    no_counts = "--- a/m.py\n+++ b/m.py\n@@ -3 +3 @@\n-old()\n+new()\n"
+    assert module.derive_scope(no_counts).added_lines == {"m.py": {3}}
+
+
+def test_added_line_that_starts_with_plus_signs_is_a_body_line():
+    diff = "--- a/m.py\n+++ b/m.py\n@@ -1,1 +1,2 @@\n keep\n+++ not_a_header\n"
+    assert _load_module().derive_scope(diff).added_lines == {"m.py": {2}}
+
+
+def test_reviewer_rule_11_pins_the_scanner_contract():
+    rule = next(
+        ln for ln in (ROOT / "agents" / "reviewer.md").read_text().splitlines() if ln.startswith("11. **Dead-code lens")
+    )
+    for needle in (
+        "--funnel grep --diff-from -", "--src-prefix=a/ --dst-prefix=b/", "pipefail", "diff_relation",
+        "`scoped_paths`", "`watched_symbols`", "`scanned_files`", "file-cap", "diff-path-unresolved",
+        "DEAD-CODE-SCAN:", "dead-code lens unavailable",
+    ):
+        assert needle in rule, needle

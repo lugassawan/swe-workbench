@@ -41,7 +41,7 @@ appears on a deleted non-test line); rows with neither are not emitted.
 
 Exit 0 with a valid envelope even when candidates were found — findings are
 not failures. "partial" plus a warning reports degradation (file cap hit, LSP
-error mid-scan, native tool failure); designed fallbacks (tool absent) stay
+error mid-scan, native tool failure, a diff path not found under the root); designed fallbacks (tool absent) stay
 "ok". Non-zero exit means the scan could not run at all; stdout stays empty
 and the diagnostic goes to stderr.
 """
@@ -53,6 +53,7 @@ import configparser
 import glob
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -295,7 +296,11 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
 
 
 def parse_text(rel: str, ext: str, text: str) -> FileRecord:
-    lines = text.splitlines()
+    # "\n" only: splitlines() also breaks on \f, \v, \x1c-\x1e, \x85 and  ,
+    # which would shift every later line number away from the diff's.
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
     record = FileRecord(rel)
 
     line_idents_by_line: list[set[str]] = []
@@ -882,8 +887,7 @@ class Scope(NamedTuple):
     removed_idents: set[str]  # identifiers on `-` lines of non-test source files
 
 
-# Keywords and ubiquitous builtins: a deleted `return x` must not make every
-# def named like a keyword-adjacent word a watched symbol.
+# Keywords and ubiquitous builtins would otherwise flood the watched set.
 SCOPE_STOPLIST = frozenset({
     "self", "cls", "this", "None", "True", "False", "null", "undefined", "nil", "true", "false",
     "return", "def", "class", "function", "const", "let", "var", "if", "else", "elif", "for", "while",
@@ -893,29 +897,42 @@ SCOPE_STOPLIST = frozenset({
     "tuple", "range",
 })
 
+# A deleted comment line mentions a symbol without having called it.
+COMMENT_LINE_STARTS = ("#", "//", "/*", "*")
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def _diff_path(raw: str, prefix: str) -> str | None:
-    """A `---`/`+++` header path: drop a trailing tab+timestamp and the default
-    `a/`/`b/` prefix; `/dev/null` (a created or deleted file) is no path. A
-    C-quoted path (spaces, non-ASCII) stays quoted, so it simply names no file."""
+    """A `---`/`+++` header path: drop the trailing tab (and any timestamp after
+    it) and the default `a/`/`b/` prefix, then normalise; `/dev/null` (a created
+    or deleted file) is no path. A C-quoted path (special or non-ASCII
+    characters) stays quoted, so it names no file and surfaces as unresolved."""
     path = raw.split("\t", 1)[0].rstrip("\r")
     if path == "/dev/null":
         return None
-    return path.removeprefix(prefix)
+    return posixpath.normpath(path.removeprefix(prefix))
 
 
-def _tracks_removed_idents(path: str) -> bool:
+def _tracks_removed_idents(path: str, root: Path | None) -> bool:
+    """Removed identifiers count only from non-test source: not under an excluded
+    dir (its references never count either), and extensionless only when the file
+    on disk is a shebang script."""
+    parts = Path(path).parts
+    if Path(path).is_absolute() or ".." in parts or EXCLUDED_DIRS.intersection(parts) or TEST_PATH_RE.search(path):
+        return False
     suffix = Path(path).suffix.lower()
-    return (suffix in SOURCE_EXTS or not suffix) and not TEST_PATH_RE.search(path)
+    if suffix:
+        return suffix in SOURCE_EXTS
+    return root is not None and bool(_source_ext(root / path))
 
 
-def derive_scope(diff_text: str) -> Scope:
+def derive_scope(diff_text: str, root: Path | None = None) -> Scope:
     """Added line numbers per file and the identifiers removed from non-test
-    source, from unified diff text. Hunk line counts (not line prefixes) delimit
-    hunk bodies, so a deleted `-- x` line is never mistaken for a `---` header.
-    Raises DiffError when the text is not a diff or a hunk is cut short."""
+    source code (comment-only lines aside), from unified diff text. Hunk line
+    counts (not line prefixes) delimit hunk bodies, so a deleted `-- x` line is
+    never mistaken for a `---` header. `root` lets extensionless paths be told
+    apart as shebang scripts. Raises DiffError when the text is not a diff, is a
+    combined diff, or a hunk is cut short."""
     lines = diff_text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
@@ -929,11 +946,13 @@ def derive_scope(diff_text: str) -> Scope:
     while i < len(lines):
         line = lines[i].rstrip("\r")
         i += 1
+        if line.startswith(("diff --cc ", "diff --combined ")):
+            raise DiffError("combined diffs are not supported")
         if line.startswith("diff --git "):
             old_path = new_path = None
             binary, recognised = False, True
         elif line.startswith("rename to "):
-            new_path = line[len("rename to "):]
+            new_path = posixpath.normpath(line[len("rename to "):])
             added.setdefault(new_path, set())
         elif line.startswith("--- "):
             old_path, new_path, binary, recognised = _diff_path(line[4:], "a/"), None, False, True
@@ -950,7 +969,7 @@ def derive_scope(diff_text: str) -> Scope:
             old_left = int(m.group(2)) if m.group(2) is not None else 1
             new_left = int(m.group(4)) if m.group(4) is not None else 1
             new_no = int(m.group(3))
-            track = _tracks_removed_idents(path)
+            track = _tracks_removed_idents(path, root)
             while old_left > 0 or new_left > 0:
                 if i >= len(lines):
                     raise DiffError("hunk ended before its declared length")
@@ -965,7 +984,7 @@ def derive_scope(diff_text: str) -> Scope:
                     new_left -= 1
                 elif tag == "-" and old_left > 0:
                     old_left -= 1
-                    if track:
+                    if track and not body[1:].lstrip().startswith(COMMENT_LINE_STARTS):
                         removed.update(t for t in IDENT_RE.findall(body[1:]) if t not in SCOPE_STOPLIST)
                 elif (tag == " " or body == "") and old_left > 0 and new_left > 0:
                     new_no += 1
@@ -1005,16 +1024,30 @@ def _scan_file_scoped(
     return record
 
 
-def _parse_changed(root: Path, scope: Scope) -> dict[str, FileRecord]:
+def _parse_changed(root: Path, scope: Scope, warnings: list) -> dict[str, FileRecord]:
+    """Parse the diff's changed files that live inside `root`. A source path with
+    added lines that resolves to no file there (a prefix the parser did not
+    expect, a C-quoted name, a checkout that lacks the change, a symlink out of
+    the root) is reported — silence would read as a clean scan."""
     changed: dict[str, FileRecord] = {}
+    unresolved: list[str] = []
     for rel in scope.paths:
         parts = Path(rel).parts
-        if Path(rel).is_absolute() or ".." in parts or EXCLUDED_DIRS.intersection(parts):
+        if EXCLUDED_DIRS.intersection(parts):
             continue
         path = root / rel
-        record = parse_file(root, path) if path.is_file() else None
-        if record is not None:
-            changed[record.relpath] = record
+        inside = not Path(rel).is_absolute() and ".." not in parts and path.resolve().is_relative_to(root)
+        if inside and path.is_file():
+            record = parse_file(root, path)
+            if record is not None:
+                changed[record.relpath] = record
+        elif scope.added_lines.get(rel) and Path(rel.rstrip('"')).suffix.lower() in SOURCE_EXTS:  # a quoted name ends in `"`
+            unresolved.append(rel)
+    if unresolved:
+        shown = ", ".join(unresolved[:5]) + (f" (+{len(unresolved) - 5} more)" if len(unresolved) > 5 else "")
+        warnings.append(
+            _warning("diff-path-unresolved", f"{len(unresolved)} changed path(s) not found under the root: {shown}")
+        )
     return changed
 
 
@@ -1025,12 +1058,14 @@ def scan_scoped(root: Path, scope: Scope, max_files: int, warnings: list) -> tup
     watched set is the names defined on `+` lines plus every removed identifier.
     A watched name's references are complete only while the walk stays under
     the file cap; changed files are always indexed, even past it."""
-    changed = _parse_changed(root, scope)
+    changed = _parse_changed(root, scope, warnings)
     watched = set(scope.removed_idents)
     for record in changed.values():
         if not TEST_PATH_RE.search(record.relpath):
             added = scope.added_lines.get(record.relpath, ())
             watched.update(d.name for d in record.defs if d.line in added)
+    if not watched:
+        return [], len(changed), len(changed), 0  # nothing can be added or orphaned: skip the walk
     for record in changed.values():
         record.idents &= watched
         record.dynamic &= watched
@@ -1070,7 +1105,7 @@ def scan_scoped(root: Path, scope: Scope, max_files: int, warnings: list) -> tup
 # ── Scan driver ─────────────────────────────────────────────────────────────
 
 
-DEGRADED_CODES = {"file-cap", "lsp-error", "native-error"}
+DEGRADED_CODES = {"file-cap", "lsp-error", "native-error", "diff-path-unresolved"}
 
 
 def _envelope(
@@ -1163,7 +1198,7 @@ def main(argv=None) -> int:
             return 1
         try:
             raw = sys.stdin.buffer.read() if args.diff_from == "-" else Path(args.diff_from).read_bytes()
-            scope = derive_scope(raw.decode("utf-8", errors="replace"))
+            scope = derive_scope(raw.decode("utf-8", errors="replace"), root.resolve())
         except OSError as exc:
             print(f"error: cannot read diff: {exc}", file=sys.stderr)
             return 1
