@@ -1195,6 +1195,29 @@ def bash_fixtures_via_adapter(tmp_path_factory):
     )
 
 
+@pytest.fixture(scope="module")
+def bash_fixtures_via_adapter_by_branch(tmp_path_factory):
+    """One driver batch per branch, with the guard's cwd set to a committed temp repo on it."""
+    from pi_guard_fixtures import (
+        BASH_GUARD_BRANCH_FIXTURES,
+        BASH_GUARD_FIXTURES,
+        SHARED_FIXTURE_BRANCHES,
+        make_branch_repo,
+    )
+
+    results = {}
+    for branch in sorted(set(SHARED_FIXTURE_BRANCHES) | set(BASH_GUARD_BRANCH_FIXTURES)):
+        repo = make_branch_repo(tmp_path_factory.mktemp("fixture-repo") / "repo", branch, _CLEAN_ENV)
+        commands = [cmd for cmd, _ in BASH_GUARD_FIXTURES] if branch in SHARED_FIXTURE_BRANCHES else []
+        commands += [cmd for cmd, _ in BASH_GUARD_BRANCH_FIXTURES.get(branch, [])]
+        config = {"root": str(ROOT), "cwd": str(repo), "commands": commands}
+        results[branch] = _run_node(
+            _BASH_FIXTURES_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory,
+            label="pi-bash-fixtures-branch-driver",
+        )
+    return results
+
+
 @requires_node
 def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtures_via_adapter):
     from pi_guard_fixtures import BASH_GUARD_FIXTURES
@@ -1205,6 +1228,27 @@ def test_adapter_verdict_matches_direct_invocation_for_every_fixture(bash_fixtur
         if result["blocked"] != expect_blocked:
             mismatches.append(f"{cmd!r}: expected blocked={expect_blocked}, adapter returned {result}")
     assert not mismatches, "adapter verdict diverged from direct-invocation verdict:\n" + "\n".join(mismatches)
+
+
+@requires_node
+def test_adapter_verdict_matches_direct_invocation_on_every_branch(bash_fixtures_via_adapter_by_branch):
+    from pi_guard_fixtures import (
+        BASH_GUARD_BRANCH_FIXTURES,
+        BASH_GUARD_FIXTURES,
+        SHARED_FIXTURE_BRANCHES,
+    )
+
+    mismatches = []
+    for branch, results in bash_fixtures_via_adapter_by_branch.items():
+        rows = list(BASH_GUARD_FIXTURES) if branch in SHARED_FIXTURE_BRANCHES else []
+        rows += BASH_GUARD_BRANCH_FIXTURES.get(branch, [])
+        assert len(results) == len(rows), branch
+        for (cmd, expect_blocked), result in zip(rows, results):
+            if result["blocked"] != expect_blocked:
+                mismatches.append(
+                    f"{cmd!r} on {branch}: expected blocked={expect_blocked}, adapter returned {result}"
+                )
+    assert not mismatches, "adapter verdict diverged on a branch:\n" + "\n".join(mismatches)
 
 
 # ---------------------------------------------------------------------------
