@@ -2039,23 +2039,145 @@ class TestHardResetBypassClosures:
         assert "quote" in result.stderr
 
 
-class TestHardResetKnownGaps:
-    """Spellings the text scan cannot see through. They were caught by the old whole-text grep, so
-    each is pinned here on purpose: closing one means changing this test, not drifting past it."""
+_CODE_FROM_DATA = [
+    "echo 'git reset --hard' | bash",
+    "printf 'git reset --hard' | sh -s",
+    "source <(echo 'git reset --hard')",
+    "bash <(echo 'git reset --hard')",
+    "x='git reset --hard'; eval \"$x\"",
+    "x='git reset --hard'; $x",
+    "x='git reset --hard'; bash -c \"$x\"",
+]
+
+# One spelling per executor kind the list above does not already cover.
+_MORE_CODE_FROM_DATA = [
+    "echo 'git reset --hard' | sh",
+    "echo 'git reset --hard' |& dash",
+    "echo 'git reset --hard' | zsh -s",
+    "echo 'git reset --hard' | bash -s build",
+    "x='reset --hard'; eval git $x",
+    "echo 'git reset --hard' | sudo -n ksh",
+    "echo 'git reset --hard' | bash -",
+    "bash < <(echo 'git reset --hard')",
+    "X='git reset --hard'; env bash -c \"$X\"",
+    "bash --command=\"$(echo git reset --hard)\"",
+    "x='git reset --hard'; eval $x",
+    "echo 'git reset --hard' | . /dev/stdin",
+    "echo 'git reset --hard' | source /dev/fd/0",
+    "x=/tmp/f; echo 'git reset --hard' > $x; source $x",
+    "CMD='git reset --hard'; $CMD",
+    "CMD='git reset --hard'; exec $CMD",
+    "\"$(printf 'git reset --hard')\"",
+    "bash <<< 'git reset --hard'",
+    "x='git reset --hard'; bash <<< \"$x\"",
+    "x='git reset --hard'; bash <<EOF\n$x\nEOF",
+    "echo 'git reset --ha' | bash",
+]
+
+
+class TestHardResetCodeFromData:
+    """Code assembled from data runs text the scan never sees. A command that mentions
+    `reset ... --ha` and runs such code blocks on a protected branch, whatever would be lost."""
+
+    @pytest.mark.parametrize("cmd", _CODE_FROM_DATA + _MORE_CODE_FROM_DATA)
+    def test_blocked_on_a_dirty_protected_branch(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        _blocked(result)
+        assert "code assembled from data" in result.stderr
+
+    @pytest.mark.parametrize("cmd", _CODE_FROM_DATA + _MORE_CODE_FROM_DATA)
+    def test_allowed_on_a_feature_branch(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("feature/x")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", _CODE_FROM_DATA[:3])
+    def test_blocked_on_a_clean_synced_protected_branch(
+        self, guard_script, synced_repo_on, cmd
+    ):
+        # nothing would be lost, but the code that runs cannot be read: not a loss check
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    def test_blocked_on_release_branch(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("release/1.0")
+        _blocked(run_guard(guard_script, _CODE_FROM_DATA[0], cwd=str(repo)))
+
+    def test_unresolvable_branch_blocks(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        (repo / ".git" / "HEAD").write_text("ref: refs/heads/\n")
+        _blocked(run_guard(guard_script, _CODE_FROM_DATA[0], cwd=str(repo)))
+
+    def test_detached_head_is_allowed(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _g(repo, "checkout", "-q", "--detach")
+        _allowed(run_guard(guard_script, _CODE_FROM_DATA[0], cwd=str(repo)))
+
+    def test_vanished_session_cwd_blocks(self, guard_script, synced_repo_on, tmp_path):
+        repo = synced_repo_on("main")
+        result = run_guard(guard_script, _CODE_FROM_DATA[0], cwd=str(repo),
+                           payload_cwd=str(tmp_path / "gone"))
+        _blocked(result)
+
+    def test_syntax_check_of_piped_code_is_an_accepted_false_positive(
+        self, guard_script, synced_repo_on
+    ):
+        # `bash -n` only parses what it reads, but a pipe sink is judged by what it may run
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, "echo 'git reset --hard' | bash -n", cwd=str(repo)))
 
     @pytest.mark.parametrize("cmd", [
-        "echo 'git reset --hard' | bash",
-        "printf 'git reset --hard' | sh -s",
-        "source <(echo 'git reset --hard')",
-        "bash <(echo 'git reset --hard')",
-        "x='git reset --hard'; eval \"$x\"",
-        "x='git reset --hard'; $x",
-        "x='git reset --hard'; bash -c \"$x\"",
+        "bash build.sh && git log --grep 'reset --hard'",
+        "echo 'git reset --hard' | cat",
+        "echo 'git reset --hard' || bash build.sh",
+        "bash -c 'echo reset --hard' build",
+        "source ./env.sh && echo 'reset --hard'",
+        "cat <<< 'git reset --hard'",
+        "git log --grep 'reset --hard' | sh -c 'wc -l'",
     ])
-    def test_code_assembled_from_data_is_not_seen(self, guard_script, synced_repo_on, cmd):
+    def test_reset_text_without_an_executor_is_allowed(self, guard_script, synced_repo_on, cmd):
         repo = synced_repo_on("main")
         _dirty(repo)
         _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo 'git status' | bash",
+        "x='git status'; eval \"$x\"",
+        "x=ls; $x",
+        "source <(echo 'git reset --soft HEAD')",
+    ])
+    def test_executor_without_reset_text_is_allowed(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    def test_a_pipe_breaks_the_branch_credit_chain(self, guard_script, synced_repo_on):
+        # the two sides of a pipe run at once: the branch may not exist when the reset runs
+        repo = synced_repo_on("main")
+        _commit(repo, "extra")
+        cmd = "git branch keep | git reset --hard HEAD~1"
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    def test_plain_reset_keeps_the_loss_verdict(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+        _dirty(repo)
+        result = run_guard(guard_script, "git reset --hard", cwd=str(repo))
+        _blocked(result)
+        assert "code assembled from data" not in result.stderr
+
+
+class TestHardResetKnownGaps:
+    """Spellings the text scan cannot see through, pinned on purpose: closing one means changing
+    this test, not drifting past it."""
+
+    def test_subcommand_spelled_by_an_expansion_is_not_seen(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, "git ${S:-reset} --hard", cwd=str(repo)))
 
     def test_deleting_the_keeping_branch_after_the_reset_is_not_seen(
         self, guard_script, synced_repo_on

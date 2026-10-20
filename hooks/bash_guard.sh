@@ -25,8 +25,9 @@
 #     `checkout -b`) at HEAD earlier in the same `&&` chain and repository: it keeps the
 #     commits, so only the uncommitted and untracked checks apply, while no branch of that name
 #     exists yet and nothing after the reset may change the repository. Quoted text such as
-#     `echo 'git reset --hard'` is data and is not judged, and
-#     neither is code assembled from data (see the reset-only gaps below). A reset that is
+#     `echo 'git reset --hard'` is data and is not judged, but code assembled from data in a
+#     command that mentions `reset ... --ha` (`| bash`, `eval`, `$x`, `bash -c "$x"`,
+#     `source <(...)`) blocks on a protected branch, loss or not. A reset that is
 #     nested too deep to scan, or sits in a command over 64 KB, blocks on any branch.
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
@@ -81,9 +82,8 @@
 # command holding both a `pi` token and a `-p`/`--print` token (no segmenter runs).
 #
 # Reset-only gaps (the text scan cannot see these; the old whole-text grep caught some of them):
-#   - code assembled from data: `echo 'git reset --hard' | bash`, `source <(echo '...')`,
-#     `x='...'; eval "$x"`, `$x` or `bash -c "$x"`; the subcommand spelled through an expansion
-#     (`git ${S:-reset} --hard`). The push scan shares this limit.
+#   - the subcommand spelled through an expansion (`git ${S:-reset} --hard`); code assembled
+#     from data is only caught by its `reset ... --ha` text (above). The push scan shares this.
 #   - somewhere other than the session cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
 #     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
 #     in the hook's own environment; git aliases, including `-c alias.x=...`.
@@ -309,7 +309,7 @@ _seg_token_awk='
     return (expands && lim < n) ? lim : 0
   }
   # SEP carries the separator kind a consumer needs: AND for `&&`, LIST for `;` and a newline
-  # (they start a new list); any other separator is a bare SEP
+  # (they start a new list), PIPE for a single `|` or `|&`; any other separator is a bare SEP
   function emit_separator(kind) {
     emit_word()
     redirect_target = 0; here_string = 0; wcount = 0
@@ -381,7 +381,8 @@ _seg_token_awk='
         continue
       }
       if (c == ">" || c == "<") {
-        if (substr(line, i + 1, 1) == "(") { emit_word(); continue }
+        # PSUB: the segment holds a process substitution
+        if (substr(line, i + 1, 1) == "(") { emit_word(); print "PSUB"; continue }
         if (c == "<" && substr(line, i, 3) == "<<<") here_string = 1
         if (c == "<" && substr(line, i, 2) == "<<" && substr(line, i, 3) != "<<<" && hd_nl == 0 && arith == 0 && pe == 0) {
           # a quoted-delimiter heredoc whose start line ends there (a pipe or && would let the
@@ -533,7 +534,14 @@ _seg_token_awk='
         while (i + 1 <= n && i + 1 != hd_nl && substr(line, i + 1, 1) ~ /[ \n]/) i++
         continue
       }
-      if (c ~ /[;|&()]/) {
+      if (c == "|") {
+        # `||` is one list separator; `|&` pipes stderr too
+        nc = substr(line, i + 1, 1)
+        if (nc == "|" || nc == "&") i++
+        emit_separator(nc == "|" ? "" : "PIPE")
+        continue
+      }
+      if (c ~ /[;&()]/) {
         emit_separator(c == ";" ? "LIST" : "")
         continue
       }
@@ -1130,6 +1138,78 @@ _classify_segment() {
   _seg_tokens=("${_all[@]}")
 }
 
+# Code assembled from data (`echo '...' | bash`, `eval "$x"`, `$x`) runs text the scan
+# never sees as code. When the command mentions `reset ... --ha` anywhere, a segment that
+# runs such code emits one CHECK_RESET with dynamic target 2: the verdict blocks it on a
+# protected branch only.
+_text_mentions_reset=0
+_unseen_code_seen=0
+
+# Whether the shell at word $1 of the active segment runs code the scan cannot see: its stdin
+# (-s, or no script operand: a pipe, a here-string, `bash <(...)`, whose words the lexer splits
+# off), or a -c operand that holds an expansion or substitution.
+_shell_runs_unseen_code() {
+  local _j _t _c=0 _val=0
+  for ((_j = $1 + 1; _j < ${#_seg_tokens[@]}; _j++)); do
+    _t=${_seg_tokens[_j]}
+    if (( _val )); then _val=0; continue; fi
+    if (( _c )); then [[ "$_t" == *'$'* || "$_t" == *"$_DYNAMIC_TOKEN"* ]]; return; fi
+    case "$_t" in
+      --) _c=0; _val=0
+          case "${_seg_tokens[_j + 1]-}" in ''|/dev/stdin|/dev/fd/*|-) return 0 ;; esac
+          return 1 ;;
+      --command=*) [[ "$_t" == *'$'* || "$_t" == *"$_DYNAMIC_TOKEN"* ]]; return ;;
+      --command) _c=1 ;;
+      -o|-O|+o|+O|--rcfile|--init-file) _val=1 ;;
+      --*) ;;
+      -) return 0 ;;
+      -*s*|+*s*) [[ "$_t" == -* ]] && return 0 ;;
+      -*c*) _c=1 ;;
+      -*|+*) ;;
+      /dev/stdin|/dev/fd/*) return 0 ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# Emits the unseen-code record when the active segment, past its assignments and wrapper
+# words, runs a shell that reads unseen code, `eval`, `source`/`.` of stdin, a process
+# substitution or an expansion, or a command word spelled by an expansion or substitution.
+# Reads only the segment.
+_note_unseen_code() {
+  (( _text_mentions_reset && ! _unseen_code_seen )) || return 0
+  local _i _t _base _n=${#_seg_tokens[@]} _wrapped=0 _cmdpos=1 _hit=0 _op
+  for ((_i = 0; _i < _n && ! _hit; _i++)); do
+    _t=${_seg_tokens[_i]}
+    if (( ${#_t} > 255 )); then _base=$_t; else _base=${_t##*/}; fi
+    case "$_t" in [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;; esac
+    case "$_t" in '!'|if|while|until|do|then|else|elif|coproc) continue ;; esac
+    case "$_base" in
+      bash|sh|zsh|dash|ksh|fish) _shell_runs_unseen_code "$_i" && _hit=1 ;;
+      eval) _hit=1 ;;
+      source|.)
+        _op=${_seg_tokens[_i + 1]-}
+        case "$_op" in
+          /dev/stdin|/dev/fd/*|*'$'*|*"$_DYNAMIC_TOKEN"*) _hit=1 ;;
+          *) (( _seg_psub )) && _hit=1 ;;
+        esac ;;
+      # an expansion is the command only right where a command word stands
+      '$'*|"$_DYNAMIC_TOKEN"*) (( _cmdpos )) && _hit=1 ;;
+    esac
+    (( _hit )) && break
+    # git runs its words itself; anything else that is not a wrapper ends the search, except
+    # after a wrapper, whose options and their values come before the command it runs
+    [[ "$_base" == git ]] && return 0
+    if _is_wrapper_prefix "$_base"; then _wrapped=1; _cmdpos=1; continue; fi
+    (( _wrapped )) || return 0
+    _cmdpos=0
+  done
+  (( _hit )) || return 0
+  _unseen_code_seen=1
+  printf 'CHECK_RESET\t%s\t0\t2\tHEAD\tC\t\n' "$(( _git_prior_switch ? 2 : 0 ))"
+}
+
 MAX_GIT_SCAN_DEPTH=4
 # Why the coarse grep ran instead of the lexer: nesting too deep (default) or text too large.
 _limit_reason=indeterminate
@@ -1357,11 +1437,15 @@ scan_git_text() {
   _seg_redir=0
   # Every separator since this list began (the text, or after `;` or a newline) was `&&`.
   local _chain_and=1
+  # The active segment holds a process substitution (for _note_unseen_code; nested scans keep
+  # their own).
+  local _seg_psub=0
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
       WORD) _seg_tokens+=("$_value") ;;
       NEST) _seg_subs+=("$_value") ;;
       HERE) _seg_here+=("$_value") ;;
+      PSUB) _seg_psub=1 ;;
       UHERE)
         _seg_here+=("$_value")
         _collect_heredoc_substitutions "$_value" ;;
@@ -1372,6 +1456,7 @@ scan_git_text() {
       REDIR) _seg_redir=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
+        _note_unseen_code
         _scan_known_wrapper_body "$_scan_depth"
         _classify_segment
         _seg_tokens=()
@@ -1381,6 +1466,7 @@ scan_git_text() {
         _seg_subhere_body=()
         _seg_saw_tab=0
         _seg_redir=0
+        _seg_psub=0
         if [[ "$_value" != AND ]]; then
           # past another separator a later reset can run without the branch: a mutation again
           if (( _scan_depth == 0 && ${#_credit_names[@]} )); then
@@ -1394,6 +1480,7 @@ scan_git_text() {
         ;;
     esac
   done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" "$_seg_token_awk")
+  _note_unseen_code
   _scan_known_wrapper_body "$_scan_depth"
   _classify_segment
   (( _lex_ok )) || printf 'BLOCK\tscan-failed\n'
@@ -1501,7 +1588,8 @@ _reset_data_loss() {
   exit 2
 }
 
-# Args: seq (0|1|2), submodules (0|1), dynamic target (0|1), target, context joined by \x1f,
+# Args: seq (0|1|2), submodules (0|1), dynamic target (0|1|2: 2 is code assembled from data,
+# judged by the branch alone), target, context joined by \x1f,
 # branch names created at HEAD earlier in the same `&&` chain, joined by \x1f.
 _reset_verdict() {
   local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5 _credits=${6-}
@@ -1547,6 +1635,11 @@ _reset_verdict() {
   _branch=${_branch#refs/heads/}
   case "$_branch" in main|master|release/*) ;; *) return 0 ;; esac
 
+  if (( _dyn == 2 )); then
+    _p='code assembled from data that runs `git reset --hard` cannot be checked;'
+    echo "BLOCKED: $_p run the reset directly (protected branch '$_branch')" >&2
+    exit 2
+  fi
   if (( _dyn )); then
     _reset_block "on protected branch '$_branch' has a dynamic target or flag that cannot be checked; spell it literally"
   fi
@@ -1624,6 +1717,11 @@ _reset_verdict() {
 _scan_and_judge() {
   local -a _records=()
   local _line _policy _reason _rseq _rsub _rdyn _rtarget _rcred _rctx _i _last_post=-1
+  # the depth-cap grep, relaxed: any `reset ... --ha` in the text, quoted or not
+  if [[ "$_bj" == *reset* ]] && printf '%s\n' "$_bj" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' \
+      | grep -Eq 'reset([[:space:]].*)?[[:space:]]--ha'; then
+    _text_mentions_reset=1
+  fi
   while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj" "$(( _oversize ? MAX_GIT_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
   kill -USR2 $$
   if (( ! ${#_records[@]} )) || [[ "${_records[${#_records[@]} - 1]}" != DONE ]]; then
