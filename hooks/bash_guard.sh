@@ -3,11 +3,13 @@
 #
 # Blocks:
 #   - rm -rf against /, /*, ~, $HOME, /Users[/<user>], /home[/<user>]
-#   - git push --force / -f to main/master/release/*
-#   - a force push with a dynamic destination or flag (an unquoted brace group included), a target
-#     in another repository (-C, --git-dir, --work-tree), nesting too deep to scan, or a command
-#     over 64 KB that spells one literally or through a brace group or substitution, on any
-#     branch. The exception: a word that is exactly
+#   - git push --force / -f to main/master/release/*; with no refspec, the current branch of the
+#     repository -C / --git-dir names decides (else the payload's cwd); one that cannot be resolved,
+#     or --work-tree without --git-dir, blocks
+#   - a force push with a dynamic destination or flag (an unquoted brace group included), with no
+#     refspec into a repository a GIT_DIR-like assignment or a dynamic -C/--git-dir/--work-tree
+#     value selects, nesting too deep to scan, or a command over 64 KB that spells one literally or
+#     through a brace group or substitution, on any branch. The exception: a word that is exactly
 #     `$(git branch --show-current)` (or the rev-parse / symbolic-ref spelling) is the current
 #     branch, so it blocks only on a protected one
 #   - a push, `git reset --hard` or `pi` check whose awk or tr preprocessing fails: blocked, never skipped (an
@@ -58,8 +60,7 @@
 #     (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`), parameter expansions (`B=main; git push -f origin
 #     $B`, `${B:-main}`), and a subcommand spelled by a substitution (`git $(echo push) -f ...`)
 #   - the current-branch query is assumed to run where the push does, so `cd other &&`, an earlier
-#     `git checkout` or `switch`, and `GIT_DIR=other` are not followed (the hook payload carries no
-#     cwd after a cd)
+#     `git checkout` or `switch` are not followed (the hook payload carries no cwd after a cd)
 #   - a command word spelled by a brace group or substitution (`{git,} push -f origin main`)
 #   - an odd quote inside a heredoc body desyncs the comment stripper, and a bare-delimiter
 #     `cat <<EOF` heredoc inside `$(` is lexed as code, so a lone apostrophe in its text can hide a
@@ -577,10 +578,25 @@ _is_git_continuation() {
   return 1
 }
 
-# A push that a substitution may have turned into a force push: the current branch decides it,
-# unless another repository was selected (-C, --git-dir, --work-tree), whose branch is unknown.
-_emit_current_maybe() {
-  if (( $1 )); then printf 'BLOCK\tcontext-destination\n'; else printf 'CHECK_CURRENT_MAYBE\n'; fi
+# A push of the current branch ($1 is CHECK_CURRENT, or CHECK_CURRENT_MAYBE when a substitution
+# may spell the force flag): the branch of the repository -C/--git-dir/--work-tree selects decides,
+# so the record carries them, joined by \x1f, for the verdict. A repository the text does not spell
+# (a GIT_DIR-like assignment, an expansion or substitution in a value) cannot be read, and a
+# control character would corrupt the record.
+_emit_current_check() {
+  local _c _joined="" _sep=$'\x1f'
+  if (( _git_env_ctx || _git_ctx_dynamic )); then
+    printf 'BLOCK\tcontext-destination\n'
+    return
+  fi
+  for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do
+    if [[ "$_c" == *[[:cntrl:]]* || "$_c" == *'$'* || "$_c" == *"$_CURRENT_BRANCH_TOKEN"* ]]; then
+      printf 'BLOCK\tcontext-destination\n'
+      return
+    fi
+    _joined="$_joined${_joined:+$_sep}$_c"
+  done
+  printf '%s\t%s\n' "$1" "$_joined"
 }
 
 _is_shell_interpreter() {
@@ -846,14 +862,14 @@ _classify_force_push_segment() {
     if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
       _has_force=1
     elif (( _glued_flag_candidate && ! _has_refspec )); then
-      _emit_current_maybe "$_has_context"
+      _emit_current_check CHECK_CURRENT_MAYBE
       return
     fi
   fi
   # A bare substitution first may itself be the force flag; with the destination implicit
   # (at most one literal positional after it) only the current branch is at stake.
   if (( ! _has_force && _first_positional_dynamic && _positional_count <= 2 && ! _has_colon_refspec )); then
-    _emit_current_maybe "$_has_context"
+    _emit_current_check CHECK_CURRENT_MAYBE
     return
   fi
   (( _has_force )) || return
@@ -865,15 +881,11 @@ _classify_force_push_segment() {
     printf 'BLOCK\tdynamic-destination\n'
     return
   fi
-  if (( _has_context && _has_refspec == 0 )); then
-    printf 'BLOCK\tcontext-destination\n'
-    return
-  fi
   if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
     printf 'BLOCK\tprotected-ref\n'
     return
   fi
-  (( _has_refspec )) || printf 'CHECK_CURRENT\n'
+  (( _has_refspec )) || _emit_current_check CHECK_CURRENT
 }
 
 # Set once any earlier segment of the scan may have changed the repository. It is never reset, so
@@ -1287,6 +1299,83 @@ _reset_block() {
   exit 2
 }
 
+# Fills the caller's _rctx with the -C/--git-dir/--work-tree pairs of a record's context (joined
+# by \x1f), for _rgit. Returns 1 when the context is malformed or holds a value git would misread,
+# 2 when it depends on a session cwd that could not be entered (only an all-absolute context does
+# not), 0 otherwise.
+_resolve_git_ctx() {
+  local -a _flat=()
+  local _i _k _v
+  _rctx=()
+  if [[ -n "$1" ]]; then
+    IFS=$'\x1f' read -r -a _flat <<< "$1"
+  fi
+  (( ${#_flat[@]} % 2 == 0 )) || return 1
+  for ((_i = 0; _i < ${#_flat[@]}; _i += 2)); do
+    _k=${_flat[_i]}
+    _v=${_flat[_i + 1]}
+    case "$_k" in -C|--git-dir|--work-tree) ;; *) return 1 ;; esac
+    # a leading tilde is expanded by the shell or not depending on quoting the scan cannot see
+    if [[ -z "$_v" || "$_v" == -* || "$_v" == '~'* || "$_v" == *[[:cntrl:]]* ]]; then return 1; fi
+    _rctx+=("$_k" "$_v")
+  done
+  if (( _session_cwd_bad )); then
+    (( ${#_rctx[@]} )) || return 2
+    for ((_i = 1; _i < ${#_rctx[@]}; _i += 2)); do
+      [[ "${_rctx[_i]}" == /* ]] || return 2
+    done
+  fi
+  return 0
+}
+
+# Verdict for a force push of the current branch. $1 is CHECK_CURRENT, or CHECK_CURRENT_MAYBE when
+# a substitution may spell the force flag; $2 the context. The branch is read from the repository
+# the context names (else the session cwd's) through _rgit; symbolic-ref runs no filter driver, so
+# the filter list is not read.
+_push_current_verdict() {
+  local _kind=$1 _ctxj=$2 _rc _branch _c _has_gd=0 _has_wt=0
+  local -a _rctx=() _filter_off=()
+  local _unres='unable to resolve branch for implicit force push'
+  [[ "$_kind" == CHECK_CURRENT_MAYBE ]] \
+    && _unres='unable to resolve branch for a push whose force flag a substitution may spell'
+  [[ -z "$_ctxj" ]] || _unres="$_unres: the repository -C/--git-dir/--work-tree names"\
+' cannot be resolved (check the path)'
+
+  _rc=0
+  _resolve_git_ctx "$_ctxj" || _rc=$?
+  if (( _rc == 1 )); then echo "BLOCKED: $_unres" >&2; exit 2; fi
+  if (( _rc == 2 )); then echo "BLOCKED: force push of the current branch $_cwd_gone" >&2; exit 2; fi
+  # --work-tree alone keeps the cwd's repository and names no other; it stays blocked
+  for _c in ${_rctx[@]+"${_rctx[@]}"}; do
+    case "$_c" in --git-dir) _has_gd=1 ;; --work-tree) _has_wt=1 ;; esac
+  done
+  if (( _has_wt && ! _has_gd )); then
+    echo 'BLOCKED: force push with --work-tree but no --git-dir cannot be attributed to a repository; add --git-dir or use -C' >&2
+    exit 2
+  fi
+
+  # the full ref: `--short` prints `heads/main` when a tag named `main` exists
+  _rc=0
+  _branch=$(_rgit symbolic-ref -q HEAD) || _rc=$?
+  # a detached HEAD pushes no branch by default
+  (( _rc != 1 )) || return 0
+  if (( _rc != 0 )) || [[ "$_branch" != refs/heads/?* ]]; then
+    echo "BLOCKED: $_unres" >&2
+    exit 2
+  fi
+  _branch=${_branch#refs/heads/}
+  case "$_branch" in
+    main|master|release/*) ;;
+    *) return 0 ;;
+  esac
+  if [[ "$_kind" == CHECK_CURRENT_MAYBE ]]; then
+    echo "BLOCKED: this may be a force push of current protected branch '$_branch' (a substitution can spell the force flag; spell it literally or use --force-with-lease)" >&2
+  else
+    echo "BLOCKED: force push of current protected branch '$_branch' (implicit upstream)" >&2
+  fi
+  exit 2
+}
+
 _reset_data_loss() {
   local _branch=$1 _what=$2
   {
@@ -1301,30 +1390,15 @@ _reset_data_loss() {
 # Args: seq (0|1), submodules (0|1), dynamic target (0|1), target, context joined by \x1f.
 _reset_verdict() {
   local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5
-  local -a _rctx=() _filter_off=() _flat=()
+  local -a _rctx=() _filter_off=()
   local _i _v _k _d _p _rc _branch _sha _top
   local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref; quote a target that contains { }, e.g. '"'"'@{u}'"'"')'
   local _dirty='uncommitted changes (run `git status` first; stat-only differences also count)'
 
-  if [[ -n "$_ctxj" ]]; then
-    IFS=$'\x1f' read -r -a _flat <<< "$_ctxj"
-  fi
-  (( ${#_flat[@]} % 2 == 0 )) || _reset_block "$_unresolved"
-  for ((_i = 0; _i < ${#_flat[@]}; _i += 2)); do
-    _k=${_flat[_i]}
-    _v=${_flat[_i + 1]}
-    case "$_k" in -C|--git-dir|--work-tree) ;; *) _reset_block "$_unresolved" ;; esac
-    # a leading tilde is expanded by the shell or not depending on quoting the scan cannot see
-    if [[ -z "$_v" || "$_v" == -* || "$_v" == '~'* || "$_v" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
-    _rctx+=("$_k" "$_v")
-  done
-  # only an all-absolute context is independent of the session cwd
-  if (( _session_cwd_bad )); then
-    (( ${#_rctx[@]} )) || _reset_block "$_cwd_gone"
-    for ((_i = 1; _i < ${#_rctx[@]}; _i += 2)); do
-      [[ "${_rctx[_i]}" == /* ]] || _reset_block "$_cwd_gone"
-    done
-  fi
+  _rc=0
+  _resolve_git_ctx "$_ctxj" || _rc=$?
+  (( _rc != 1 )) || _reset_block "$_unresolved"
+  (( _rc != 2 )) || _reset_block "$_cwd_gone"
 
   if ! _rgit rev-parse --git-dir >/dev/null; then
     # nothing named a repository and the cwd is none: git fails on its own, or a `cd` came first (documented gap)
@@ -1413,7 +1487,7 @@ _reset_verdict() {
 # USR2 tells the hook the scan is done, so a timeout can say which half ran out of time.
 _scan_and_judge() {
   local -a _records=()
-  local _line _policy _reason _rseq _rsub _rdyn _rtarget _rctx branch
+  local _line _policy _reason _rseq _rsub _rdyn _rtarget _rctx
   while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj" "$(( _oversize ? MAX_GIT_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
   kill -USR2 $$
   if (( ! ${#_records[@]} )) || [[ "${_records[${#_records[@]} - 1]}" != DONE ]]; then
@@ -1425,14 +1499,6 @@ _scan_and_judge() {
     _judge_record
   done
   exit 0
-}
-
-# The current-branch checks read the cwd's repository.
-_current_branch_cwd() {
-  if (( _session_cwd_bad )); then
-    echo "BLOCKED: force push of the current branch $_cwd_gone" >&2
-    exit 2
-  fi
 }
 
 _judge_record() {
@@ -1449,7 +1515,7 @@ _judge_record() {
         oversize-reset) echo 'BLOCKED: git reset --hard in a command too large to scan exactly; split the command' >&2 ;;
         indeterminate-reset) echo 'BLOCKED: git reset --hard nested too deeply to scan; spell the reset directly' >&2 ;;
         dynamic-destination) echo 'BLOCKED: force push with a dynamic destination or flag cannot be checked; spell the branch literally or use --force-with-lease' >&2 ;;
-        context-destination) echo 'BLOCKED: force push into another repository (-C/--git-dir/--work-tree) cannot be attributed to a branch; name the refspec literally' >&2 ;;
+        context-destination) echo 'BLOCKED: force push into a repository the command does not spell (a GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR/GIT_CONFIG_* assignment, or an expansion, substitution or control character in git'"'"'s -C/--git-dir/--work-tree or other global options) cannot be attributed to a branch; spell the path literally or name the refspec' >&2 ;;
         indeterminate) echo 'BLOCKED: force push nested too deeply to scan; spell the push directly or use --force-with-lease' >&2 ;;
         oversize) echo 'BLOCKED: force push in a command too large to scan exactly; split the command or use --force-with-lease' >&2 ;;
         *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
@@ -1460,33 +1526,8 @@ _judge_record() {
       IFS=$'\t' read -r _rseq _rsub _rdyn _rtarget _rctx <<< "$_reason"
       _reset_verdict "$_rseq" "$_rsub" "$_rdyn" "$_rtarget" "${_rctx-}"
       ;;
-    CHECK_CURRENT_MAYBE)
-      _current_branch_cwd
-      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-      case "$branch" in
-        main|master|release/*)
-          echo "BLOCKED: this may be a force push of current protected branch '$branch' (a substitution can spell the force flag; spell it literally or use --force-with-lease)" >&2
-          exit 2
-          ;;
-        '')
-          echo 'BLOCKED: unable to resolve branch for a push whose force flag a substitution may spell' >&2
-          exit 2
-          ;;
-      esac
-      ;;
-    CHECK_CURRENT)
-      _current_branch_cwd
-      branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-      case "$branch" in
-        main|master|release/*)
-          echo "BLOCKED: force push of current protected branch '$branch' (implicit upstream)" >&2
-          exit 2
-          ;;
-        '')
-          echo 'BLOCKED: unable to resolve branch for implicit force push' >&2
-          exit 2
-          ;;
-      esac
+    CHECK_CURRENT|CHECK_CURRENT_MAYBE)
+      _push_current_verdict "$_policy" "${_reason-}"
       ;;
   esac
 }

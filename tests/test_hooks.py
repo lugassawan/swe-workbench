@@ -2223,6 +2223,126 @@ class TestSessionCwdFromPayload:
         _allowed(run_guard(guard_script, cmd, cwd=str(feature), payload_cwd=str(tmp_path / "gone")))
 
 
+class TestForcePushIntoANamedRepository:
+    """A force push with no refspec pushes the current branch of the repository -C or --git-dir
+    names, so that repository's branch decides, not the cwd's."""
+
+    @staticmethod
+    def _pair(repo_on, tmp_path, target_branch):
+        """(target, cwd): the target on `target_branch`, the cwd on the other kind of branch."""
+        if target_branch == "main":
+            return repo_on("main"), _feature_repo(tmp_path / "feat")
+        return _feature_repo(tmp_path / "feat"), repo_on("main")
+
+    @staticmethod
+    def _run(guard_script, cmd, cwd, payload_cwd=None):
+        """The hook runs in `cwd`; the payload carries `payload_cwd`, else the same directory."""
+        return run_guard(guard_script, cmd, cwd=str(cwd), payload_cwd=str(payload_cwd or cwd))
+
+    def test_a_main_repository_is_blocked_from_a_feature_cwd(self, guard_script, repo_on, tmp_path):
+        target, cwd = self._pair(repo_on, tmp_path, "main")
+        result = self._run(guard_script, f"git -C {target} push --force", cwd)
+        _blocked(result)
+        assert "protected branch 'main'" in result.stderr
+
+    def test_a_feature_repository_is_allowed_from_a_main_cwd(self, guard_script, repo_on, tmp_path):
+        target, cwd = self._pair(repo_on, tmp_path, "feature/x")
+        _allowed(self._run(guard_script, f"git -C {target} push --force", cwd))
+
+    @pytest.mark.parametrize("branch, blocked", [("main", True), ("feature/x", False)])
+    @pytest.mark.parametrize("template", [
+        "git -C{repo} push -f",
+        "git --git-dir={repo}/.git push --force",
+        "git --git-dir {repo}/.git --work-tree {repo} push --force",
+        "git -c push.default=current -C {repo} push --force origin",
+        "git -C {repo} push $(echo --force) origin",
+        "git -C {repo} push $(echo -)f",
+    ])
+    def test_every_context_form_judges_the_named_repository(
+        self, guard_script, repo_on, tmp_path, branch, blocked, template
+    ):
+        target, cwd = self._pair(repo_on, tmp_path, branch)
+        result = self._run(guard_script, template.format(repo=target), cwd)
+        assert (result.returncode == 2) is blocked, f"exit {result.returncode}: {result.stderr!r}"
+
+    @pytest.mark.parametrize("ctx", ["-C /nonexistent", "--git-dir=/nonexistent/.git", "-C -x"])
+    def test_a_repository_that_cannot_be_resolved_is_blocked(self, guard_script, tmp_path, ctx):
+        feature = _feature_repo(tmp_path / "feat")
+        result = self._run(guard_script, f"git {ctx} push --force", feature)
+        _blocked(result)
+        assert "cannot be resolved" in result.stderr
+
+    def test_a_detached_head_in_the_named_repository_is_allowed(
+        self, guard_script, repo_on, tmp_path
+    ):
+        target, cwd = self._pair(repo_on, tmp_path, "main")
+        _g(target, "checkout", "-q", "--detach")
+        _allowed(self._run(guard_script, f"git -C {target} push --force", cwd))
+
+    @pytest.mark.parametrize("template, blocked", [
+        ("git -C {main} push --force-with-lease", False),
+        ("git -C {main} push --force origin feature/x", False),
+        ("git -C {main} push origin", False),
+        ("git -C {feature} push --force origin main", True),
+        ("git -C {feature} push origin +main", True),
+        ("git -C {feature} push --force --all origin", True),
+    ])
+    def test_lease_and_explicit_refspecs_keep_their_text_verdicts(
+        self, guard_script, repo_on, tmp_path, template, blocked
+    ):
+        main, feature = self._pair(repo_on, tmp_path, "main")
+        cmd = template.format(main=main, feature=feature)
+        result = self._run(guard_script, cmd, main)
+        assert (result.returncode == 2) is blocked, f"{cmd!r}: {result.returncode} {result.stderr!r}"
+
+    def test_a_relative_context_resolves_against_the_payload_cwd(
+        self, guard_script, repo_on, tmp_path
+    ):
+        # `-C repo` names tmp_path/repo (main) from the process cwd, but tmp_path/feat/repo (a
+        # feature branch) from the payload cwd
+        main = repo_on("main")
+        _feature_repo(tmp_path / "feat" / main.name)
+        cmd = f"git -C {main.name} push --force"
+        _allowed(self._run(guard_script, cmd, tmp_path, tmp_path / "feat"))
+        _blocked(self._run(guard_script, cmd, tmp_path))
+
+    @pytest.mark.parametrize("ctx", ["-C {name}", "--git-dir={name}/.git --work-tree={repo}"])
+    def test_a_relative_context_blocks_when_the_payload_cwd_is_gone(
+        self, guard_script, tmp_path, ctx
+    ):
+        feature = _feature_repo(tmp_path / "feat")
+        cmd = f"git {ctx.format(name=feature.name, repo=feature)} push --force"
+        result = self._run(guard_script, cmd, tmp_path, tmp_path / "gone")
+        _blocked(result)
+        assert "cd to an existing directory" in result.stderr
+
+    @pytest.mark.parametrize("branch, blocked", [("main", True), ("feature/x", False)])
+    def test_an_absolute_context_is_judged_normally_when_the_payload_cwd_is_gone(
+        self, guard_script, repo_on, tmp_path, branch, blocked
+    ):
+        target, _ = self._pair(repo_on, tmp_path, branch)
+        result = self._run(guard_script, f"git -C {target} push --force", tmp_path, tmp_path / "gone")
+        assert (result.returncode == 2) is blocked, f"exit {result.returncode}: {result.stderr!r}"
+        assert "cd to an existing directory" not in result.stderr
+
+    @pytest.mark.parametrize("template", [
+        "GIT_DIR={feature}/.git git push --force",
+        "env GIT_WORK_TREE={feature} git push -f",
+        "git -C $REPO push --force",
+        "git -C {feature}/$SUB push --force",
+        "git --git-dir=$(echo {feature}/.git) push --force",
+        # a quoted newline is a control character, which would corrupt the verdict's record
+        'git -C "{feature}\nx" push --force',
+    ])
+    def test_a_repository_the_text_does_not_spell_is_blocked(
+        self, guard_script, tmp_path, template
+    ):
+        feature = _feature_repo(tmp_path / "feat")
+        result = self._run(guard_script, template.format(feature=feature), feature)
+        _blocked(result)
+        assert "does not spell" in result.stderr
+
+
 @pytest.fixture
 def hanging_repo(synced_repo_on, tmp_path):
     """main whose config includes a FIFO: any git that reads the config blocks on it until killed.
@@ -2255,7 +2375,9 @@ class TestGitWatchdog:
         result = run_guard(guard_script, cmd, cwd=cwd, env=env, timeout=15)
         return result, time.monotonic() - start
 
-    @pytest.mark.parametrize("template", ["git -C {repo} reset --hard"])
+    @pytest.mark.parametrize(
+        "template", ["git -C {repo} reset --hard", "git -C {repo} push --force"]
+    )
     def test_hanging_git_blocks_in_time(self, guard_script, hanging_repo, tmp_path, template):
         result, elapsed = self._timed(guard_script, template.format(repo=hanging_repo), str(tmp_path), "1")
         _blocked(result)
