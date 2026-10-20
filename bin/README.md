@@ -33,7 +33,9 @@ gate that should have exactly one; `result-check` needs the same JSON-object typ
 `preflight-commit` does, for the same reason; `dead-code-scan` normalizes three heterogeneous
 detection funnels (native tools, the sibling `lsp` script, and an in-process identifier index)
 into one JSON envelope — multi-adapter subprocess wrapping plus structured emission that bash
-would need `jq` and per-funnel text-munging for; `address-feedback-fetch` needed the same
+would need `jq` and per-funnel text-munging for, and whose `--diff-from` mode (supplied diff text,
+never a git call of its own) scopes the scan to the symbols a diff adds or orphans — hunk-length
+arithmetic over line numbers that bash would push into `awk`; `address-feedback-fetch` needed the same
 paginated-cursor state machine as `pr-review-submit` (a `reviewThreads(first:100, after:$after)` /
 `pageInfo{endCursor hasNextPage}` loop) plus JSON emission over arbitrary-byte review-comment text,
 where bash would again mean a second escaping engine (`jq`) layered under the same shell

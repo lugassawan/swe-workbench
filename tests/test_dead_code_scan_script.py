@@ -1,6 +1,6 @@
 """Tests for bin/swe-workbench-dead-code-scan.
 
-Full-repo dead/test-only code scanner emitting the standard JSON envelope
+Dead/test-only code scanner (whole-repo or diff-scoped) emitting the standard JSON envelope
 (shared/docs/runtime-result-contract.md). Hermetic tests force the grep funnel
 and stub the LSP sibling via SWB_DEAD_CODE_LSP_BIN; native-tool tests skip when
 the tool is absent. Unit tests import the module directly (SourceFileLoader,
@@ -10,9 +10,11 @@ script as a subprocess.
 
 from __future__ import annotations
 
+import difflib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -43,10 +45,10 @@ def _env(**extra):
     return env
 
 
-def _run(args, *, cwd=None, env=None):
+def _run(args, *, cwd=None, env=None, stdin=None, timeout=None):
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, cwd=cwd, env=env or _env(),
+        capture_output=True, text=True, cwd=cwd, env=env or _env(), input=stdin, timeout=timeout,
     )
 
 
@@ -1113,7 +1115,7 @@ def test_funnel_omits_lsp_when_no_anchor_was_resolved(tmp_path, tmp_path_factory
 def test_help_self_documents(tmp_path):
     proc = _run(["--help"])
     assert proc.returncode == 0
-    for needle in ("--root", "--funnel", "--max-files"):
+    for needle in ("--root", "--funnel", "--max-files", "--diff-from"):
         assert needle in proc.stdout
 
 
@@ -1138,3 +1140,485 @@ def test_stdout_is_envelope_only_diagnostics_on_stderr(tmp_path):
     proc = _run(["--root", str(tmp_path), "--funnel", "grep"], env=_env())
     assert proc.returncode == 0
     json.loads(proc.stdout)  # entire stdout must be the JSON envelope
+
+
+# ── Diff-scoped mode (--diff-from) ───────────────────────────────────────────
+
+
+def _unified(old: dict, new: dict) -> str:
+    """Git-shaped unified diff between two {relpath: text} trees, built with
+    difflib so the scanner's tests never need a repository."""
+    chunks = []
+    for path in sorted(set(old) | set(new)):
+        before, after = old.get(path), new.get(path)
+        if before == after:
+            continue
+        body = "".join(
+            difflib.unified_diff(
+                (before or "").splitlines(keepends=True),
+                (after or "").splitlines(keepends=True),
+                fromfile="/dev/null" if before is None else f"a/{path}",
+                tofile="/dev/null" if after is None else f"b/{path}",
+            )
+        )
+        chunks.append(f"diff --git a/{path} b/{path}\n{body}")
+    return "".join(chunks)
+
+
+def _scan_diff(root: Path, diff: str, *args, funnel="grep"):
+    """Run the scoped scanner with `diff` on stdin: (returncode, envelope-or-None, proc)."""
+    proc = _run(["--root", str(root), "--funnel", funnel, "--diff-from", "-", *args], stdin=diff)
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        envelope = None
+    return proc.returncode, envelope, proc
+
+
+def _old_rule_rows(repo_rows: list, diff: str) -> list:
+    """The reviewer's former consumer-side intersection, kept independent of the
+    scanner's own diff parser: a row whose path:line lands on a `+` line is
+    "added"; a `candidate` whose symbol is on a deleted non-test line is "orphaned"."""
+    added, removed, path, new_no = set(), set(), None, 0
+    for line in diff.splitlines():
+        hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", line)
+        if line.startswith("+++ "):
+            path = line[4:].removeprefix("b/")
+        elif hunk:
+            new_no = int(hunk.group(1))
+        elif line.startswith(("diff ", "--- ")):
+            continue
+        elif line.startswith("+"):
+            added.add((path, new_no))
+            new_no += 1
+        elif line.startswith("-"):
+            if not re.search(r"(^|/)tests?/", path):
+                removed.update(re.findall(r"[A-Za-z_$][\w$]*", line[1:]))
+        else:
+            new_no += 1
+    rows = []
+    for row in repo_rows:
+        if (row["path"], row["line"]) in added:
+            relation = "added"
+        elif row["keep_class"] == "candidate" and row["symbol"] in removed:
+            relation = "orphaned"
+        else:
+            continue
+        rows.append({**row, "diff_relation": relation})
+    return rows
+
+
+_PARITY_BEFORE = {
+    "src/app.py": (
+        "from util import old_helper, test_only_helper, still_used\n\n\n"
+        "def run():\n    return old_helper() + test_only_helper() + still_used()\n"
+    ),
+}
+_PARITY_AFTER = {
+    "src/app.py": (
+        "from util import still_used\n\n\n"
+        "def run():\n    return still_used()\n\n\n"
+        "def added_unused():\n    return 9\n\n\n"
+        "def added_test_only():\n    return 10\n\n\n"
+        "def added_used():\n    return 11\n\n\n"
+        "def added_dyn():\n    return 12\n"
+    ),
+    "src/keeper.py": "@register\ndef hooked():\n    return 1\n",
+}
+_PARITY_UNCHANGED = {
+    "src/util.py": (
+        "def old_helper():\n    return 1\n\n\n"
+        "def still_used():\n    return 2\n\n\n"
+        "def test_only_helper():\n    return 3\n"
+    ),
+    "src/other.py": "from app import added_used\n\n\ndef consume():\n    return added_used()\n",
+    "src/dyn.py": 'import app\n\n\ndef load():\n    return getattr(app, "added_dyn")()\n',
+    "tests/test_app.py": "from app import added_test_only\n\n\ndef test_it():\n    assert added_test_only() == 10\n",
+    "tests/test_util.py": "from util import test_only_helper\n\n\ndef test_helper():\n    assert test_only_helper() == 3\n",
+}
+
+
+def _parity_fixture(root: Path) -> str:
+    for rel, text in {**_PARITY_UNCHANGED, **_PARITY_AFTER}.items():
+        _write(root, rel, text)
+    return _unified({**_PARITY_UNCHANGED, **_PARITY_BEFORE}, {**_PARITY_UNCHANGED, **_PARITY_AFTER})
+
+
+def test_scoped_rows_equal_repo_rows_filtered_by_the_old_intersection(tmp_path):
+    diff = _parity_fixture(tmp_path)
+    rc, repo = _scan(tmp_path)
+    assert rc == 0
+    rc, scoped, proc = _scan_diff(tmp_path, diff)
+    assert rc == 0, proc.stderr
+    assert scoped["data"]["candidates"] == _old_rule_rows(repo["data"]["candidates"], diff)
+
+
+def test_scoped_parity_fixture_covers_each_row_shape(tmp_path):
+    rc, scoped, _ = _scan_diff(tmp_path, _parity_fixture(tmp_path))
+    rows = {r["symbol"]: r for r in scoped["data"]["candidates"]}
+    assert rows["added_unused"]["diff_relation"] == "added" and not rows["added_unused"]["test_only"]
+    assert rows["added_test_only"]["test_only"] is True
+    assert rows["added_test_only"]["references"] == [{"path": "tests/test_app.py", "reason": "test"}]
+    assert rows["old_helper"]["diff_relation"] == "orphaned"  # defined in an unchanged file
+    assert rows["test_only_helper"]["diff_relation"] == "orphaned" and rows["test_only_helper"]["test_only"]
+    assert rows["hooked"]["keep_class"] == "safe-keep" and rows["hooked"]["diff_relation"] == "added"
+    assert rows["added_dyn"]["keep_class"] == "safe-keep"
+    for unrelated in ("run", "consume", "load", "added_used", "still_used"):
+        assert unrelated not in rows
+
+
+def test_added_definition_gets_added_relation_and_deleted_caller_gets_orphaned(tmp_path):
+    _write(tmp_path, "src/lib.py", "def fresh():\n    return 1\n\n\ndef stale():\n    return 2\n")
+    _write(tmp_path, "src/app.py", "def go():\n    return 0\n")
+    diff = _unified(
+        {"src/lib.py": "def stale():\n    return 2\n", "src/app.py": "def go():\n    return stale()\n"},
+        {"src/lib.py": "def fresh():\n    return 1\n\n\ndef stale():\n    return 2\n", "src/app.py": "def go():\n    return 0\n"},
+    )
+    rc, envelope, proc = _scan_diff(tmp_path, diff)
+    assert rc == 0, proc.stderr
+    relations = {r["symbol"]: r["diff_relation"] for r in envelope["data"]["candidates"]}
+    assert relations == {"fresh": "added", "stale": "orphaned"}
+
+
+def test_deleted_test_line_orphans_nothing(tmp_path):
+    _write(tmp_path, "src/util.py", "def lonely():\n    return 1\n")
+    _write(tmp_path, "tests/test_util.py", "def test_other():\n    assert True\n")
+    diff = _unified(
+        {"tests/test_util.py": "def test_other():\n    assert lonely()\n"},
+        {"tests/test_util.py": "def test_other():\n    assert True\n"},
+    )
+    rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert rc == 0
+    assert envelope["status"] == "ok"
+    assert envelope["data"]["candidates"] == []
+
+
+def test_new_file_from_dev_null_is_scanned(tmp_path):
+    _write(tmp_path, "src/new.py", "def brand_new():\n    return 1\n")
+    diff = _unified({}, {"src/new.py": "def brand_new():\n    return 1\n"})
+    assert "--- /dev/null" in diff
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("brand_new", "added")]
+    assert envelope["data"]["scoped_paths"] == 1
+
+
+def test_deleted_file_orphans_the_symbols_it_called(tmp_path):
+    _write(tmp_path, "src/util.py", "def helper():\n    return 1\n")
+    diff = _unified({"src/gone.py": "from util import helper\n\n\ndef caller():\n    return helper()\n"}, {})
+    assert "+++ /dev/null" in diff
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("helper", "orphaned")]
+    assert envelope["data"]["scoped_paths"] == 0  # the file no longer exists
+
+
+def test_rename_with_edit_follows_the_new_path(tmp_path):
+    _write(tmp_path, "src/new.py", "def a():\n    return 1\n\n\ndef b():\n    return 2\n")
+    diff = (
+        "diff --git a/src/old.py b/src/new.py\nsimilarity index 80%\nrename from src/old.py\nrename to src/new.py\n"
+        "--- a/src/old.py\n+++ b/src/new.py\n@@ -1,3 +1,6 @@\n def a():\n     return 1\n \n+\n+def b():\n+    return 2\n"
+    )
+    module = _load_module()
+    scope = module.derive_scope(diff)
+    assert scope.paths == ["src/new.py"]
+    assert scope.added_lines == {"src/new.py": {4, 5, 6}}
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert {r["symbol"]: r["diff_relation"] for r in envelope["data"]["candidates"]} == {"b": "added"}
+
+
+def test_pure_rename_registers_the_path_without_added_lines():
+    diff = "diff --git a/src/a.py b/src/b.py\nsimilarity index 100%\nrename from src/a.py\nrename to src/b.py\n"
+    scope = _load_module().derive_scope(diff)
+    assert scope.paths == ["src/b.py"]
+    assert scope.added_lines == {"src/b.py": set()}
+
+
+def test_binary_stanza_is_ignored():
+    diff = "diff --git a/logo.png b/logo.png\nindex 1111111..2222222 100644\nBinary files a/logo.png and b/logo.png differ\n"
+    scope = _load_module().derive_scope(diff)
+    assert scope.paths == [] and scope.added_lines == {} and scope.removed_idents == set()
+
+
+def test_deleted_line_that_looks_like_a_file_header_is_still_a_body_line():
+    diff = "--- a/run.sh\n+++ b/run.sh\n@@ -1,2 +1,1 @@\n--- old_name\n keep\n"
+    scope = _load_module().derive_scope(diff)
+    assert "old_name" in scope.removed_idents
+    assert scope.paths == ["run.sh"]
+
+
+def test_stoplist_identifiers_are_not_watched():
+    diff = "--- a/m.py\n+++ b/m.py\n@@ -1,2 +1,1 @@\n-    return self.gone_symbol(None)\n keep\n"
+    scope = _load_module().derive_scope(diff)
+    assert scope.removed_idents == {"gone_symbol"}
+
+
+def test_empty_diff_scans_cleanly_with_zero_rows(tmp_path):
+    _write(tmp_path, "src/mod.py", "def orphan():\n    return 1\n")
+    rc, envelope, _ = _scan_diff(tmp_path, "")
+    assert rc == 0
+    assert envelope["status"] == "ok"
+    assert envelope["data"]["scope"] == "diff"
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+def test_diff_from_reads_a_file_path(tmp_path):
+    _write(tmp_path, "src/new.py", "def brand_new():\n    return 1\n")
+    diff_file = _write(tmp_path / "scratch", "change.diff", _unified({}, {"src/new.py": "def brand_new():\n    return 1\n"}))
+    proc = _run(["--root", str(tmp_path), "--funnel", "grep", "--diff-from", str(diff_file)])
+    assert proc.returncode == 0, proc.stderr
+    assert [r["symbol"] for r in json.loads(proc.stdout)["data"]["candidates"]] == ["brand_new"]
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        "this is not a diff at all\n",
+        "--- a/x.py\n+++ b/x.py\n@@ -1,3 +1,3 @@\n keep\n",  # hunk ends before its declared length
+        "--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,1 @@\n*weird\n",  # a body line with no valid prefix
+        "@@ -1,1 +1,1 @@\n-a\n+b\n",  # hunk with no file header
+    ],
+)
+def test_malformed_diff_exits_nonzero_with_empty_stdout(tmp_path, diff):
+    rc, envelope, proc = _scan_diff(tmp_path, diff)
+    assert rc != 0
+    assert proc.stdout == ""
+    assert proc.stderr.strip() != ""
+
+
+def test_unreadable_diff_path_exits_nonzero_with_empty_stdout(tmp_path):
+    proc = _run(["--root", str(tmp_path), "--funnel", "grep", "--diff-from", str(tmp_path / "missing.diff")])
+    assert proc.returncode != 0
+    assert proc.stdout == ""
+
+
+def test_scoped_scan_honours_a_small_file_cap_and_still_emits_rows(tmp_path):
+    for i in range(6):
+        _write(tmp_path, f"src/f{i}.py", f"def filler_{i}():\n    return {i}\n")
+    _write(tmp_path, "src/zz_new.py", "def fresh():\n    return 1\n")
+    diff = _unified({}, {"src/zz_new.py": "def fresh():\n    return 1\n"})
+    rc, envelope, _ = _scan_diff(tmp_path, diff, "--max-files", "2")
+    assert rc == 0
+    assert envelope["status"] == "partial"
+    assert any(w["code"] == "file-cap" for w in envelope["warnings"])
+    assert envelope["data"]["scope"] == "diff"
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("fresh", "added")]
+
+
+@pytest.mark.parametrize("funnel", ["auto", "native", "lsp"])
+def test_diff_from_requires_the_grep_funnel(tmp_path, funnel):
+    rc, _envelope, proc = _scan_diff(tmp_path, "", funnel=funnel)
+    assert rc != 0
+    assert proc.stdout == ""
+    assert "--funnel grep" in proc.stderr
+
+
+def test_diff_from_without_a_funnel_flag_is_refused(tmp_path):
+    proc = _run(["--root", str(tmp_path), "--diff-from", "-"], stdin="")
+    assert proc.returncode != 0
+    assert proc.stdout == ""
+
+
+def test_scoped_scan_spawns_no_subprocess(tmp_path, monkeypatch):
+    diff = _parity_fixture(tmp_path)
+    module = _load_module()
+    calls = []
+
+    def _fail_run(*a, **k):  # pragma: no cover - only reached on violation
+        calls.append(a)
+        raise AssertionError("scoped scan must not spawn subprocesses")
+
+    monkeypatch.setattr(module.subprocess, "run", _fail_run)
+    monkeypatch.setattr(module.subprocess, "Popen", _fail_run)
+    result = module.scan_diff(str(tmp_path), module.derive_scope(diff))
+    assert result["data"]["candidate_count"] >= 1
+    assert calls == []
+
+
+def test_envelope_scope_fields_in_both_modes(tmp_path):
+    diff = _parity_fixture(tmp_path)
+    _rc, repo = _scan(tmp_path)
+    data = repo["data"]
+    assert (data["scope"], data["scoped_paths"], data["watched_symbols"]) == ("repo", 0, 0)
+    assert {r["diff_relation"] for r in data["candidates"]} == {""}
+    _rc, scoped, _ = _scan_diff(tmp_path, diff)
+    data = scoped["data"]
+    assert data["scope"] == "diff"
+    assert data["scoped_paths"] == 2  # app.py and keeper.py
+    assert data["watched_symbols"] > 0
+    assert data["funnel"] == "grep"
+
+
+def test_scoped_scan_ignores_diff_paths_outside_the_root(tmp_path):
+    outside = tmp_path / "outside"
+    _write(outside, "evil.py", "def planted():\n    return 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    diff = "--- a/../outside/evil.py\n+++ b/../outside/evil.py\n@@ -0,0 +1,2 @@\n+def planted():\n+    return 1\n"
+    _rc, envelope, _ = _scan_diff(root, diff)
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+def _new_file_diff(path: str, body: str = "def planted():\n    return 1\n", prefix: str = "b/") -> str:
+    lines = body.splitlines()
+    return f"--- /dev/null\n+++ {prefix}{path}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{ln}\n" for ln in lines)
+
+
+def test_symlinked_directory_cannot_lead_the_scan_outside_the_root(tmp_path):
+    _write(tmp_path / "outside", "secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "link").symlink_to(tmp_path / "outside")
+    _rc, envelope, _ = _scan_diff(root, _new_file_diff("link/secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n"))
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+    assert [w["code"] for w in envelope["warnings"]] == ["diff-path-unresolved"]
+
+
+def test_absolute_diff_path_is_never_read(tmp_path):
+    outside = _write(tmp_path / "outside", "abs.py", "def planted():\n    return 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    diff = f"--- /dev/null\n+++ {outside}\n@@ -0,0 +1,2 @@\n+def planted():\n+    return 1\n"
+    _rc, envelope, _ = _scan_diff(root, diff)
+    assert envelope["data"]["candidates"] == []
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+@pytest.mark.parametrize(
+    "path, prefix",
+    [("src/mod.py", "i/"), ("src/mod.py", "w/"), ("\"\\303\\251.py\"", "")],  # mnemonic prefixes; a C-quoted name
+)
+def test_changed_path_that_resolves_to_no_file_is_reported_not_silently_clean(tmp_path, path, prefix):
+    _write(tmp_path, "src/mod.py", "def planted():\n    return 1\n")
+    _rc, envelope, _ = _scan_diff(tmp_path, _new_file_diff(path, prefix=prefix))
+    assert envelope["status"] == "partial"
+    assert [w["code"] for w in envelope["warnings"]] == ["diff-path-unresolved"]
+    assert envelope["data"]["scoped_paths"] == 0
+
+
+def test_dot_slash_diff_path_is_normalised(tmp_path):
+    _write(tmp_path, "src/mod.py", "def planted():\n    return 1\n")
+    _rc, envelope, _ = _scan_diff(tmp_path, _new_file_diff("./src/mod.py"))
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("planted", "added")]
+    assert envelope["warnings"] == []
+
+
+def test_deleted_and_non_source_paths_do_not_warn(tmp_path):
+    diff = (
+        "--- a/src/gone.py\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x = 1\n"
+        + _new_file_diff("docs/notes.md", "hello\n")
+    )
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert envelope["warnings"] == []
+    assert envelope["status"] == "ok"
+
+
+def test_removed_identifiers_ignore_comments_excluded_dirs_and_non_script_files(tmp_path):
+    _write(tmp_path, "bin/tool", "#!/usr/bin/env python3\nprint(1)\n")
+    _write(tmp_path, "LICENSE", "text\n")
+    diff = (
+        "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,3 +1,1 @@\n-# mentions comment_only\n-    call_removed()\n keep\n"
+        "--- a/dist/bundle.js\n+++ b/dist/bundle.js\n@@ -1,1 +1,0 @@\n-excluded_removed()\n"
+        "--- a/LICENSE\n+++ b/LICENSE\n@@ -1,1 +1,0 @@\n-license_word\n"
+        "--- a/bin/tool\n+++ b/bin/tool\n@@ -1,1 +1,0 @@\n-script_removed()\n"
+    )
+    scope = _load_module().derive_scope(diff, tmp_path)
+    assert scope.removed_idents == {"call_removed", "script_removed"}
+
+
+def test_extensionless_paths_are_not_tracked_without_a_root():
+    diff = "--- a/bin/tool\n+++ b/bin/tool\n@@ -1,1 +1,0 @@\n-script_removed()\n"
+    assert _load_module().derive_scope(diff).removed_idents == set()
+
+
+def test_deleted_comment_does_not_orphan_an_unrelated_unused_def(tmp_path):
+    _write(tmp_path, "src/util.py", "def process():\n    return 1\n")
+    _write(tmp_path, "src/m.py", "x = 1\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,1 @@\n-# drop the process step\n x = 1\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert envelope["data"]["candidates"] == []
+
+
+def test_line_numbers_follow_newlines_only_not_form_feeds(tmp_path):
+    _write(tmp_path, "src/m.py", "x = 1\n\x0c\ndef ff():\n    return 1\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,4 @@\n x = 1\n \x0c\n+def ff():\n+    return 1\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    rows = envelope["data"]["candidates"]
+    assert [(r["symbol"], r["line"], r["diff_relation"]) for r in rows] == [("ff", 3, "added")]
+
+
+def test_combined_diff_is_refused_not_read_as_empty(tmp_path):
+    rc, _envelope, proc = _scan_diff(tmp_path, "diff --cc src/m.py\nindex 1,2..3\n--- a/src/m.py\n+++ b/src/m.py\n")
+    assert rc != 0
+    assert proc.stdout == ""
+
+
+def test_modified_signature_of_an_unused_def_is_added_not_orphaned(tmp_path):
+    _write(tmp_path, "src/m.py", "def foo(a, b):\n    return a\n")
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,2 +1,2 @@\n-def foo(a):\n+def foo(a, b):\n     return a\n"
+    _rc, envelope, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["diff_relation"]) for r in envelope["data"]["candidates"]] == [("foo", "added")]
+
+
+def test_parser_handles_crlf_no_newline_markers_and_hunk_headers_without_counts():
+    module = _load_module()
+    crlf = "--- a/m.py\r\n+++ b/m.py\r\n@@ -1,2 +1,3 @@\r\n keep\r\n+def added():\r\n \r\n"
+    assert module.derive_scope(crlf).added_lines == {"m.py": {2}}
+    marker = "--- a/m.py\n+++ b/m.py\n@@ -1,1 +1,1 @@\n-old()\n\\ No newline at end of file\n+new()\n\\ No newline at end of file\n"
+    scope = module.derive_scope(marker)
+    assert scope.added_lines == {"m.py": {1}} and scope.removed_idents == {"old"}
+    no_counts = "--- a/m.py\n+++ b/m.py\n@@ -3 +3 @@\n-old()\n+new()\n"
+    assert module.derive_scope(no_counts).added_lines == {"m.py": {3}}
+
+
+def test_added_line_that_starts_with_plus_signs_is_a_body_line():
+    diff = "--- a/m.py\n+++ b/m.py\n@@ -1,1 +1,2 @@\n keep\n+++ not_a_header\n"
+    assert _load_module().derive_scope(diff).added_lines == {"m.py": {2}}
+
+
+def test_reviewer_rule_11_pins_the_scanner_contract():
+    rule = next(
+        ln for ln in (ROOT / "agents" / "reviewer.md").read_text().splitlines() if ln.startswith("11. **Dead-code lens")
+    )
+    for needle in (
+        "--funnel grep --diff-from -", "--src-prefix=a/ --dst-prefix=b/ --no-color --no-ext-diff", "pipefail", "diff_relation",
+        "never reaches the posted review", "**Low** finding row",
+        "`scoped_paths`", "`watched_symbols`", "`scanned_files`", "file-cap", "diff-path-unresolved",
+        "DEAD-CODE-SCAN:", "dead-code lens unavailable",
+    ):
+        assert needle in rule, needle
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX named pipes")
+@pytest.mark.parametrize("name", ["evil.py", "evil"])  # the extensionless one is opened for its shebang
+def test_symlink_to_a_fifo_never_blocks_either_mode(tmp_path, name):
+    os.mkfifo(tmp_path / "pipe")
+    (tmp_path / name).symlink_to(tmp_path / "pipe")
+    _write(tmp_path, "src/mod.py", "def lonely():\n    return 1\n")
+    diff = _unified({}, {"src/mod.py": "def lonely():\n    return 1\n"})
+    repo = _run(["--root", str(tmp_path), "--funnel", "grep"], timeout=20)
+    scoped = _run(["--root", str(tmp_path), "--funnel", "grep", "--diff-from", "-"], stdin=diff, timeout=20)
+    for proc in (repo, scoped):
+        assert proc.returncode == 0, proc.stderr
+        assert [r["symbol"] for r in json.loads(proc.stdout)["data"]["candidates"]] == ["lonely"]
+
+
+def test_symlink_to_a_file_outside_the_root_is_not_scanned(tmp_path):
+    _write(tmp_path / "outside", "secret.py", "# TOPSECRET above leak\ndef leak():\n    return 1\n")
+    root = tmp_path / "repo"
+    _write(root, "src/mod.py", "def lonely():\n    return 1\n")
+    (root / "src" / "escape.py").symlink_to(tmp_path / "outside" / "secret.py")
+    _rc, envelope = _scan(root)
+    assert [r["symbol"] for r in envelope["data"]["candidates"]] == ["lonely"]
+    assert envelope["data"]["scanned_files"] == 1
+
+
+def test_lone_carriage_return_does_not_shift_line_numbers(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_bytes(b"x = 1\rpass\ny = 2\n\ndef late():\n    return 1\n")
+    _rc, envelope = _scan(tmp_path)
+    assert [(r["symbol"], r["line"]) for r in envelope["data"]["candidates"]] == [("late", 4)]
+    diff = "--- a/src/m.py\n+++ b/src/m.py\n@@ -1,3 +1,5 @@\n x = 1\rpass\n y = 2\n \n+def late():\n+    return 1\n"
+    _rc, scoped, _ = _scan_diff(tmp_path, diff)
+    assert [(r["symbol"], r["line"], r["diff_relation"]) for r in scoped["data"]["candidates"]] == [("late", 4, "added")]
