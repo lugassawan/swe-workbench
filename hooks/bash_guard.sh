@@ -17,7 +17,7 @@
 #   - git reset --hard on main/master/release/* only when it would lose data: uncommitted changes, or
 #     commits no other branch, tag or remote keeps. The target is the repository named by -C /
 #     --git-dir / --work-tree (else the payload's cwd, or the hook's own without one; a payload cwd
-#     that no longer exists blocks); feature branches and a detached HEAD are never judged.
+#     that is relative or no longer exists blocks what depends on it); feature branches and a detached HEAD are never judged.
 #     Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
 #     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare, --recurse-submodules,
 #     and an earlier step of the same command that may have changed the repository (run it as its own
@@ -64,6 +64,8 @@
 #   - values that are never resolved: a heredoc assigned to a variable and run later
 #     (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`), parameter expansions (`B=main; git push -f origin
 #     $B`, `${B:-main}`), and a subcommand spelled by a substitution (`git $(echo push) -f ...`)
+#   - a push with no refspec is judged by the current branch, but `push.default=matching|upstream`
+#     or a configured `remote.*.push` can still send main from a feature branch, also via `-C`
 #   - the current-branch query is assumed to run where the push does, so `cd other &&`, an earlier
 #     `git checkout` or `switch` are not followed (the hook payload carries no cwd after a cd)
 #   - a command word spelled by a brace group or substitution (`{git,} push -f origin main`)
@@ -83,7 +85,9 @@
 #
 # Reset-only gaps (the text scan cannot see these; the old whole-text grep caught some of them):
 #   - the subcommand spelled through an expansion (`git ${S:-reset} --hard`); code assembled
-#     from data is only caught by its `reset ... --ha` text (above). The push scan shares this.
+#     from data is only caught by its `reset ... --ha` text (above), so `reset --h` hidden in
+#     assembled text and `sudo -u x $CMD` pass, and `echo 'git reset --hard' | bash -n` on a
+#     protected branch over-blocks. The push scan shares the expansion gap.
 #   - somewhere other than the session cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
 #     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
 #     in the hook's own environment; git aliases, including `-c alias.x=...`.
