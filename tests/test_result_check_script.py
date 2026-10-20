@@ -167,6 +167,9 @@ EXPECTED_REGISTRY = {
         "candidate_count": "int",
         "safe_keep_count": "int",
         "justified_count": "int",
+        "scope": "str",
+        "scoped_paths": "int",
+        "watched_symbols": "int",
         "candidates": "list[candidate]",
     },
     "swb.issue-preflight/1": {
@@ -482,6 +485,9 @@ def _scan_envelope(candidates, **overrides):
         ),
         "safe_keep_count": 0,
         "justified_count": 0,
+        "scope": "repo",
+        "scoped_paths": 0,
+        "watched_symbols": 0,
         "candidates": candidates,
     }
     data.update(overrides)
@@ -531,6 +537,24 @@ def test_candidate_list_wrong_field_types_rejected():
         row[field] = bad
         problems = rc.validate_envelope("swb.dead-code-scan/1", _scan_envelope([row]))
         assert problems, f"candidate {field}={bad!r} must be rejected"
+
+
+def test_scope_fields_required_with_correct_types():
+    for field, bad in (("scope", 1), ("scoped_paths", "2"), ("scoped_paths", True), ("watched_symbols", None)):
+        problems = rc.validate_envelope("swb.dead-code-scan/1", _scan_envelope([], **{field: bad}))
+        assert problems, f"{field}={bad!r} must be rejected"
+
+
+def test_missing_scope_fields_rejected():
+    for missing in ("scope", "scoped_paths", "watched_symbols"):
+        envelope = _scan_envelope([_candidate_row()])
+        del envelope["data"][missing]
+        assert rc.validate_envelope("swb.dead-code-scan/1", envelope) != [], f"missing {missing!r}"
+
+
+def test_diff_scoped_rows_with_diff_relation_accepted():
+    envelope = _scan_envelope([_candidate_row(diff_relation="orphaned")], scope="diff", scoped_paths=3, watched_symbols=7)
+    assert rc.validate_envelope("swb.dead-code-scan/1", envelope) == []
 
 
 def test_candidate_list_non_dict_entry_rejected():

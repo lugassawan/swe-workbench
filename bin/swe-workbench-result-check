@@ -150,6 +150,9 @@ REGISTRY: dict[str, dict[str, str]] = {
         "candidate_count": "int",
         "safe_keep_count": "int",
         "justified_count": "int",
+        "scope": "str",
+        "scoped_paths": "int",
+        "watched_symbols": "int",
         "candidates": "list[candidate]",
     },
     "swb.issue-preflight/1": {
