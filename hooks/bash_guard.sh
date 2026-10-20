@@ -6,7 +6,8 @@
 #   - git push --force / -f to main/master/release/*
 #   - a force push with a dynamic destination or flag (an unquoted brace group included), a target
 #     in another repository (-C, --git-dir, --work-tree), nesting too deep to scan, or a command
-#     over 64 KB that spells one literally, on any branch. The exception: a word that is exactly
+#     over 64 KB that spells one literally or through a brace group or substitution, on any
+#     branch. The exception: a word that is exactly
 #     `$(git branch --show-current)` (or the rev-parse / symbolic-ref spelling) is the current
 #     branch, so it blocks only on a protected one
 #   - a push, `git reset --hard` or `pi` check whose awk or tr preprocessing fails: blocked, never skipped (an
@@ -46,18 +47,32 @@
 # detectors (`rm -rf {/,}`); bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
 # or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
 # bash 4 and later.
-# Also accepted: a substitution is only read as the force flag when it is the first positional
-# (`git push origin $(echo --force)` passes), and a substitution flag next to a substitution
-# destination (`git push $(echo --force) origin $(echo main)`) passes too; a heredoc assigned to a
-# variable and run later (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`) is data; the current-branch
-# query is assumed to run where the push does, so `cd other &&`, an earlier `git checkout` or
-# `switch`, and `GIT_DIR=other` prefixes are not followed; a command word spelled by a brace group
-# or substitution (`{git,} push -f origin main`) is not recognised; an odd quote inside a heredoc
-# body desyncs the comment stripper, and a bare-delimiter `cat <<EOF` heredoc inside `$(` is
-# lexed as code, so a lone quote in its text can hide a later push.
+# Also accepted, each because the text holds no value to judge (the cost is a push the guard
+# does not see):
+#   - a substitution is read as the force flag only as the first positional or beside a literal
+#     protected ref: `git push origin $(echo --force)` and a substitution flag next to a
+#     substitution destination (`git push $(echo --force) origin $(echo main)`) pass, because
+#     blocking every computed destination would block ordinary pushes
+#   - values that are never resolved: a heredoc assigned to a variable and run later
+#     (`X="$(cat <<'EOT' ... EOT)"; eval "$X"`), parameter expansions (`B=main; git push -f origin
+#     $B`, `${B:-main}`), and a subcommand spelled by a substitution (`git $(echo push) -f ...`)
+#   - the current-branch query is assumed to run where the push does, so `cd other &&`, an earlier
+#     `git checkout` or `switch`, and `GIT_DIR=other` are not followed (the hook payload carries no
+#     cwd after a cd)
+#   - a command word spelled by a brace group or substitution (`{git,} push -f origin main`)
+#   - an odd quote inside a heredoc body desyncs the comment stripper, and a bare-delimiter
+#     `cat <<EOF` heredoc inside `$(` is lexed as code, so a lone apostrophe in its text can hide a
+#     later push (`git commit -m "$(cat <<EOF ... Don't ... EOF)" && git push -f origin main`):
+#     both predate the push scan; the quoted-delimiter and top-level forms are handled
+#   - a command with many `$(...)`: each costs an awk process (about 40 ms), so a few hundred can
+#     outlast the hook timeout; the 64 KB cap bounds size, not time
 # Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
 # non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
-# substitution; `ssh host echo "…git push -f…"` and other wrapper argument text is code.
+# substitution; a brace group after a protected ref (`git push origin main {a,b}`) may be the force
+# flag; `ssh host echo "…git push -f…"` and other wrapper argument text is code; a `cat <<'EOT'`
+# body inside a compound or nested substitution (`$(true; cat <<'EOT' ...)`) is scanned as code;
+# over 64 KB, a `git ... push` carrying a brace group, `$` or a backtick blocks, and so does any
+# command holding both a `pi` token and a `-p`/`--print` token (no segmenter runs).
 #
 # Reset-only gaps (the text scan cannot see these; the old whole-text grep caught some of them):
 #   - code assembled from data: `echo 'git reset --hard' | bash`, `source <(echo '...')`,
@@ -404,10 +419,12 @@ _push_token_awk='
           sc = substr(line, i, 1)
           if (sc == "\n") {
             sc = ";"
-            # the output of cat is data only when nothing follows the delimiter (a pipe makes it code)
-            # and `cat <<` is the whole outermost substitution (a nested `$(cat ...)` is a command word
-            # whose output runs, and text before it is a command of its own), not text inside a quoted word
-            if (!sub_sq && !sub_dq && sub_depth == 1 && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /^[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
+            # a quoted-delimiter `cat <<` heredoc body is skipped wherever the command sits, so its quotes
+            # cannot desync the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<`
+            # is real syntax at command position, not text inside a quoted word. Only when `cat` is the
+            # whole outermost substitution is the body data of its word; in a compound or nested one the
+            # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code.
+            if (!sub_sq && !sub_dq && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
               match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/)
               hd = substr(subtext, RSTART, RLENGTH)
               if (match(hd, /[\047"][A-Za-z_][A-Za-z0-9_]*[\047"]/)) {
@@ -426,8 +443,9 @@ _push_token_awk='
                 if (found) {
                   hbody = substr(line, bstart, pos - bstart)
                   gsub(/\n/, "\001", hbody)
-                  # the word index tells the caller whether this word is code (a redirect target never is)
-                  print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
+                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) print "NEST\t" hbody
+                  else if (redirect_target && here_string) print "HERE\t" hbody
+                  else print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
                   i = pos + length(ltxt) - 1
                 }
               }
@@ -546,6 +564,12 @@ _is_git_continuation() {
     symbolic-ref|tag|update-ref|var|version|worktree) return 0 ;;
   esac
   return 1
+}
+
+# A push that a substitution may have turned into a force push: the current branch decides it,
+# unless another repository was selected (-C, --git-dir, --work-tree), whose branch is unknown.
+_emit_current_maybe() {
+  if (( $1 )); then printf 'BLOCK\tcontext-destination\n'; else printf 'CHECK_CURRENT_MAYBE\n'; fi
 }
 
 _is_shell_interpreter() {
@@ -745,14 +769,14 @@ _classify_force_push_segment() {
     if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
       _has_force=1
     elif (( _glued_flag_candidate && ! _has_refspec )); then
-      printf 'CHECK_CURRENT_MAYBE\n'
+      _emit_current_maybe "$_has_context"
       return
     fi
   fi
   # A bare substitution first may itself be the force flag; with the destination implicit
   # (at most one literal positional after it) only the current branch is at stake.
   if (( ! _has_force && _first_positional_dynamic && _positional_count <= 2 && ! _has_colon_refspec )); then
-    printf 'CHECK_CURRENT_MAYBE\n'
+    _emit_current_maybe "$_has_context"
     return
   fi
   (( _has_force )) || return
@@ -1126,6 +1150,10 @@ scan_git_text() {
     if printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
       'git([[:space:]].*)?[[:space:]]push([[:space:]].*)?[[:space:]](--force|--m(i(r(r(or?)?)?)?)?|-[[:alnum:]]*f[[:alnum:]]*|\+[^[:space:]]+)([[:space:];&|()`,]|$)'; then
       printf 'BLOCK\t%s\n' "$_limit_reason"
+    elif (( _oversize )) && printf '%s\n' "$_scan_text" | LC_ALL=C grep -Eq \
+      'git[[:space:]]([^;&|]*[[:space:]])?push[^;&|]*[{$`]'; then
+      # no lexer ran, so a push whose words are spelled by a brace group or substitution cannot be read
+      printf 'BLOCK\t%s\n' "$_limit_reason"
     elif printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
       'git([[:space:]].*)?[[:space:]]reset([[:space:]].*)?[[:space:]]--ha(rd?)?([[:space:];&|()`,]|$)'; then
       printf 'BLOCK\t%s-reset\n' "$_limit_reason"
@@ -1326,6 +1354,10 @@ while IFS=$'\t' read -r _policy _reason; do
           echo "BLOCKED: this may be a force push of current protected branch '$branch' (a substitution can spell the force flag; spell it literally or use --force-with-lease)" >&2
           exit 2
           ;;
+        '')
+          echo 'BLOCKED: unable to resolve branch for a push whose force flag a substitution may spell' >&2
+          exit 2
+          ;;
       esac
       ;;
     CHECK_CURRENT)
@@ -1377,9 +1409,15 @@ case "$norm" in
     else
       pi_seg=$(printf '%s' "$_bj" | LC_ALL=C awk "$_segment_awk") || _fail_closed awk
     fi
-    if printf '%s\n' "$pi_seg" | grep -iE '(^|[[:space:]])([^[:space:]]*/)?pi[[:space:]]' \
-       | grep -Eq '(^|[[:space:]])(-p|--print)([[:space:]]|=|$)'; then
-      echo 'BLOCKED: nested non-interactive pi session (subagent recursion guard)' >&2
+    # Byte-wise matching: the patterns are ASCII, and a case-insensitive multibyte grep over a
+    # 64 KB+ line is several times slower on GNU grep.
+    if printf '%s\n' "$pi_seg" | LC_ALL=C grep -iE '(^|[[:space:]])([^[:space:]]*/)?pi[[:space:]]' \
+       | LC_ALL=C grep -Eq '(^|[[:space:]])(-p|--print)([[:space:]]|=|$)'; then
+      if (( _oversize )); then
+        echo 'BLOCKED: command over 64 KB mentions pi and -p/--print, which cannot be told apart from a nested pi session without the segmenter; split the command' >&2
+      else
+        echo 'BLOCKED: nested non-interactive pi session (subagent recursion guard)' >&2
+      fi
       exit 2
     fi
     ;;

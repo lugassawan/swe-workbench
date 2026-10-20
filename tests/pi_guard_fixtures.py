@@ -211,6 +211,24 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("$(git branch --show-current) git push -f origin main", True),
     # A word after git is never a shell interpreter, even `.`.
     ("git commit . -m \"$(cat <<'EOT'\nnever run git push --force origin main\nEOT\n)\"", False),
+    # A here-string is the script a shell reads, so a `$(cat <<'EOF' ...)` inside it is code;
+    # fed to `cat` it is data.
+    ("ssh host bash -s <<< \"$(cat <<'EOF'\ncd repo && git push --force origin main\nEOF\n)\"", True),
+    ("bash <<< \"$(cat <<'EOF'\ngit push --force origin main\nEOF\n)\"", True),
+    ("sudo -u deploy bash <<< \"$(cat <<'EOF'\ngit push --force origin main\nEOF\n)\"", True),
+    ("source /dev/stdin <<< \"$(cat <<'EOF'\ngit push --force origin main\nEOF\n)\"", True),
+    ("cat <<< \"$(cat <<'EOT'\ngit push --force origin main\nEOT\n)\"", False),
+    # A quoted heredoc body in a compound or nested substitution is skipped like any other, so
+    # its apostrophe cannot swallow the push after it; the body itself is scanned as code there.
+    ("echo $(true; cat <<'EOT'\nit's\nEOT\n); git push -f origin main", True),
+    ("echo $(true && cat <<'EOT'\nit's\nEOT\n); git push -f origin main", True),
+    ("echo $(\ncat <<'EOT'\nit's\nEOT\n); git push -f origin main", True),
+    ("echo $(echo $(cat <<'EOT'\nit's\nEOT\n)); git push -f origin main", True),
+    # A substitution flag with another repository selected cannot be attributed to the current branch.
+    ("git -C ../other-repo push $(echo --force) origin", True),
+    ("git --git-dir=../other/.git push $(echo --force) origin", True),
+    # Brace groups after a protected ref read as a possible force flag (a known over-block).
+    ("git push origin main {a,b}", True),
     # Push state must not leak between segments: the second push is judged on its own.
     ("git push $(echo x) ; git push --force origin main", True),
     # Quoted text that is data stays allowed.

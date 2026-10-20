@@ -2504,6 +2504,9 @@ class TestDifferentialFixtures:
 # ──────────────────────────────────────────────
 
 _OVERSIZE_FILLER = "a" * 200_000
+# The quadratic path this cap replaced needed 5-10 s for the same input; a shared CI runner can
+# be several times slower than a laptop, so the bound sits between the two.
+_OVERSIZE_BUDGET_S = 3
 
 
 @pytest.fixture
@@ -2538,6 +2541,58 @@ class TestScanToolFailure:
         )
 
 
+@pytest.fixture
+def failing_awk_path(tmp_path):
+    """A PATH whose awk exits 1 for any program text containing $SWB_FAIL_AWK_MARKER, else runs the real one."""
+    shim = tmp_path / "failing-awk-bin"
+    shim.mkdir()
+    for tool in ("jq", "tr", "grep", "git", "bash", "env", "cat"):
+        (shim / tool).symlink_to(shutil.which(tool))
+    awk = shim / "awk"
+    awk.write_text(
+        "#!/bin/sh\n"
+        'for program; do :; done\n'
+        'case "$program" in *"$SWB_FAIL_AWK_MARKER"*) exit 1 ;; esac\n'
+        f'exec "{shutil.which("awk")}" "$@"\n'
+    )
+    awk.chmod(0o755)
+    return str(shim)
+
+
+class TestEachPreprocessingStageFailsClosed:
+    # (stage, text only that stage's awk program contains, a command that reaches the stage)
+    @pytest.mark.parametrize("marker,cmd", [
+        ("substr(line, i-1, 1) ~", "ls"),
+        ("nb % 2 == 1", "ls"),
+        ("function brace_group_end", "git status"),
+        ('printf "%s ", out', "pi list"),
+    ], ids=["comment-stripper", "backslash-join", "push-lexer", "pi-segmenter"])
+    def test_a_failing_stage_blocks(self, guard_script, failing_awk_path, marker, cmd):
+        result = run_guard(
+            guard_script, cmd, env={"PATH": failing_awk_path, "SWB_FAIL_AWK_MARKER": marker}
+        )
+        assert result.returncode == 2 and "BLOCKED" in result.stderr, (
+            f"expected BLOCKED when only the {marker!r} stage fails, got exit "
+            f"{result.returncode}: {result.stderr!r}"
+        )
+
+    def test_the_shim_passes_other_programs_through(self, guard_script, failing_awk_path):
+        result = run_guard(
+            guard_script, "ls", env={"PATH": failing_awk_path, "SWB_FAIL_AWK_MARKER": "no such text"}
+        )
+        assert result.returncode == 0, result.stderr
+
+
+class TestSubstitutionForceFlagWithoutABranch:
+    def test_outside_a_repository_it_blocks(self, guard_script, tmp_path):
+        result = run_guard(guard_script, "git push $(echo --force) origin", cwd=str(tmp_path))
+        assert result.returncode == 2 and "BLOCKED" in result.stderr, result.stderr
+
+    def test_a_plain_push_outside_a_repository_stays_allowed(self, guard_script, tmp_path):
+        result = run_guard(guard_script, "git push origin feature/x", cwd=str(tmp_path))
+        assert result.returncode == 0, result.stderr
+
+
 class TestBraceRun:
     @pytest.mark.parametrize("count", [4000, 8000])
     def test_a_run_of_open_braces_stays_linear(self, guard_script, count):
@@ -2557,12 +2612,12 @@ class TestOversizeCommand:
     def test_oversize_benign_command_is_allowed_quickly(self, guard_script):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}")
         assert result.returncode == 0 and result.stderr == ""
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     def test_oversize_command_with_unrelated_git_is_allowed(self, guard_script):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; git status")
         assert result.returncode == 0 and result.stderr == ""
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     @pytest.mark.parametrize("tail", [
         "git push --force origin main",
@@ -2572,19 +2627,29 @@ class TestOversizeCommand:
         "git push --mirro origin",
         "git push --m origin",
         "git push -f origin :",
+        # no lexer runs over the cap, so a push spelled by a brace group or substitution blocks
+        "git push {,-f} origin main",
+        "git push -{,f} origin main",
+        "git push --{,force} origin main",
+        "git push origin {,+}main",
+        "git push --force$(true) origin main",
+        "git push -$(echo f) origin main",
+        "git push $(echo -)f origin main",
+        "git push -f$X origin main",
+        "git push `echo --force` origin main",
     ])
     def test_oversize_force_push_blocks_on_any_branch(self, guard_script, tail):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
         assert result.returncode == 2 and "BLOCKED" in result.stderr
         assert "too large" in result.stderr
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     @pytest.mark.parametrize("tail", ["git reset --hard", "git reset {--hard,} HEAD~1"])
     def test_oversize_hard_reset_blocks_on_any_branch(self, guard_script, tail):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
         assert result.returncode == 2 and "BLOCKED" in result.stderr
         assert "too large" in result.stderr
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     @pytest.mark.parametrize("tail", ["git reset --soft HEAD~1", "git status"])
     def test_oversize_non_hard_reset_is_allowed(self, guard_script, tail):
@@ -2594,13 +2659,13 @@ class TestOversizeCommand:
     def test_oversize_rm_is_still_blocked(self, guard_script):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; rm -rf /")
         assert result.returncode == 2 and "BLOCKED" in result.stderr
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     @pytest.mark.parametrize("tail", ["pi -p x", "pi --print x"])
     def test_oversize_pi_print_is_blocked(self, guard_script, tail):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
         assert result.returncode == 2 and "BLOCKED" in result.stderr
-        assert elapsed < 2, f"oversize command took {elapsed:.2f}s"
+        assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
     def test_command_under_the_cap_still_uses_the_exact_scan(self, guard_script):
         # 60 KB stays below the cap, so the full lexer decides and a feature-branch force push passes.

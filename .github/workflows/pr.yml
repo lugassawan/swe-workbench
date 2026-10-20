@@ -214,7 +214,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends mawk
           mkdir -p "$RUNNER_TEMP/mawk-bin"
           ln -sf "$(command -v mawk)" "$RUNNER_TEMP/mawk-bin/awk"
-          PATH="$RUNNER_TEMP/mawk-bin:$PATH" pytest tests/test_hooks.py -v
+          PATH="$RUNNER_TEMP/mawk-bin:$PATH" pytest tests/test_hooks.py -v \
+            -k "Differential or Oversize or ScanToolFailure or EachPreprocessing or BraceRun or AwkImplementation"
         env:
           SWB_REQUIRE_MAWK: '1'
 
