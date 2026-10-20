@@ -21,7 +21,11 @@
 #     Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
 #     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare, --recurse-submodules,
 #     and an earlier step of the same command that may have changed the repository (run it as its own
-#     command first). Quoted text such as `echo 'git reset --hard'` is data and is not judged, and
+#     command first). The exception is a plain `git branch <name>` (or `switch -c` /
+#     `checkout -b`) at HEAD earlier in the same `&&` chain and repository: it keeps the
+#     commits, so only the uncommitted and untracked checks apply, while no branch of that name
+#     exists yet and nothing after the reset may change the repository. Quoted text such as
+#     `echo 'git reset --hard'` is data and is not judged, and
 #     neither is code assembled from data (see the reset-only gaps below). A reset that is
 #     nested too deep to scan, or sits in a command over 64 KB, blocks on any branch.
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
@@ -83,9 +87,10 @@
 #   - somewhere other than the session cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
 #     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
 #     in the hook's own environment; git aliases, including `-c alias.x=...`.
-#   - state the verdict cannot credit or see: a `git branch keep` earlier in the same command; a fetch
-#     before the reset (judged against the refs as they were); a switch to a remote-tracking name
-#     (`git checkout -b x origin/main`); edits to an `--assume-unchanged` file.
+#   - state the verdict cannot credit or see: a fetch before the reset (judged against the refs
+#     as they were); a switch to a remote-tracking name (`git checkout -b x origin/main`);
+#     edits to an `--assume-unchanged` file; a later step deleting a branch the loss check
+#     counted on (`git reset --hard X && git branch -D feature`, only `feature` holding them).
 #   - over-blocks, on purpose: the dirty check is stat-based, so touched-but-unchanged files block
 #     (run `git status` and retry); the subcommand is the first word after git's global options, but
 #     an unknown option or an expansion before it, or a subcommand that runs the rest of its words
@@ -303,16 +308,20 @@ _seg_token_awk='
     }
     return (expands && lim < n) ? lim : 0
   }
-  function emit_separator() {
+  # SEP carries the separator kind a consumer needs: AND for `&&`, LIST for `;` and a newline
+  # (they start a new list); any other separator is a bare SEP
+  function emit_separator(kind) {
     emit_word()
     redirect_target = 0; here_string = 0; wcount = 0
-    print "SEP"
+    print (kind == "" ? "SEP" : "SEP\t" kind)
   }
   function begin_redirect() {
     if (word_started && word ~ /^[0-9]*$/) {
       word = ""; word_started = 0
     } else emit_word()
     redirect_target = 1
+    # the segment writes or reads a file: it is not a plain git call
+    print "REDIR"
   }
   BEGIN { in_sq = 0; in_dq = 0; escaped = 0; word = ""; word_started = 0; cur_branch = 0; wcount = 0; arith = 0; pe = 0; redirect_target = 0; here_string = 0; hd_nl = 0; hd_to = 0 }
   { buf = (NR == 1) ? $0 : buf "\n" $0 }
@@ -329,7 +338,7 @@ _seg_token_awk='
       if (c == "\n") {
         escaped = 0
         if (in_sq || in_dq) { word = word "\001"; word_started = 1 } else {
-          emit_separator()
+          emit_separator("LIST")
           if (hd_nl > 0 && i == hd_nl) { i = hd_to; hd_nl = 0 }
         }
         continue
@@ -517,8 +526,15 @@ _seg_token_awk='
       # `<<` is a shift, not a heredoc, inside (( )) and ${ }
       if (c == "(") { if (arith > 0 || substr(line, i + 1, 1) == "(") arith++ }
       else if (c == ")" && arith > 0) arith--
+      if (c == "&" && substr(line, i + 1, 1) == "&") {
+        emit_separator("AND")
+        i++
+        # a newline after `&&` continues the list (a heredoc body never starts here)
+        while (i + 1 <= n && i + 1 != hd_nl && substr(line, i + 1, 1) ~ /[ \n]/) i++
+        continue
+      }
       if (c ~ /[;|&()]/) {
-        emit_separator()
+        emit_separator(c == ";" ? "LIST" : "")
         continue
       }
       if (c == "{" && substr(word, length(word), 1) == "$") pe++
@@ -544,6 +560,8 @@ _seg_subs=()
 _seg_subhere_idx=()
 _seg_subhere_body=()
 _seg_saw_tab=0
+# Set when the segment redirects its input or output.
+_seg_redir=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
 # Stands for a word that is exactly a query for the current branch name.
 _CURRENT_BRANCH_TOKEN=__SWB_CURRENT_BRANCH__
@@ -894,6 +912,66 @@ _git_prior_mutation=0
 # Set when an earlier segment may have switched to a protected branch, so the branch read at hook
 # time is not the one the reset will run on.
 _git_prior_switch=0
+# Branches created at HEAD earlier in the current `&&` chain of the top-level text, each with
+# the context it ran in (joined by \x1f). They are not a mutation: a reset later in the same
+# chain and context has its commits kept by them (see _credit_branch_segment).
+_credit_names=()
+_credit_ctx=()
+# CHECK_RESET records emitted with credits; a mutation after one emits POST_MUTATION.
+_credited_resets=0
+
+# A segment that is exactly `git [ctx] branch [-q] <name> [HEAD]`, `git [ctx] switch [-q] -c
+# <name> [HEAD]` or `git [ctx] checkout [-q] -b <name> [HEAD]`, at the top level and
+# preceded only by `&&` in its list, records a credit instead of a mutation: the new branch
+# sits at HEAD. Anything the scan cannot read plainly (a prefix word, -c, a redirect, a
+# substitution, a name that is not literal) is no credit. Returns 1 when the segment is not one.
+_credit_branch_segment() {
+  local _i _n=${#_seg_tokens[@]} _name _c _ctxj="" _sep=$'\x1f'
+  (( _scan_depth == 0 && ! _NESTED_WRAPPER_BODY && _chain_and )) || return 1
+  (( ! _seg_saw_tab && ! _seg_redir && ! ${#_seg_subs[@]} )) || return 1
+  (( ! ${#_seg_here[@]} && ! ${#_seg_subhere_body[@]} )) || return 1
+  _parse_git_invocation "" || return 1
+  (( _git_index == 0 && _git_subcmd_index > 0 )) || return 1
+  (( ! _git_has_cfg && ! _git_env_ctx && ! _git_via_runner )) || return 1
+  (( ! _git_ctx_dynamic )) || return 1
+  # only -C/--git-dir/--work-tree between `git` and the subcommand
+  for ((_i = _git_index + 1; _i < _git_subcmd_index; _i++)); do
+    case "${_seg_tokens[_i]}" in
+      -C|--git-dir|--work-tree) _i=$((_i + 1)) ;;
+      -C?*|--git-dir=*|--work-tree=*) ;;
+      *) return 1 ;;
+    esac
+  done
+  for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do
+    [[ "$_c" == *[[:cntrl:]]* || "$_c" == *'$'* ]] && return 1
+    [[ "$_c" == *"$_CURRENT_BRANCH_TOKEN"* ]] && return 1
+    _ctxj="$_ctxj${_ctxj:+$_sep}$_c"
+  done
+  _i=$((_git_subcmd_index + 1))
+  case "${_seg_tokens[_i]-}" in -q|--quiet) _i=$((_i + 1)) ;; esac
+  case "$_git_subcmd" in
+    branch) ;;
+    switch) [[ "${_seg_tokens[_i]-}" == -c ]] || return 1; _i=$((_i + 1)) ;;
+    checkout) [[ "${_seg_tokens[_i]-}" == -b ]] || return 1; _i=$((_i + 1)) ;;
+    *) return 1 ;;
+  esac
+  _name=${_seg_tokens[_i]-}
+  _i=$((_i + 1))
+  # a literal name: no expansion, glob, quote residue or control character can hide in it
+  # (a class, not a range: a range follows the locale's collation order)
+  [[ -n "$_name" && "$_name" != -* && "$_name" != HEAD ]] || return 1
+  [[ "$_name" != *[![:alnum:]._/-]* ]] || return 1
+  [[ "$_name" != *"$_DYNAMIC_TOKEN"* && "$_name" != *"$_CURRENT_BRANCH_TOKEN"* ]] \
+    || return 1
+  if (( _i < _n )); then
+    [[ "${_seg_tokens[_i]}" == HEAD ]] || return 1
+    _i=$((_i + 1))
+  fi
+  (( _i == _n )) || return 1
+  _credit_names+=("$_name")
+  _credit_ctx+=("$_ctxj")
+  return 0
+}
 
 _git_switch_token_risky() {
   case "$1" in
@@ -904,11 +982,12 @@ _git_switch_token_risky() {
 }
 
 # Scanner half of the hard-reset check (no I/O): BLOCK for input that cannot be resolved, or
-# CHECK_RESET <seq> <submodules> <dynamic-target> <target> <context joined by \x1f> for
-# _reset_verdict to judge against the real repository.
+# CHECK_RESET <seq> <submodules> <dynamic-target> <target> C<credited names joined by \x1f>
+# <context joined by \x1f> for _reset_verdict to judge against the real repository.
 _classify_reset_segment() {
   local _i _t _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0 _eoo=0
   local _joined="" _c _n=0 _sep=$'\x1f' _has_gd=0 _has_wt=0 _seqv=$_git_prior_mutation
+  local _cred=""
   (( _git_prior_switch )) && _seqv=2
 
   _parse_git_invocation reset || return
@@ -969,14 +1048,29 @@ _classify_reset_segment() {
     _n=$((_n + 1))
   done
   for _c in ${_git_ctx[@]+"${_git_ctx[@]}"}; do _joined="$_joined${_joined:+$_sep}$_c"; done
-  printf 'CHECK_RESET\t%s\t%s\t%s\t%s\t%s\n' "$_seqv" "$_submod" "$_dyn" "$_target" "$_joined"
+  # a credit counts for a top-level reset in the same context; a branch made elsewhere, or a
+  # reset in nested text, leaves it a mutation
+  for ((_n = 0; _n < ${#_credit_names[@]}; _n++)); do
+    if (( _scan_depth == 0 && ! _NESTED_WRAPPER_BODY )) \
+        && [[ "${_credit_ctx[_n]}" == "$_joined" ]]; then
+      _cred="$_cred${_cred:+$_sep}${_credit_names[_n]}"
+    elif (( ! _seqv )); then
+      _seqv=1
+    fi
+  done
+  [[ -z "$_cred" ]] || _credited_resets=$((_credited_resets + 1))
+  # the credits field opens with C so an empty one keeps its place among the tab-split fields
+  printf 'CHECK_RESET\t%s\t%s\t%s\t%s\tC%s\t%s\n' "$_seqv" "$_submod" "$_dyn" "$_target" \
+    "$_cred" "$_joined"
 }
 
 # The segment mutates the repository unless it is a git call that only reads. A fetch that can
 # prune or force-update refs, a remote edit, config handed in with -c, and output redirected to a
 # file are not reads: the reset after them is judged against refs that no longer exist.
+# $1 is how many credited resets came before this segment: a mutation after one may remove
+# what its credits relied on (`git branch -D keep`), so it emits POST_MUTATION.
 _note_segment_effect() {
-  local _i _t _ro=0
+  local _i _t _ro=0 _before=${1:-0}
   (( ${#_seg_tokens[@]} )) || return 0
   if _parse_git_invocation ""; then
     case "$_git_subcmd" in
@@ -1002,21 +1096,24 @@ _note_segment_effect() {
     done
   fi
   (( _ro )) && return 0
+  _credit_branch_segment && return 0
   _git_prior_mutation=1
+  (( _before == 0 )) || printf 'POST_MUTATION\n'
 }
 
 # One segment, classified in the order its commands run. `find -exec A ; -exec B` runs A and then
 # B, so each part sees what the parts before it did (the leading `find` itself reads only).
 _classify_segment() {
   local -a _all=(${_seg_tokens[@]+"${_seg_tokens[@]}"})
-  local _n=${#_all[@]} _i _start=0 _split=0
+  local _n=${#_all[@]} _i _start=0 _split=0 _before=$_credited_resets
   for ((_i = 1; _i < _n; _i++)); do
     case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) _split=1 ;; esac
   done
   if (( ! _split )); then
     _classify_force_push_segment
     _classify_reset_segment
-    _note_segment_effect
+    # the reset's own segment is not "after" it
+    _note_segment_effect "$_before"
     return
   fi
   for ((_i = 1; _i <= _n; _i++)); do
@@ -1024,9 +1121,10 @@ _classify_segment() {
       case "${_all[_i]}" in -exec|-execdir|-ok|-okdir) ;; *) continue ;; esac
     fi
     _seg_tokens=("${_all[@]:_start:_i - _start}")
+    _before=$_credited_resets
     _classify_force_push_segment
     _classify_reset_segment
-    (( _start == 0 )) || _note_segment_effect
+    (( _start == 0 )) || _note_segment_effect "$_before"
     _start=$_i
   done
   _seg_tokens=("${_all[@]}")
@@ -1045,7 +1143,7 @@ _scan_nested_text() {
   local -a _saved_subs=(${_seg_subs[@]+"${_seg_subs[@]}"})
   local -a _saved_subhere_idx=(${_seg_subhere_idx[@]+"${_seg_subhere_idx[@]}"})
   local -a _saved_subhere_body=(${_seg_subhere_body[@]+"${_seg_subhere_body[@]}"})
-  local _saved_saw_tab=$_seg_saw_tab
+  local _saved_saw_tab=$_seg_saw_tab _saved_redir=$_seg_redir
   scan_git_text "$_nested_text" "$((_nested_depth + 1))"
   _seg_tokens=(${_saved_tokens[@]+"${_saved_tokens[@]}"})
   _seg_here=(${_saved_here[@]+"${_saved_here[@]}"})
@@ -1053,6 +1151,7 @@ _scan_nested_text() {
   _seg_subhere_idx=(${_saved_subhere_idx[@]+"${_saved_subhere_idx[@]}"})
   _seg_subhere_body=(${_saved_subhere_body[@]+"${_saved_subhere_body[@]}"})
   _seg_saw_tab=$_saved_saw_tab
+  _seg_redir=$_saved_redir
 }
 
 # A word holding whitespace or a quoted newline is a candidate command string.
@@ -1255,6 +1354,9 @@ scan_git_text() {
   _seg_subhere_idx=()
   _seg_subhere_body=()
   _seg_saw_tab=0
+  _seg_redir=0
+  # Every separator since this list began (the text, or after `;` or a newline) was `&&`.
+  local _chain_and=1
   while IFS=$'\t' read -r _kind _value; do
     case "$_kind" in
       WORD) _seg_tokens+=("$_value") ;;
@@ -1267,6 +1369,7 @@ scan_git_text() {
         _seg_subhere_idx+=("${_value%%:*}")
         _seg_subhere_body+=("${_value#*:}") ;;
       TAB) _seg_saw_tab=1 ;;
+      REDIR) _seg_redir=1 ;;
       EOS) _lex_ok=1 ;;
       SEP)
         _scan_known_wrapper_body "$_scan_depth"
@@ -1277,6 +1380,17 @@ scan_git_text() {
         _seg_subhere_idx=()
         _seg_subhere_body=()
         _seg_saw_tab=0
+        _seg_redir=0
+        if [[ "$_value" != AND ]]; then
+          # past another separator a later reset can run without the branch: a mutation again
+          if (( _scan_depth == 0 && ${#_credit_names[@]} )); then
+            _git_prior_mutation=1
+            _credit_names=()
+            _credit_ctx=()
+          fi
+          _chain_and=0
+          [[ "$_value" == LIST ]] && _chain_and=1
+        fi
         ;;
     esac
   done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" "$_seg_token_awk")
@@ -1387,10 +1501,11 @@ _reset_data_loss() {
   exit 2
 }
 
-# Args: seq (0|1), submodules (0|1), dynamic target (0|1), target, context joined by \x1f.
+# Args: seq (0|1|2), submodules (0|1), dynamic target (0|1), target, context joined by \x1f,
+# branch names created at HEAD earlier in the same `&&` chain, joined by \x1f.
 _reset_verdict() {
-  local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5
-  local -a _rctx=() _filter_off=()
+  local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5 _credits=${6-}
+  local -a _rctx=() _filter_off=() _cnames=()
   local _i _v _k _d _p _rc _branch _sha _top
   local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref; quote a target that contains { }, e.g. '"'"'@{u}'"'"')'
   local _dirty='uncommitted changes (run `git status` first; stat-only differences also count)'
@@ -1474,6 +1589,27 @@ _reset_verdict() {
     done
   done < <(_rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" --)
 
+  # A branch the command creates first sits at HEAD and keeps every commit the reset drops,
+  # but only if `git branch` can create it: a valid name that no branch holds yet.
+  if [[ -n "$_credits" ]]; then
+    IFS=$'\x1f' read -r -a _cnames <<< "$_credits"
+    for _k in ${_cnames[@]+"${_cnames[@]}"}; do
+      _p="on protected branch '$_branch' counts on branch '$_k' created earlier in this command"
+      _rgit check-ref-format --branch "$_k" >/dev/null \
+        || _reset_block "$_p, but '$_k' is not a valid branch name, so it keeps nothing;"\
+' create the branch as its own command first, then reset'
+      _rc=0
+      _rgit rev-parse --verify -q "refs/heads/$_k" >/dev/null || _rc=$?
+      if (( _rc == 0 )); then
+        _reset_block "$_p, but '$_k' already exists, so it is not created at HEAD and"\
+' nothing may keep the commits the reset drops; pick a new name, or create the branch as'\
+' its own command first, then reset'
+      fi
+      (( _rc == 1 )) || _reset_block "$_unresolved"
+    done
+    return 0
+  fi
+
   _rc=0
   _v=$(_rgit rev-list --max-count=1 HEAD --not "$_sha" --exclude="$_branch" --branches --remotes --tags) || _rc=$?
   (( _rc == 0 )) || _reset_block "$_unresolved"
@@ -1487,15 +1623,20 @@ _reset_verdict() {
 # USR2 tells the hook the scan is done, so a timeout can say which half ran out of time.
 _scan_and_judge() {
   local -a _records=()
-  local _line _policy _reason _rseq _rsub _rdyn _rtarget _rctx
+  local _line _policy _reason _rseq _rsub _rdyn _rtarget _rcred _rctx _i _last_post=-1
   while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj" "$(( _oversize ? MAX_GIT_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
   kill -USR2 $$
   if (( ! ${#_records[@]} )) || [[ "${_records[${#_records[@]} - 1]}" != DONE ]]; then
     echo 'BLOCKED: git command scan did not complete (internal error)' >&2
     exit 2
   fi
-  for _line in "${_records[@]}"; do
-    IFS=$'\t' read -r _policy _reason <<< "$_line"
+  # POST_MUTATION voids the credits of every CHECK_RESET before it: that reset then gets the
+  # full loss check, with no branch from earlier in the command counted
+  for ((_i = 0; _i < ${#_records[@]}; _i++)); do
+    [[ "${_records[_i]}" == POST_MUTATION ]] && _last_post=$_i
+  done
+  for ((_i = 0; _i < ${#_records[@]}; _i++)); do
+    IFS=$'\t' read -r _policy _reason <<< "${_records[_i]}"
     _judge_record
   done
   exit 0
@@ -1523,8 +1664,10 @@ _judge_record() {
       exit 2
       ;;
     CHECK_RESET)
-      IFS=$'\t' read -r _rseq _rsub _rdyn _rtarget _rctx <<< "$_reason"
-      _reset_verdict "$_rseq" "$_rsub" "$_rdyn" "$_rtarget" "${_rctx-}"
+      IFS=$'\t' read -r _rseq _rsub _rdyn _rtarget _rcred _rctx <<< "$_reason"
+      _rcred=${_rcred#C}
+      (( _i > _last_post )) || _rcred=""
+      _reset_verdict "$_rseq" "$_rsub" "$_rdyn" "$_rtarget" "${_rctx-}" "$_rcred"
       ;;
     CHECK_CURRENT|CHECK_CURRENT_MAYBE)
       _push_current_verdict "$_policy" "${_reason-}"

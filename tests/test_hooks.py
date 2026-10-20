@@ -2057,6 +2057,16 @@ class TestHardResetKnownGaps:
         _dirty(repo)
         _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
 
+    def test_deleting_the_keeping_branch_after_the_reset_is_not_seen(
+        self, guard_script, synced_repo_on
+    ):
+        # the loss check credits `keep` with the commit, and the later deletion drops it
+        repo = synced_repo_on("main")
+        _commit(repo, "extra")
+        _g(repo, "branch", "keep")
+        cmd = "git reset --hard origin/main && git branch -D keep"
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
 
 class TestHardResetEarlierStepsInOneLine:
     """Whatever runs before the reset in the same command line counts, in execution order."""
@@ -2131,6 +2141,181 @@ class TestHardResetEarlierStepsInOneLine:
     def test_plain_read_only_calls_still_do_not_count(self, guard_script, kept, tmp_path, before):
         cmd = f"{before.replace('git ', f'git -C {kept} ', 1)} && git -C {kept} reset --hard HEAD~1"
         _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+
+class TestHardResetCreditsAnEarlierBranch:
+    """A branch created at HEAD earlier in the same `&&` chain keeps the commits the reset drops."""
+
+    RESET = "git reset --hard origin/main"
+
+    def test_fixture_loses_data_without_a_credit(self, guard_script, losing_repo):
+        result = run_guard(guard_script, self.RESET, cwd=str(losing_repo))
+        _blocked(result)
+        assert "commits" in result.stderr
+
+    @pytest.mark.parametrize("create", [
+        "git branch keep",
+        "git branch -q keep",
+        "git branch -q keep HEAD",
+        "git branch keep HEAD",
+        "git switch -c keep",
+        "git switch -q -c keep HEAD",
+        "git checkout -b keep",
+        "git checkout -q -b keep HEAD",
+        "git branch 'keep'",
+        "git branch feature/keep_1.x",
+    ])
+    def test_branch_created_at_head_first_is_credited(self, guard_script, losing_repo, create):
+        _allowed(run_guard(guard_script, f"{create} && {self.RESET}", cwd=str(losing_repo)))
+
+    @pytest.mark.parametrize("cmd", [
+        "git branch a && git branch b && {reset}",
+        "git status && git branch keep && {reset}",
+        "git status; git branch keep && {reset}",
+        "git status || git log -1; git branch keep && {reset}",
+        "git branch keep &&\n{reset}",
+        "{{ git branch keep && {reset}; }}",
+        "git branch keep && {reset} && git branch other",
+    ])
+    def test_credited_chains_that_still_hold(self, guard_script, losing_repo, cmd):
+        _allowed(run_guard(guard_script, cmd.format(reset=self.RESET), cwd=str(losing_repo)))
+
+    def test_matching_context_is_credited(self, guard_script, losing_repo, tmp_path):
+        cmd = f"git -C {losing_repo} branch keep && git -C {losing_repo} reset --hard origin/main"
+        _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+    @pytest.mark.parametrize("cmd", [
+        # the start point is not HEAD, or the creation can fail or be skipped before the reset
+        "git branch keep origin/main && {reset}",
+        "git branch keep ; {reset}",
+        "git branch keep || {reset}",
+        "git branch keep & {reset}",
+        "git branch keep | {reset}",
+        "true || git branch keep && {reset}",
+        "git status || git branch keep && {reset}",
+        "! git branch keep && {reset}",
+        "(git branch keep) && {reset}",
+        "{{ git branch keep; }} && {reset}",
+        "(git branch keep && {reset})",
+        "git branch keep\n{reset}",
+        # prefixes, config, wrappers and nested text are not the plain form
+        "git -c x.y=z branch keep && {reset}",
+        "X=1 git branch keep && {reset}",
+        "sudo git branch keep && {reset}",
+        "bash -c 'git branch keep' && {reset}",
+        "git branch keep && bash -c '{reset}'",
+        "git --no-pager branch keep && {reset}",
+        "git branch keep > out.txt && {reset}",
+        # other forms of `git branch`, `switch` and `checkout`
+        "git branch --force keep && {reset}",
+        "git branch -f keep && {reset}",
+        "git branch -D keep && {reset}",
+        "git branch -m keep && {reset}",
+        "git branch -c keep && {reset}",
+        "git branch --track keep && {reset}",
+        "git branch keep -q && {reset}",
+        "git branch keep HEAD x && {reset}",
+        "git branch --list && {reset}",
+        "git switch -C keep && {reset}",
+        "git checkout -B keep && {reset}",
+        "git switch keep && {reset}",
+        # names that are not literal
+        "git branch HEAD && {reset}",
+        "git branch @ && {reset}",
+        "git branch $N && {reset}",
+        "git branch \"$(echo keep)\" && {reset}",
+        "git branch k* && {reset}",
+        "git branch k{{a,b}} && {reset}",
+        "git branch k$(echo x) && {reset}",
+        "git branch k@x && {reset}",
+        # a creation or a reset inside a substitution is nested text
+        "git log -1 \"$(git branch keep)\" && {reset}",
+        "git branch keep && git log -1 \"$({reset})\"",
+        "git branch keep && git checkout main && {reset}",
+    ])
+    def test_uncredited_shapes_count_as_an_earlier_step(self, guard_script, losing_repo, cmd):
+        # the sequencing message, not a verdict on a credited name
+        result = run_guard(guard_script, cmd.format(reset=self.RESET), cwd=str(losing_repo))
+        _blocked(result)
+        assert "follows" in result.stderr and "created earlier" not in result.stderr
+
+    @pytest.mark.parametrize("cmd", [
+        "git branch keep && {reset} && git branch -D keep",
+        "git branch keep && {reset}; git branch -D keep",
+        "git branch keep && {reset} | git branch -D keep",
+        "git branch keep && {reset} && bash -c 'git branch -D keep'",
+        "git branch keep && {reset} && git pull",
+    ])
+    def test_a_mutation_after_the_reset_voids_the_credit(self, guard_script, losing_repo, cmd):
+        result = run_guard(guard_script, cmd.format(reset=self.RESET), cwd=str(losing_repo))
+        _blocked(result)
+        assert "commits" in result.stderr
+
+    def test_creation_in_another_repository_is_not_credited(
+        self, guard_script, losing_repo, tmp_path
+    ):
+        other = tmp_path / "other"
+        other.mkdir()
+        cmd = f"git -C {other} branch keep && git reset --hard origin/main"
+        _blocked(run_guard(guard_script, cmd, cwd=str(losing_repo)))
+
+    @pytest.mark.parametrize("sep", [";", "||", "|", "&", "\n"])
+    def test_creation_before_another_separator_still_counts_as_an_earlier_step(
+        self, guard_script, synced_repo_on, sep
+    ):
+        # nothing to lose here, so only the sequencing rule can block
+        repo = synced_repo_on("main")
+        result = run_guard(guard_script, f"git branch keep {sep} {self.RESET}", cwd=str(repo))
+        _blocked(result)
+        assert "follows" in result.stderr
+
+    def test_creation_in_another_repository_still_counts_as_an_earlier_step(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        # nothing to lose here, so only the sequencing rule can block
+        repo = synced_repo_on("main")
+        other = tmp_path / "other"
+        other.mkdir()
+        cmd = f"git -C {other} branch keep && git reset --hard origin/main"
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        _blocked(result)
+        assert "follows" in result.stderr
+
+    @pytest.mark.parametrize("name", ["keep", "main"])
+    def test_a_name_that_already_exists_blocks(self, guard_script, losing_repo, name):
+        _g(losing_repo, "branch", "keep", "origin/main")
+        result = run_guard(guard_script, f"git branch {name} && {self.RESET}", cwd=str(losing_repo))
+        _blocked(result)
+        assert "already exists" in result.stderr
+
+    def test_an_invalid_name_blocks(self, guard_script, losing_repo):
+        result = run_guard(guard_script, f"git branch a..b && {self.RESET}", cwd=str(losing_repo))
+        _blocked(result)
+        assert "not a valid branch name" in result.stderr
+
+    def test_dirty_tree_still_blocks_with_a_credit(self, guard_script, losing_repo):
+        for _ in range(10):
+            _dirty(losing_repo)
+            result = run_guard(
+                guard_script, f"git branch keep && {self.RESET}", cwd=str(losing_repo)
+            )
+            _blocked(result)
+            assert "uncommitted" in result.stderr
+
+    def test_untracked_overwrite_still_blocks_with_a_credit(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _commit(repo, "f.txt")
+        _g(repo, "push", "-q")
+        _g(repo, "reset", "-q", "--hard", "HEAD~1")
+        _commit(repo, "extra")
+        (repo / "f.txt").write_text("precious, never committed")
+        result = run_guard(guard_script, f"git branch keep && {self.RESET}", cwd=str(repo))
+        _blocked(result)
+        assert "untracked" in result.stderr
+
+    def test_reset_then_pull_stays_allowed_on_a_clean_branch(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, f"{self.RESET} && git pull", cwd=str(repo)))
 
 
 def _feature_repo(path):
