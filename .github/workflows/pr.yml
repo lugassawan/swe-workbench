@@ -210,6 +210,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends mawk
           mkdir -p "$RUNNER_TEMP/mawk-bin"
           ln -sf "$(command -v mawk)" "$RUNNER_TEMP/mawk-bin/awk"
