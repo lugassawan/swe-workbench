@@ -49,14 +49,16 @@
 #     in the hook's own environment; git aliases, including `-c alias.x=...`.
 #   - state the verdict cannot credit or see: a `git branch keep` earlier in the same command; a fetch
 #     before the reset (judged against the refs as they were); a switch to a remote-tracking name
-#     (`git checkout -b x origin/main`); edits to an `--assume-unchanged` file; a hostile repository
-#     config that makes git hang (a FIFO include).
+#     (`git checkout -b x origin/main`); edits to an `--assume-unchanged` file.
 #   - over-blocks, on purpose: the dirty check is stat-based, so touched-but-unchanged files block
 #     (run `git status` and retry); the subcommand matches at any argument position (`git commit -m x
 #     reset --hard`); a leading expansion or substitution in a reset argument, a `~` in a -C path and
 #     an unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed.
 # The read-only git calls in the verdict never forward the user's `-c` values and switch off
 # fsmonitor and clean/process filter drivers, because config can execute code before approval.
+# The scan and the verdicts run as one job with a 3 s budget (SWE_WORKBENCH_GUARD_GIT_BUDGET lowers
+# it, 1-3 s): a repository config that makes git hang (a FIFO include), or a command too long to
+# scan in that time, blocks the command.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
 # (quoted text is literal, substitutions are scanned); a remote literally
 # named main/master over-blocks. The push-token scan trusts a small allowlist of known
@@ -1038,6 +1040,10 @@ _reset_verdict() {
   if (( _seq == 2 )); then
     _reset_block "follows a command that may switch to a protected branch, so the branch cannot be read yet; run the switch as its own command first, then reset"
   fi
+  _rc=0
+  _v=$(_rgit config --name-only --get-regexp '^filter\..*\.(clean|process)$') || _rc=$?
+  # 1 means no driver is set; any other failure is a config git could not read, not "no filters"
+  (( _rc <= 1 )) || _reset_block "$_unresolved"
   while IFS= read -r _k; do
     case "$_k" in
       *.clean) _d=${_k%.clean} ;;
@@ -1048,7 +1054,7 @@ _reset_verdict() {
     # `-c` splits a key at its first `=`, so such a driver name could not be switched off
     if [[ "$_d" == *=* || "$_d" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
     _filter_off+=(-c "filter.$_d.clean=" -c "filter.$_d.process=" -c "filter.$_d.required=false")
-  done < <(_rgit config --name-only --get-regexp '^filter\..*\.(clean|process)$')
+  done <<< "$_v"
 
   # the full ref: `--short` prints `heads/main` when a tag named `main` exists
   _rc=0
@@ -1107,11 +1113,28 @@ _reset_verdict() {
   return 0
 }
 
-# The scanner ends with DONE; a missing sentinel means it died mid-scan, which must not read as "clean".
-_scan_done=0
-while IFS=$'\t' read -r _policy _reason; do
+# The scan reads only text and runs to completion first; the verdicts, which read the repository,
+# then judge its records in order. The scanner ends with DONE; a missing sentinel means it died
+# mid-scan, which must not read as "clean". Runs as a background job: exit 0 allows, 2 blocks.
+# USR2 tells the hook the scan is done, so a timeout can say which half ran out of time.
+_scan_and_judge() {
+  local -a _records=()
+  local _line _policy _reason _rseq _rsub _rdyn _rtarget _rctx branch
+  while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj"; printf 'DONE\n')
+  kill -USR2 $$
+  if (( ! ${#_records[@]} )) || [[ "${_records[${#_records[@]} - 1]}" != DONE ]]; then
+    echo 'BLOCKED: git command scan did not complete (internal error)' >&2
+    exit 2
+  fi
+  for _line in "${_records[@]}"; do
+    IFS=$'\t' read -r _policy _reason <<< "$_line"
+    _judge_record
+  done
+  exit 0
+}
+
+_judge_record() {
   case "$_policy" in
-    DONE) _scan_done=1 ;;
     BLOCK)
       case "$_reason" in
         all-refs) echo 'BLOCKED: force push of all refs may update protected branches' >&2 ;;
@@ -1156,11 +1179,60 @@ while IFS=$'\t' read -r _policy _reason; do
       esac
       ;;
   esac
-done < <(scan_git_text "$_bj"; printf 'DONE\n')
-if (( ! _scan_done )); then
-  echo 'BLOCKED: git command scan did not complete (internal error)' >&2
-  exit 2
+}
+
+# One bounded job instead of a timeout at every git call: a repository config can make git hang
+# (a FIFO include), and the hook must answer before its caller kills it (Pi at 5 s). The job gets its
+# own process group (set -m) so the watchdog's signal can kill every git it started. The watchdog's
+# stdio is detached so a caller waiting for the hook's output to close is not held up by it.
+_budget=3
+if [[ "${SWE_WORKBENCH_GUARD_GIT_BUDGET-}" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  _bint=${BASH_REMATCH[1]}
+  _bint=${_bint#"${_bint%%[!0]*}"}
+  if [[ -z "$_bint" ]]; then _budget=1
+  elif (( ${#_bint} > 1 || _bint >= 3 )); then _budget=3
+  else _budget=$SWE_WORKBENCH_GUARD_GIT_BUDGET
+  fi
 fi
+_vpid=""
+_wpid=""
+_scanned=0
+trap 'kill -TERM -"$_vpid" 2>/dev/null; kill -KILL -"$_vpid" 2>/dev/null' USR1
+trap '_scanned=1' USR2
+# the job and the watchdog sit in their own process groups, so a caller killing the hook would
+# leave them running
+trap 'kill -KILL -- -"$_vpid" -"$_wpid" 2>/dev/null; exit 2' TERM INT HUP
+set -m
+_scan_and_judge </dev/null &
+_vpid=$!
+( sleep "$_budget"; kill -USR1 $$ ) </dev/null >/dev/null 2>&1 &
+_wpid=$!
+# A trapped signal interrupts the wait. After USR2 the job is still running, so wait again; after
+# USR1 it was killed in the trap, so its status is neither 0 nor 2.
+_vrc=0
+wait "$_vpid" || _vrc=$?
+if (( _vrc > 128 && _scanned )); then
+  _vrc=0
+  wait "$_vpid" || _vrc=$?
+fi
+trap '' USR1 USR2
+trap - TERM INT HUP
+kill -TERM -"$_wpid" 2>/dev/null
+wait "$_wpid" 2>/dev/null
+wait "$_vpid" 2>/dev/null
+set +m
+case "$_vrc" in
+  0) ;;
+  2) exit 2 ;;
+  *)
+    if (( _scanned )); then
+      echo 'BLOCKED: git command could not be checked in time (a repository config may be hanging git)' >&2
+    else
+      echo 'BLOCKED: git command scan did not finish in time (the command is too long to check; split it into smaller commands)' >&2
+    fi
+    exit 2
+    ;;
+esac
 
 # Nested non-interactive `pi` session — subagent recursion guard. Segment-scoped:
 # a `pi` command token and a -p/--print flag must appear in the SAME segment, so everyday

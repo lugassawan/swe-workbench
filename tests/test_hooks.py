@@ -29,7 +29,7 @@ def guard_script():
     return GUARD
 
 
-def run_guard(script, cmd, *, cwd=None, env=None):
+def run_guard(script, cmd, *, cwd=None, env=None, timeout=None):
     payload = json.dumps({"tool_input": {"command": cmd}})
     merged_env = dict(_CLEAN_ENV)
     if env is not None:
@@ -37,7 +37,7 @@ def run_guard(script, cmd, *, cwd=None, env=None):
     return subprocess.run(
         [str(script)],
         input=payload, text=True, capture_output=True,
-        cwd=cwd, env=merged_env,
+        cwd=cwd, env=merged_env, timeout=timeout,
     )
 
 
@@ -1050,9 +1050,9 @@ class TestWrapperAndSubstitutionCoverage:
     def test_large_wrapper_operand_scans_in_linear_time(self, guard_script, repo_on):
         """bash 3.2's pattern substitution is superlinear in match count, so
         converting quoted-newline markers there took minutes for a long
-        script operand; the hook must stay well inside its timeout.
+        script operand; the hook must stay well inside its git budget.
         """
-        body = "\n".join(["echo hello world; git status | grep foo"] * 600)
+        body = "\n".join(["echo hello world; git status | grep foo"] * 200)
         started = time.monotonic()
         result = run_guard(
             guard_script, f"sudo sh -c '{body}'", cwd=str(repo_on("feature"))
@@ -2108,6 +2108,84 @@ class TestHardResetEarlierStepsInOneLine:
     def test_plain_read_only_calls_still_do_not_count(self, guard_script, kept, tmp_path, before):
         cmd = f"{before.replace('git ', f'git -C {kept} ', 1)} && git -C {kept} reset --hard HEAD~1"
         _allowed(run_guard(guard_script, cmd, cwd=str(tmp_path)))
+
+
+@pytest.fixture
+def hanging_repo(synced_repo_on, tmp_path):
+    """main whose config includes a FIFO: any git that reads the config blocks on it until killed.
+
+    The include is appended to the file, after every fixture git call, since a later call would hang
+    too. Teardown moves the FIFO aside, so no new git finds it, then opens it for writing, which
+    releases any reader a broken guard left behind."""
+    repo = synced_repo_on("main")
+    fifo = tmp_path / "hang.fifo"
+    os.mkfifo(fifo)
+    with open(repo / ".git" / "config", "a", encoding="utf-8") as config:
+        config.write(f"[include]\n\tpath = {fifo}\n")
+    yield repo
+    released = fifo.rename(tmp_path / "released.fifo")
+    for _ in range(20):
+        try:
+            os.close(os.open(released, os.O_WRONLY | os.O_NONBLOCK))
+        except OSError:
+            break
+
+
+class TestGitWatchdog:
+    """The scan and its verdicts run as one bounded job: git that hangs on a repository's config
+    blocks the command instead of stalling the hook past its caller's kill."""
+
+    @staticmethod
+    def _timed(guard_script, cmd, cwd, budget):
+        env = None if budget is None else {"SWE_WORKBENCH_GUARD_GIT_BUDGET": budget}
+        start = time.monotonic()
+        result = run_guard(guard_script, cmd, cwd=cwd, env=env, timeout=15)
+        return result, time.monotonic() - start
+
+    @pytest.mark.parametrize("template", ["git -C {repo} reset --hard"])
+    def test_hanging_git_blocks_in_time(self, guard_script, hanging_repo, tmp_path, template):
+        result, elapsed = self._timed(guard_script, template.format(repo=hanging_repo), str(tmp_path), "1")
+        _blocked(result)
+        assert "could not be checked in time" in result.stderr
+        assert elapsed < 5, f"took {elapsed:.2f}s"
+
+    @pytest.mark.parametrize("budget, expected", [("0.2", 1), ("1.5", 1.5), ("9", 3), ("bogus", 3)])
+    def test_budget_is_clamped_to_one_to_three_seconds(
+        self, guard_script, hanging_repo, tmp_path, budget, expected
+    ):
+        result, elapsed = self._timed(guard_script, f"git -C {hanging_repo} reset --hard", str(tmp_path), budget)
+        _blocked(result)
+        assert expected - 0.1 <= elapsed < expected + 1.5, f"took {elapsed:.2f}s"
+
+    def test_killing_the_hook_stops_its_git(self, guard_script, hanging_repo, tmp_path):
+        proc = subprocess.Popen(
+            [str(guard_script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, cwd=str(tmp_path), env=dict(_CLEAN_ENV),
+        )
+        payload = json.dumps({"tool_input": {"command": f"git -C {hanging_repo} reset --hard"}})
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.communicate(payload, timeout=0.5)
+        proc.terminate()
+        proc.communicate(timeout=5)
+        time.sleep(0.2)
+        ps = subprocess.run(
+            ["ps", "-eo", "args"], capture_output=True, text=True, check=True, env=dict(_CLEAN_ENV),
+        ).stdout
+        assert str(hanging_repo) not in ps
+
+    def test_a_scan_that_runs_out_of_time_says_so(self, guard_script, repo_on):
+        body = "\n".join(["echo hello world; git status | grep foo"] * 2000)
+        result, elapsed = self._timed(guard_script, f"sudo sh -c '{body}'", str(repo_on("feature")), "1")
+        _blocked(result)
+        assert "scan did not finish in time" in result.stderr
+        assert elapsed < 5, f"took {elapsed:.2f}s"
+
+    def test_allowed_command_does_not_wait_out_the_budget(self, guard_script, synced_repo_on, tmp_path):
+        repo = synced_repo_on("main")
+        result, elapsed = self._timed(guard_script, f"git -C {repo} reset --hard", str(tmp_path), None)
+        _allowed(result)
+        assert result.stderr == ""
+        assert elapsed < 2.5, f"took {elapsed:.2f}s"
 
 
 # ──────────────────────────────────────────────

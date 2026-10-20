@@ -226,6 +226,23 @@ def test_handoff_guard_registered_after_secret_guard_for_mutating_tools():
     assert handoff_entry["matcher"] == "Bash|Edit|Write"
 
 
+def test_bash_guard_timeout_outlasts_its_git_budget():
+    """bash_guard.sh bounds its own git work at 3 s at most, so the harness timeout must leave it
+    room to answer. There is no onFailure key: older Claude Code releases were not confirmed to
+    accept one, and a rejected hooks.json would switch every guard off."""
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    guard_hooks = [
+        hook
+        for entry in data["hooks"]["PreToolUse"]
+        for hook in entry.get("hooks", [])
+        if "bash_guard.sh" in hook["command"]
+    ]
+    assert len(guard_hooks) == 1
+    timeout = guard_hooks[0].get("timeout")
+    assert isinstance(timeout, int) and not isinstance(timeout, bool), f"got {timeout!r}"
+    assert timeout > 3
+
+
 def test_rtk_worktree_guard_registered_for_worktree_lifecycle_and_bash():
     """The RTK-aware worktree guard needs both halves: PostToolUse on
     EnterWorktree|ExitWorktree to keep its per-session marker, and a PreToolUse
