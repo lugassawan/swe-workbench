@@ -202,6 +202,22 @@ jobs:
         env:
           SWB_REQUIRE_GH_COMPAT: '1'
           SWB_REQUIRE_GH_MIN: ${{ runner.os == 'Linux' && runner.arch == 'X64' && '1' || '0' }}
+      # hooks/bash_guard.sh must behave the same under mawk, the awk most Debian-family users
+      # have; bwk awk (macOS) and the runner's default cover the other legs. The shim puts mawk
+      # first on PATH as `awk`, and SWB_REQUIRE_MAWK makes tests/test_hooks.py fail, not skip,
+      # if that stops being true.
+      - name: Run the bash guard tests under mawk
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mawk
+          mkdir -p "$RUNNER_TEMP/mawk-bin"
+          ln -sf "$(command -v mawk)" "$RUNNER_TEMP/mawk-bin/awk"
+          PATH="$RUNNER_TEMP/mawk-bin:$PATH" pytest tests/test_hooks.py -v \
+            -k "Differential or Oversize or ScanToolFailure or EachPreprocessing or BraceRun or AwkImplementation"
+        env:
+          SWB_REQUIRE_MAWK: '1'
 
   handoff-py39:
     name: "handoff:python3.9"
