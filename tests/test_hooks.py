@@ -775,6 +775,24 @@ def _g(repo, *args, check=True):
     )
 
 
+def _racy_readme_repo(synced_repo_on, driver="evil"):
+    """main with README under `filter=<driver>` and an index entry that is always "racily clean".
+
+    git compares times in whole seconds, and an entry is racy when its recorded mtime is not before
+    the index file's own: record one 100s ahead. `diff-files` then has to read the file through its
+    filters to know it is unchanged, whatever second the setup ran in. Call it before configuring any
+    filter: the refresh that records the new time reads the file too."""
+    repo = synced_repo_on("main")
+    (repo / ".gitattributes").write_text(f"README filter={driver}\n")
+    _g(repo, "add", ".gitattributes")
+    _g(repo, "commit", "-qm", "attrs")
+    _g(repo, "push", "-q")
+    st = (repo / "README").stat()
+    os.utime(repo / "README", ns=(st.st_atime_ns, st.st_mtime_ns + 100 * 10**9))
+    _g(repo, "update-index", "-q", "--refresh")
+    return repo
+
+
 def _commit(repo, name):
     (repo / name).write_text(name)
     _g(repo, "add", name)
@@ -1618,52 +1636,59 @@ class TestHardResetVerdict:
         assert "git reset --soft" in err and "git stash -u" in err and "git branch" in err
 
     def test_user_config_never_runs_code_inside_the_hook(self, guard_script, synced_repo_on, tmp_path):
-        repo = synced_repo_on("main")
+        repo = _racy_readme_repo(synced_repo_on)
         clean_marker = tmp_path / "clean-marker"
         fsmon_marker = tmp_path / "fsmonitor-marker"
         fsmon = tmp_path / "fsmon.sh"
         fsmon.write_text(f"#!/bin/sh\ntouch {fsmon_marker}\nprintf ''\n")
         fsmon.chmod(0o755)
-        (repo / ".gitattributes").write_text("README filter=evil\n")
-        _g(repo, "add", ".gitattributes")
-        _g(repo, "commit", "-qm", "attrs")
-        _g(repo, "push", "-q")
         _g(repo, "config", "filter.evil.clean", f"sh -c 'touch {clean_marker}; cat'")
         _g(repo, "config", "core.fsmonitor", str(fsmon))
 
-        def make_racy():
-            # a file as new as the index is "racily clean": git must read its content, through the filter
-            (repo / "README").write_text("init")
-            idx_ns = (repo / ".git" / "index").stat().st_mtime_ns
-            os.utime(repo / "README", ns=(idx_ns, idx_ns))
-
         # the fixture is only meaningful if the bare commands the hook runs would fire both programs
-        make_racy()
         _g(repo, "diff-files", "--quiet", check=False)
         assert clean_marker.exists(), "fixture: diff-files did not run the clean filter"
         _g(repo, "status", "--porcelain", check=False)
         assert fsmon_marker.exists(), "fixture: status did not run fsmonitor"
         clean_marker.unlink()
         fsmon_marker.unlink()
-        make_racy()
         result = run_guard(guard_script, "git reset --hard", cwd=str(repo))
         assert result.returncode in (0, 2)
         assert not clean_marker.exists() and not fsmon_marker.exists()
+
+    @pytest.mark.parametrize("kind", ["clean", "process"])
+    def test_each_filter_command_is_switched_off(self, guard_script, synced_repo_on, tmp_path, kind):
+        repo = _racy_readme_repo(synced_repo_on)
+        marker = tmp_path / f"{kind}-marker"
+        _g(repo, "config", f"filter.evil.{kind}", f"sh -c 'touch {marker}; cat'")
+        # the fixture is only meaningful if the bare command would run the program
+        _g(repo, "diff-files", "--quiet", check=False)
+        assert marker.exists(), f"fixture: diff-files did not run the {kind} filter"
+        marker.unlink()
+        run_guard(guard_script, "git reset --hard", cwd=str(repo))
+        assert not marker.exists()
+
+    def test_a_required_filter_that_is_switched_off_does_not_make_git_fail(
+        self, guard_script, synced_repo_on
+    ):
+        # a required filter whose command is emptied is a fatal error unless `required` is cleared too
+        repo = _racy_readme_repo(synced_repo_on)
+        _g(repo, "config", "filter.evil.clean", "true")
+        _g(repo, "config", "filter.evil.required", "true")
+        # fixture: with `true` as the clean command, git cannot reproduce the file, so it fails
+        assert _g(repo, "diff-files", "--quiet", check=False).returncode != 0
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
 
     def test_filter_driver_name_that_cannot_be_switched_off_fails_closed(
         self, guard_script, synced_repo_on, tmp_path
     ):
         # `-c` splits a key at its first `=`, so the override for a driver named `a=b` would miss it
-        repo = synced_repo_on("main")
+        repo = _racy_readme_repo(synced_repo_on, driver="a=b")
         marker = tmp_path / "eq-marker"
-        (repo / ".gitattributes").write_text("README filter=a=b\n")
-        _g(repo, "add", ".gitattributes")
-        _g(repo, "commit", "-qm", "attrs")
-        _g(repo, "push", "-q")
         _g(repo, "config", "filter.a=b.clean", f"sh -c 'touch {marker}; cat'")
-        (repo / "README").write_text("init")
-        idx_ns = (repo / ".git" / "index").stat().st_mtime_ns
-        os.utime(repo / "README", ns=(idx_ns, idx_ns))
+        _g(repo, "diff-files", "--quiet", check=False)
+        assert marker.exists(), "fixture: diff-files did not run the filter"
+        marker.unlink()
         _blocked(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
         assert not marker.exists()
 
@@ -1689,6 +1714,33 @@ class TestHardResetVerdict:
     ):
         repo = synced_repo_on("main")
         _blocked(run_guard(guard_script, f"{assign} git reset --hard", cwd=str(repo)))
+
+    @pytest.mark.parametrize("assign", [
+        "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+        "GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null",
+    ])
+    def test_hermetic_config_idiom_does_not_redirect_anything(
+        self, guard_script, synced_repo_on, tmp_path, assign
+    ):
+        # these only choose which config files git reads (or none): neither a repository nor a tree
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, f"{assign} git reset --hard", cwd=str(repo)))
+        feature = tmp_path / "feat"
+        feature.mkdir()
+        _g(feature, "init", "-q", "-b", "feature/h")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, f"{assign} git reset --hard", cwd=str(feature)))
+
+    @pytest.mark.parametrize("assign", [
+        "GIT_CONFIG_GLOBAL=/tmp/other.cfg", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_PARAMETERS=x",
+    ])
+    def test_config_that_can_name_a_work_tree_still_fails_closed_on_a_feature_branch(
+        self, guard_script, tmp_path, assign
+    ):
+        feature = tmp_path / "feat"
+        feature.mkdir()
+        _g(feature, "init", "-q", "-b", "feature/h")
+        _blocked(run_guard(guard_script, f"{assign} git reset --hard", cwd=str(feature)))
 
     def test_dash_led_context_value_is_blocked(self, guard_script, synced_repo_on):
         repo = synced_repo_on("main")
@@ -1865,6 +1917,40 @@ class TestHardResetBypassClosures:
         _blocked(result)
         assert "untracked" in result.stderr
 
+    @pytest.fixture
+    def adds_docs_guide(self, synced_repo_on):
+        """main with `docs/guide.md` on origin/main but not in the work tree's HEAD."""
+        repo = synced_repo_on("main")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "guide.md").write_text("guide")
+        _g(repo, "add", "docs/guide.md")
+        _g(repo, "commit", "-qm", "add guide")
+        _g(repo, "push", "-q")
+        _g(repo, "reset", "-q", "--hard", "HEAD~1")
+        return repo
+
+    def test_untracked_file_standing_where_the_target_needs_a_directory_is_data(
+        self, guard_script, adds_docs_guide
+    ):
+        # git deletes the file `docs` to create the directory docs/
+        (adds_docs_guide / "docs").write_text("precious, never committed")
+        result = run_guard(guard_script, "git reset --hard origin/main", cwd=str(adds_docs_guide))
+        _blocked(result)
+        assert "untracked" in result.stderr
+
+    def test_symlink_standing_where_the_target_needs_a_directory_is_data(
+        self, guard_script, adds_docs_guide
+    ):
+        (adds_docs_guide / "docs").symlink_to("README")
+        _blocked(run_guard(guard_script, "git reset --hard origin/main", cwd=str(adds_docs_guide)))
+
+    def test_untracked_directory_the_target_only_adds_a_file_to_is_left_alone(
+        self, guard_script, adds_docs_guide
+    ):
+        (adds_docs_guide / "docs").mkdir()
+        (adds_docs_guide / "docs" / "notes.md").write_text("untracked, but not overwritten")
+        _allowed(run_guard(guard_script, "git reset --hard origin/main", cwd=str(adds_docs_guide)))
+
     def test_untracked_file_elsewhere_is_left_alone_by_reset_and_allowed(
         self, guard_script, synced_repo_on
     ):
@@ -1928,6 +2014,25 @@ class TestHardResetBypassClosures:
         result = run_guard(guard_script, "git reset --hard @{u}", cwd=str(repo))
         _blocked(result)
         assert "quote" in result.stderr
+
+
+class TestHardResetKnownGaps:
+    """Spellings the text scan cannot see through. They were caught by the old whole-text grep, so
+    each is pinned here on purpose: closing one means changing this test, not drifting past it."""
+
+    @pytest.mark.parametrize("cmd", [
+        "echo 'git reset --hard' | bash",
+        "printf 'git reset --hard' | sh -s",
+        "source <(echo 'git reset --hard')",
+        "bash <(echo 'git reset --hard')",
+        "x='git reset --hard'; eval \"$x\"",
+        "x='git reset --hard'; $x",
+        "x='git reset --hard'; bash -c \"$x\"",
+    ])
+    def test_code_assembled_from_data_is_not_seen(self, guard_script, synced_repo_on, cmd):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
 
 
 class TestHardResetEarlierStepsInOneLine:

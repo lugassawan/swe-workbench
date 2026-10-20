@@ -12,7 +12,8 @@
 #     judged. Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
 #     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare, --recurse-submodules,
 #     and an earlier step of the same command that may have changed the repository (run it as its own
-#     command first). Quoted text such as `echo 'git reset --hard'` is data and is not judged.
+#     command first). Quoted text such as `echo 'git reset --hard'` is data and is not judged, and
+#     neither is code assembled from data (see the reset-only gaps below).
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
 #     dispatcher's --exclude-tools recursion guard; see
@@ -38,18 +39,24 @@
 # Accepted gaps: brace expansion, glob refspecs and unique-prefix long options (push only; the reset
 # scan accepts --ha/--har/--hard); a bare substitution that is the force flag with an implicit
 # destination; function/coproc NAME bodies; unlisted wrappers.
-# Reset-only gaps: git aliases (including `-c alias.x=...`); a compound `cd x && git reset --hard`,
-# `env -C x`, `docker exec` or `ssh` judges the hook's cwd, not the place the reset runs (the
-# sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables in the hook's
-# own environment; the subcommand itself spelled through an expansion (`git ${S:-reset} --hard`);
-# a `git branch keep` earlier in the same command is not credited; a switch to a remote-tracking
-# name (`git checkout -b x origin/main`) is not treated as a switch to a protected branch; edits to an
-# `--assume-unchanged` file (reset ignores that bit) are not seen; the dirty check is stat-based, so
-# touched-but-unchanged files over-block (run `git status` and retry); a fetch before the reset is
-# judged against the refs as they were before it ran; a hostile repository config that blocks git
-# (a FIFO include) hangs the hook. A leading expansion or substitution in a reset argument, a
-# `~` in a -C path, and an unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed. The read-only git calls in the verdict never forward the user's `-c` values and switch
-# off fsmonitor and clean/process filter drivers, because config can execute code before approval.
+#
+# Reset-only gaps (the text scan cannot see these; the old whole-text grep caught some of them):
+#   - code assembled from data: `echo 'git reset --hard' | bash`, `source <(echo '...')`,
+#     `x='...'; eval "$x"`, `$x` or `bash -c "$x"`; the subcommand spelled through an expansion
+#     (`git ${S:-reset} --hard`). The push scan shares this limit.
+#   - somewhere other than the hook's cwd: `cd x && git reset --hard`, `env -C x`, `docker exec`,
+#     `ssh` (the sequenced-step rule still blocks the `cd` form on a protected cwd); GIT_* variables
+#     in the hook's own environment; git aliases, including `-c alias.x=...`.
+#   - state the verdict cannot credit or see: a `git branch keep` earlier in the same command; a fetch
+#     before the reset (judged against the refs as they were); a switch to a remote-tracking name
+#     (`git checkout -b x origin/main`); edits to an `--assume-unchanged` file; a hostile repository
+#     config that makes git hang (a FIFO include).
+#   - over-blocks, on purpose: the dirty check is stat-based, so touched-but-unchanged files block
+#     (run `git status` and retry); the subcommand matches at any argument position (`git commit -m x
+#     reset --hard`); a leading expansion or substitution in a reset argument, a `~` in a -C path and
+#     an unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed.
+# The read-only git calls in the verdict never forward the user's `-c` values and switch off
+# fsmonitor and clean/process filter drivers, because config can execute code before approval.
 # --force-with-lease/--force-if-includes intentionally unblocked (#163); the push scan lexes quotes
 # (quoted text is literal, substitutions are scanned); a remote literally
 # named main/master over-blocks. The push-token scan trusts a small allowlist of known
@@ -461,6 +468,8 @@ _parse_git_invocation() {
       _prefix_args=1
       _name=${_prefix%%=*}
       case "$_name" in
+        GIT_CONFIG_NOSYSTEM) ;;
+        GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM) [[ "${_prefix#*=}" == /dev/null ]] || _git_env_ctx=1 ;;
         GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_CONFIG*) _git_env_ctx=1 ;;
       esac
       _i=$((_i + 1))
@@ -1003,7 +1012,7 @@ _reset_data_loss() {
 _reset_verdict() {
   local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5
   local -a _rctx=() _filter_off=() _flat=()
-  local _i _v _k _d _rc _branch _sha _top
+  local _i _v _k _d _p _rc _branch _sha _top
   local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref; quote a target that contains { }, e.g. '"'"'@{u}'"'"')'
   local _dirty='uncommitted changes (run `git status` first; stat-only differences also count)'
 
@@ -1079,9 +1088,15 @@ _reset_verdict() {
   _rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" -- >/dev/null \
     || _reset_block "$_unresolved"
   while IFS= read -r -d '' _v; do
-    if [[ -e "$_top/$_v" || -L "$_top/$_v" ]]; then
-      _reset_data_loss "$_branch" 'untracked files that the target commit would overwrite'
-    fi
+    # the path itself, and every parent: a plain file or a symlink standing where a directory is needed
+    _p=$_v
+    while :; do
+      if [[ -L "$_top/$_p" ]] || { [[ -e "$_top/$_p" ]] && { [[ "$_p" == "$_v" ]] || [[ ! -d "$_top/$_p" ]]; }; }; then
+        _reset_data_loss "$_branch" 'untracked files that the target commit would overwrite'
+      fi
+      [[ "$_p" == */* ]] || break
+      _p=${_p%/*}
+    done
   done < <(_rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" --)
 
   _rc=0
@@ -1100,7 +1115,7 @@ while IFS=$'\t' read -r _policy _reason; do
       case "$_reason" in
         all-refs) echo 'BLOCKED: force push of all refs may update protected branches' >&2 ;;
         scan-failed) echo 'BLOCKED: git command scan did not complete (internal error)' >&2 ;;
-        reset-env) echo 'BLOCKED: git reset --hard with GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR/GIT_CONFIG* set points at a repository that cannot be checked; unset it or use -C' >&2 ;;
+        reset-env) echo 'BLOCKED: git reset --hard with GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR or injected GIT_CONFIG_* set can point git at a repository or config that cannot be checked; unset it or use -C (GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL/SYSTEM=/dev/null are fine)' >&2 ;;
         reset-config) echo 'BLOCKED: git reset --hard with -c core.worktree/core.bare redirects the work tree and cannot be checked; drop the override' >&2 ;;
         reset-dynamic-context) echo 'BLOCKED: git reset --hard with a dynamic -C/--git-dir/--work-tree value cannot be checked; spell the path literally' >&2 ;;
         reset-unsafe-arg) echo 'BLOCKED: git reset --hard with a control character, a dash-led value, or a ~ path cannot be checked safely; spell the absolute path plainly' >&2 ;;
