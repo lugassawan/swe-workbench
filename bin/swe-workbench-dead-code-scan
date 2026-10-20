@@ -152,9 +152,11 @@ def _warning(code: str, message: str) -> dict:
 
 
 class DefHit:
-    __slots__ = ("name", "kind", "path", "line", "exported", "marker_reason", "note", "registered")
+    __slots__ = ("name", "kind", "path", "line", "exported", "marker_reason", "note", "registered", "self_used")
 
-    def __init__(self, name, kind, path, line, exported=False, marker_reason=None, note="", registered=False):
+    def __init__(
+        self, name, kind, path, line, exported=False, marker_reason=None, note="", registered=False, self_used=False
+    ):
         self.name = name
         self.kind = kind
         self.path = path
@@ -163,17 +165,16 @@ class DefHit:
         self.marker_reason = marker_reason
         self.note = note
         self.registered = registered
+        self.self_used = self_used  # named on another non-declaration line of its own file
 
 
 class FileRecord:
-    __slots__ = ("relpath", "idents", "dynamic", "line_idents", "defs", "all_names", "lines")
+    __slots__ = ("relpath", "idents", "dynamic", "defs", "all_names")
 
-    def __init__(self, relpath, lines):
+    def __init__(self, relpath):
         self.relpath = relpath
-        self.lines = lines
         self.idents: set[str] = set()
         self.dynamic: set[str] = set()
-        self.line_idents: list[set[str]] = []
         self.defs: list[DefHit] = []
         self.all_names: set[str] = set()
 
@@ -283,12 +284,17 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
         return None
     rel = path.relative_to(root).as_posix()
     lines = text.splitlines()
-    record = FileRecord(rel, lines)
+    record = FileRecord(rel)
 
+    line_idents_by_line: list[set[str]] = []
+    use_lines: dict[str, int] = {}  # identifier → count of non-declaration lines naming it
     for no, line in enumerate(lines, start=1):
         line_idents = set(IDENT_RE.findall(line))
-        record.line_idents.append(line_idents)
+        line_idents_by_line.append(line_idents)
         record.idents.update(line_idents)
+        if not _is_declaration_only(line):
+            for ident in line_idents:
+                use_lines[ident] = use_lines.get(ident, 0) + 1
         if DYNAMIC_CALL_RE.search(line):
             record.dynamic.update(QUOTED_IDENT_RE.findall(line))
 
@@ -330,7 +336,9 @@ def parse_file(root: Path, path: Path) -> FileRecord | None:
                 marker = MARKER_RE.search(note) or MARKER_RE.search(line)
                 if marker:
                     marker_reason = marker.group(1).strip()
-            record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note, registered))
+            on_def_line = name in line_idents_by_line[no - 1] and not _is_declaration_only(line)
+            self_used = use_lines.get(name, 0) - on_def_line > 0
+            record.defs.append(DefHit(name, kind, rel, no, exported, marker_reason, note, registered, self_used))
             break
 
     if ext in {".py", ".pyi"}:
@@ -541,14 +549,9 @@ def classify(records: list[FileRecord], entries: EntryPoints) -> list[dict]:
             cross = index.get(hit.name, set()) - {record.relpath}
             normal_refs = {rel for rel in cross if hit.name not in by_rel[rel].dynamic}
             dyn_refs = cross & dynamic_index.get(hit.name, set())
-            own_other_line = any(
-                hit.name in record.line_idents[i]
-                for i in range(len(record.line_idents))
-                if i != hit.line - 1 and not _is_declaration_only(record.lines[i])
-            )
             references: list[dict] = []
             test_only = False
-            if own_other_line or any(not TEST_PATH_RE.search(rel) for rel in normal_refs):
+            if hit.self_used or any(not TEST_PATH_RE.search(rel) for rel in normal_refs):
                 continue  # used by production code somewhere (or self) — not a finding
             if normal_refs:
                 test_only = True  # only test-path files reference it repo-wide
