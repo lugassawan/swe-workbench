@@ -2817,7 +2817,9 @@ class TestOversizeCommand:
         assert "too large" in result.stderr
         assert elapsed < _OVERSIZE_BUDGET_S, f"oversize command took {elapsed:.2f}s"
 
-    @pytest.mark.parametrize("tail", ["git reset --hard", "git reset {--hard,} HEAD~1"])
+    @pytest.mark.parametrize("tail", [
+        "git reset --hard", "git reset {--hard,} HEAD~1", "git reset --h",
+    ])
     def test_oversize_hard_reset_blocks_on_any_branch(self, guard_script, tail):
         result, elapsed = self._timed(guard_script, f"echo {_OVERSIZE_FILLER}; {tail}")
         assert result.returncode == 2 and "BLOCKED" in result.stderr
@@ -2961,3 +2963,151 @@ class TestSubcommandsThatRunTheirRemainingWords:
     def test_unquoted_force_push_is_judged(self, guard_script, synced_repo_on, cmd):
         repo = synced_repo_on("main")
         _blocked(run_guard(guard_script, cmd, cwd=str(repo)))
+
+
+def _guard_snippet(text, start, end):
+    i = text.index(start)
+    return text[i:text.index(end, i) + len(end)]
+
+
+def _long_opt_matches(list_name, words):
+    """Run the guard's own `_long_opt_match` over `words` against one of its option lists."""
+    text = GUARD.read_text()
+    src = "\n".join([
+        _guard_snippet(text, "_long_opt_match() {", "\n}\n"),
+        _guard_snippet(text, f"{list_name}=(", ")\n"),
+        f'for w in "$@"; do _long_opt_match "$w" "${{{list_name}[@]}}"; '
+        "printf '%s=%s\\n' \"$w\" \"$_long_opt\"; done",
+    ])
+    out = subprocess.run(["/bin/bash", "-c", src, "probe", *words], capture_output=True,
+                         text=True, env=_CLEAN_ENV, check=True, timeout=10).stdout
+    return dict(line.split("=", 1) for line in out.splitlines())
+
+
+# What the installed git 2.54/2.56 resolve each word to ("" = ambiguous or unknown: git errors
+# out and runs nothing). `--help` is matched only spelled in full, so `reset --h` is `--hard`.
+PUSH_LONG_OPT_CASES = {
+    "--force": "--force", "--forc": "", "--for": "", "--fo": "",
+    "--mirr": "--mirror", "--m": "--mirror", "--al": "--all", "--a": "", "--b": "--branches",
+    "--rep": "--repo", "--re": "", "--rec": "", "--rece": "--receive-pack",
+    "--recu": "--recurse-submodules", "--e": "--exec", "--pu": "--push-option",
+    "--force-w": "--force-with-lease", "--force-": "", "--veri": "--verify", "--ver": "",
+    "--h": "", "--n": "", "--no": "", "--no-force": "", "--no-mirr": "", "--f*": "",
+}
+RESET_LONG_OPT_CASES = {
+    "--h": "--hard", "--ha": "--hard", "--har": "--hard", "--hard": "--hard", "--he": "",
+    "--r": "", "--re": "", "--rec": "--recurse-submodules", "--m": "", "--mi": "--mixed",
+    "--me": "--merge", "--s": "--soft", "--no-rec": "", "--no-hard": "", "--ref": "--refresh",
+}
+
+
+class TestLongOptMatch:
+    """`_long_opt_match`: an exact spelling wins, else the one candidate a word abbreviates."""
+
+    @pytest.mark.parametrize("list_name,cases", [
+        ("_PUSH_LONG_OPTS", PUSH_LONG_OPT_CASES),
+        ("_RESET_LONG_OPTS", RESET_LONG_OPT_CASES),
+    ], ids=["push", "reset"])
+    def test_resolution_table(self, list_name, cases):
+        assert _long_opt_matches(list_name, list(cases)) == cases
+
+    def test_no_list_offers_help_or_a_negation(self):
+        # git abbreviates neither `--help` nor `--no-<opt>` into these options
+        for list_name in ("_PUSH_LONG_OPTS", "_RESET_LONG_OPTS"):
+            words = _guard_snippet(GUARD.read_text(), f"{list_name}=(", ")\n").split()
+            assert not [w for w in words if w.startswith(("--help", "--no-"))], list_name
+
+
+class TestPushUniquePrefixLongOptions:
+    """A push long option abbreviated to a unique prefix behaves like its full spelling."""
+
+    @pytest.mark.parametrize("opt", ["--mirr", "--m", "--mirror"])
+    def test_mirror_prefix_blocks_on_any_branch(self, guard_script, repo_on, opt):
+        _blocked(run_guard(guard_script, f"git push {opt} origin", cwd=str(repo_on("feature"))))
+
+    @pytest.mark.parametrize("opt", ["--al", "--all", "--b", "--branche"])
+    def test_all_refs_prefix_with_force_blocks_on_any_branch(self, guard_script, repo_on, opt):
+        cmd = f"git push -f {opt} origin"
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo_on("feature"))))
+
+    @pytest.mark.parametrize("opt", ["--mirr", "--al"])
+    def test_prefix_after_an_unknown_flag_still_counts(self, guard_script, repo_on, opt):
+        # the unknown -Z takes the next word as its value, which is still sniffed for force
+        cmd = f"git push -f -Z {opt} origin"
+        _blocked(run_guard(guard_script, cmd, cwd=str(repo_on("feature"))))
+
+    @pytest.mark.parametrize("opt", [
+        "--repo", "--rep",
+        "--receive-pack", "--rece",
+        "--exec", "--ex", "--e",
+        "--push-option", "--push-o", "--pu",
+        "--recurse-submodules", "--recu",
+    ])
+    def test_keyed_flag_prefix_takes_its_value_like_the_full_spelling(
+        self, guard_script, synced_repo_on, opt
+    ):
+        # the substitution is the flag's value, not the destination
+        repo = synced_repo_on("main")
+        cmd = f"git push --force {opt} $(echo x) origin feature"
+        _allowed(run_guard(guard_script, cmd, cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", [
+        "--force-with-lease", "--force-w", "--veri", "--ta", "--at", "--th", "--porc", "--dry",
+        "--prog", "--prun", "--follow", "--set-up", "--del", "--sig", "--qu", "--verb",
+    ])
+    def test_boolean_flag_prefix_takes_no_value(self, guard_script, synced_repo_on, opt):
+        # `origin` stays the remote, so the push names feature and not the current main
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, f"git push -f {opt} origin feature", cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", ["--forc", "--fo", "--a", "--rec", "--ver", "--n", "--h"])
+    def test_ambiguous_or_unknown_prefix_is_an_unknown_flag(
+        self, guard_script, synced_repo_on, opt
+    ):
+        # git rejects these and pushes nothing; like any unknown flag the word after it is taken
+        # as its value, so the push may name the current main and is blocked
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, f"git push -f {opt} origin feature", cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", ["--forc", "--fo"])
+    def test_ambiguous_force_prefix_is_not_a_force(self, guard_script, synced_repo_on, opt):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, f"git push {opt} origin main", cwd=str(repo)))
+
+
+class TestResetUniquePrefixLongOptions:
+    """A reset long option abbreviated to a unique prefix behaves like its full spelling."""
+
+    @pytest.mark.parametrize("opt", ["--h", "--ha", "--har", "--hard"])
+    def test_hard_prefix_on_a_dirty_main_is_blocked(self, guard_script, synced_repo_on, opt):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _blocked(run_guard(guard_script, f"git reset {opt}", cwd=str(repo)))
+
+    def test_help_prefix_is_not_hard(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, "git reset --he", cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", ["--rec", "--recu", "--recurse-s=yes", "--recurse-submodules"])
+    def test_submodule_recursion_prefix_is_blocked(self, guard_script, synced_repo_on, opt):
+        repo = synced_repo_on("main")
+        _blocked(run_guard(guard_script, f"git reset --hard {opt}", cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", ["--re", "--no-rec", "--no-recurse-submodules"])
+    def test_ambiguous_or_negated_recursion_is_not_recursion(
+        self, guard_script, synced_repo_on, opt
+    ):
+        repo = synced_repo_on("main")
+        _allowed(run_guard(guard_script, f"git reset --hard {opt}", cwd=str(repo)))
+
+    @pytest.mark.parametrize("opt", ["--s", "--so", "--mi", "--me", "--k", "--soft"])
+    def test_later_mode_flag_prefix_covers_a_dynamic_word(self, guard_script, synced_repo_on, opt):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _allowed(run_guard(guard_script, f"git reset $(echo HEAD) {opt}", cwd=str(repo)))
+
+    def test_ambiguous_mode_prefix_does_not_cover_it(self, guard_script, synced_repo_on):
+        repo = synced_repo_on("main")
+        _dirty(repo)
+        _blocked(run_guard(guard_script, "git reset $(echo HEAD) --m", cwd=str(repo)))

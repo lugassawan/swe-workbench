@@ -103,7 +103,9 @@
 # BOOLEAN-only push flags and defensively consumes the next token for any other `-*` flag
 # (assumes it takes a separate-word value, e.g. `-o ci.skip`) so an unknown flag's value can never
 # be miscounted as the remote/refspec (#501 senior-engineer consult); an unrecognized flag that
-# actually takes NO value over-blocks by one token (fail-safe direction).
+# actually takes NO value over-blocks by one token (fail-safe direction). Push and reset long
+# options resolve by unique prefix as git's parse-options does (`--mirr`, `reset --h`); one git
+# rejects as ambiguous (`--forc`, `--fo`) counts as such an unknown flag.
 # Quotes are stripped before matching (same fail-safe direction as that over-block
 # above), so a `pi -p` mention inside an unrelated quoted string (e.g. a commit message) can
 # over-block too — accepted, not special-cased.
@@ -708,6 +710,46 @@ _note_config_key() {
   esac
 }
 
+# The long options of `git push` and `git reset`, as `git push -h` / `git reset -h` list them
+# (git 2.54-2.56), each spelled positively. A `--no-` word matches none of them and keeps its own
+# handling: a negation takes no value and turns on neither force, mirror, all, hard nor submodule
+# recursion. `--help` is left out because git takes it only spelled in full (`reset --h` is --hard).
+_PUSH_LONG_OPTS=(--verbose --quiet --repo --all --branches --mirror --delete --tags --dry-run
+  --porcelain --force --force-with-lease --force-if-includes --recurse-submodules --thin
+  --receive-pack --exec --set-upstream --progress --prune --verify --follow-tags --signed
+  --atomic --push-option --ipv4 --ipv6)
+_RESET_LONG_OPTS=(--quiet --refresh --mixed --soft --hard --merge --keep --recurse-submodules
+  --patch --auto-advance --unified --inter-hunk-context --intent-to-add --pathspec-from-file
+  --pathspec-file-nul)
+
+# Sets _long_opt to the candidate a long option names, as git's parse-options resolves it: an
+# exact spelling wins, else the one candidate the word abbreviates; empty when it abbreviates
+# several (git rejects it) or none, and the caller treats the word as unknown. It sets a variable
+# rather than printing so the per-word scan forks nothing.
+_long_opt_match() {
+  local _w=$1 _c _hit="" _hits=0
+  shift
+  _long_opt=""
+  for _c in "$@"; do
+    if [[ "$_c" == "$_w" ]]; then _long_opt=$_c; return 0; fi
+    if [[ "$_c" == "$_w"* ]]; then _hit=$_c; _hits=$((_hits + 1)); fi
+  done
+  if (( _hits == 1 )); then _long_opt=$_hit; fi
+  return 0
+}
+
+# Sets _long_word to the word with its long option name (the part before `=`) spelled in full
+# among the candidates; a word that resolves to none is kept as it is.
+_long_word_canon() {
+  local _w=$1 _name=${1%%=*}
+  shift
+  _long_word=$_w
+  [[ "$_w" == --?* ]] || return 0
+  _long_opt_match "$_name" "$@"
+  if [[ -n "$_long_opt" ]]; then _long_word=$_long_opt${_w:${#_name}}; fi
+  return 0
+}
+
 _classify_force_push_segment() {
   local _t push_text
   local _i _has_force=0 _has_refspec=0 _pushes_all_refs=0 _seen_positional=0 _has_dynamic=0 _has_context=0
@@ -724,10 +766,11 @@ _classify_force_push_segment() {
   for ((_i = _git_sub_index + 1; _i < ${#_seg_tokens[@]}; _i++)); do
     _t=${_seg_tokens[_i]}
     if (( _consume_next )); then
-      case "$_t" in
+      _long_word_canon "$_t" "${_PUSH_LONG_OPTS[@]}"
+      case "$_long_word" in
         --force|-f) _has_force=1 ;;
-        --al|--all|--b|--br|--bra|--bran|--branc|--branch|--branche|--branches) _pushes_all_refs=1 ;;
-        --m|--mi|--mir|--mirr|--mirro|--mirror) _has_force=1; _pushes_all_refs=1 ;;
+        --all|--branches) _pushes_all_refs=1 ;;
+        --mirror) _has_force=1; _pushes_all_refs=1 ;;
         -*) [[ "$_t" != --* && "$_t" == *f* ]] && _has_force=1 ;;
       esac
       # a value-taking flag may carry a substitution; any other flag's slot is the destination
@@ -761,16 +804,17 @@ _classify_force_push_segment() {
     fi
     if (( _skip_tok )); then _skip_tok=0; continue; fi
     [[ "$_t" != -* && ( "$_t" == +* || "$_t" == *:+* ) ]] && _has_force=1
+    # git accepts any unambiguous prefix of a long option (`--mirr`, `--rep`); an ambiguous one
+    # (`--forc`, `--fo`) is rejected by git and stays an unknown flag here
+    _long_word_canon "$_t" "${_PUSH_LONG_OPTS[@]}"
+    _t=$_long_word
     case "$_t" in
       --force|-f) _has_force=1 ;;
-      # git accepts any unambiguous prefix of a long option; `--forc` and `--fo` are ambiguous
-      # with --force-with-lease and --follow-tags, so git rejects them and they need no arm
-      --al|--all|--b|--br|--bra|--bran|--branc|--branch|--branche|--branches) _pushes_all_refs=1 ;;
-      --m|--mi|--mir|--mirr|--mirro|--mirror) _has_force=1; _pushes_all_refs=1 ;;
-      --force-with-lease*|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
-      --no-verify|--dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|--no-progress|\
-      -u|--set-upstream|-d|--delete|--signed|--no-signed|-n|--no-thin|--no-atomic|--verify|\
-      --no-*|-4|-6|--ipv4|--ipv6|--) ;;
+      --all|--branches) _pushes_all_refs=1 ;;
+      --mirror) _has_force=1; _pushes_all_refs=1 ;;
+      --force-with-lease|--force-if-includes|--tags|--follow-tags|--prune|--thin|--atomic|\
+      --dry-run|--porcelain|-q|--quiet|-v|--verbose|--progress|-u|--set-upstream|-d|--delete|\
+      --signed|-n|--verify|--no-*|-4|-6|--ipv4|--ipv6|--) ;;
       --*=*) ;;
       -*)
         if [[ "$_t" != --* && "$_t" == *f* ]]; then
@@ -851,7 +895,7 @@ _git_switch_token_risky() {
 # CHECK_RESET <seq> <submodules> <dynamic-target> <target> <context joined by \x1f> for
 # _reset_verdict to judge against the real repository.
 _classify_reset_segment() {
-  local _i _t _o _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0 _eoo=0
+  local _i _t _hard=0 _mode_flag=0 _maybe=0 _target="" _have_target=0 _submod=0 _dyn=0 _eoo=0
   local _joined="" _c _n=0 _sep=$'\x1f' _has_gd=0 _has_wt=0 _seqv=$_git_prior_mutation
   (( _git_prior_switch )) && _seqv=2
 
@@ -875,14 +919,14 @@ _classify_reset_segment() {
       _mode_flag=0  # git applies the last mode flag, so an earlier --soft does not cover this word
     fi
     if [[ "$_t" == -* ]]; then
-      case "$_t" in
+      # git accepts any unique prefix of a long option: `--h` is --hard, `--rec` is
+      # --recurse-submodules (which takes an optional value); the mode flags take none
+      _long_word_canon "$_t" "${_RESET_LONG_OPTS[@]}"
+      case "$_long_word" in
         --soft|--mixed|--keep|--merge) _mode_flag=1 ;;
+        --hard) _hard=1 ;;
+        --recurse-submodules|--recurse-submodules=*) _submod=1 ;;
       esac
-      # git accepts a unique prefix of --recurse-submodules (`--rec` and up), with or without a value
-      _o=${_t%%=*}
-      if [[ "$_o" == --rec* && ${#_o} -ge 5 && "--recurse-submodules" == "$_o"* ]]; then _submod=1; fi
-      # git accepts any unique prefix of a long option; `--h` alone is ambiguous with --help
-      if [[ "$_t" == --* && ${#_t} -ge 4 && "--hard" == "$_t"* ]]; then _hard=1; fi
       continue
     fi
     if (( ! _have_target )); then _have_target=1; _target=$_t; fi
@@ -1188,7 +1232,7 @@ scan_git_text() {
       # no lexer ran, so a push whose words are spelled by a brace group or substitution cannot be read
       printf 'BLOCK\t%s\n' "$_limit_reason"
     elif printf '%s\n' "$_scan_text" | tr -d "'\"\\\\[]{}" | tr '()`' '   ' | grep -Eq \
-      'git([[:space:]].*)?[[:space:]]reset([[:space:]].*)?[[:space:]]--ha(rd?)?([[:space:];&|()`,]|$)'; then
+      'git([[:space:]].*)?[[:space:]]reset([[:space:]].*)?[[:space:]]--h(a(rd?)?)?([[:space:];&|()`,]|$)'; then
       printf 'BLOCK\t%s-reset\n' "$_limit_reason"
     fi
     return
