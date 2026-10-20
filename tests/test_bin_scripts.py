@@ -40,6 +40,7 @@ SCRIPTS = {
     "swe-workbench-lsp": "python3",
     "swe-workbench-memory": "python3",
     "swe-workbench-new-run-dir": "bash",
+    "swe-workbench-plan-evidence": "python3",
     "swe-workbench-preflight-commit": "python3",
     "swe-workbench-preflight-pr": "bash",
     "swe-workbench-pr-review-submit": "python3",

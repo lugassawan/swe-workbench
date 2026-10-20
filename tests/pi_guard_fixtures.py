@@ -211,6 +211,8 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("$(git branch --show-current) git push -f origin main", True),
     # A word after git is never a shell interpreter, even `.`.
     ("git commit . -m \"$(cat <<'EOT'\nnever run git push --force origin main\nEOT\n)\"", False),
+    # Push state must not leak between segments: the second push is judged on its own.
+    ("git push $(echo x) ; git push --force origin main", True),
     # Quoted text that is data stays allowed.
     ("git commit -m 'document git push --force origin main'", False),
     ("git log --grep='git push --force origin main'", False),
@@ -255,6 +257,17 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("/usr/local/bin/docker exec dev git push --force origin main", True),
     ("/usr/local/bin/podman exec dev git push --force origin main", True),
     ("/usr/local/bin/kubectl exec pod -- git push --force origin main", True),
+    # Hard resets whose repository cannot be resolved are blocked whatever the current branch is;
+    # a soft reset and quoted text are not judged at all.
+    ("git -C /nonexistent-swb reset --hard", True),
+    ("git -c a=b -C /nonexistent-swb reset --hard", True),
+    ("git --no-pager -C /nonexistent-swb reset --hard", True),
+    ("git --git-dir=/nonexistent-swb/.git reset --hard", True),
+    ('git -C "$(echo x)" reset --hard', True),
+    ("GIT_DIR=/x git reset --hard", True),
+    ("bash -c 'git -C /nonexistent-swb reset --hard'", True),
+    ("git -C /nonexistent-swb reset --soft HEAD~1", False),
+    ("echo 'git reset --hard'", False),
     # nested non-interactive `pi` session — the bash escape hatch around the subagent
     # dispatcher's --exclude-tools recursion guard
     ("pi -p 'review this'", True),
@@ -305,6 +318,8 @@ BASH_GUARD_BRANCH_FIXTURES: dict[str, list[tuple[str, bool]]] = {
         ("git push $(echo --force) origin", True),
         ('git push "$(git remote)"', True),
         ("git push $(echo --force) origin feature/x", False),
+        # the positional count of one push must not suppress the check on the next
+        ("git push origin feature/x ; git push $(echo -f) origin", True),
         # a whole-word current-branch query is the current branch
         ("git push --force origin $(git branch --show-current)", True),
         ('git push --force origin "$(git branch --show-current)"', True),
@@ -319,6 +334,7 @@ BASH_GUARD_BRANCH_FIXTURES: dict[str, list[tuple[str, bool]]] = {
         ("git push $(echo --force) origin", False),
         ('git push "$(git remote)"', False),
         ("git push $(echo --force) origin feature/x", False),
+        ("git push origin feature/x ; git push $(echo -f) origin", False),
         ("git push --force origin $(git branch --show-current)", False),
         ('git push --force origin "$(git branch --show-current)"', False),
         ("git push --force origin `git branch --show-current`", False),
