@@ -884,12 +884,14 @@ class Scope(NamedTuple):
 
 # Keywords and ubiquitous builtins: a deleted `return x` must not make every
 # def named like a keyword-adjacent word a watched symbol.
-SCOPE_STOPLIST = frozenset(
-    "self cls this None True False null undefined nil true false return def class function const let var "
-    "if else elif for while in is not and or import from as with try except finally raise pass break "
-    "continue yield async await new delete typeof void lambda global nonlocal assert print len str int "
-    "float bool list dict set tuple range".split()
-)
+SCOPE_STOPLIST = frozenset({
+    "self", "cls", "this", "None", "True", "False", "null", "undefined", "nil", "true", "false",
+    "return", "def", "class", "function", "const", "let", "var", "if", "else", "elif", "for", "while",
+    "in", "is", "not", "and", "or", "import", "from", "as", "with", "try", "except", "finally", "raise",
+    "pass", "break", "continue", "yield", "async", "await", "new", "delete", "typeof", "void", "lambda",
+    "global", "nonlocal", "assert", "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
+    "tuple", "range",
+})
 
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -901,7 +903,7 @@ def _diff_path(raw: str, prefix: str) -> str | None:
     path = raw.split("\t", 1)[0].rstrip("\r")
     if path == "/dev/null":
         return None
-    return path[len(prefix):] if path.startswith(prefix) else path
+    return path.removeprefix(prefix)
 
 
 def _tracks_removed_idents(path: str) -> bool:
