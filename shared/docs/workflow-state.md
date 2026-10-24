@@ -42,16 +42,28 @@ sit on `main` and would collide on `main.json`, each overwriting or deleting the
 |---|---|
 | **Path** | `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>--<run_scope>.json` |
 | **Example** | `.claude/cache/workflow-state/main--pr-review-5-acme-app-123.json` |
-| **`run_scope`** | `[A-Za-z0-9._-]` only; unique per concurrent run. pr-review uses `<MODE_TAG>-<repo-scope-slug>-<PR>`. |
+| **`run_scope`** | Non-empty, `[A-Za-z0-9._-]` only, no `--`; unique per concurrent run. pr-review uses `<MODE_TAG>-<repo-scope-slug>-<PR>`. |
 
 The writer records the same value in `context.run_scope`; the hook rejects a file whose
 filename scope and `context.run_scope` disagree (and an unscoped `<branch>.json` that carries
 a `run_scope`). Each run writes, updates and deletes **only its own** scoped file.
 
-On SessionStart the hook considers the unscoped file and every `<branch>--*.json` sibling.
-Exactly one usable checkpoint → the normal resume preamble (with a `Run scope:` line). More
-than one → the hook lists them all and tells the model to ask the user which run the session
-belongs to, never picking one itself. The staleness sweep applies to each file independently.
+On SessionStart the hook considers the unscoped file and every `<branch>--*.json` sibling,
+rejecting symlinks and any malformed scope. That glob can also match another branch's file
+(branch `a` sees branch `a--b`'s `a--b.json`), so a stale run-scoped candidate is deleted only
+after its `context.branch` and `context.run_scope` are confirmed as this run's; the exact
+`<branch>.json` is swept by name as before.
+
+- Exactly one usable checkpoint → the normal resume preamble, with `Run scope:` and
+  `Checkpoint file:` lines so the model keeps writing to the scoped file after compaction.
+- One unscoped checkpoint whose skill differs from every run-scoped one (e.g. a
+  workflow-development run on `main` alongside PR reviews) → resume the unscoped one, and list
+  the run-scoped ones in case the session is one of those runs.
+- Otherwise → list every checkpoint, with its `worktree_root`, and tell the model to ask the
+  user which run the session belongs to, never picking one itself.
+
+On a detached HEAD, pr-review names its file `detached-<short-sha>--<run_scope>.json`; the hook
+does not resume checkpoints on a detached HEAD, so only Step 7 removes it.
 
 ### Schema
 

@@ -711,11 +711,65 @@ class TestRunScopedCheckpoints:
         assert "Resume from Phase" not in ctx
         assert a.exists() and b.exists()
 
-    def test_unscoped_and_scoped_both_listed(self, hook_script, git_repo):
-        _write_state(git_repo, VALID_STATE)
+    def test_unscoped_other_skill_auto_resumes_and_mentions_scoped(self, hook_script, git_repo):
+        unscoped = _write_state(git_repo, VALID_STATE)
         _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
         ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Multiple workflow checkpoints" not in ctx
+        assert "swe-workbench:workflow-development" in ctx
+        assert f"Checkpoint file:  {unscoped}" in ctx
+        assert "Resume from Phase 3" in ctx
+        assert "Other concurrent runs" in ctx and "pr-review-o-r-1" in ctx
+
+    def test_unscoped_same_skill_as_scoped_is_ambiguous(self, hook_script, git_repo):
+        s = _pr_state(9)
+        _write_state(git_repo, s)
+        _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Multiple workflow checkpoints" in ctx
         assert "(unscoped)" in ctx and "pr-review-o-r-1" in ctx
+
+    def test_single_preamble_names_checkpoint_file(self, hook_script, git_repo):
+        path = _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert f"Checkpoint file:  {path}" in ctx
+
+    def test_ambiguous_listing_keeps_worktree_root(self, hook_script, git_repo):
+        a = _pr_state(1)
+        a["context"]["worktree_root"] = "/x/wt-1"
+        _write_scoped(git_repo, "pr-review-o-r-1", a)
+        _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "worktree_root `/x/wt-1`" in ctx
+        assert "EnterWorktree(path=<that worktree_root>)" in ctx
+
+    def test_non_string_phase_label_still_listed(self, hook_script, git_repo):
+        a = _pr_state(1)
+        a["phase_label"] = 4
+        _write_scoped(git_repo, "pr-review-o-r-1", a)
+        _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "pr-review-o-r-1" in ctx and "pr-review-o-r-2" in ctx
+
+    @pytest.mark.parametrize("name", ["", "a--b", "bad scope"])
+    def test_malformed_file_scope_rejected(self, hook_script, git_repo, name):
+        _write_scoped(git_repo, name, _pr_state(1))
+        assert _run(hook_script, str(git_repo)).stdout.strip() == ""
+
+    def test_other_branch_stale_file_not_deleted(self, hook_script, git_repo):
+        """Branch `X` globs `X--*.json`, which matches branch `X--b`'s own file."""
+        other_branch = _SAFE_BRANCH + "--b"
+        s = json.loads(json.dumps(VALID_STATE))
+        s["context"]["branch"] = other_branch
+        path = git_repo / ".claude" / "cache" / "workflow-state" / f"{other_branch}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(s), encoding="utf-8")
+        old = 25 * 3600
+        st = path.stat()
+        os.utime(path, (st.st_atime - old, st.st_mtime - old))
+        result = _run(hook_script, str(git_repo))
+        assert result.stdout.strip() == ""
+        assert path.exists()
 
     def test_scope_mismatch_rejected(self, hook_script, git_repo):
         _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1), record_scope="pr-review-o-r-9")
