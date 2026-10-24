@@ -98,3 +98,17 @@ class TestReadmeEntries:
         assert "workflow-state" in shared_readme, (
             "shared/docs/README.md missing index entry for workflow-state.md"
         )
+
+
+class TestPrReviewRunScopedCheckpoint:
+    """workflow-pr-review must checkpoint to a run-scoped file (issue #823)."""
+
+    TEXT = (ROOT / "skills" / "workflow-pr-review" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_checkpoint_path_is_run_scoped(self):
+        assert 'CHECKPOINT_SCOPE="${MODE_TAG}-${SCOPE_SLUG}-${PR}"' in self.TEXT
+        assert "--${CHECKPOINT_SCOPE}.json" in self.TEXT
+
+    def test_records_run_scope_and_deletes_only_own_file(self):
+        assert "context.run_scope" in self.TEXT
+        assert 'rm -f "$CHECKPOINT"' in self.TEXT

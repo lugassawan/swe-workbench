@@ -662,3 +662,141 @@ class TestSourceAwareFraming:
         assert "This session resumed." in ctx
         assert "compacted" not in ctx.lower()
         assert '{"a"' not in ctx
+
+
+# ---------------------------------------------------------------------------
+# Run-scoped checkpoints (issue #823)
+# ---------------------------------------------------------------------------
+
+def _write_scoped(repo_dir: Path, scope: str, state: dict, record_scope: str | None = None) -> Path:
+    safe = _BRANCH.replace("/", "-")
+    path = repo_dir / ".claude" / "cache" / "workflow-state" / f"{safe}--{scope}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    s = json.loads(json.dumps(state))
+    s["context"]["run_scope"] = scope if record_scope is None else record_scope
+    path.write_text(json.dumps(s), encoding="utf-8")
+    return path
+
+
+def _pr_state(pr: int) -> dict:
+    s = json.loads(json.dumps(VALID_STATE))
+    s["skill"] = "swe-workbench:workflow-pr-review"
+    s["mode"] = None
+    s["phase"] = "4"
+    s["phase_label"] = f"Review PR {pr}"
+    s["context"]["pr"] = pr
+    return s
+
+
+class TestRunScopedCheckpoints:
+    """Concurrent runs on one branch keep separate `<branch>--<scope>.json` files."""
+
+    def test_single_scoped_checkpoint_resumes(self, hook_script, git_repo):
+        _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        result = _run(hook_script, str(git_repo))
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "swe-workbench:workflow-pr-review" in ctx
+        assert "Run scope:        pr-review-o-r-1" in ctx
+        assert "Resume from Phase 4" in ctx
+
+    def test_concurrent_scoped_checkpoints_listed_not_picked(self, hook_script, git_repo):
+        a = _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        b = _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Multiple workflow checkpoints" in ctx
+        assert "pr-review-o-r-1" in ctx and "pr-review-o-r-2" in ctx
+        assert "Ask the user which run" in ctx
+        assert "Resume from Phase" not in ctx
+        assert a.exists() and b.exists()
+
+    def test_unscoped_other_skill_auto_resumes_and_mentions_scoped(self, hook_script, git_repo):
+        unscoped = _write_state(git_repo, VALID_STATE)
+        _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Multiple workflow checkpoints" not in ctx
+        assert "swe-workbench:workflow-development" in ctx
+        assert f"Checkpoint file:  {unscoped}" in ctx
+        assert "Resume from Phase 3" in ctx
+        assert "Other concurrent runs" in ctx and "pr-review-o-r-1" in ctx
+
+    def test_unscoped_same_skill_as_scoped_is_ambiguous(self, hook_script, git_repo):
+        s = _pr_state(9)
+        _write_state(git_repo, s)
+        _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "Multiple workflow checkpoints" in ctx
+        assert "(unscoped)" in ctx and "pr-review-o-r-1" in ctx
+
+    def test_single_preamble_names_checkpoint_file(self, hook_script, git_repo):
+        path = _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert f"Checkpoint file:  {path}" in ctx
+
+    def test_ambiguous_listing_keeps_worktree_root(self, hook_script, git_repo):
+        a = _pr_state(1)
+        a["context"]["worktree_root"] = "/x/wt-1"
+        _write_scoped(git_repo, "pr-review-o-r-1", a)
+        _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "worktree_root `/x/wt-1`" in ctx
+        assert "EnterWorktree(path=<that worktree_root>)" in ctx
+
+    def test_non_string_phase_label_still_listed(self, hook_script, git_repo):
+        a = _pr_state(1)
+        a["phase_label"] = 4
+        _write_scoped(git_repo, "pr-review-o-r-1", a)
+        _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "pr-review-o-r-1" in ctx and "pr-review-o-r-2" in ctx
+
+    @pytest.mark.parametrize("name", ["", "bad scope"])
+    def test_malformed_file_scope_rejected(self, hook_script, git_repo, name):
+        _write_scoped(git_repo, name, _pr_state(1))
+        assert _run(hook_script, str(git_repo)).stdout.strip() == ""
+
+    @pytest.mark.parametrize("scope", ["a--b", "pr-review-4-acme-my--repo-7", "pr-review-4-acme--tool-7"])
+    def test_scope_containing_double_dash_resumes(self, hook_script, git_repo, scope):
+        """repo-scope slugs can contain `--` (e.g. `acme/my--repo`, `acme/-tool`)."""
+        _write_scoped(git_repo, scope, _pr_state(7))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert f"Run scope:        {scope}" in ctx
+
+    def test_other_branch_stale_file_not_deleted(self, hook_script, git_repo):
+        """Branch `X` globs `X--*.json`, which matches branch `X--b`'s own file."""
+        other_branch = _SAFE_BRANCH + "--b"
+        s = json.loads(json.dumps(VALID_STATE))
+        s["context"]["branch"] = other_branch
+        path = git_repo / ".claude" / "cache" / "workflow-state" / f"{other_branch}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(s), encoding="utf-8")
+        old = 25 * 3600
+        st = path.stat()
+        os.utime(path, (st.st_atime - old, st.st_mtime - old))
+        result = _run(hook_script, str(git_repo))
+        assert result.stdout.strip() == ""
+        assert path.exists()
+
+    def test_scope_mismatch_rejected(self, hook_script, git_repo):
+        _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1), record_scope="pr-review-o-r-9")
+        result = _run(hook_script, str(git_repo))
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    def test_unscoped_file_with_run_scope_rejected(self, hook_script, git_repo):
+        s = json.loads(json.dumps(VALID_STATE))
+        s["context"]["run_scope"] = "pr-review-o-r-1"
+        _write_state(git_repo, s)
+        assert _run(hook_script, str(git_repo)).stdout.strip() == ""
+
+    def test_stale_scoped_file_swept_others_kept(self, hook_script, git_repo):
+        stale = _write_scoped(git_repo, "pr-review-o-r-1", _pr_state(1))
+        fresh = _write_scoped(git_repo, "pr-review-o-r-2", _pr_state(2))
+        old = 25 * 3600
+        st = stale.stat()
+        os.utime(stale, (st.st_atime - old, st.st_mtime - old))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert not stale.exists()
+        assert fresh.exists()
+        assert "Run scope:        pr-review-o-r-2" in ctx

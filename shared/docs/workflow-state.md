@@ -31,6 +31,40 @@ holds whether the session runs in the main checkout or a linked worktree.
 Per-branch filenames give worktree isolation for free: two worktrees on the same repo
 but different branches never share a checkpoint file.
 
+### Run-scoped checkpoints
+
+Branch isolation is not enough when several runs of a workflow can share one branch — e.g.
+`swe-workbench:workflow-pr-review` runs launched concurrently from the same main checkout all
+sit on `main` and would collide on `main.json`, each overwriting or deleting the other's state
+(issue #823). Such a workflow writes a **run-scoped** file instead:
+
+| Property | Value |
+|---|---|
+| **Path** | `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>--<run_scope>.json` |
+| **Example** | `.claude/cache/workflow-state/main--pr-review-5-acme-app-123.json` |
+| **`run_scope`** | Non-empty, `[A-Za-z0-9._-]` only (may contain `--`, as repo-scope slugs can); unique per concurrent run. pr-review uses `<MODE_TAG>-<repo-scope-slug>-<PR>`. |
+
+The writer records the same value in `context.run_scope`; the hook rejects a file whose
+filename scope and `context.run_scope` disagree (and an unscoped `<branch>.json` that carries
+a `run_scope`). Each run writes, updates and deletes **only its own** scoped file.
+
+On SessionStart the hook considers the unscoped file and every `<branch>--*.json` sibling,
+rejecting symlinks and any malformed scope. That glob can also match another branch's file
+(branch `a` sees branch `a--b`'s `a--b.json`), so a stale run-scoped candidate is deleted only
+after its `context.branch` and `context.run_scope` are confirmed as this run's; the exact
+`<branch>.json` is swept by name as before.
+
+- Exactly one usable checkpoint → the normal resume preamble, with `Run scope:` and
+  `Checkpoint file:` lines so the model keeps writing to the scoped file after compaction.
+- One unscoped checkpoint whose skill differs from every run-scoped one (e.g. a
+  workflow-development run on `main` alongside PR reviews) → resume the unscoped one, and list
+  the run-scoped ones in case the session is one of those runs.
+- Otherwise → list every checkpoint, with its `worktree_root`, and tell the model to ask the
+  user which run the session belongs to, never picking one itself.
+
+On a detached HEAD, pr-review names its file `detached-<short-sha>--<run_scope>.json`; the hook
+does not resume checkpoints on a detached HEAD, so only Step 7 removes it.
+
 ### Schema
 
 ```json
@@ -59,6 +93,7 @@ but different branches never share a checkpoint file.
 - `mode` — optional mode letter (A/B/C for workflow-development; absent for single-mode skills).
 - `phase` / `phase_label` — current phase/step number and human label; `completed_phases` lists all finished phases.
 - `context` — flat free-form bag; `context.branch` is the resume-validation key. Skills pack skill-specific values here (`pr`, `head_sha`, `decision` for pr-review; project-detection values for workflow-development). `context.worktree_root` records the absolute path of the worktree where the session is doing its work — populate it with `git rev-parse --show-toplevel` at Phase 1 checkpoint, or omit it when working in the main checkout.
+- `context.run_scope` — present only on run-scoped files (see Run-scoped checkpoints above); must match the filename's `--<run_scope>` suffix.
 - `updated_at` — ISO-8601 timestamp (informational — not used for staleness; the hook uses filesystem mtime instead).
 
 **Coverage limit for the worktree re-anchor nudge:** As of issue #497, the nudge fires independently of the sidecar gate: it probes `git rev-parse --git-dir --git-common-dir` directly and fires whenever cwd resolves to a linked worktree — including the *same-path* case (a fresh sidecar's `worktree_root` already matches the live root) and the *sidecar-less* case (no checkpoint exists at all, e.g. a workflow that never wrote one). Only when cwd is **not** a linked worktree does the hook stay silent. As of issue #524, the hook also fires on `startup` (cold launch) and `resume` (`--continue`/`--resume`/`/resume`), not only `compact` — closing the gap where a non-compaction session resume left `EnterWorktree` tracking silently unrecovered. Wording is source-aware: a `startup`/`resume` firing never claims "this session was compacted" (see `context.worktree_root` note below and the Hook registration table). Two intentional gaps remain: `clear` (`/clear`) is not covered, since anchoring generally survives it (same process, same cwd); and the hook still **cannot** redirect to a *foreign* worktree it has no checkpoint for (e.g. a session that was always anchored in the wrong dir) — path mismatch still only produces the `REQUIRED` variant when a sidecar records a differing `worktree_root`. The worktree_root nudge is defense-in-depth; the primary guidance lives in `skills/workflow-worktree-session/SKILL.md` and the plan template.
@@ -68,7 +103,8 @@ but different branches never share a checkpoint file.
 | Actor | Event | Action |
 |---|---|---|
 | **Model** | Phase/step transition | Write (overwrite) the state file with the new phase |
-| **Model** | Terminal phase success | Delete the state file |
+| **Model** | Terminal phase success | Delete the state file (run-scoped writers delete only their own scoped file) |
+| **Hook** | SessionStart(startup\|resume\|compact), several usable files for the branch | List them; instruct the model to ask the user which run to resume |
 | **Hook** | SessionStart(startup\|resume\|compact) | Read the file; inject resume preamble if fresh + valid |
 | **Hook** | SessionStart(startup\|resume\|compact), file >24h old | Delete the file; no injection (staleness sweep) |
 | **Hook** | SessionStart(startup\|resume\|compact), branch mismatch or version ≠ 1 | No injection (fail-open, file untouched) |
@@ -203,6 +239,8 @@ it was skipped, delete manually:
 ```bash
 rm .claude/cache/workflow-state/$(git branch --show-current | tr '/' '-').json
 ```
+For a run-scoped file, delete `<branch>--<run_scope>.json` for the finished run only —
+other `--*` siblings may belong to runs still in progress.
 
 **Hook exits non-zero:**
 
