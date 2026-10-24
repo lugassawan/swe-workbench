@@ -45,7 +45,7 @@ This skill orchestrates; analysis is delegated to:
 - `swe-workbench:reviewer` subagent — produces `Severity | File:Line | Issue | Why | Fix` findings + a Review Decision footer (when instructed by this skill — see Step 4).
 - `swe-workbench:ticket-context` skill — prepended to the reviewer prompt when the PR body or commit messages reference a ticket key, atlassian/Confluence URL, or `#NNN` GitHub ref.
 - `swe-workbench:workflow-pr-review-post` skill — the shared posting core (Step 6): dedup, inline/PR-level posting, self-review gate + diff-scoping flip, submit, its own state reap.
-- **Checkpoint:** write the workflow state file (see `shared/docs/workflow-state.md`) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context`. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete the state file after Step 7.
+- **Checkpoint:** write the workflow state file at `$CHECKPOINT` (set in Step 1 — a *run-scoped* path, see `shared/docs/workflow-state.md` § Run-scoped checkpoints) at each step boundary, carrying `$PR`/`$BASE`/`$HEAD_SHA`/`$DECISION` in `context` and `$CHECKPOINT_SCOPE` in `context.run_scope`. Never write the unscoped `<branch>.json`: PR reviews usually run from the main checkout, so concurrent reviews of different PRs share one branch and would overwrite or delete each other's state. Also populate `context.worktree_root` with `git rev-parse --show-toplevel`; omit it when working in the main checkout. This lets the resume hook emit a re-anchor nudge on compaction. Delete only `$CHECKPOINT` after Step 7.
 
 ## 7-step flow
 
@@ -89,6 +89,9 @@ if [ "$MODE" = followup ] && [ "$STATE" != "OPEN" ]; then
 fi
 CURRENT_USER=$(gh api /user -q .login)
 RUN_DIR=$(swe-workbench-new-run-dir "$MODE_TAG" "$PR" --repo "$PR_REPO")
+# Run-scoped checkpoint: concurrent reviews from one checkout never share state.
+CHECKPOINT_SCOPE="${MODE_TAG}-${SCOPE_SLUG}-${PR}"
+CHECKPOINT="$(git rev-parse --show-toplevel)/.claude/cache/workflow-state/$(git branch --show-current | tr '/' '-')--${CHECKPOINT_SCOPE}.json"
 ```
 
 `preflight-pr.sh` handles `gh auth status`, fetches the PR JSON to `$JSON`, and emits `BASE`, `HEAD_SHA`, `AUTHOR_LOGIN`, `OWNER`, `REPO`, `STATE` as shell assignments. `title`/`body` stay in `$JSON` — read them with `jq` when needed (Step 3 ticket-context). The JSON path is `${SCOPE_SLUG}-${PR}${STATE_SUFFIX}.json`: first-pass leaves `STATE_SUFFIX` empty (`<slug>-${PR}.json`); followup sets it to `-followup` (`<slug>-${PR}-followup.json`), so both can coexist for the same PR. `PR_REPO` comes from the repository selected by `gh` (including `gh repo set-default`), and the same value is passed to `swe-workbench-repo-scope` and `swe-workbench-new-run-dir`; a fork checkout therefore cannot split state and run artifacts across two repository slugs. `new-run-dir.sh` allocates `$RUN_DIR` — a mode-0700 scratch directory under `/tmp/swe-workbench-run/` for this run's own ad-hoc artifacts (assembled JSON payloads, submit-response captures) that this flow's bash produces but never enumerates ahead of time. Distinct from `$JSON` above, which is a deliberate PR-keyed state file reaped by name in Step 7. The `if [ "$MODE" = followup ] …` guard is followup-only: a first-pass review proceeds regardless of PR state, while a followup re-check only makes sense while the PR is still open for further pushes. This gate runs immediately after the preflight fetch and before `$RUN_DIR` is allocated, so a rejected followup reaps `$JSON` inline rather than leaking it — `$RUN_DIR` never exists on this path, so there is nothing else to reap.
@@ -254,7 +257,7 @@ happens here:
 eval "$(swe-workbench-pr-review-worktree release --mode "$MODE" --pr "$PR" --intent completed)"
 ```
 
-Delete the workflow-state checkpoint file (see `shared/docs/workflow-state.md`) now that the flow has reached its terminal step.
+Delete the workflow-state checkpoint for this run (see `shared/docs/workflow-state.md`) now that the flow has reached its terminal step — `rm -f "$CHECKPOINT"`, never another run's file in the same directory.
 
 ## Footer parsing contract
 

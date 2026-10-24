@@ -57,9 +57,75 @@ maybe_standalone_advisory() {
         '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$ctx}}'
 }
 
+# Validates $state_file as a usable checkpoint for $branch; returns 0 if so.
+# A run-scoped file (`<safe_branch>--<scope>.json`) must also record the same
+# scope in `context.run_scope`. Stale files (>24h) are deleted — only this
+# branch's own files are ever considered, so other branches manage their own.
+# Reads state_file/state_dir/real_dir/safe_branch/branch via dynamic scoping.
+validate_checkpoint() {
+    local real_state version ctx_branch ctx_scope file_scope base
+    [ -f "$state_file" ] || return 1
+
+    # Path-containment guard: state_file must resolve inside state_dir.
+    # Uses python3 for portability (GNU realpath -m unavailable on macOS without coreutils).
+    real_state=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
+        "$state_file" 2>/dev/null) || return 1
+    case "$real_state" in "$real_dir/"*) ;; *) return 1 ;; esac
+
+    # Staleness gate: file older than 24h is deleted and skipped.
+    if [ -n "$(find "$state_file" -mmin +1440 2>/dev/null)" ]; then
+        rm -f "$state_file"
+        return 1
+    fi
+
+    # Schema version gate — only v1 understood; jq failure means malformed JSON.
+    version=$(jq -r '.version // empty' "$state_file" 2>/dev/null) || return 1
+    [ "$version" = "1" ] || return 1
+
+    # Branch-match gate — reject a checkpoint left by a different branch
+    ctx_branch=$(jq -r '.context.branch // empty' "$state_file" 2>/dev/null) || return 1
+    [ "$ctx_branch" = "$branch" ] || return 1
+
+    # Scope-match gate — filename scope and recorded scope must agree.
+    base="${state_file##*/}"
+    base="${base%.json}"
+    file_scope=""
+    [ "$base" = "$safe_branch" ] || file_scope="${base#"${safe_branch}--"}"
+    ctx_scope=$(jq -r '.context.run_scope // ""' "$state_file" 2>/dev/null) || return 1
+    [ "$ctx_scope" = "$file_scope" ] || return 1
+    return 0
+}
+
+# Several concurrent runs on this branch each left a checkpoint. Never pick
+# one — a wrong resume is worse than no resume — so list them and ask.
+# Reads valid_files/branch/is_linked_worktree/preamble_* via dynamic scoping.
+emit_ambiguous_preamble() {
+    local f listing="" line advisory=""
+    for f in "${valid_files[@]}"; do
+        line=$(jq -r '"- run scope `\(.context.run_scope // "" | if . == "" then "(unscoped)" else . end)`: \(.skill // "?") — Phase \(.phase // "?")\(if (.phase_label // "") != "" then " — " + .phase_label else "" end)"' \
+            "$f" 2>/dev/null) || continue
+        listing="${listing}${line} (\`${f}\`)
+"
+    done
+    if [ "$is_linked_worktree" -eq 1 ]; then
+        advisory="
+$(format_advisory "is a linked worktree")
+"
+    fi
+    jq -cn --arg ctx "${preamble_header}
+
+${preamble_intro} Multiple workflow checkpoints were found for branch: ${branch} (concurrent runs):
+
+${listing}
+Ask the user which run this session belongs to before resuming. Resume, update, and delete only that run's checkpoint file — never another run's.
+${advisory}" \
+        '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":$ctx}}'
+}
+
 main() {
-    local input cwd root branch safe_branch state_dir state_file stale
-    local real_state real_dir version ctx_branch
+    local input cwd root branch safe_branch state_dir state_file
+    local real_dir run_scope
+    local -a valid_files
     local skill mode phase phase_label completed notes preamble
     local worktree_root real_wt_root real_live_root cmp_wt_root cmp_live_root reanchor_line
     local git_dir git_common_dir real_git_dir real_common_dir cmp_git_dir cmp_common_dir
@@ -101,45 +167,33 @@ main() {
     # Sanitize branch name: / → - (mirrors the writer contract)
     safe_branch="${branch//\//-}"
     state_dir="$root/.claude/cache/workflow-state"
-    state_file="${state_dir}/${safe_branch}.json"
-
-    # Path-containment guard: state_file must resolve inside state_dir.
-    # Uses python3 for portability (GNU realpath -m unavailable on macOS without coreutils).
-    real_state=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
-        "$state_file" 2>/dev/null) || return 0
     real_dir=$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
         "$state_dir" 2>/dev/null) || return 0
-    case "$real_state" in "$real_dir/"*) ;; *) return 0 ;; esac
 
-    # No usable checkpoint (missing, and below: stale/malformed/wrong
-    # version/wrong branch) still gets the standalone nudge if cwd is linked.
-    if [ ! -f "$state_file" ]; then
+    # Candidates: the unscoped per-branch file plus any run-scoped
+    # `<branch>--<run_scope>.json` siblings (issue #823 — concurrent runs on
+    # one branch, e.g. parallel PR reviews from the main checkout).
+    valid_files=()
+    for state_file in "${state_dir}/${safe_branch}.json" "${state_dir}/${safe_branch}--"*.json; do
+        if validate_checkpoint; then
+            valid_files+=("$state_file")
+        fi
+    done
+
+    # No usable checkpoint (missing/stale/malformed/wrong version/wrong
+    # branch/wrong scope) still gets the standalone nudge if cwd is linked.
+    if [ "${#valid_files[@]}" -eq 0 ]; then
         maybe_standalone_advisory
         return 0
     fi
 
-    # Staleness gate: file older than 24h is deleted and skipped.
-    # Only the current branch's file is removed; other branches manage their own.
-    stale=$(find "$state_file" -mmin +1440 2>/dev/null)
-    if [ -n "$stale" ]; then
-        rm -f "$state_file"
-        maybe_standalone_advisory
+    if [ "${#valid_files[@]}" -gt 1 ]; then
+        emit_ambiguous_preamble
         return 0
     fi
 
-    # Schema version gate — only v1 understood; jq failure means malformed JSON.
-    version=$(jq -r '.version // empty' "$state_file" 2>/dev/null) || { maybe_standalone_advisory; return 0; }
-    if [ "$version" != "1" ]; then
-        maybe_standalone_advisory
-        return 0
-    fi
-
-    # Branch-match gate — reject a checkpoint left by a different branch
-    ctx_branch=$(jq -r '.context.branch // empty' "$state_file" 2>/dev/null) || { maybe_standalone_advisory; return 0; }
-    if [ "$ctx_branch" != "$branch" ]; then
-        maybe_standalone_advisory
-        return 0
-    fi
+    state_file="${valid_files[0]}"
+    run_scope=$(jq -r '.context.run_scope // ""' "$state_file" 2>/dev/null) || run_scope=""
 
     # Read resume fields
     skill=$(jq -r '.skill // ""' "$state_file" 2>/dev/null) || return 0
@@ -191,7 +245,8 @@ $(format_advisory "is a linked worktree")
 ${preamble_intro} A workflow checkpoint was found for branch: ${branch}.
 
 Skill:            ${skill}
-Current phase:    Phase ${phase}${phase_label:+ — ${phase_label}}${mode:+ (Mode ${mode})}
+${run_scope:+Run scope:        ${run_scope}
+}Current phase:    Phase ${phase}${phase_label:+ — ${phase_label}}${mode:+ (Mode ${mode})}
 Completed phases: ${completed}
 ${notes:+Notes: ${notes}
 }
