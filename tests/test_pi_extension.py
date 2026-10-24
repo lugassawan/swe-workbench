@@ -4066,7 +4066,7 @@ def test_handoff_interpreter_startup_failure_names_the_required_runtime(tmp_path
     out = _handoff_driver_result(tmp_path_factory, "pi-handoff-py-crash")["out"]
     blocked = out["crashingRuntime"]
     assert blocked["block"] is True, "startup failure must still fail closed"
-    assert "Python 3.9" in blocked["reason"]
+    assert "Python 3.12" in blocked["reason"]
     assert "pin" in blocked["reason"], "reason must carry remediation, not just the requirement"
 
 
@@ -4114,7 +4114,7 @@ def test_handoff_missing_interpreter_fails_closed_with_runtime_requirement(tmp_p
     )
     result = json.loads(out_path.read_text(encoding="utf-8"))
     assert result["block"] is True, "a missing interpreter must still fail closed"
-    assert "Python 3.9" in result["reason"]
+    assert "Python 3.12" in result["reason"]
 
 
 def _run_pi_handoff_commands(tmp_path, tmp_path_factory, repo, state_dir, session_id, **config):
@@ -4210,7 +4210,7 @@ def test_handoff_guard_timeout_keeps_the_generic_fail_closed_reason(tmp_path, tm
     result = json.loads(out_path.read_text(encoding="utf-8"))
     assert result["block"] is True, "a hung guard must still fail closed"
     assert "could not be verified" in result["reason"], "a timeout is not an interpreter problem"
-    assert "Python 3.9" not in result["reason"]
+    assert "Python 3.12" not in result["reason"]
 
 
 @requires_node
