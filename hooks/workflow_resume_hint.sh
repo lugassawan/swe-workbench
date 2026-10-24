@@ -59,7 +59,7 @@ maybe_standalone_advisory() {
 
 # Validates $state_file as a usable checkpoint for $branch; returns 0 if so
 # and sets checked_scope/checked_skill. A run-scoped file
-# (`<safe_branch>--<scope>.json`) must use the documented scope format and
+# (`<safe_branch>--<scope>.json`) must use the documented scope charset and
 # record the same scope in `context.run_scope`. The `<safe_branch>--*.json`
 # glob can also match another branch's files (branch `a` sees branch `a--b`'s
 # `a--b.json`), so a stale file is deleted only after its branch and scope
@@ -77,7 +77,7 @@ validate_checkpoint() {
     file_scope=""
     if [ "$base" != "$safe_branch" ]; then
         file_scope="${base#"${safe_branch}--"}"
-        case "$file_scope" in ''|*--*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+        case "$file_scope" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
     fi
 
     # Staleness: file older than 24h is deleted and skipped (see above).

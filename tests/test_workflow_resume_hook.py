@@ -751,10 +751,17 @@ class TestRunScopedCheckpoints:
         ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
         assert "pr-review-o-r-1" in ctx and "pr-review-o-r-2" in ctx
 
-    @pytest.mark.parametrize("name", ["", "a--b", "bad scope"])
+    @pytest.mark.parametrize("name", ["", "bad scope"])
     def test_malformed_file_scope_rejected(self, hook_script, git_repo, name):
         _write_scoped(git_repo, name, _pr_state(1))
         assert _run(hook_script, str(git_repo)).stdout.strip() == ""
+
+    @pytest.mark.parametrize("scope", ["a--b", "pr-review-4-acme-my--repo-7", "pr-review-4-acme--tool-7"])
+    def test_scope_containing_double_dash_resumes(self, hook_script, git_repo, scope):
+        """repo-scope slugs can contain `--` (e.g. `acme/my--repo`, `acme/-tool`)."""
+        _write_scoped(git_repo, scope, _pr_state(7))
+        ctx = json.loads(_run(hook_script, str(git_repo)).stdout)["hookSpecificOutput"]["additionalContext"]
+        assert f"Run scope:        {scope}" in ctx
 
     def test_other_branch_stale_file_not_deleted(self, hook_script, git_repo):
         """Branch `X` globs `X--*.json`, which matches branch `X--b`'s own file."""

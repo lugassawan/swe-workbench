@@ -42,7 +42,7 @@ sit on `main` and would collide on `main.json`, each overwriting or deleting the
 |---|---|
 | **Path** | `<git-toplevel>/.claude/cache/workflow-state/<branch-with-slashes-as-dashes>--<run_scope>.json` |
 | **Example** | `.claude/cache/workflow-state/main--pr-review-5-acme-app-123.json` |
-| **`run_scope`** | Non-empty, `[A-Za-z0-9._-]` only, no `--`; unique per concurrent run. pr-review uses `<MODE_TAG>-<repo-scope-slug>-<PR>`. |
+| **`run_scope`** | Non-empty, `[A-Za-z0-9._-]` only (may contain `--`, as repo-scope slugs can); unique per concurrent run. pr-review uses `<MODE_TAG>-<repo-scope-slug>-<PR>`. |
 
 The writer records the same value in `context.run_scope`; the hook rejects a file whose
 filename scope and `context.run_scope` disagree (and an unscoped `<branch>.json` that carries
