@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import shlex
 import stat
 import subprocess
@@ -1747,39 +1746,6 @@ def test_cleanup_retains_a_released_orphan_before_expiry(tmp_path):
     assert orphan_workspace.exists()
 
 
-def _python39() -> str | None:
-    """Locate a runnable Python 3.9 interpreter (env override > PATH > mise/pyenv installs)."""
-    candidates: list[str] = []
-    override = os.environ.get("SWE_WORKBENCH_TEST_PY39")
-    if override:
-        candidates.append(override)
-    found = shutil.which("python3.9")
-    if found:
-        candidates.append(found)
-    for base in (
-        Path.home() / ".local" / "share" / "mise" / "installs" / "python",
-        Path.home() / ".pyenv" / "versions",
-    ):
-        if base.is_dir():
-            candidates.extend(
-                str(entry / "bin" / "python3.9") for entry in sorted(base.glob("3.9*"), reverse=True)
-            )
-    for candidate in candidates:
-        try:
-            probe = subprocess.run(
-                [candidate, "--version"],
-                capture_output=True,
-                text=True,
-                env=dict(_CLEAN_ENV),
-                timeout=15,
-            )
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if probe.returncode == 0 and probe.stdout.startswith("Python 3.9"):
-            return candidate
-    return None
-
-
 # ── Task 3: session-env flags (literal-argument-only lifecycle pipelines) ────
 
 
@@ -2009,33 +1975,3 @@ def test_create_revalidates_worktree_registration_after_waiting_for_lease_lock(t
         or "Unable to read current working directory" in stderr
     )
     assert not (workspace / "lease.json").exists()
-
-
-def test_handoff_script_avoids_post_3_9_datetime_imports():
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert re.search(r"^from datetime import .*\bUTC\b", source, re.MULTILINE) is None, (
-        "datetime.UTC requires Python 3.11; the runtime must stay importable under 3.9 "
-        "(use timezone.utc instead)"
-    )
-
-
-def test_handoff_guard_returns_allow_under_python_3_9(tmp_path):
-    interpreter = _python39()
-    if interpreter is None:
-        if os.environ.get("CI"):
-            pytest.fail("CI must expose python3.9 for this regression (see pr.yml handoff-py39 job)")
-        pytest.skip("no Python 3.9 interpreter available")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _initialize_repo(repo)
-    state_dir = tmp_path / "state"
-    result = subprocess.run(
-        [interpreter, str(SCRIPT), "guard", "--as", "pi"],
-        capture_output=True,
-        text=True,
-        env={**_CLEAN_ENV, "SWE_WORKBENCH_HANDOFF_STATE_DIR": str(state_dir)},
-        cwd=repo,
-    )
-    assert result.returncode == 0, result.stderr
-    envelope = json.loads(result.stdout)
-    assert envelope["data"]["decision"] == "allow"

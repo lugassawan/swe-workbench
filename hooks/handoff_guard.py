@@ -240,9 +240,9 @@ def main() -> None:
 
 def _interpreter_failure() -> None:
     _block(
-        "handoff runtime could not start: bin/swe-workbench-handoff requires Python 3.9+, "
+        "handoff runtime could not start: bin/swe-workbench-handoff requires Python 3.12+, "
         "and this repository's python3 could not run it. Check the repository's Python "
-        "version pin (mise/asdf/pyenv/.python-version), ensure a Python 3.9+ interpreter "
+        "version pin (mise/asdf/pyenv/.python-version), ensure a Python 3.12+ interpreter "
         "is on PATH, or repair the swe-workbench plugin install"
     )
 

@@ -546,7 +546,7 @@ def test_interpreter_startup_failure_names_the_required_runtime(tmp_path):
     result = _run_hook(_payload(repo, "Bash"), state_dir=tmp_path / "state", plugin_root=crashing_root)
 
     assert result.returncode == 2
-    assert "Python 3.9" in result.stderr
+    assert "Python 3.12" in result.stderr
     assert "pin" in result.stderr
 
 

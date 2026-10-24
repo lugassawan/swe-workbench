@@ -40,9 +40,9 @@ const QUOTA_RECOVERY_TEXT =
  *  repo's Python pin (the #696 Mise case) is diagnosable instead of a blanket mutation block. */
 const INTERPRETER_FAILURE_TEXT =
   "swe-workbench handoff runtime could not start: bin/swe-workbench-handoff requires " +
-  "Python 3.9+, and this repository's `python3` could not run it. Check the repository's " +
+  "Python 3.12+, and this repository's `python3` could not run it. Check the repository's " +
   "Python version pin (mise/asdf/pyenv/.python-version), launch pi with a compatible " +
-  "interpreter (e.g. mise exec python@3.11 -- pi), or repair the swe-workbench plugin " +
+  "interpreter (e.g. mise exec python@3.12 -- pi), or repair the swe-workbench plugin " +
   "install before mutating this worktree";
 
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;

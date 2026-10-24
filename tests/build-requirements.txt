@@ -1,9 +1,1 @@
 pip-tools==7.6.2
-# pip 26.2 permanently removed pip._internal.utils.compat.stdlib_pkgs
-# (pip PR #14133); pip-tools' sync module still imports it, breaking every
-# pip-tools release including the latest (7.6.0). pip maintainers closed
-# pip#14214 as not_planned / "wrong project" — pip will never restore the
-# symbol. The fix has to land in pip-tools (tracked, still open, as of
-# 2026-08-02: pip-tools#2436). Pin below 26.2 until pip-tools stops
-# depending on pip internals — not until a newer pip ships.
-pip<26.2
