@@ -6,7 +6,8 @@
 #   - git push --force / -f to main/master/release/*; with no refspec, the current branch of the
 #     repository -C / --git-dir names decides (else the payload's cwd); one that cannot be resolved,
 #     or --work-tree without --git-dir, blocks
-#   - a force push with a dynamic destination or flag (an unquoted brace group included), with no
+#   - a force push with a dynamic destination or flag (an unquoted brace group included; one is a
+#     possible flag only when an alternative is empty or can begin with `-` or `+`), with no
 #     refspec into a repository a GIT_DIR-like assignment or a dynamic -C/--git-dir/--work-tree
 #     value selects, nesting too deep to scan, or a command over 64 KB that spells one literally or
 #     through a brace group or substitution, on any branch. The exception: a word that is exactly
@@ -29,6 +30,9 @@
 #     command that mentions `reset ... --h` (`| bash`, `eval`, `$x`, `bash -c "$x"`,
 #     `source <(...)`) blocks on a protected branch, loss or not. A reset that is
 #     nested too deep to scan, or sits in a command over 64 KB, blocks on any branch.
+#   - past 64 rescans of substitutions and heredoc bodies (each costs an awk process), the whole
+#     command is judged once by the depth-cap grep: a force push or `reset --hard` anywhere in it
+#     blocks on any branch, which keeps a command of many `$(...)` inside the time budget
 #   - a `pi` invocation carrying -p/--print in the same command segment (nested
 #     non-interactive pi session — the bash escape hatch around the subagent
 #     dispatcher's --exclude-tools recursion guard; see
@@ -42,8 +46,10 @@
 # IFS/word-splitting substitution (e.g. rm${IFS}-rf, pi${IFS}-p) — a shared limitation of the
 # regex/tr token-matching approach across all three detectors (rm, git, pi), not specific to any one.
 # A backslash-escaped quote (e.g. `\"`) inside an already-open double-quoted string desyncs the
-# comment-stripper's quote tracker (pre-existing, predates the pi work, shared by rm/git too) — a
-# `#` that's really inside the string can get treated as a real comment. Indirection that supplies
+# comment-stripper's quote tracker (pre-existing, predates the pi work, shared by rm and pi) — a
+# `#` that's really inside the string can get treated as a real comment. The push and reset scans
+# do not read the stripper's output: their lexer handles comments, continuations and heredoc
+# bodies on the raw text. Indirection that supplies
 # either the `pi` token or the `-p`/`--print` flag from somewhere other than literal argv text
 # (command substitution — `$(which pi) -p x`; parameter expansion — `$P -p x`; another program's
 # output — `echo -p x | xargs pi`) defeats segment-scoping, since the guard only ever sees the
@@ -51,8 +57,9 @@
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# Accepted gaps: function/coproc NAME bodies; unlisted wrappers; brace expansion in the rm and pi
-# detectors (`rm -rf {/,}`); bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
+# Brace expansion is resolved for the rm and pi detectors (`rm -rf {/,}`, `{p,}i -p`), quotes
+# ignored, so a quoted `"{/,}"` over-blocks; the rm detector still reads only the first operand.
+# Accepted gaps: function/coproc NAME bodies; unlisted wrappers; bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
 # or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
 # bash 4 and later.
 # Also accepted, each because the text holds no value to judge (the cost is a push the guard
@@ -69,17 +76,12 @@
 #   - the current-branch query is assumed to run where the push does, so `cd other &&`, an earlier
 #     `git checkout` or `switch` are not followed (the hook payload carries no cwd after a cd)
 #   - a command word spelled by a brace group or substitution (`{git,} push -f origin main`)
-#   - an odd quote inside a heredoc body desyncs the comment stripper, and a bare-delimiter
-#     `cat <<EOF` heredoc inside `$(` is lexed as code, so a lone apostrophe in its text can hide a
-#     later push (`git commit -m "$(cat <<EOF ... Don't ... EOF)" && git push -f origin main`):
-#     both predate the push scan; the quoted-delimiter and top-level forms are handled
-#   - a command with many `$(...)`: each costs an awk process (about 40 ms), so a few hundred can
-#     outlast the hook timeout; the 64 KB cap bounds size, not time
 # Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
 # non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
-# substitution; a brace group after a protected ref (`git push origin main {a,b}`) may be the force
-# flag; `ssh host echo "…git push -f…"` and other wrapper argument text is code; a `cat <<'EOT'`
+# substitution; a brace group that may begin a flag after a protected ref (`git push origin main
+# {a,}`) may be the force flag; `ssh host echo "…git push -f…"` and other wrapper argument text is code; a `cat <<'EOT'`
 # body inside a compound or nested substitution (`$(true; cat <<'EOT' ...)`) is scanned as code;
+# past 64 rescans the depth-cap grep reads the whole command, so `git push x; rm -f y` blocks;
 # over 64 KB, a `git ... push` carrying a brace group, `$` or a backtick blocks, and so does any
 # command holding both a `pi` token and a `-p`/`--print` token (no segmenter runs).
 #
@@ -160,8 +162,19 @@ _oversize=0
 # real command text that follows the closing quote on the SAME line (#501
 # re-review finding).
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
+# A heredoc body is text: its lines are kept whole and their quotes do not count, so an odd quote
+# there cannot make a later `#` inside real quotes read as a comment. A `<<WORD` outside single
+# quotes and outside (( )) / ${ } is taken as a heredoc even inside double quotes, where it may
+# sit in a `$(...)`; a wrong guess keeps more text, which the rm and pi detectors only over-match.
 _comment_awk='
-BEGIN { in_sq = 0; in_dq = 0 }
+BEGIN { in_sq = 0; in_dq = 0; arith = 0; pe = 0; nq = 0; qi = 0 }
+qi > 0 {
+  cmp = $0
+  if (hstrip[qi]) sub(/^\t+/, "", cmp)
+  print
+  if (cmp == hdel[qi] && ++qi > nq) { nq = 0; qi = 0 }
+  next
+}
 {
   line = $0; out = ""; n = length(line)
   for (i = 1; i <= n; i++) {
@@ -169,9 +182,24 @@ BEGIN { in_sq = 0; in_dq = 0 }
     if (c == "\x27" && !in_dq) { in_sq = !in_sq; out = out c; continue }
     if (c == "\"" && !in_sq)  { in_dq = !in_dq; out = out c; continue }
     if (c == "#" && !in_sq && !in_dq && (i == 1 || substr(line, i-1, 1) ~ /[ \t]/)) break
+    if (!in_sq && !in_dq) {
+      if (c == "(") { if (arith > 0 || substr(line, i + 1, 1) == "(") arith++ }
+      else if (c == ")" && arith > 0) arith--
+      else if (c == "{" && i > 1 && substr(line, i - 1, 1) == "$") pe++
+      else if (c == "}" && pe > 0) pe--
+    }
+    if (c == "<" && !in_sq && arith == 0 && pe == 0 && substr(line, i, 2) == "<<" && substr(line, i, 3) != "<<<" \
+        && match(substr(line, i + 2), /^-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)/)) {
+      hd = substr(line, i + 2, RLENGTH)
+      nq++; hstrip[nq] = (hd ~ /^-/)
+      match(hd, /[A-Za-z_][A-Za-z0-9_]*/); hdel[nq] = substr(hd, RSTART, RLENGTH)
+      out = out "<<" hd; i += 1 + length(hd)
+      continue
+    }
     out = out c
   }
   print out
+  if (nq > 0) qi = 1
 }'
 if (( _oversize )); then
   _nc=$cmd
@@ -196,19 +224,77 @@ fi
 # the word boundary once the leftover backslash is later deleted by the
 # `tr -d` below — hiding whatever destructive command started the second line
 # from every detector.
-_bj=$(printf '%s' "$_nc" | LC_ALL=C awk '
+# shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
+_join_awk='
 {
   line = $0; ll = length(line); nb = 0
   while (nb < ll && substr(line, ll - nb, 1) == "\\") nb++
   if (nb % 2 == 1) printf "%s", substr(line, 1, ll - 1); else print line
-}') || _fail_closed awk
+}'
+_bj=$(printf '%s' "$_nc" | LC_ALL=C awk "$_join_awk") || _fail_closed awk
+
+# Brace expansion for the rm and pi detectors (`rm -rf {/,}`, `{p,}i -p`): each blank-separated
+# word with a `{...,...}` group is replaced by its expansions, quotes ignored. The expanded copy is
+# checked as well as the text itself, so it can only add a block. A word past 64 expansions keeps
+# its braces and commas as blanks instead, which reads every alternative as a word of its own; so
+# does a word over 1024 characters, and a group is looked for within 256 characters of its `{`, so
+# a run of braces stays linear.
+# shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
+_brace_awk='
+  # Sets GS/GE to the first `{...}` group in w with a comma at its top level (a `${` opens none),
+  # and A[1..NA] to its alternatives; 0 when there is none.
+  function find_group(w,   s, k, ch, d, last, n) {
+    n = length(w)
+    for (s = 1; s <= n; s++) {
+      if (substr(w, s, 1) != "{" || (s > 1 && substr(w, s - 1, 1) == "$")) continue
+      d = 0; NA = 0; last = s
+      for (k = s; k <= n && k <= s + 256; k++) {
+        ch = substr(w, k, 1)
+        if (ch == "{") d++
+        else if (ch == "}") {
+          d--
+          if (d == 0) {
+            if (NA == 0) break
+            A[++NA] = substr(w, last + 1, k - last - 1); GS = s; GE = k
+            return 1
+          }
+        } else if (ch == "," && d == 1) { A[++NA] = substr(w, last + 1, k - last - 1); last = k }
+      }
+    }
+    return 0
+  }
+  function expand_word(w,   qn, cur, k, pre, suf, out, cnt) {
+    if (length(w) > 1024) { gsub(/[{},]/, " ", w); return w }
+    qn = 1; Q[1] = w; out = ""; cnt = 0
+    while (qn > 0) {
+      cur = Q[qn--]
+      if (!find_group(cur)) {
+        out = out (cnt++ ? " " : "") cur
+        if (cnt > 64) { gsub(/[{},]/, " ", w); return w }
+        continue
+      }
+      pre = substr(cur, 1, GS - 1); suf = substr(cur, GE + 1)
+      for (k = NA; k >= 1; k--) Q[++qn] = pre A[k] suf
+      if (qn > 256) { gsub(/[{},]/, " ", w); return w }
+    }
+    return out
+  }
+  {
+    nw = split($0, W, /[ \t]+/); out = ""
+    for (j = 1; j <= nw; j++) out = out (j > 1 ? " " : "") (index(W[j], "{") ? expand_word(W[j]) : W[j])
+    print out
+  }'
+_bjx=""
+if [[ "$_bj" == *'{'*,*'}'* ]]; then
+  _bjx=$(printf '%s' "$_bj" | LC_ALL=C awk "$_brace_awk") || _fail_closed awk
+fi
 
 # Normalise separators AND newlines/tabs/backticks to spaces so rm/git after
 # ; | & \n \t \` are still detected — the fast-gate `case` and the grep
 # detectors must share ONE separator alphabet (gate saw ';|&', grep saw
-# [[:space:]]).
+# [[:space:]]). The brace-expanded copy follows a word that no detector reads as an operand.
 # shellcheck disable=SC2016  # backtick in tr's SET1 is a literal char, not command substitution
-_norm=$(printf '%s' "$_bj" | tr ';|&\n\t`' '      ') || _fail_closed tr
+_norm=$(printf '%s' "$_bj${_bjx:+ __SWB_BRACE_EXPANDED__ $_bjx}" | tr ';|&\n\t`' '      ') || _fail_closed tr
 
 # Fully normalise BEFORE the fast gate, not after: turning "(" and ")" into SPACES (not
 # deleting them) handles $(...), <(...), >(...), and bare (...) uniformly, since whatever
@@ -312,6 +398,34 @@ _seg_token_awk='
     }
     return (expands && lim < n) ? lim : 0
   }
+  # Whether the brace group line[p..e] can open a word with a flag: some alternative is empty
+  # (the text after the group then opens the word) or can begin with `-` or `+`. A nested group,
+  # a quote or an expansion leading an alternative, or a group cut off at the bound, counts.
+  function brace_may_flag(p, e,   k, ch, d, q, first) {
+    if (substr(line, e, 1) != "}") return 1
+    d = 0; q = ""; first = 1
+    for (k = p + 1; k < e; k++) {
+      ch = substr(line, k, 1)
+      if (first) {
+        if (ch == ",") return 1
+        if (ch ~ /[-+{\\\047"$`]/) return 1
+        first = 0
+      }
+      if (q != "") {
+        if (ch == "\\" && q == "\"") k++
+        else if (ch == q) q = ""
+        continue
+      }
+      if (ch == "\\") { k++; continue }
+      if (ch == "\047" || ch == "\"") { q = ch; continue }
+      if (ch == "{") d++
+      else if (ch == "}") d--
+      else if (d == 0 && ch == ",") first = 1
+      # the end of a sequence (`{1..-1}`) is an alternative too
+      else if (d == 0 && ch == "." && substr(line, k + 1, 1) == ".") { k++; first = 1 }
+    }
+    return first
+  }
   # SEP carries the separator kind a consumer needs: AND for `&&`, LIST for `;` and a newline
   # (they start a new list), PIPE for a single `|` or `|&`; any other separator is a bare SEP
   function emit_separator(kind) {
@@ -352,6 +466,8 @@ _seg_token_awk='
         continue
       }
       if (c == "\\" && !in_sq) {
+        # a backslash-newline joins the lines and adds nothing to the word
+        if (substr(line, i + 1, 1) == "\n") { i++; continue }
         escaped = 1; word_started = 1
         continue
       }
@@ -410,7 +526,7 @@ _seg_token_awk='
           }
           if (hid != "") {
             hnl = index(substr(line, hend), "\n")
-            if (hnl > 0 && substr(line, hend, hnl - 1) ~ /^[ \t]*([0-9]*>>?[ \t]*[^ \t|&;<>()`$]+)?[ \t]*$/) {
+            if (hnl > 0 && substr(line, hend, hnl - 1) ~ /^[ \t]*([0-9]*>>?[ \t]*[^ \t|&;<>()`$#]+)?([ \t]+#.*)?[ \t]*$/) {
               hnlpos = hend + hnl - 1
               hbs = hnlpos + 1; hp = hbs; hfound = 0
               while (hp <= n) {
@@ -436,6 +552,12 @@ _seg_token_awk='
         while (i + 1 <= n && substr(line, i + 1, 1) ~ /[><&|]/) i++
         continue
       }
+      # a comment, a `#` that opens a word, runs to the newline: the lexer reads the raw text
+      if (c == "#" && !word_started) {
+        nl = index(substr(line, i), "\n")
+        i = (nl == 0) ? n : i + nl - 2
+        continue
+      }
       if (c == "$" && (substr(line, i + 1, 1) == "\047" || substr(line, i + 1, 1) == "\"")) continue
       if (c == "$" && substr(line, i + 1, 1) == "(") {
         subtext = ""; sub_depth = 1; sub_sq = 0; sub_dq = 0
@@ -443,18 +565,27 @@ _seg_token_awk='
         i += 2
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
+          # a comment runs to the newline: its quotes and `)` are text
+          if (sc == "#" && !sub_sq && !sub_dq && (subtext == "" || substr(subtext, length(subtext), 1) ~ /[ \t;&|(]/)) {
+            nl = index(substr(line, i), "\n")
+            if (nl == 0) { i = n; break }
+            i += nl - 1; sc = "\n"
+          }
           if (sc == "\n") {
             sc = ";"
-            # a quoted-delimiter `cat <<` heredoc body is skipped wherever the command sits, so its quotes
-            # cannot desync the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<`
+            # a `cat <<` heredoc body is skipped wherever the command sits, so its quotes cannot
+            # desync the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<`
             # is real syntax at command position, not text inside a quoted word. Only when `cat` is the
             # whole outermost substitution is the body data of its word; in a compound or nested one the
-            # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code.
-            if (!sub_sq && !sub_dq && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
-              match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/)
+            # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code. A bare
+            # delimiter leaves the expansions in the body live: HDSUBS has them re-lexed as code.
+            if (!sub_sq && !sub_dq && match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)[ \t]*$/) \
+                && unquoted(substr(subtext, 1, RSTART - 1)) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+$/) {
               hd = substr(subtext, RSTART, RLENGTH)
-              if (match(hd, /[\047"][A-Za-z_][A-Za-z0-9_]*[\047"]/)) {
-                delim = substr(hd, RSTART + 1, RLENGTH - 2)
+              hpre = unquoted(substr(subtext, 1, RSTART - 1))
+              if (match(hd, /[A-Za-z_][A-Za-z0-9_]*/)) {
+                delim = substr(hd, RSTART, RLENGTH)
+                hd_live = (hd !~ /[\047"\\]/)
                 strip_tabs = (hd ~ /<<-/)
                 bstart = i + 1; pos = bstart; found = 0
                 while (pos <= n) {
@@ -469,9 +600,10 @@ _seg_token_awk='
                 if (found) {
                   hbody = substr(line, bstart, pos - bstart)
                   gsub(/\n/, "\001", hbody)
-                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) print "NEST\t" hbody
+                  if (sub_depth != 1 || hpre !~ /^[ \t]*cat[ \t]+$/) print "NEST\t" hbody
                   else if (redirect_target && here_string) print "HERE\t" hbody
                   else print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
+                  if (hd_live) print "HDSUBS\t" hbody
                   i = pos + length(ltxt) - 1
                 }
               }
@@ -490,6 +622,8 @@ _seg_token_awk='
             sub_w = ""; sub_wcmd = 0
           }
           if (sc == "\\" && !sub_sq) {
+            # a backslash-newline joins the lines
+            if (substr(line, i + 1, 1) == "\n") { i++; continue }
             subtext = subtext sc
             if (i < n) { i++; subtext = subtext substr(line, i, 1) }
             continue
@@ -514,10 +648,13 @@ _seg_token_awk='
         i++
         for (; i <= n; i++) {
           sc = substr(line, i, 1)
-          if (sc == "\n") sc = ";"
+          # the newline stays one (as \001) so the rescan ends a comment there
+          if (sc == "\n") sc = "\001"
           if (sc == "\\" && i < n) {
-            # inside backticks `\\`, `\`` and `\$` lose one backslash; anything else keeps it
+            # inside backticks `\\`, `\`` and `\$` lose one backslash; anything else keeps it, and a
+            # backslash-newline joins the lines
             i++; bq = substr(line, i, 1)
+            if (bq == "\n") continue
             if (bq == "\\" || bq == "`" || bq == "$") subtext = subtext bq
             else subtext = subtext sc bq
             continue
@@ -553,7 +690,8 @@ _seg_token_awk='
       else if (c == "}" && pe > 0) pe--
       if (c == "{" && substr(word, length(word), 1) != "$") {
         be = brace_group_end(i, n)
-        if (be > 0) { word = word dyn; word_started = 1; i = be; continue }
+        # a group opening the word that cannot spell a flag is a dynamic value, never the force flag
+        if (be > 0) { word = word ((word == "" && !brace_may_flag(i, be)) ? dynb : dyn); word_started = 1; i = be; continue }
       }
       if (c == "[" || c == "]" || c == "{" || c == "}") continue
       word = word c; word_started = 1
@@ -575,6 +713,9 @@ _seg_saw_tab=0
 # Set when the segment redirects its input or output.
 _seg_redir=0
 _DYNAMIC_TOKEN=__SWB_DYNAMIC_SUBSTITUTION__
+# A brace group opening a word whose alternatives cannot begin a flag: dynamic like a substitution,
+# but no flag. It starts with the dynamic token, so every check for one covers it.
+_BRACE_TOKEN="$_DYNAMIC_TOKEN#"
 # Stands for a word that is exactly a query for the current branch name.
 _CURRENT_BRANCH_TOKEN=__SWB_CURRENT_BRANCH__
 # Set while a wrapper's code operand is re-scanned: everything before `git` there is an argument.
@@ -629,6 +770,18 @@ _emit_current_check() {
   printf '%s\t%s\n' "$1" "$_joined"
 }
 
+# Sets _base to the command name word $1 spells: its basename, with a leading substitution or
+# brace group dropped (one standing alone is the dynamic token).
+_command_base() {
+  if (( ${#1} > 255 )); then _base=$1; else _base=${1##*/}; fi
+  if [[ "$_base" == "$_BRACE_TOKEN" ]]; then
+    _base=$_DYNAMIC_TOKEN
+  elif [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]]; then
+    _base=${_base##*"$_DYNAMIC_TOKEN"}
+    _base=${_base#"#"}
+  fi
+}
+
 _is_shell_interpreter() {
   case "$1" in bash|sh|zsh|dash|ksh|fish|su|eval|source|.) return 0 ;; esac
   return 1
@@ -662,8 +815,7 @@ _parse_git_invocation() {
       _i=$((_i + 1))
       continue
     fi
-    if (( ${#_prefix} > 255 )); then _base=$_prefix; else _base=${_prefix##*/}; fi
-    [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
+    _command_base "$_prefix"
     case "$_base" in
       git)
         if _is_git_continuation "${_seg_tokens[_i + 1]-}"; then _found_git=1; break; fi
@@ -885,11 +1037,12 @@ _classify_force_push_segment() {
         fi ;;
     esac
   done
-  push_text=$(printf ' %s' "${_seg_tokens[@]}")
+  # built and matched in-process: a fork per push segment adds up over a long list of them
+  printf -v push_text ' %s' "${_seg_tokens[@]}"
   # A substitution-led word that can finish a force flag counts next to a literal protected ref;
   # a glued one with no refspec checks the current branch (a bare one is a normal push).
   if (( ! _has_force && _dynamic_flag_candidate )); then
-    if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
+    if [[ "$push_text" =~ $_protected_ref_re ]]; then
       _has_force=1
     elif (( _glued_flag_candidate && ! _has_refspec )); then
       _emit_current_check CHECK_CURRENT_MAYBE
@@ -911,7 +1064,7 @@ _classify_force_push_segment() {
     printf 'BLOCK\tdynamic-destination\n'
     return
   fi
-  if printf '%s\n' "$push_text" | grep -Eq "$_protected_ref_re"; then
+  if [[ "$push_text" =~ $_protected_ref_re ]]; then
     printf 'BLOCK\tprotected-ref\n'
     return
   fi
@@ -1220,8 +1373,31 @@ MAX_GIT_SCAN_DEPTH=4
 _limit_reason=indeterminate
 (( _oversize )) && _limit_reason=oversize
 
+# Each rescan costs an awk process, so past this many the scan stops rescanning and judges the
+# whole command once with the depth-cap grep instead (a command of many `$(...)` would otherwise
+# outlast the time budget).
+MAX_NESTED_SCANS=64
+_nested_scans=0
+
+# Returns 1 once the cap is passed; the first time, it runs the depth-cap grep over the whole raw
+# command (comments included, continuations joined), which needs no rescans.
+_count_nested_scan() {
+  _nested_scans=$((_nested_scans + 1))
+  (( _nested_scans <= MAX_NESTED_SCANS )) && return 0
+  if (( _nested_scans == MAX_NESTED_SCANS + 1 )); then
+    _limit_reason=many-substitutions
+    if _raw_joined=$(printf '%s' "$cmd" | LC_ALL=C awk "$_join_awk"); then
+      scan_git_text "$_raw_joined" "$MAX_GIT_SCAN_DEPTH"
+    else
+      printf 'BLOCK\tscan-failed\n'
+    fi
+  fi
+  return 1
+}
+
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
+  _count_nested_scan || return 0
   # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
   local -a _saved_tokens=(${_seg_tokens[@]+"${_seg_tokens[@]}"})
   local -a _saved_here=(${_seg_here[@]+"${_seg_here[@]}"})
@@ -1259,8 +1435,7 @@ _scan_known_wrapper_body() {
   local _wp=-1 _interp=-1 _cmdidx=-1
   for ((_i = 0; _i < _n; _i++)); do
     _tok=${_seg_tokens[_i]}
-    if (( ${#_tok} > 255 )); then _base=$_tok; else _base=${_tok##*/}; fi
-    [[ "$_base" == *"$_DYNAMIC_TOKEN"?* ]] && _base=${_base##*"$_DYNAMIC_TOKEN"}
+    _command_base "$_tok"
     _is_shell_interpreter "$_base" && _consumer=1
     case "$_tok" in
       -exec|-execdir|-ok|-okdir) _p=-1; _wp=-1; _g=-1; _after=0; continue ;;
@@ -1297,7 +1472,7 @@ _scan_known_wrapper_body() {
     case "${_seg_tokens[_i]}" in
       [[:alpha:]_]=*|[[:alpha:]_][[:alnum:]_]*=*) continue ;;
       '!'|if|while|until|do|then|else|elif|coproc) continue ;;
-      "$_DYNAMIC_TOKEN") _cmdword=1 ;;
+      "$_DYNAMIC_TOKEN"|"$_BRACE_TOKEN") _cmdword=1 ;;
     esac
     _cmdidx=$_i
     break
@@ -1408,12 +1583,13 @@ _scan_known_wrapper_body() {
 # A lexer that dies here has seen nothing, so it reports `scan-failed` like the main scan.
 _collect_heredoc_substitutions() {
   local _hd_kind _hd_value _hd_ok=0
+  _count_nested_scan || return 0
   while IFS=$'\t' read -r _hd_kind _hd_value; do
     case "$_hd_kind" in
       NEST) _seg_subs+=("$_hd_value") ;;
       EOS) _hd_ok=1 ;;
     esac
-  done < <(printf '%s' "$1" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" -v hdmode=1 "$_seg_token_awk")
+  done < <(printf '%s' "$1" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v dynb="$_BRACE_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" -v hdmode=1 "$_seg_token_awk")
   (( _hd_ok )) || printf 'BLOCK\tscan-failed\n'
 }
 
@@ -1454,6 +1630,7 @@ scan_git_text() {
       UHERE)
         _seg_here+=("$_value")
         _collect_heredoc_substitutions "$_value" ;;
+      HDSUBS) _collect_heredoc_substitutions "$_value" ;;
       SUBHERE)
         _seg_subhere_idx+=("${_value%%:*}")
         _seg_subhere_body+=("${_value#*:}") ;;
@@ -1484,7 +1661,7 @@ scan_git_text() {
         fi
         ;;
     esac
-  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" "$_seg_token_awk")
+  done < <(printf '%s' "$_scan_text" | LC_ALL=C awk -v dyn="$_DYNAMIC_TOKEN" -v dynb="$_BRACE_TOKEN" -v cur="$_CURRENT_BRANCH_TOKEN" "$_seg_token_awk")
   _note_unseen_code
   _scan_known_wrapper_body "$_scan_depth"
   _classify_segment
@@ -1728,7 +1905,11 @@ _scan_and_judge() {
       | grep -Eq 'reset([[:space:]].*)?[[:space:]]--h(a|[^[:alnum:]_-]|$)'; then
     _text_mentions_reset=1
   fi
-  while IFS= read -r _line; do _records+=("$_line"); done < <(scan_git_text "$_bj" "$(( _oversize ? MAX_GIT_SCAN_DEPTH : 0 ))"; printf 'DONE\n')
+  while IFS= read -r _line; do _records+=("$_line"); done < <(
+    # the lexer reads the raw text: it handles comments and continuations itself, so a quote
+    # in a heredoc body cannot desync a comment stripper in front of it
+    if (( _oversize )); then scan_git_text "$_bj" "$MAX_GIT_SCAN_DEPTH"; else scan_git_text "$cmd" 0; fi
+    printf 'DONE\n')
   kill -USR2 $$
   if (( ! ${#_records[@]} )) || [[ "${_records[${#_records[@]} - 1]}" != DONE ]]; then
     echo 'BLOCKED: git command scan did not complete (internal error)' >&2
@@ -1759,10 +1940,12 @@ _judge_record() {
         reset-work-tree) echo 'BLOCKED: git reset --hard with --work-tree but no --git-dir resets another tree under this directory'"'"'s repository; add --git-dir or use -C' >&2 ;;
         oversize-reset) echo 'BLOCKED: git reset --hard in a command too large to scan exactly; split the command' >&2 ;;
         indeterminate-reset) echo 'BLOCKED: git reset --hard nested too deeply to scan; spell the reset directly' >&2 ;;
+        many-substitutions-reset) echo 'BLOCKED: git reset --hard in a command with too many substitutions or heredocs to scan exactly; split the command' >&2 ;;
         dynamic-destination) echo 'BLOCKED: force push with a dynamic destination or flag cannot be checked; spell the branch literally or use --force-with-lease' >&2 ;;
         context-destination) echo 'BLOCKED: force push into a repository the command does not spell (a GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR/GIT_CONFIG_* assignment, or an expansion, substitution or control character in git'"'"'s -C/--git-dir/--work-tree or other global options) cannot be attributed to a branch; spell the path literally or name the refspec' >&2 ;;
         indeterminate) echo 'BLOCKED: force push nested too deeply to scan; spell the push directly or use --force-with-lease' >&2 ;;
         oversize) echo 'BLOCKED: force push in a command too large to scan exactly; split the command or use --force-with-lease' >&2 ;;
+        many-substitutions) echo 'BLOCKED: force push in a command with too many substitutions or heredocs to scan exactly; split the command or use --force-with-lease' >&2 ;;
         *) echo 'BLOCKED: force push to protected branch (main/master/release/*)' >&2 ;;
       esac
       exit 2
@@ -1876,7 +2059,8 @@ case "$norm" in
     if (( _oversize )); then
       pi_seg=$norm
     else
-      pi_seg=$(printf '%s' "$_bj" | LC_ALL=C awk "$_segment_awk") || _fail_closed awk
+      # the brace-expanded copy, if any, is its own lines
+      pi_seg=$(printf '%s' "$_bj${_bjx:+$'\n'$_bjx}" | LC_ALL=C awk "$_segment_awk") || _fail_closed awk
     fi
     # Byte-wise matching: the patterns are ASCII, and a case-insensitive multibyte grep over a
     # 64 KB+ line is several times slower on GNU grep.

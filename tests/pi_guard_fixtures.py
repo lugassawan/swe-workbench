@@ -227,8 +227,67 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     # A substitution flag with another repository selected cannot be attributed to the current branch.
     ("git -C ../other-repo push $(echo --force) origin", True),
     ("git --git-dir=../other/.git push $(echo --force) origin", True),
-    # Brace groups after a protected ref read as a possible force flag (a known over-block).
-    ("git push origin main {a,b}", True),
+    # A brace group is a possible force flag only when an alternative is empty or can begin
+    # with `-` or `+`; otherwise it is a dynamic destination of a push that is not forced.
+    ("git push origin main {a,b}", False),
+    ("git push origin {a,b} main", False),
+    ("git push origin main --tags {a,b}", False),
+    ("git push origin main {a..c}", False),
+    ("git push origin main {a,}", True),
+    ("git push origin main {,-f}", True),
+    ("git push origin main {a,-f}", True),
+    ("git push origin main {a,+b}", True),
+    ("git push origin main {1..-1}", True),
+    ("git push origin main {a,{b,-f}}", True),
+    ('git push origin main {"-f",a}', True),
+    ("git push --force origin {a,b}", True),
+    ("{sudo,env} git push --force origin main", True),
+    # A bare or backslash delimiter `cat <<EOF` inside `$(` is data too, so an apostrophe in its
+    # body cannot hide a later push; the substitutions a bare-delimiter body expands still run.
+    ("git commit -m \"$(cat <<EOF\nDon't break\nEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<\\EOF\nDon't break\nEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<-EOF\n\tDon't break\n\tEOF\n)\" && git push -f origin main", True),
+    ("echo $(true; cat <<EOF\nit's\nEOF\n); git push -f origin main", True),
+    ("git commit -m \"$(cat <<EOF\nDon't $(git push -f origin main)\nEOF\n)\"", True),
+    ("git commit -m \"$(cat <<EOF\nDon't `git push -f origin main`\nEOF\n)\"", True),
+    ("git commit -m \"$(cat <<EOF\nDon't break\nEOF\n)\" && git push --force origin feature/x", False),
+    ("git commit -m \"$(cat <<EOF\nnever git push --force origin main\nEOF\n)\"", False),
+    ("git commit -m \"$(cat <<\\EOF\nDon't $(git push -f origin main)\nEOF\n)\"", False),
+    # The lexer reads the raw text and its comments itself, so an odd quote in a heredoc body
+    # cannot make a `#` inside real quotes read as a comment; nor can a comment's quote hide a
+    # push, even in a heredoc that feeds a shell or in a substitution.
+    ("cat <<'EOF' > n.txt\na 5\" pipe\nEOF\ngit commit -m \"fix #123\"; git push --force origin main", True),
+    ("cat <<EOF > n.txt\na 5' pipe\nEOF\ngit commit -m 'fix #123'; git push --force origin main", True),
+    ("cat <<'EOF' | sh\n# don't\ngit push -f origin main\nEOF", True),
+    ("cat <<'EOF' > n.txt # it's a note\nit's\nEOF\ngit push -f origin main", True),
+    ("(( 1 <<EOT ))\n# don't\ngit push -f origin main\nEOT", True),
+    ("x=$(echo a # c ) '\ngit push -f origin main)", True),
+    ("x=`echo a # c\ngit push -f origin main`", True),
+    ("git push -f \\\n origin main", True),
+    ("cat <<'EOF' > n.txt\na 5\" pipe\nEOF\ngit commit -m \"fix #123\"; git push origin main", False),
+    ("echo ok # git push -f origin main", False),
+    ("x=$(echo a # git push -f origin main\n)", False),
+    # The comment stripper the rm and pi detectors read skips heredoc bodies the same way.
+    ("cat <<'EOF' > n.txt\na 5\" pipe\nEOF\necho \"x #1\"; rm -rf ~", True),
+    ("cat <<EOF > n.txt\na 5' pipe\nEOF\necho 'x #1'; pi -p x", True),
+    # Brace expansion is resolved for the rm and pi detectors.
+    ("rm -rf {/,}", True),
+    ("rm -rf {,/}", True),
+    ("rm -rf {~,build}", True),
+    ("rm -rf {/home/bob,build}", True),
+    ("rm -rf {$HOME,build}", True),
+    ("pi {-p,} x", True),
+    ("{p,}i -p x", True),
+    ("rm -rf /{a,b}", False),
+    ("rm -rf /tmp/{a,b}", False),
+    ("rm -rf {build,dist}", False),
+    ("pi {a,b} x", False),
+    # Past 64 rescans the whole command is judged once by the depth-cap grep: a force push
+    # anywhere blocks on any branch, a command without one stays allowed.
+    ("echo " + "x$(a)" * 80 + "; git status", False),
+    ("echo " + "x$(a)" * 80 + "; git push origin feature/x", False),
+    ("echo " + "x$(a)" * 80 + "; git push -f origin feature/x", True),
+    ("echo " + "x$(a)" * 80 + "; git reset --hard", True),
     # Push state must not leak between segments: the second push is judged on its own.
     ("git push $(echo x) ; git push --force origin main", True),
     # Quoted text that is data stays allowed.

@@ -3218,6 +3218,22 @@ class TestBraceRun:
         assert elapsed < 3, f"{count} braces took {elapsed:.2f}s"
 
 
+class TestManySubstitutions:
+    # each rescan is an awk process; past the cap the scan must not spawn one per substitution
+    @pytest.mark.parametrize("tail,blocked", [
+        ("git status", False),
+        ("git push --force origin feature/x", True),
+    ])
+    def test_many_substitutions_finish_well_inside_the_budget(self, guard_script, tail, blocked):
+        start = time.monotonic()
+        result = run_guard(guard_script, "echo " + "x$(a)" * 1600 + "; " + tail)
+        elapsed = time.monotonic() - start
+        assert result.returncode == (2 if blocked else 0), result.stderr
+        if blocked:
+            assert "too many substitutions" in result.stderr
+        assert elapsed < 3, f"1600 substitutions took {elapsed:.2f}s"
+
+
 class TestOversizeCommand:
     def _timed(self, guard_script, cmd):
         start = time.monotonic()
