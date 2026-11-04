@@ -6,7 +6,8 @@
 #   - git push --force / -f to main/master/release/*; with no refspec, the current branch of the
 #     repository -C / --git-dir names decides (else the payload's cwd); one that cannot be resolved,
 #     or --work-tree without --git-dir, blocks
-#   - a force push with a dynamic destination or flag (an unquoted brace group included), with no
+#   - a force push with a dynamic destination or flag (a brace group the comment pass leaves
+#     unexpanded included), with no
 #     refspec into a repository a GIT_DIR-like assignment or a dynamic -C/--git-dir/--work-tree
 #     value selects, nesting too deep to scan, or a command over 64 KB that spells one literally or
 #     through a brace group or substitution, on any branch. The exception: a word that is exactly
@@ -41,18 +42,16 @@
 # Out of scope: ${HOME} brace-form; ANSI-C $'...' quoting; path normalization via .. traversal; compound cd (only the session cwd is known);
 # IFS/word-splitting substitution (e.g. rm${IFS}-rf, pi${IFS}-p) — a shared limitation of the
 # regex/tr token-matching approach across all three detectors (rm, git, pi), not specific to any one.
-# A backslash-escaped quote (e.g. `\"`) inside an already-open double-quoted string desyncs the
-# comment-stripper's quote tracker (pre-existing, predates the pi work, shared by rm/git too) — a
-# `#` that's really inside the string can get treated as a real comment. Indirection that supplies
-# either the `pi` token or the `-p`/`--print` flag from somewhere other than literal argv text
+# Indirection that supplies either the `pi` token or the `-p`/`--print` flag from somewhere other than literal argv text
 # (command substitution — `$(which pi) -p x`; parameter expansion — `$P -p x`; another program's
 # output — `echo -p x | xargs pi`) defeats segment-scoping, since the guard only ever sees the
 # unresolved source text — inherent to a text-scanning guard rather than a gap specific to this
 # detector. The `pi` detector matches its command-name token case-insensitively (a case-insensitive
 # filesystem, e.g. macOS's default, resolves "Pi"/"PI" to the same binary); `rm`/`git` do not get the
 # same treatment here — a pre-existing gap, not introduced or widened by this change.
-# Accepted gaps: function/coproc NAME bodies; unlisted wrappers; brace expansion in the rm and pi
-# detectors (`rm -rf {/,}`); bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
+# Accepted gaps: function/coproc NAME bodies; unlisted wrappers; a brace group the comment pass
+# leaves unexpanded (a sequence such as `{1..3}`, more than 64 result words) in the rm and pi
+# detectors, whose brace-stripped text may then hold no root path or `pi` word; bash 3.2's mis-parsing of a heredoc body inside `$(` (an unmatched `)`
 # or quote there ends the substitution early on /bin/bash 3.2) is out of scope, the guard models
 # bash 4 and later.
 # Also accepted, each because the text holds no value to judge (the cost is a push the guard
@@ -68,17 +67,18 @@
 #     or a configured `remote.*.push` can still send main from a feature branch, also via `-C`
 #   - the current-branch query is assumed to run where the push does, so `cd other &&`, an earlier
 #     `git checkout` or `switch` are not followed (the hook payload carries no cwd after a cd)
-#   - a command word spelled by a brace group or substitution (`{git,} push -f origin main`)
-#   - an odd quote inside a heredoc body desyncs the comment stripper, and a bare-delimiter
-#     `cat <<EOF` heredoc inside `$(` is lexed as code, so a lone apostrophe in its text can hide a
-#     later push (`git commit -m "$(cat <<EOF ... Don't ... EOF)" && git push -f origin main`):
-#     both predate the push scan; the quoted-delimiter and top-level forms are handled
-#   - a command with many `$(...)`: each costs an awk process (about 40 ms), so a few hundred can
-#     outlast the hook timeout; the 64 KB cap bounds size, not time
+#   - a command word spelled by a substitution or an unexpanded brace group
+#     (`$(echo git) push -f origin main`)
+#   - a `#` comment inside a heredoc body that a shell runs is dropped only when it holds no `$` or
+#     backtick (an unquoted body expands those even there), so such a comment's quotes stay in the
+#     body's text; the comment pass tracks the body's quotes on their own, and the lexer still
+#     lexes a body it cannot prove is data as code
 # Over-blocks taken to stay fail-safe: a wildcard force push (`refs/tags/*`) counts as all refs; a
 # non-force `git push "$(...)"` on a protected branch may be the force flag spelled by a
-# substitution; a brace group after a protected ref (`git push origin main {a,b}`) may be the force
-# flag; `ssh host echo "…git push -f…"` and other wrapper argument text is code; a `cat <<'EOT'`
+# substitution; a brace group the comment pass leaves unexpanded (`{1..3}`) after a protected ref
+# may be the force flag; a command whose substitutions each need their own lexer process (one
+# holding git, a quote, an expansion, a redirect or a shell; about 5-40 ms each) blocks once the
+# 3 s budget below runs out, so a few hundred `$(git ...)` must be split; `ssh host echo "…git push -f…"` and other wrapper argument text is code; a `cat <<'EOT'`
 # body inside a compound or nested substitution (`$(true; cat <<'EOT' ...)`) is scanned as code;
 # over 64 KB, a `git ... push` carrying a brace group, `$` or a backtick blocks, and so does any
 # command holding both a `pi` token and a `-p`/`--print` token (no segmenter runs).
@@ -158,25 +158,220 @@ _oversize=0
 # across an embedded newline inside a still-open quote — e.g. a multi-line -m
 # commit message — otherwise a '#'-starting continuation line would swallow
 # real command text that follows the closing quote on the SAME line (#501
-# re-review finding).
+# re-review finding). A backslash escapes the next character, and `$(` opens a
+# fresh quoting context even inside double quotes, so `"a \" #b"` and
+# `"$(cat <<EOF ...)"` keep the quote state in step with bash.
+# Heredoc bodies keep a quote state of their own: an odd quote in one (`a 5" pipe`)
+# must not flip the quote state of the text after the body (#820). The delimiter is
+# the next word with its quotes and backslashes removed, as bash reads it (`E"O"F`
+# is EOF, `"EOF"x` is EOFx); a `<<` inside `$(( ))` or `$[ ]` opens no heredoc. A
+# body may open heredocs of its own (a script fed to `bash`), up to 8 levels deep,
+# each with its own quote state; an outer delimiter line closes every inner level.
+# The same pass expands unquoted brace groups (`{/,}`, `{git,} push`, `main {a,b}`)
+# into the words bash would run, in code and in heredoc bodies alike (a shell may
+# run a body), so the detectors after it see them. Left as they are, for the lexer
+# to read as dynamic: a group it cannot resolve (a sequence like `{1..3}`, more than
+# 64 result words or 64 KB of text, a word over 4 KB, an unclosed brace), a word holding `$` or a
+# backtick or glued to a substitution (`{-,x}$(echo f)`, `a${b}{main,c}`), an
+# assignment value, and a body line whose expansion would read as its delimiter.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _comment_awk='
-BEGIN { in_sq = 0; in_dq = 0 }
-{
-  line = $0; out = ""; n = length(line)
+# Brace expansion of one unquoted word, as bash does it before any other expansion: every
+# result word joined by a space, "" when all of them are empty, or FAIL when the word holds
+# more results or more text than the budget allows (the word is then kept as it is).
+function bexp(w, depth,   n, i, ch, q, e, d, k, c2, q2, e2, na, start, alts, pre, suf, res, j, r) {
+  # a long word is not expanded: some awks walk a string to index it, so the scan would be slow
+  if (depth > 16 || length(w) > 4096) return FAIL
+  n = length(w); q = ""; e = 0
+  for (i = 1; i <= n; i++) {
+    ch = substr(w, i, 1)
+    if (e) { e = 0; continue }
+    if (q == "\047") { if (ch == q) q = ""; continue }
+    if (ch == "\\") { e = 1; continue }
+    if (q == "\"") { if (ch == q) q = ""; continue }
+    if (ch == "\047" || ch == "\"") { q = ch; continue }
+    if (ch != "{") continue
+    d = 0; na = 0; start = i + 1; q2 = ""; e2 = 0
+    for (k = i; k <= n; k++) {
+      c2 = substr(w, k, 1)
+      if (e2) { e2 = 0; continue }
+      if (q2 == "\047") { if (c2 == q2) q2 = ""; continue }
+      if (c2 == "\\") { e2 = 1; continue }
+      if (q2 == "\"") { if (c2 == q2) q2 = ""; continue }
+      if (c2 == "\047" || c2 == "\"") { q2 = c2; continue }
+      if (c2 == "{") d++
+      else if (c2 == "}") { d--; if (d == 0) break }
+      else if (c2 == "," && d == 1) { na++; alts[na] = substr(w, start, k - start); start = k + 1 }
+    }
+    # an unclosed group expands nothing here; one with no comma is literal (a sequence too)
+    if (k > n) return w
+    if (na == 0) continue
+    na++; alts[na] = substr(w, start, k - start)
+    pre = substr(w, 1, i - 1); suf = substr(w, k + 1); res = ""
+    for (j = 1; j <= na; j++) {
+      r = bexp(pre alts[j] suf, depth + 1)
+      if (r == FAIL) return FAIL
+      if (r != "") res = (res == "") ? r : res " " r
+    }
+    return res
+  }
+  # the budget is checked before the text is built, not after
+  if (++bwords > 64) return FAIL
+  blen += length(w) + 1
+  if (blen > bbudget) return FAIL
+  return w
+}
+# Ends the word that began at out[wstart]: a plain unquoted one is replaced by its expansion. A
+# word holding `$` or a backtick stays whole, so the lexer still reads it as dynamic.
+function end_word(   w, r) {
+  if (wstart > 0 && !wnoexp && !noexpand && index(substr(out, wstart), "{")) {
+    w = substr(out, wstart)
+    if (w !~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/ && w !~ /[$`]/) {
+      bwords = 0; blen = 0
+      r = bexp(w, 0)
+      if (r != FAIL && r != w) { out = substr(out, 1, wstart - 1) r; bbudget -= length(r) }
+    }
+  }
+  wstart = 0; wnoexp = 0
+}
+# One line of code, or of a heredoc body (inbody). A body has a quote state of its own, so an odd
+# quote in it cannot reach the text after it; it is processed like code because a shell may run
+# it, but a comment holding `$` or a backtick is kept there, since an unquoted body expands those
+# even after a `#`. Only code opens heredocs.
+function process(line, inbody,   n, i, c, hj, hs, hrest, hid) {
+  out = ""; n = length(line); wstart = 0; wnoexp = 0
+  # a word still inside a quote that opened on an earlier line goes on here, unexpanded
+  if (in_sq || in_dq) { wstart = 1; wnoexp = 1 }
   for (i = 1; i <= n; i++) {
     c = substr(line, i, 1)
-    if (c == "\x27" && !in_dq) { in_sq = !in_sq; out = out c; continue }
-    if (c == "\"" && !in_sq)  { in_dq = !in_dq; out = out c; continue }
-    if (c == "#" && !in_sq && !in_dq && (i == 1 || substr(line, i-1, 1) ~ /[ \t]/)) break
+    if (in_sq) { if (c == "\047") in_sq = 0; out = out c; continue }
+    if (c == "\\") {
+      if (wstart == 0) wstart = length(out) + 1
+      out = out c substr(line, i + 1, 1); i++; continue
+    }
+    if (c == "\"") { if (wstart == 0) wstart = length(out) + 1; in_dq = !in_dq; out = out c; continue }
+    # `$(` opens a new quoting context, inside double quotes too; the word it sits in is not
+    # expanded, and neither is the rest of that word after the `)`
+    if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) != "(") {
+      sd++; st_dq[sd] = in_dq; st_par[sd] = par; in_dq = 0; par = 0
+      out = out "$("; i++; wstart = 0; wnoexp = 0; continue
+    }
+    if (in_dq) { out = out c; continue }
+    if (c == "\047") { if (wstart == 0) wstart = length(out) + 1; in_sq = 1; out = out c; continue }
+    if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t]/) \
+        && (!inbody || substr(line, i) !~ /[$`]/)) break
+    if (c == "$" && substr(line, i + 1, 1) == "[") bk++
+    else if (c == "]" && bk > 0) bk--
+    if (c == "(") {
+      end_word()
+      if (ar > 0 || substr(line, i + 1, 1) == "(") ar++; else par++
+      out = out c; continue
+    }
+    if (c == ")") {
+      end_word()
+      out = out c
+      if (ar > 0) ar--
+      else if (par > 0) par--
+      else if (sd > sdbase) {
+        in_dq = st_dq[sd]; par = st_par[sd]; sd--
+        wstart = length(out) + 1; wnoexp = 1
+      }
+      continue
+    }
+    # an opening backtick drops the word in progress unexpanded and starts the command inside
+    # fresh; the closing one ends the last word inside and leaves the rest of its own word
+    # unexpanded
+    if (c == "`") {
+      if (!bq) { bq = 1; out = out c; wstart = 0; wnoexp = 0 }
+      else { end_word(); bq = 0; out = out c; wstart = length(out) + 1; wnoexp = 1 }
+      continue
+    }
+    if (lv < MAXLV && c == "<" && ar == 0 && bk == 0 && substr(line, i + 1, 1) == "<" \
+        && substr(line, i + 2, 1) != "<" && (i == 1 || substr(line, i - 1, 1) != "<")) {
+      # a heredoc opener: its body starts on the next line. The delimiter is the next word with
+      # its quotes and backslashes removed, as bash reads it (`E"O"F` is EOF, `"EOF"x` is EOFx)
+      hj = i + 2; hs = 0
+      if (substr(line, hj, 1) == "-") { hs = 1; hj++ }
+      while (substr(line, hj, 1) ~ /[ \t]/) hj++
+      hid = heredoc_word(line, hj)
+      if (hid != "") { qn[lv]++; hd[lv, qn[lv]] = hid; hst[lv, qn[lv]] = hs }
+    }
+    if (c ~ /[ \t;&|<>]/) { end_word(); out = out c; continue }
+    if (wstart == 0) wstart = length(out) + 1
     out = out c
   }
-  print out
-}'
+  if (!in_sq && !in_dq) end_word()
+  return out
+}
+# The word at line[p] up to an unquoted blank or operator, quotes and backslashes removed: a
+# heredoc delimiter as bash reads it. "" when there is none.
+function heredoc_word(l, p,   m, ch, q, r) {
+  m = length(l); q = ""; r = ""
+  for (; p <= m; p++) {
+    ch = substr(l, p, 1)
+    if (q == "\047") { if (ch == q) q = ""; else r = r ch; continue }
+    if (ch == "\\") { p++; r = r substr(l, p, 1); continue }
+    if (q == "\"") { if (ch == q) q = ""; else r = r ch; continue }
+    if (ch == "\047" || ch == "\"") { q = ch; continue }
+    if (ch ~ /[ \t;&|<>()`]/) break
+    r = r ch
+  }
+  return (q == "") ? r : ""
+}
+# Each heredoc level (0 is the code, n the body of a heredoc opened at level n - 1) keeps its own
+# quote state; the globals hold the state of the current level.
+function save_lv(l) {
+  S_sq[l] = in_sq; S_dq[l] = in_dq; S_sd[l] = sd; S_par[l] = par; S_ar[l] = ar; S_bk[l] = bk
+  S_bq[l] = bq; S_base[l] = sdbase
+}
+function load_lv(l) {
+  in_sq = S_sq[l]; in_dq = S_dq[l]; sd = S_sd[l]; par = S_par[l]; ar = S_ar[l]; bk = S_bk[l]
+  bq = S_bq[l]; sdbase = S_base[l]
+}
+# a body starts with fresh quotes; its `$(` stack sits above the one it was opened in
+function enter_body() {
+  save_lv(lv); lv++
+  in_sq = 0; in_dq = 0; par = 0; ar = 0; bk = 0; bq = 0; sdbase = sd; qn[lv] = 0; qa[lv] = 0
+}
+# Whether the line ends an open heredoc: the level whose body it closes, else -1. bash reads a
+# body up to its delimiter whatever the body holds, so an outer delimiter closes every inner level.
+function closing_level(l,   p, t) {
+  for (p = 0; p < lv; p++) {
+    t = l
+    if (hst[p, qa[p]]) sub(/^\t+/, "", t)
+    if (t == hd[p, qa[p]]) return p
+  }
+  return -1
+}
+BEGIN { in_sq = 0; in_dq = 0; sd = 0; sdbase = 0; par = 0; ar = 0; bk = 0; bq = 0; lv = 0
+  qn[0] = 0; qa[0] = 0; MAXLV = 8; FAIL = "\001F"; bbudget = 65536; noexpand = 0 }
+{
+  line = $0
+  cl = closing_level(line)
+  if (cl >= 0) {
+    load_lv(cl); lv = cl; qa[cl]++
+    if (qa[cl] > qn[cl]) { qn[cl] = 0; qa[cl] = 0 } else enter_body()
+    print line
+    next
+  }
+  s_sq = in_sq; s_dq = in_dq; s_sd = sd; s_par = par; s_ar = ar; s_bk = bk; s_bq = bq; s_qn = qn[lv]
+  r = process(line, lv > 0)
+  # expansion must not turn a body line into a delimiter: the lexer would end the body there
+  if (lv > 0 && closing_level(r) >= 0) {
+    in_sq = s_sq; in_dq = s_dq; sd = s_sd; par = s_par; ar = s_ar; bk = s_bk; bq = s_bq; qn[lv] = s_qn
+    noexpand = 1; r = process(line, 1); noexpand = 0
+  }
+  print r
+  # the bodies start after a line that ends outside any quote
+  if (qn[lv] > 0 && qa[lv] == 0 && !in_sq && !in_dq) { qa[lv] = 1; enter_body() }
+}
+'
 if (( _oversize )); then
   _nc=$cmd
 else
   _nc=$(printf '%s' "$cmd" | LC_ALL=C awk "$_comment_awk") || _fail_closed awk
+  # brace expansion can lengthen the text past the exact-scan size
+  (( ${#_nc} > MAX_EXACT_SCAN_CHARS )) && _oversize=1
 fi
 
 # Join backslash-continued lines AFTER comment-stripping (see above), still
@@ -394,20 +589,21 @@ _seg_token_awk='
           hj = i + 2; hstrip = 0
           if (substr(line, hj, 1) == "-") { hstrip = 1; hj++ }
           while (substr(line, hj, 1) ~ /[ \t]/) hj++
-          hq = substr(line, hj, 1); hid = ""; hend = 0; hunq = 0
-          if ((hq == "\047" || hq == "\"") && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            hid = substr(line, hj + 1, RLENGTH)
-            hend = hj + 1 + RLENGTH
-            if (substr(line, hend, 1) != hq) hid = ""; else hend++
-          } else if (hq == "\\" && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            hid = substr(line, hj + 1, RLENGTH)
-            hend = hj + 1 + RLENGTH
-          } else if (hq ~ /[A-Za-z_]/ && match(substr(line, hj), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            # a bare delimiter leaves the body expanding substitutions: UHERE tells the caller to look for them
-            hid = substr(line, hj, RLENGTH)
-            hend = hj + RLENGTH
-            hunq = 1
+          # the delimiter is the next word with its quotes and backslashes removed, as bash reads
+          # it (`E"O"F` is EOF); a bare one, with nothing quoted, leaves the body expanding
+          # substitutions: UHERE tells the caller to look for them
+          hid = ""; hq = ""; hquoted = 0
+          for (hend = hj; hend <= n; hend++) {
+            hc = substr(line, hend, 1)
+            if (hq == "\047") { if (hc == hq) hq = ""; else hid = hid hc; continue }
+            if (hc == "\\") { hquoted = 1; hend++; hid = hid substr(line, hend, 1); continue }
+            if (hq == "\"") { if (hc == hq) hq = ""; else hid = hid hc; continue }
+            if (hc == "\047" || hc == "\"") { hq = hc; hquoted = 1; continue }
+            if (hc ~ /[ \t\n;&|<>()`]/) break
+            hid = hid hc
           }
+          if (hq != "" || hid ~ /\n/) hid = ""
+          hunq = !hquoted
           if (hid != "") {
             hnl = index(substr(line, hend), "\n")
             if (hnl > 0 && substr(line, hend, hnl - 1) ~ /^[ \t]*([0-9]*>>?[ \t]*[^ \t|&;<>()`$]+)?[ \t]*$/) {
@@ -445,16 +641,22 @@ _seg_token_awk='
           sc = substr(line, i, 1)
           if (sc == "\n") {
             sc = ";"
-            # a quoted-delimiter `cat <<` heredoc body is skipped wherever the command sits, so its quotes
-            # cannot desync the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<`
-            # is real syntax at command position, not text inside a quoted word. Only when `cat` is the
-            # whole outermost substitution is the body data of its word; in a compound or nested one the
-            # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code.
-            if (!sub_sq && !sub_dq && subtext ~ /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) {
-              match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*")[ \t]*$/)
+            # a `cat <<` heredoc body is skipped wherever the command sits, so its quotes cannot desync
+            # the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<` is real
+            # syntax at command position, not text inside a quoted word. The delimiter is the word
+            # after `<<` with its quotes and backslashes removed (`E"O"F` is EOF). Only when `cat` is the whole
+            # outermost substitution is the body data of its word; in a compound or nested one the
+            # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code. A bare
+            # delimiter leaves the substitutions in the body live: HDSUBS hands the body to the caller,
+            # which re-lexes it in hdmode to scan them as code.
+            if (!sub_sq && !sub_dq && subtext ~ /(^|[^<])<<-?[ \t]*(\047[^\047\n]*\047|"[^"\n]*"|\\.|[^ \t\n;&|<>()`\047"\\])+[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*[^ \t;&|<>()]*[ \t]*$/) {
+              match(subtext, /<<-?[ \t]*(\047[^\047\n]*\047|"[^"\n]*"|\\.|[^ \t\n;&|<>()`\047"\\])+[ \t]*$/)
               hd = substr(subtext, RSTART, RLENGTH)
-              if (match(hd, /[\047"][A-Za-z_][A-Za-z0-9_]*[\047"]/)) {
-                delim = substr(hd, RSTART + 1, RLENGTH - 2)
+              hd_live = (hd !~ /[\047"\\]/)
+              delim = hd
+              sub(/^<<-?[ \t]*/, "", delim)
+              gsub(/[\047"\\ \t]/, "", delim)
+              if (delim != "") {
                 strip_tabs = (hd ~ /<<-/)
                 bstart = i + 1; pos = bstart; found = 0
                 while (pos <= n) {
@@ -469,7 +671,8 @@ _seg_token_awk='
                 if (found) {
                   hbody = substr(line, bstart, pos - bstart)
                   gsub(/\n/, "\001", hbody)
-                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*Q[ \t]*$/) print "NEST\t" hbody
+                  if (hd_live) print "HDSUBS\t" hbody
+                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*[^ \t;&|<>()]*[ \t]*$/) print "NEST\t" hbody
                   else if (redirect_target && here_string) print "HERE\t" hbody
                   else print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
                   i = pos + length(ltxt) - 1
@@ -1220,8 +1423,30 @@ MAX_GIT_SCAN_DEPTH=4
 _limit_reason=indeterminate
 (( _oversize )) && _limit_reason=oversize
 
+# Whether nested text can be judged without a lexer process: no `git` in it, nothing quoted,
+# escaped, expanded or redirected, and no word that runs code from elsewhere (a shell, eval,
+# source). Such text yields no record, so the scan only notes it as a mutation, as the full scan
+# notes any non-git segment. Each full scan costs an awk process, and a command with hundreds of
+# `$(date)`-like substitutions would otherwise outlast the time budget.
+_nested_text_is_inert() {
+  local _w _ws=() _brk=$'\n\001;&|()'
+  [[ "$1" != *git* && "$1" != *[\$\`\'\"\\\<\>\{]* ]] || return 1
+  read -r -a _ws <<< "${1//[$_brk]/ }"
+  for _w in ${_ws[@]+"${_ws[@]}"}; do
+    case "${_w##*/}" in
+      bash|sh|zsh|dash|ksh|fish|su|eval|source|.|exec|xargs|parallel) return 1 ;;
+    esac
+  done
+  if (( ${#_ws[@]} )); then
+    _git_prior_mutation=1
+    (( _credited_resets == 0 )) || printf 'POST_MUTATION\n'
+  fi
+  return 0
+}
+
 _scan_nested_text() {
   local _nested_text=$1 _nested_depth=$2
+  _nested_text_is_inert "$_nested_text" && return 0
   # `${arr[@]+...}` keeps an empty array from tripping `set -u` on bash 3.2.
   local -a _saved_tokens=(${_seg_tokens[@]+"${_seg_tokens[@]}"})
   local -a _saved_here=(${_seg_here[@]+"${_seg_here[@]}"})
@@ -1454,6 +1679,7 @@ scan_git_text() {
       UHERE)
         _seg_here+=("$_value")
         _collect_heredoc_substitutions "$_value" ;;
+      HDSUBS) _collect_heredoc_substitutions "$_value" ;;
       SUBHERE)
         _seg_subhere_idx+=("${_value%%:*}")
         _seg_subhere_body+=("${_value#*:}") ;;
