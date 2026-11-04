@@ -1,4 +1,4 @@
-pytest==9.1.1
+pytest==9.2.0
 # PyYAML: strict-parse gate for tests/test_pi_contract.py (#605). Its YAML 1.1 loader is
 # configured there with Pi-compatible YAML 1.2 boolean semantics for skill descriptions.
 PyYAML==6.0.3
