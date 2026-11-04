@@ -757,7 +757,7 @@ registerGuards(stubPi, config.root, { runGuard });
 
 const ctx = { hasUI: false, cwd: config.cwd, signal: undefined, ui: { notify() {} } };
 const result = await handlers["tool_call"](
-  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: "git reset --hard" } },
+  { type: "tool_call", toolCallId: "t", toolName: "bash", input: { command: config.command ?? "git reset --hard" } },
   ctx,
 );
 console.log(JSON.stringify({ result: result ?? null }));
@@ -794,6 +794,39 @@ def test_bash_guard_judges_the_session_cwd_from_the_payload(tmp_path, tmp_path_f
     out = _run_node(_SESSION_CWD_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-session-cwd")
     assert out["result"] is not None and out["result"]["block"] is True, out
     assert "uncommitted" in out["result"]["reason"]
+
+
+@requires_node
+def test_bash_guard_judges_a_dirty_submodule_in_a_recursed_reset(tmp_path, tmp_path_factory):
+    """Through the adapter, a recursed reset on main with an edited submodule is uncommitted
+    changes in that submodule, judged against ctx.cwd while the hook runs elsewhere."""
+    src = tmp_path / "subsrc"
+    repo = tmp_path / "main"
+    elsewhere = tmp_path / "elsewhere"
+    for path, branch in ((src, "main"), (repo, "main"), (elsewhere, "feature/x")):
+        path.mkdir()
+        _fixture_git(path, "init", "-q", "-b", branch)
+        (path / "README").write_text("init")
+        _fixture_git(path, "add", "README")
+        _fixture_git(path, "commit", "-qm", "init")
+    _fixture_git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(src), "sub")
+    _fixture_git(repo, "commit", "-qm", "add sub")
+    (repo / "sub" / "README").write_text("edited inside the submodule")
+    config = {
+        "root": str(ROOT),
+        "guardRunnerPath": str(GUARD_RUNNER_TS),
+        "cwd": str(repo),
+        "spawnCwd": str(elsewhere),
+        "command": "git reset --hard --recurse-submodules",
+    }
+    out = _run_node(_SESSION_CWD_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-submodule")
+    assert out["result"] is not None and out["result"]["block"] is True, out
+    assert "uncommitted changes in submodule 'sub'" in out["result"]["reason"]
+
+    # checkout restores the file and its index entry, so no stat-only difference is left
+    _fixture_git(repo / "sub", "checkout", "--", "README")
+    out = _run_node(_SESSION_CWD_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-submodule-clean")
+    assert out["result"] is None, out
 
 
 _SESSION_START_DRIVER = """
