@@ -161,17 +161,22 @@ _oversize=0
 # re-review finding). A backslash escapes the next character, and `$(` opens a
 # fresh quoting context even inside double quotes, so `"a \" #b"` and
 # `"$(cat <<EOF ...)"` keep the quote state in step with bash.
-# Heredoc bodies are skipped: an odd quote in one (`a 5" pipe`) is data and must
-# not flip the quote state of the text after the body (#820).
+# Heredoc bodies keep a quote state of their own: an odd quote in one (`a 5" pipe`)
+# must not flip the quote state of the text after the body (#820). A delimiter that
+# is not exactly one plain, quoted or escaped word (`E"O"F`), or a `<<` inside
+# `$(( ))` or `$[ ]`, opens no heredoc, so the text after it stays code.
 # The same pass expands unquoted brace groups (`{/,}`, `{git,} push`, `main {a,b}`)
-# into the words bash would run, so every detector after it sees them; a group it
-# cannot resolve (a sequence like `{1..3}`, more than 64 result words, an unclosed
-# brace) is left as it is.
+# into the words bash would run, in code and in heredoc bodies alike (a shell may
+# run a body), so the detectors after it see them. Left as they are, for the lexer
+# to read as dynamic: a group it cannot resolve (a sequence like `{1..3}`, more than
+# 64 result words or 64 KB of text, an unclosed brace), a word holding `$` or a
+# backtick or glued to a substitution (`{-,x}$(echo f)`, `a${b}{main,c}`), an
+# assignment value, and a body line whose expansion would read as its delimiter.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
 _comment_awk='
 # Brace expansion of one unquoted word, as bash does it before any other expansion: every
 # result word joined by a space, "" when all of them are empty, or FAIL when the word holds
-# more results than the budget (the word is then kept as it is).
+# more results or more text than the budget allows (the word is then kept as it is).
 function bexp(w, depth,   n, i, ch, q, e, d, k, c2, q2, e2, na, start, alts, pre, suf, res, j, r) {
   if (depth > 16) return FAIL
   n = length(w); q = ""; e = 0
@@ -183,18 +188,6 @@ function bexp(w, depth,   n, i, ch, q, e, d, k, c2, q2, e2, na, start, alts, pre
     if (q == "\"") { if (ch == q) q = ""; continue }
     if (ch == "\047" || ch == "\"") { q = ch; continue }
     if (ch != "{") continue
-    # `${...}` is a parameter expansion: skip to its close
-    if (i > 1 && substr(w, i - 1, 1) == "$") {
-      d = 0
-      for (k = i; k <= n; k++) {
-        c2 = substr(w, k, 1)
-        if (c2 == "{") d++
-        else if (c2 == "}") { d--; if (d == 0) break }
-      }
-      if (k > n) return w
-      i = k
-      continue
-    }
     d = 0; na = 0; start = i + 1; q2 = ""; e2 = 0
     for (k = i; k <= n; k++) {
       c2 = substr(w, k, 1)
@@ -219,50 +212,30 @@ function bexp(w, depth,   n, i, ch, q, e, d, k, c2, q2, e2, na, start, alts, pre
     }
     return res
   }
+  # the budget is checked before the text is built, not after
   if (++bwords > 64) return FAIL
+  blen += length(w) + 1
+  if (blen > bbudget) return FAIL
   return w
 }
-# A heredoc body line. The body is data here, but a shell may still run it as code, so a comment
-# is dropped as in code, with a quote state of the body alone: an odd quote in it cannot reach the
-# text after the body. A comment holding `$` or a backtick is kept, since an unquoted body expands
-# those even there.
-function strip_body(l,   o, m, p, ch) {
-  o = ""; m = length(l)
-  for (p = 1; p <= m; p++) {
-    ch = substr(l, p, 1)
-    if (b_sq) { if (ch == "\047") b_sq = 0; o = o ch; continue }
-    if (ch == "\\") { o = o ch substr(l, p + 1, 1); p++; continue }
-    if (ch == "\"") b_dq = !b_dq
-    else if (ch == "\047" && !b_dq) b_sq = 1
-    else if (ch == "#" && !b_dq && (p == 1 || substr(l, p - 1, 1) ~ /[ \t]/) && substr(l, p) !~ /[$`]/) break
-    o = o ch
-  }
-  return o
-}
-# Ends the word that began at out[wstart]: a plain unquoted one is replaced by its expansion.
+# Ends the word that began at out[wstart]: a plain unquoted one is replaced by its expansion. A
+# word holding `$` or a backtick stays whole, so the lexer still reads it as dynamic.
 function end_word(   w, r) {
-  if (wstart > 0 && !wnoexp && index(substr(out, wstart), "{") && bbudget > 0) {
+  if (wstart > 0 && !wnoexp && !noexpand && index(substr(out, wstart), "{")) {
     w = substr(out, wstart)
-    if (w !~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) {
-      bwords = 0
+    if (w !~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/ && w !~ /[$`]/) {
+      bwords = 0; blen = 0
       r = bexp(w, 0)
       if (r != FAIL && r != w) { out = substr(out, 1, wstart - 1) r; bbudget -= length(r) }
     }
   }
   wstart = 0; wnoexp = 0
 }
-BEGIN { in_sq = 0; in_dq = 0; sd = 0; par = 0; ar = 0; hq_n = 0; hq_at = 0; FAIL = "\001F"; bbudget = 65536; b_sq = 0; b_dq = 0 }
-{
-  line = $0
-  # inside a heredoc body: the text is data to this pass, copied as it is
-  if (hq_at > 0 && hq_at <= hq_n) {
-    hcmp = line
-    if (hq_strip[hq_at]) sub(/^\t+/, "", hcmp)
-    if (hcmp == hq_id[hq_at]) { hq_at++; b_sq = 0; b_dq = 0; print line }
-    else print strip_body(line)
-    if (hq_at > hq_n) { hq_n = 0; hq_at = 0 }
-    next
-  }
+# One line of code, or of a heredoc body (inbody). A body has a quote state of its own, so an odd
+# quote in it cannot reach the text after it; it is processed like code because a shell may run
+# it, but a comment holding `$` or a backtick is kept there, since an unquoted body expands those
+# even after a `#`. Only code opens heredocs.
+function process(line, inbody,   n, i, c, hj, hs, hrest, hid) {
   out = ""; n = length(line); wstart = 0; wnoexp = 0
   # a word still inside a quote that opened on an earlier line goes on here, unexpanded
   if (in_sq || in_dq) { wstart = 1; wnoexp = 1 }
@@ -274,21 +247,18 @@ BEGIN { in_sq = 0; in_dq = 0; sd = 0; par = 0; ar = 0; hq_n = 0; hq_at = 0; FAIL
       out = out c substr(line, i + 1, 1); i++; continue
     }
     if (c == "\"") { if (wstart == 0) wstart = length(out) + 1; in_dq = !in_dq; out = out c; continue }
-    if (in_dq) {
-      # `$(` opens a new quoting context inside double quotes
-      if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) != "(") {
-        sd++; st_dq[sd] = 1; st_par[sd] = par; in_dq = 0; par = 0
-        out = out "$("; i++; wstart = 0; wnoexp = 0; continue
-      }
-      out = out c; continue
-    }
-    if (c == "\047") { if (wstart == 0) wstart = length(out) + 1; in_sq = 1; out = out c; continue }
-    if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t]/)) break
+    # `$(` opens a new quoting context, inside double quotes too; the word it sits in is not
+    # expanded, and neither is the rest of that word after the `)`
     if (c == "$" && substr(line, i + 1, 1) == "(" && substr(line, i + 2, 1) != "(") {
-      end_word()
-      sd++; st_dq[sd] = 0; st_par[sd] = par; par = 0
-      out = out "$("; i++; continue
+      sd++; st_dq[sd] = in_dq; st_par[sd] = par; in_dq = 0; par = 0
+      out = out "$("; i++; wstart = 0; wnoexp = 0; continue
     }
+    if (in_dq) { out = out c; continue }
+    if (c == "\047") { if (wstart == 0) wstart = length(out) + 1; in_sq = 1; out = out c; continue }
+    if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t]/) \
+        && (!inbody || substr(line, i) !~ /[$`]/)) break
+    if (c == "$" && substr(line, i + 1, 1) == "[") bk++
+    else if (c == "]" && bk > 0) bk--
     if (c == "(") {
       end_word()
       if (ar > 0 || substr(line, i + 1, 1) == "(") ar++; else par++
@@ -299,34 +269,78 @@ BEGIN { in_sq = 0; in_dq = 0; sd = 0; par = 0; ar = 0; hq_n = 0; hq_at = 0; FAIL
       out = out c
       if (ar > 0) ar--
       else if (par > 0) par--
-      else if (sd > 0) {
+      else if (sd > sdbase) {
         in_dq = st_dq[sd]; par = st_par[sd]; sd--
-        # the rest of a word that a `"$(...)"` sits in
-        if (in_dq) { wstart = length(out) + 1; wnoexp = 1 }
+        wstart = length(out) + 1; wnoexp = 1
       }
       continue
     }
-    if (c == "<" && ar == 0 && substr(line, i + 1, 1) == "<" && substr(line, i + 2, 1) != "<" \
-        && (i == 1 || substr(line, i - 1, 1) != "<")) {
-      # a heredoc opener: its body starts on the next line
+    if (c == "`") { out = out c; wstart = length(out) + 1; wnoexp = 1; continue }
+    if (!inbody && c == "<" && ar == 0 && bk == 0 && substr(line, i + 1, 1) == "<" \
+        && substr(line, i + 2, 1) != "<" && (i == 1 || substr(line, i - 1, 1) != "<")) {
+      # a heredoc opener: its body starts on the next line. A delimiter that is not exactly one
+      # plain, quoted or escaped word (`E"O"F`, `"EOF"x`) is left unrecognized, so the text
+      # after it stays code
       hj = i + 2; hs = 0
       if (substr(line, hj, 1) == "-") { hs = 1; hj++ }
       while (substr(line, hj, 1) ~ /[ \t]/) hj++
       hrest = substr(line, hj)
-      if (match(hrest, /^(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)/)) {
+      if (match(hrest, /^(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)/) \
+          && substr(hrest, RLENGTH + 1, 1) ~ /^[ \t;&|<>()]?$/) {
         hid = substr(hrest, 1, RLENGTH)
         gsub(/[\047"\\]/, "", hid)
         hq_n++; hq_id[hq_n] = hid; hq_strip[hq_n] = hs
       }
     }
-    if (c ~ /[ \t;&|<>`]/) { end_word(); out = out c; continue }
+    if (c ~ /[ \t;&|<>]/) { end_word(); out = out c; continue }
     if (wstart == 0) wstart = length(out) + 1
     out = out c
   }
   if (!in_sq && !in_dq) end_word()
-  print out
+  return out
+}
+function swap_state(   t) {
+  t = in_sq; in_sq = o_sq; o_sq = t
+  t = in_dq; in_dq = o_dq; o_dq = t
+  t = sd; sd = o_sd; o_sd = t
+  t = par; par = o_par; o_par = t
+  t = ar; ar = o_ar; o_ar = t
+  t = bk; bk = o_bk; o_bk = t
+}
+BEGIN { in_sq = 0; in_dq = 0; sd = 0; sdbase = 0; par = 0; ar = 0; bk = 0; hq_n = 0; hq_at = 0
+  FAIL = "\001F"; bbudget = 65536; noexpand = 0; bfresh = 1 }
+{
+  line = $0
+  if (hq_at > 0) {
+    hcmp = line
+    if (hq_strip[hq_at]) sub(/^\t+/, "", hcmp)
+    if (hcmp == hq_id[hq_at]) {
+      hq_at++; bfresh = 1
+      if (hq_at > hq_n) { hq_n = 0; hq_at = 0 }
+      print line
+      next
+    }
+    # the body state stacks above the code state, which it never pops
+    if (bfresh) { o_sq = 0; o_dq = 0; o_sd = sd; o_par = 0; o_ar = 0; o_bk = 0; bfresh = 0 }
+    swap_state()
+    sdbase = o_sd
+    s_sq = in_sq; s_dq = in_dq; s_sd = sd; s_par = par; s_ar = ar; s_bk = bk
+    r = process(line, 1)
+    # expansion must not turn a body line into its delimiter: the lexer would end the body there
+    hcmp = r
+    if (hq_strip[hq_at]) sub(/^\t+/, "", hcmp)
+    if (hcmp == hq_id[hq_at]) {
+      in_sq = s_sq; in_dq = s_dq; sd = s_sd; par = s_par; ar = s_ar; bk = s_bk
+      noexpand = 1; r = process(line, 1); noexpand = 0
+    }
+    swap_state()
+    sdbase = 0
+    print r
+    next
+  }
+  print process(line, 0)
   # the bodies start after a line that ends outside any quote
-  if (hq_n > 0 && hq_at == 0 && !in_sq && !in_dq) hq_at = 1
+  if (hq_n > 0 && !in_sq && !in_dq) { hq_at = 1; bfresh = 1 }
 }
 '
 if (( _oversize )); then

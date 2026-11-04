@@ -151,6 +151,28 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("git push origin {+main,x}", True),
     ("{git,} push --force origin main", True),
     ("git push --force origin feature/x {main,}", True),
+    # A brace group glued to a substitution or parameter expansion is not expanded, so the word
+    # stays dynamic (#827 review).
+    ("git push origin {-,x}$(echo f) main", True),
+    ("git push origin main {-,x}$(echo f)", True),
+    ("git push origin {-,x}`echo f` main", True),
+    ("git push --force origin a${b}{main,c}", True),
+    ("git push --force origin $b{main,c}", True),
+    # A delimiter that is not exactly one plain, quoted or escaped word, or a `<<` inside `$[ ]`,
+    # opens no heredoc: the lines after it are still code (#827 review).
+    ("cat <<E\"O\"F\nx\nEOF\n{git,} push --force origin main", True),
+    ("cat <<\"EOF\"x\nEOF\n{p,}i -p x", True),
+    ("echo $[1<<EOF]\nrm -rf {/,}", True),
+    # A heredoc body a shell runs is brace-expanded like code (#827 review).
+    ("sh <<'EOF'\nrm -rf {/,}\nEOF", True),
+    ("cat <<'EOF' | sh\n{git,} push --force origin main\nEOF", True),
+    ("bash <<'EOF'\n{p,}i -p x\nEOF", True),
+    ("git commit -m \"$(cat <<EOF\nx $({git,} push --force origin main)\nEOF\n)\"", True),
+    # expansion never turns a body line into the delimiter, which would end the body early
+    ("cat <<'EOF' > f\n{EOF,}\ndon't\nEOF\ngit push --force origin main", True),
+    ("cat <<'EOF' > f\n{EOF,}\ndon't\nEOF\ngit push origin feature/x", False),
+    # the expansion budget bounds the text before it is built
+    ("echo a" + "b" * 60000 + "{" + ",".join("c" * 63) + "} && git push origin feature/x", False),
     ("git push origin {main,}", False),
     ("git push --force-with-lease origin {main,}", False),
     ("git push --force origin '{main,}'", False),
