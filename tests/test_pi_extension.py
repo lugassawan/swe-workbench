@@ -796,7 +796,6 @@ def test_bash_guard_judges_the_session_cwd_from_the_payload(tmp_path, tmp_path_f
     assert "uncommitted" in out["result"]["reason"]
 
 
-
 @requires_node
 def test_bash_guard_judges_a_dirty_submodule_in_a_recursed_reset(tmp_path, tmp_path_factory):
     """Through the adapter, a recursed reset on main with an edited submodule is uncommitted
@@ -824,7 +823,8 @@ def test_bash_guard_judges_a_dirty_submodule_in_a_recursed_reset(tmp_path, tmp_p
     assert out["result"] is not None and out["result"]["block"] is True, out
     assert "uncommitted changes in submodule 'sub'" in out["result"]["reason"]
 
-    (repo / "sub" / "README").write_text("init")
+    # checkout restores the file and its index entry, so no stat-only difference is left
+    _fixture_git(repo / "sub", "checkout", "--", "README")
     out = _run_node(_SESSION_CWD_DRIVER, [str(GUARDS_TS), json.dumps(config)], tmp_path_factory, label="pi-submodule-clean")
     assert out["result"] is None, out
 

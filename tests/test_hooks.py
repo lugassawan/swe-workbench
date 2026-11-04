@@ -8,6 +8,7 @@ Exit code 0, empty stderr              → command was allowed.
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -1933,6 +1934,98 @@ class TestHardResetRecursedSubmodules:
         marker.unlink()
         _allowed(run_guard(guard_script, "git reset --hard --recurse-submodules", cwd=str(repo)))
         assert not marker.exists()
+
+    def test_staged_submodule_pointer_is_data_in_a_recursed_reset(self, guard_script, super_repo):
+        # the recursed reset puts the pointer back and checks out the old commit, so a commit
+        # only the staged pointer names is lost; a flat reset leaves the submodule where it is
+        repo = super_repo()
+        _g(repo / "sub", "checkout", "-q", "--detach")
+        _commit(repo / "sub", "staged-only")
+        _g(repo, "add", "sub")
+        _allowed(run_guard(guard_script, "git reset --hard", cwd=str(repo)))
+        result = run_guard(guard_script, "git reset --hard --recurse-submodules", cwd=str(repo))
+        _blocked(result)
+        assert "uncommitted" in result.stderr
+
+    def test_submodule_whose_work_tree_is_elsewhere_fails_closed(
+        self, guard_script, super_repo, tmp_path
+    ):
+        """A core.worktree in the submodule's own config keeps --show-prefix empty while git reads
+        another tree, which the overwrite check would never look at."""
+        repo = super_repo()
+        other = tmp_path / "other-tree"
+        other.mkdir()
+        (other / "s").write_text("s")
+        _g(repo / "sub", "config", "core.worktree", str(other))
+        assert _g(repo / "sub", "rev-parse", "--show-prefix").stdout.strip() == ""
+        _blocked(run_guard(guard_script, "git reset --hard --recurse-submodules", cwd=str(repo)))
+
+    def test_status_hint_names_the_submodule_by_a_path_that_works_anywhere(
+        self, guard_script, synced_repo_on, tmp_path
+    ):
+        src = tmp_path / "subsrc"
+        src.mkdir()
+        _g(src, "init", "-q", "-b", "main")
+        _commit(src, "s")
+        repo = synced_repo_on("main")
+        _g(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(src), "my lib")
+        _g(repo, "commit", "-qm", "add sub")
+        _g(repo, "push", "-q")
+        (repo / "my lib" / "s").write_text("edited")
+        cmd = f"git -C {repo} reset --hard --recurse-submodules"
+        result = run_guard(guard_script, cmd, cwd=str(tmp_path))
+        _blocked(result)
+        assert "submodule 'my lib'" in result.stderr
+        hint = re.search(r"run `git -C (.+?) status`", result.stderr)
+        assert hint, result.stderr
+        listed = subprocess.run(
+            ["bash", "-c", f"printf '%s' {hint.group(1)}"],
+            capture_output=True, text=True, env=dict(_CLEAN_ENV),
+        ).stdout
+        assert listed == str(repo / "my lib")
+
+    def test_target_gitlinks_are_read_from_the_target_commit(self, guard_script, super_repo):
+        # resetting back to an older pointer moves the submodule there: its newer commit, held by
+        # nothing else, is the loss, found through the target's own gitlink
+        repo = super_repo()
+        sub = repo / "sub"
+        _g(sub, "checkout", "-q", "--detach")
+        _commit(sub, "newer")
+        _g(repo, "add", "sub")
+        _g(repo, "commit", "-qm", "bump sub")
+        result = run_guard(
+            guard_script, "git reset --hard --recurse-submodules origin/main", cwd=str(repo)
+        )
+        _blocked(result)
+        # the superproject's own commit is unpushed too; a branch credits it, not the submodule's
+        cmd = "git branch keep && git reset --hard --recurse-submodules origin/main"
+        result = run_guard(guard_script, cmd, cwd=str(repo))
+        _blocked(result)
+        assert "commits in submodule 'sub'" in result.stderr
+
+    def test_hanging_submodule_config_blocks_with_a_submodule_message(
+        self, guard_script, super_repo, tmp_path
+    ):
+        repo = super_repo()
+        fifo = tmp_path / "sub-hang.fifo"
+        os.mkfifo(fifo)
+        config = Path(_g(repo / "sub", "rev-parse", "--absolute-git-dir").stdout.strip()) / "config"
+        with open(config, "a", encoding="utf-8") as fh:
+            fh.write(f"[include]\n\tpath = {fifo}\n")
+        try:
+            result = run_guard(
+                guard_script, "git reset --hard --recurse-submodules", cwd=str(repo),
+                env={"SWE_WORKBENCH_GUARD_GIT_BUDGET": "1"}, timeout=15,
+            )
+            _blocked(result)
+            assert "submodule recursion could not be checked in time" in result.stderr
+        finally:
+            released = fifo.rename(tmp_path / "sub-released.fifo")
+            for _ in range(20):
+                try:
+                    os.close(os.open(released, os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    break
 
     def test_credited_branch_does_not_cover_a_dirty_submodule(self, guard_script, super_repo):
         repo = super_repo()
