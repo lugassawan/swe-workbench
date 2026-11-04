@@ -365,6 +365,9 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("GIT_DIR=/x git reset --hard", True),
     ("bash -c 'git -C /nonexistent-swb reset --hard'", True),
     ("git -C /nonexistent-swb reset --soft HEAD~1", False),
+    # a recursed reset is judged per submodule; a clean repository with none loses nothing
+    ("git reset --hard --recurse-submodules", False),
+    ("git -c submodule.recurse=true reset --hard", False),
     ("echo 'git reset --hard'", False),
     # the subcommand is the first non-option word, so `reset --hard` after another subcommand
     # is data; none of these depend on the branch or on a repository that exists

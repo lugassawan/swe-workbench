@@ -19,8 +19,12 @@
 #     commits no other branch, tag or remote keeps. The target is the repository named by -C /
 #     --git-dir / --work-tree (else the payload's cwd, or the hook's own without one; a payload cwd
 #     that is relative or no longer exists blocks what depends on it); feature branches and a detached HEAD are never judged.
+#     A recursed reset (--recurse-submodules, submodule.recurse in config or -c) judges every
+#     populated submodule the same way, nested ones too: its uncommitted changes, the commits only
+#     its HEAD holds, and untracked files the recorded commit would overwrite; a flat reset leaves
+#     submodule content alone and does not look inside.
 #     Anything unresolvable or dynamic fails closed: a missing repo or ref, a substitution in
-#     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare, --recurse-submodules,
+#     the path or target, GIT_DIR-like assignments, -c core.worktree/core.bare,
 #     and an earlier step of the same command that may have changed the repository (run it as its own
 #     command first). The exception is a plain `git branch <name>` (or `switch -c` /
 #     `checkout -b`) at HEAD earlier in the same `&&` chain and repository: it keeps the
@@ -101,9 +105,13 @@
 #     (`submodule foreach`, `bisect run`, `for-each-repo`), matches `reset` at any later position;
 #     a bare `--exec-path` and `--config` (no-ops or errors in git) count as unknown options and
 #     block; a leading expansion or substitution in a reset argument, a `~` in a -C path and an
-#     unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed.
+#     unquoted `@{u}` (the lexer drops the braces) are blocked rather than guessed; any mention
+#     of recursion (`--recurse-submodules=no`, a `-c submodule.recurse=false`, config recursion
+#     the command negates) judges the submodules, and so does recursion into a populated
+#     submodule git would skip as inactive.
 # The read-only git calls in the verdict never forward the user's `-c` values and switch off
-# fsmonitor and clean/process filter drivers, because config can execute code before approval.
+# fsmonitor and clean/process filter drivers (inside each submodule, its own), because config can
+# execute code before approval.
 # The scan and the verdicts run as one job with a 3 s budget (SWE_WORKBENCH_GUARD_GIT_BUDGET lowers
 # it, 1-3 s): a repository config that makes git hang (a FIFO include), or a command too long to
 # scan in that time, blocks the command.
@@ -842,14 +850,15 @@ _is_shell_interpreter() {
 # namerefs): _git_index (the `git` word), _git_sub_index (the subcommand when it is $1, -1
 # otherwise), _git_ctx (-C/--git-dir/--work-tree as separate words, original order so
 # `-C a -C b` compounds), _git_has_context (`-C ''` is a no-op), _git_ctx_dynamic,
-# _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_env_ctx (a GIT_DIR-like
+# _git_cfg_risky (-c/--config-env on core.worktree/core.bare), _git_cfg_submod (one on
+# submodule.recurse), _git_env_ctx (a GIT_DIR-like
 # assignment before `git`). Returns 1 when the segment is not a git command.
 _parse_git_invocation() {
   local _want=$1 _prefix _base _t _name
   local _i=0 _prefix_ok=1 _prefix_args=$_NESTED_WRAPPER_BODY _found_git=0
   local _global_value=0 _context_value=0 _config_value=0 _ctx_flag="" _any_position=0
   _git_index=-1; _git_sub_index=-1; _git_ctx=(); _git_has_context=0; _git_subcmd=""; _git_subcmd_index=-1
-  _git_ctx_dynamic=0; _git_cfg_risky=0; _git_env_ctx=0; _git_has_cfg=0; _git_via_runner=0
+  _git_ctx_dynamic=0; _git_cfg_risky=0; _git_cfg_submod=0; _git_env_ctx=0; _git_has_cfg=0; _git_via_runner=0
 
   (( ${#_seg_tokens[@]} )) || return 1
   for _prefix in "${_seg_tokens[@]}"; do
@@ -956,6 +965,8 @@ _note_config_key() {
   [[ "$_key" == *'$'* ]] && _git_cfg_risky=1
   case "$_key" in
     [Cc][Oo][Rr][Ee].[Ww][Oo][Rr][Kk][Tt][Rr][Ee][Ee]|[Cc][Oo][Rr][Ee].[Bb][Aa][Rr][Ee]) _git_cfg_risky=1 ;;
+    # a recursed reset is judged per submodule, whatever value the override sets
+    [Ss][Uu][Bb][Mm][Oo][Dd][Uu][Ll][Ee].[Rr][Ee][Cc][Uu][Rr][Ss][Ee]) _git_cfg_submod=1 ;;
   esac
 }
 
@@ -1239,6 +1250,7 @@ _classify_reset_segment() {
     if (( ! _have_target )); then _have_target=1; _target=$_t; fi
   done
   (( _hard )) || (( _maybe && ! _mode_flag )) || return
+  (( ! _git_cfg_submod )) || _submod=1
 
   if (( _git_env_ctx )); then printf 'BLOCK\treset-env\n'; return; fi
   if (( _git_cfg_risky )); then printf 'BLOCK\treset-config\n'; return; fi
@@ -1819,13 +1831,124 @@ _reset_data_loss() {
   exit 2
 }
 
+# Fills the caller's _filter_off with overrides that switch off every clean/process filter driver
+# the repository of the current _rctx configures. Returns 1 when its config cannot be read or a
+# driver name cannot be switched off.
+_collect_filter_off() {
+  local _v _k _d _rc=0
+  _filter_off=()
+  _v=$(_rgit config --name-only --get-regexp '^filter\..*\.(clean|process)$') || _rc=$?
+  # 1 means no driver is set; any other failure is a config git could not read, not "no filters"
+  (( _rc <= 1 )) || return 1
+  while IFS= read -r _k; do
+    case "$_k" in
+      *.clean) _d=${_k%.clean} ;;
+      *.process) _d=${_k%.process} ;;
+      *) continue ;;
+    esac
+    _d=${_d#filter.}
+    # `-c` splits a key at its first `=`, so such a driver name could not be switched off
+    if [[ "$_d" == *=* || "$_d" == *[[:cntrl:]]* ]]; then return 1; fi
+    _filter_off+=(-c "filter.$_d.clean=" -c "filter.$_d.process=" -c "filter.$_d.required=false")
+  done <<< "$_v"
+  return 0
+}
+
+# Blocks with $3 when a path the commit $2 adds over HEAD already stands in the work tree $1 of
+# the repository of the current _rctx: the reset would overwrite it.
+_untracked_overwrite_check() {
+  local _top=$1 _to=$2 _what=$3 _v _p
+  _rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_to" -- >/dev/null \
+    || _reset_block "$_unresolved"
+  while IFS= read -r -d '' _v; do
+    # the path itself, and every parent: a plain file or a symlink standing where a directory is needed
+    _p=$_v
+    while :; do
+      if [[ -L "$_top/$_p" ]] || { [[ -e "$_top/$_p" ]] && { [[ "$_p" == "$_v" ]] || [[ ! -d "$_top/$_p" ]]; }; }; then
+        _reset_data_loss "$_branch" "$_what"
+      fi
+      [[ "$_p" == */* ]] || break
+      _p=${_p%/*}
+    done
+  done < <(_rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_to" --)
+}
+
+# Fills the caller's _gitlinks with the submodule paths the index of the current _rctx records.
+_list_gitlinks() {
+  local _e
+  _gitlinks=()
+  # the whole index, named from its top, whichever subdirectory -C entered
+  _rgit ls-files --stage -z --full-name -- ':(top)' >/dev/null || return 1
+  while IFS= read -r -d '' _e; do
+    [[ "$_e" == "160000 "* ]] || continue
+    _gitlinks+=("${_e#*$'\t'}")
+  done < <(_rgit ls-files --stage -z --full-name -- ':(top)')
+  return 0
+}
+
+# Prints the commit that commit $1 of the repository of the current _rctx records for submodule
+# path $2; nothing when the commit holds no submodule there (the reset removes it).
+_target_gitlink() {
+  local _e
+  _e=$(_rgit ls-tree -z --full-tree "$1" -- ":(top,literal)$2" | tr -d '\0') || return 0
+  [[ "$_e" == "160000 commit "* && "${_e#*$'\t'}" == "$2" ]] || return 0
+  _e=${_e#160000 commit }
+  printf '%s' "${_e%%$'\t'*}"
+}
+
+# A recursed reset moves submodule $1 (shown as $2) to commit $3, or removes its work tree when
+# $3 is empty, discarding its uncommitted changes and the commits only its HEAD holds; nested
+# submodules ($4 is the depth) follow. Every call goes through _rgit with the submodule as its only
+# context and its own filter drivers switched off, so its config runs nothing either.
+_submodule_verdict() {
+  local _dir=$1 _label=$2 _gl=$3 _depth=$4 _v _p _rc
+  local -a _rctx=(-C "$_dir") _filter_off=() _gitlinks=()
+  local _what="uncommitted changes in submodule '$_label' (run \`git -C $_label status\` first; stat-only differences also count)"
+  # an unpopulated submodule holds nothing the reset could discard
+  [[ -e "$_dir/.git" || -L "$_dir/.git" ]] || return 0
+  (( _depth <= 8 )) || _reset_block "on protected branch '$_branch' cannot be checked: submodules are nested too deeply"
+  # the submodule must be its own work tree: a broken one would let git find the superproject
+  _p=$(_rgit rev-parse --show-prefix) || _reset_block "$_unresolved"
+  [[ -z "$_p" ]] || _reset_block "$_unresolved"
+  _collect_filter_off || _reset_block "$_unresolved"
+  _rgit rev-parse --verify -q 'HEAD^{commit}' >/dev/null || _reset_block "$_unresolved"
+
+  _rc=0
+  _rgit diff-index --cached --quiet --ignore-submodules=all HEAD -- || _rc=$?
+  if (( _rc == 1 )); then _reset_data_loss "$_branch" "$_what"; fi
+  (( _rc == 0 )) || _reset_block "$_unresolved"
+  _rc=0
+  _rgit diff-files --quiet --ignore-submodules=all || _rc=$?
+  if (( _rc == 1 )); then _reset_data_loss "$_branch" "$_what"; fi
+  (( _rc == 0 )) || _reset_block "$_unresolved"
+
+  # the submodule's HEAD is detached at the recorded commit; its branches keep their commits
+  _rc=0
+  if [[ -n "$_gl" ]]; then
+    _rgit rev-parse --verify -q "$_gl^{commit}" >/dev/null || _reset_block "$_unresolved"
+    _untracked_overwrite_check "$_dir" "$_gl" "untracked files in submodule '$_label' that the target commit would overwrite"
+    _v=$(_rgit rev-list --max-count=1 HEAD --not "$_gl" --branches --remotes --tags) || _rc=$?
+  else
+    _v=$(_rgit rev-list --max-count=1 HEAD --not --branches --remotes --tags) || _rc=$?
+  fi
+  (( _rc == 0 )) || _reset_block "$_unresolved"
+  [[ -z "$_v" ]] || _reset_data_loss "$_branch" "commits in submodule '$_label' not on any of its branches, tags or remotes"
+
+  _list_gitlinks || _reset_block "$_unresolved"
+  for _p in ${_gitlinks[@]+"${_gitlinks[@]}"}; do
+    _v=""
+    [[ -z "$_gl" ]] || _v=$(_target_gitlink "$_gl" "$_p")
+    _submodule_verdict "$_dir/$_p" "$_label/$_p" "$_v" $((_depth + 1))
+  done
+}
+
 # Args: seq (0|1|2), submodules (0|1), dynamic target (0|1|2: 2 is code assembled from data,
 # judged by the branch alone), target, context joined by \x1f,
 # branch names created at HEAD earlier in the same `&&` chain, joined by \x1f.
 _reset_verdict() {
   local _seq=$1 _submod=$2 _dyn=$3 _target=$4 _ctxj=$5 _credits=${6-}
-  local -a _rctx=() _filter_off=() _cnames=()
-  local _i _v _k _d _p _rc _branch _sha _top
+  local -a _rctx=() _filter_off=() _cnames=() _gitlinks=()
+  local _i _v _k _d _p _rc _branch _sha _top _recurse=0
   local _unresolved='could not be checked: the target repository or reset target cannot be resolved (check the -C/--git-dir/--work-tree path and the ref; quote a target that contains { }, e.g. '"'"'@{u}'"'"')'
   local _dirty='uncommitted changes (run `git status` first; stat-only differences also count)'
 
@@ -1842,21 +1965,7 @@ _reset_verdict() {
   if (( _seq == 2 )); then
     _reset_block "follows a command that may switch to a protected branch, so the branch cannot be read yet; run the switch as its own command first, then reset"
   fi
-  _rc=0
-  _v=$(_rgit config --name-only --get-regexp '^filter\..*\.(clean|process)$') || _rc=$?
-  # 1 means no driver is set; any other failure is a config git could not read, not "no filters"
-  (( _rc <= 1 )) || _reset_block "$_unresolved"
-  while IFS= read -r _k; do
-    case "$_k" in
-      *.clean) _d=${_k%.clean} ;;
-      *.process) _d=${_k%.process} ;;
-      *) continue ;;
-    esac
-    _d=${_d#filter.}
-    # `-c` splits a key at its first `=`, so such a driver name could not be switched off
-    if [[ "$_d" == *=* || "$_d" == *[[:cntrl:]]* ]]; then _reset_block "$_unresolved"; fi
-    _filter_off+=(-c "filter.$_d.clean=" -c "filter.$_d.process=" -c "filter.$_d.required=false")
-  done <<< "$_v"
+  _collect_filter_off || _reset_block "$_unresolved"
 
   # the full ref: `--short` prints `heads/main` when a tag named `main` exists
   _rc=0
@@ -1878,16 +1987,14 @@ _reset_verdict() {
     _reset_block "on protected branch '$_branch' follows another command in the same line that may change the repository; run the earlier steps as their own command first, then reset"
   fi
   _v=$(_rgit config --bool submodule.recurse) || true
-  if (( _submod )) || [[ "$_v" == true ]]; then
-    _reset_block "on protected branch '$_branch' with submodule recursion cannot be checked; reset without --recurse-submodules"
-  fi
+  if (( _submod )) || [[ "$_v" == true ]]; then _recurse=1; fi
   _rgit rev-parse --verify -q 'HEAD^{commit}' >/dev/null \
     || _reset_block "on protected branch '$_branch' cannot be checked: the branch has no commits yet"
   _sha=$(_rgit rev-parse --verify -q --end-of-options "$_target^{commit}") || _sha=""
   [[ -n "$_sha" ]] || _reset_block "$_unresolved"
 
   _rc=0
-  # submodule content is not touched by a flat reset, and inspecting it would read the submodule's own config
+  # a flat reset leaves submodule content alone; a recursed one is judged per submodule below
   _rgit diff-index --cached --quiet --ignore-submodules=all HEAD -- || _rc=$?
   if (( _rc == 1 )); then _reset_data_loss "$_branch" "$_dirty"; fi
   (( _rc == 0 )) || _reset_block "$_unresolved"
@@ -1899,19 +2006,15 @@ _reset_verdict() {
   # a file the target adds and the work tree already holds is untracked: the reset overwrites it
   _top=$(_rgit rev-parse --show-toplevel) || _top=""
   [[ -n "$_top" ]] || _reset_block "$_unresolved"
-  _rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" -- >/dev/null \
-    || _reset_block "$_unresolved"
-  while IFS= read -r -d '' _v; do
-    # the path itself, and every parent: a plain file or a symlink standing where a directory is needed
-    _p=$_v
-    while :; do
-      if [[ -L "$_top/$_p" ]] || { [[ -e "$_top/$_p" ]] && { [[ "$_p" == "$_v" ]] || [[ ! -d "$_top/$_p" ]]; }; }; then
-        _reset_data_loss "$_branch" 'untracked files that the target commit would overwrite'
-      fi
-      [[ "$_p" == */* ]] || break
-      _p=${_p%/*}
+  _untracked_overwrite_check "$_top" "$_sha" 'untracked files that the target commit would overwrite'
+
+  # a recursed reset also resets every populated submodule to the commit the target records
+  if (( _recurse )); then
+    _list_gitlinks || _reset_block "$_unresolved"
+    for _p in ${_gitlinks[@]+"${_gitlinks[@]}"}; do
+      _submodule_verdict "$_top/$_p" "$_p" "$(_target_gitlink "$_sha" "$_p")" 1
     done
-  done < <(_rgit diff-tree -r -z --name-only --no-renames --diff-filter=A HEAD "$_sha" --)
+  fi
 
   # A branch the command creates first sits at HEAD and keeps every commit the reset drops,
   # but only if `git branch` can create it: a valid name that no branch holds yet.
