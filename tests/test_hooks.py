@@ -2027,6 +2027,37 @@ class TestHardResetRecursedSubmodules:
                 except OSError:
                     break
 
+    def test_hang_after_the_walk_gets_the_hanging_config_message(
+        self, guard_script, super_repo, tmp_path
+    ):
+        """The walk tells the hook when it ends, so a later verdict that hangs on another
+        repository's config is not blamed on the submodules."""
+        repo = super_repo()
+        hung = tmp_path / "hung"
+        hung.mkdir()
+        _g(hung, "init", "-q", "-b", "feature/x")
+        _commit(hung, "h")
+        fifo = tmp_path / "late-hang.fifo"
+        os.mkfifo(fifo)
+        with open(hung / ".git" / "config", "a", encoding="utf-8") as fh:
+            fh.write(f"[include]\n\tpath = {fifo}\n")
+        try:
+            result = run_guard(
+                guard_script,
+                f"git reset --hard --recurse-submodules && git -C {hung} push --force",
+                cwd=str(repo), env={"SWE_WORKBENCH_GUARD_GIT_BUDGET": "1"}, timeout=15,
+            )
+            _blocked(result)
+            assert "a repository config may be hanging git" in result.stderr
+            assert "submodule" not in result.stderr
+        finally:
+            released = fifo.rename(tmp_path / "late-released.fifo")
+            for _ in range(20):
+                try:
+                    os.close(os.open(released, os.O_WRONLY | os.O_NONBLOCK))
+                except OSError:
+                    break
+
     def test_credited_branch_does_not_cover_a_dirty_submodule(self, guard_script, super_repo):
         repo = super_repo()
         _commit(repo, "extra")

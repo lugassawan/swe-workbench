@@ -1147,8 +1147,9 @@ _credit_names=()
 _credit_ctx=()
 # CHECK_RESET records emitted with credits; a mutation after one emits POST_MUTATION.
 _credited_resets=0
-# Set once a reset verdict starts walking submodules; the hook is told by a second USR2.
-_submodule_walk_noted=0
+# Set while a reset verdict walks submodules, once it has told the hook so (a later USR2); the
+# hook is told the walk ended by URG, so a timeout can name the submodules only while one runs.
+_walk_signalled=0
 
 # A segment that is exactly `git [ctx] branch [-q] <name> [HEAD]`, `git [ctx] switch [-q] -c
 # <name> [HEAD]` or `git [ctx] checkout [-q] -b <name> [HEAD]`, at the top level and
@@ -1961,11 +1962,6 @@ _submodules_verdict() {
   else
     _target_gitlinks "$_to" "$_head" || _reset_block "$_unresolved"
   fi
-  # the first walk tells the hook, so a timeout can name the submodules instead of a hanging config
-  if (( ! _submodule_walk_noted )); then
-    _submodule_walk_noted=1
-    kill -USR2 $$ 2>/dev/null || true
-  fi
   for ((_i = 0; _i < ${#_gitlinks[@]}; _i++)); do
     _submodule_verdict "$_top/${_gitlinks[_i]}" "$_prefix${_gitlinks[_i]}" "${_gitlink_targets[_i]}" "$_depth"
   done
@@ -1982,6 +1978,12 @@ _submodule_verdict() {
   # an unpopulated submodule holds nothing the reset could discard
   [[ -e "$_dir/.git" || -L "$_dir/.git" ]] || return 0
   (( _depth <= 8 )) || _reset_block "on protected branch '$_branch' cannot be checked: submodules are nested too deeply"
+  # told just before the walk's first git call, so at least one git call runs before the end
+  # signal and the two never arrive together, where their delivery order is the platform's
+  if (( ! _walk_signalled )); then
+    _walk_signalled=1
+    kill -USR2 $$ 2>/dev/null || true
+  fi
   printf -v _q '%q' "$_dir"
   _what="uncommitted changes in submodule '$_label' (run \`git -C $_q status\` first; stat-only differences also count)"
   # its work tree must be the directory itself: a broken .git would let git find the superproject,
@@ -2092,7 +2094,12 @@ _reset_verdict() {
   # a recursed reset also resets every populated submodule to the commit the target records
   if (( _recurse )); then
     _v=$(_rgit rev-parse --verify -q 'HEAD^{commit}') || _reset_block "$_unresolved"
+    _walk_signalled=0
     _submodules_verdict "$_top" "$_sha" "$_v" "" 1
+    if (( _walk_signalled )); then
+      _walk_signalled=0
+      kill -URG $$ 2>/dev/null || true
+    fi
   fi
 
   # A branch the command creates first sits at HEAD and keeps every commit the reset drops,
@@ -2217,11 +2224,14 @@ if [[ "${SWE_WORKBENCH_GUARD_GIT_BUDGET-}" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
 fi
 _vpid=""
 _wpid=""
-# USR2 counts: once when the scan is done, again when a reset verdict starts walking submodules
+# The first USR2 says the scan is done; each later one, that a reset verdict started walking
+# submodules, and URG that the walk ended
 _scanned=0
+_in_walk=0
 _timed_out=0
 trap '_timed_out=1; kill -TERM -"$_vpid" 2>/dev/null; kill -KILL -"$_vpid" 2>/dev/null' USR1
-trap '_scanned=$((_scanned + 1))' USR2
+trap 'if (( _scanned )); then _in_walk=1; else _scanned=1; fi' USR2
+trap '_in_walk=0' URG
 # the job and the watchdog sit in their own process groups, so a caller killing the hook would
 # leave them running
 trap 'kill -KILL -- -"$_vpid" -"$_wpid" 2>/dev/null; exit 2' TERM INT HUP
@@ -2231,7 +2241,7 @@ _scan_and_judge </dev/null 2>&9 &
 _vpid=$!
 ( sleep "$_budget"; kill -USR1 $$ ) </dev/null >/dev/null 2>&1 &
 _wpid=$!
-# A trapped signal interrupts the wait. After USR2 the job is still running, so wait again; after
+# A trapped signal interrupts the wait. After USR2 or URG the job is still running, so wait again; after
 # USR1 it was killed in the trap, so its status is neither 0 nor 2. A job that is already reaped
 # makes wait return 127, which ends the loop.
 _vrc=0
@@ -2240,7 +2250,7 @@ while (( _vrc > 128 && _scanned && ! _timed_out )); do
   _vrc=0
   wait "$_vpid" || _vrc=$?
 done
-trap '' USR1 USR2
+trap '' USR1 USR2 URG
 trap - TERM INT HUP
 kill -TERM -"$_wpid" 2>/dev/null
 wait "$_wpid" 2>/dev/null
@@ -2251,7 +2261,7 @@ case "$_vrc" in
   0) ;;
   2) exit 2 ;;
   *)
-    if (( _scanned >= 2 )); then
+    if (( _in_walk )); then
       echo 'BLOCKED: git reset --hard with submodule recursion could not be checked in time (too many submodules to judge within the budget, or a submodule config may be hanging git); check them yourself (`git submodule foreach --recursive git status`), then reset with --no-recurse-submodules' >&2
     elif (( _scanned )); then
       echo 'BLOCKED: git command could not be checked in time (a repository config may be hanging git)' >&2
