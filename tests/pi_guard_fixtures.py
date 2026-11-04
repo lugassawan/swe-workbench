@@ -136,13 +136,21 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ('eval git "push -f" origin feature/x', False),
     ('ssh host "git push" -f origin feature/x', False),
     ('ssh host "ls -la"', False),
-    # An unquoted brace group is expansion the guard cannot evaluate: it is a dynamic word, so a
-    # force push using one blocks on every branch (quoted braces and `{}` stay literal).
+    # An unquoted brace group is expanded into the words bash runs (#820), so a force push
+    # into one of them is judged like the literal words; a group the guard cannot expand (a
+    # sequence) is a dynamic word, and a force push using one blocks on every branch (quoted
+    # braces and `{}` stay literal).
     ("git push --force origin {main,}", True),
     ("git push {--force,} origin main", True),
     ("git push --force origin {a..b}", True),
-    ("git push -f origin feature/{x,y}", True),
-    ("git push --force origin {a,{b,c}}", True),
+    ("git push -f origin feature/{x,y}", False),
+    ("git push --force origin {a,{b,c}}", False),
+    ("git push --force origin {a,{b,main}}", True),
+    ("git push --force origin HEAD:{x,main}", True),
+    ("git push origin {-f,x} main", True),
+    ("git push origin {+main,x}", True),
+    ("{git,} push --force origin main", True),
+    ("git push --force origin feature/x {main,}", True),
     ("git push origin {main,}", False),
     ("git push --force-with-lease origin {main,}", False),
     ("git push --force origin '{main,}'", False),
@@ -227,8 +235,39 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     # A substitution flag with another repository selected cannot be attributed to the current branch.
     ("git -C ../other-repo push $(echo --force) origin", True),
     ("git --git-dir=../other/.git push $(echo --force) origin", True),
-    # Brace groups after a protected ref read as a possible force flag (a known over-block).
-    ("git push origin main {a,b}", True),
+    # A brace group that expands to no flag is no force flag (#820).
+    ("git push origin main {a,b}", False),
+    ("git push origin {a,b} main", False),
+    ("git push origin main --tags {a,b}", False),
+    # Brace expansion reaches the rm and pi detectors too (#820).
+    ("rm -rf {/,}", True),
+    ("rm -rf {~,build}", True),
+    ("rm -rf x{,/}", False),
+    ("p{i,} -p x", True),
+    ("rm -rf {build,dist}", False),
+    # A bare or backslash heredoc delimiter inside `$(` is data too: an apostrophe in the body
+    # cannot hide the push after it, and the substitutions a bare-delimiter body expands still
+    # run (#820).
+    ("git commit -m \"$(cat <<EOF\nDon't break\nEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<\\EOF\nDon't break\nEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<-EOF\n\tDon't break\n\tEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<EOF\nDon't $(git push --force origin main)\nEOF\n)\"", True),
+    ("git commit -m \"$(cat <<\\EOF\nDon't $(git push --force origin main)\nEOF\n)\"", False),
+    ("git commit -m \"$(cat <<EOF\nDon't git push --force origin main\nEOF\n)\"", False),
+    ("git commit -m \"$(cat <<EOF\nDon't break\nEOF\n)\" && git push origin feature/x", False),
+    # An odd quote in a heredoc body cannot flip the comment stripper's quote state, and an
+    # escaped quote inside double quotes does not close them (#820).
+    ("cat <<'EOF' > n.txt\na 5\" pipe\nEOF\ngit commit -m \"fix #123\"; git push --force origin main", True),
+    ("cat <<EOF\na 5' pipe\nEOF\ngit commit -m 'fix #123'; git push --force origin main", True),
+    ("git commit -m \"a \\\" #b\"; git push --force origin main", True),
+    ("git commit -m \"$(cat <<'EOF'\nsay 5\" pipe\nEOF\n)\" && git commit -m \"fix #1\"; git push --force origin main", True),
+    # a comment in a body a shell runs is still a comment
+    ("cat <<'EOF' | sh\n# don't\nEOF\ngit push --force origin main", True),
+    ("cat <<'EOF' > n.txt\na 5\" pipe # x\nEOF\ngit commit -m \"fix #123\"", False),
+    # Substitutions that cannot hold a git call are judged without a lexer process each, so many
+    # of them still finish in time (#820).
+    ("echo " + "x$(a)" * 1600 + "; git push origin feature/x", False),
+    ("echo " + "x$(a)" * 1600 + "; git push --force origin main", True),
     # Push state must not leak between segments: the second push is judged on its own.
     ("git push $(echo x) ; git push --force origin main", True),
     # Quoted text that is data stays allowed.

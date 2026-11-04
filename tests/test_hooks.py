@@ -3177,7 +3177,7 @@ def failing_awk_path(tmp_path):
 class TestEachPreprocessingStageFailsClosed:
     # (stage, text only that stage's awk program contains, a command that reaches the stage)
     @pytest.mark.parametrize("marker,cmd", [
-        ("substr(line, i-1, 1) ~", "ls"),
+        ("function strip_body", "ls"),
         ("nb % 2 == 1", "ls"),
         ("function brace_group_end", "git status"),
         ('printf "%s ", out', "pi list"),
