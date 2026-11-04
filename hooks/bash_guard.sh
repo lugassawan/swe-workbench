@@ -162,14 +162,16 @@ _oversize=0
 # fresh quoting context even inside double quotes, so `"a \" #b"` and
 # `"$(cat <<EOF ...)"` keep the quote state in step with bash.
 # Heredoc bodies keep a quote state of their own: an odd quote in one (`a 5" pipe`)
-# must not flip the quote state of the text after the body (#820). A delimiter that
-# is not exactly one plain, quoted or escaped word (`E"O"F`), or a `<<` inside
-# `$(( ))` or `$[ ]`, opens no heredoc, so the text after it stays code.
+# must not flip the quote state of the text after the body (#820). The delimiter is
+# the next word with its quotes and backslashes removed, as bash reads it (`E"O"F`
+# is EOF, `"EOF"x` is EOFx); a `<<` inside `$(( ))` or `$[ ]` opens no heredoc. A
+# body may open heredocs of its own (a script fed to `bash`), up to 8 levels deep,
+# each with its own quote state; an outer delimiter line closes every inner level.
 # The same pass expands unquoted brace groups (`{/,}`, `{git,} push`, `main {a,b}`)
 # into the words bash would run, in code and in heredoc bodies alike (a shell may
 # run a body), so the detectors after it see them. Left as they are, for the lexer
 # to read as dynamic: a group it cannot resolve (a sequence like `{1..3}`, more than
-# 64 result words or 64 KB of text, an unclosed brace), a word holding `$` or a
+# 64 result words or 64 KB of text, a word over 4 KB, an unclosed brace), a word holding `$` or a
 # backtick or glued to a substitution (`{-,x}$(echo f)`, `a${b}{main,c}`), an
 # assignment value, and a body line whose expansion would read as its delimiter.
 # shellcheck disable=SC2016 # AWK source is intentionally a single-quoted literal.
@@ -178,7 +180,8 @@ _comment_awk='
 # result word joined by a space, "" when all of them are empty, or FAIL when the word holds
 # more results or more text than the budget allows (the word is then kept as it is).
 function bexp(w, depth,   n, i, ch, q, e, d, k, c2, q2, e2, na, start, alts, pre, suf, res, j, r) {
-  if (depth > 16) return FAIL
+  # a long word is not expanded: some awks walk a string to index it, so the scan would be slow
+  if (depth > 16 || length(w) > 4096) return FAIL
   n = length(w); q = ""; e = 0
   for (i = 1; i <= n; i++) {
     ch = substr(w, i, 1)
@@ -275,22 +278,23 @@ function process(line, inbody,   n, i, c, hj, hs, hrest, hid) {
       }
       continue
     }
-    if (c == "`") { out = out c; wstart = length(out) + 1; wnoexp = 1; continue }
-    if (!inbody && c == "<" && ar == 0 && bk == 0 && substr(line, i + 1, 1) == "<" \
+    # an opening backtick drops the word in progress unexpanded and starts the command inside
+    # fresh; the closing one ends the last word inside and leaves the rest of its own word
+    # unexpanded
+    if (c == "`") {
+      if (!bq) { bq = 1; out = out c; wstart = 0; wnoexp = 0 }
+      else { end_word(); bq = 0; out = out c; wstart = length(out) + 1; wnoexp = 1 }
+      continue
+    }
+    if (lv < MAXLV && c == "<" && ar == 0 && bk == 0 && substr(line, i + 1, 1) == "<" \
         && substr(line, i + 2, 1) != "<" && (i == 1 || substr(line, i - 1, 1) != "<")) {
-      # a heredoc opener: its body starts on the next line. A delimiter that is not exactly one
-      # plain, quoted or escaped word (`E"O"F`, `"EOF"x`) is left unrecognized, so the text
-      # after it stays code
+      # a heredoc opener: its body starts on the next line. The delimiter is the next word with
+      # its quotes and backslashes removed, as bash reads it (`E"O"F` is EOF, `"EOF"x` is EOFx)
       hj = i + 2; hs = 0
       if (substr(line, hj, 1) == "-") { hs = 1; hj++ }
       while (substr(line, hj, 1) ~ /[ \t]/) hj++
-      hrest = substr(line, hj)
-      if (match(hrest, /^(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)/) \
-          && substr(hrest, RLENGTH + 1, 1) ~ /^[ \t;&|<>()]?$/) {
-        hid = substr(hrest, 1, RLENGTH)
-        gsub(/[\047"\\]/, "", hid)
-        hq_n++; hq_id[hq_n] = hid; hq_strip[hq_n] = hs
-      }
+      hid = heredoc_word(line, hj)
+      if (hid != "") { qn[lv]++; hd[lv, qn[lv]] = hid; hst[lv, qn[lv]] = hs }
     }
     if (c ~ /[ \t;&|<>]/) { end_word(); out = out c; continue }
     if (wstart == 0) wstart = length(out) + 1
@@ -299,48 +303,67 @@ function process(line, inbody,   n, i, c, hj, hs, hrest, hid) {
   if (!in_sq && !in_dq) end_word()
   return out
 }
-function swap_state(   t) {
-  t = in_sq; in_sq = o_sq; o_sq = t
-  t = in_dq; in_dq = o_dq; o_dq = t
-  t = sd; sd = o_sd; o_sd = t
-  t = par; par = o_par; o_par = t
-  t = ar; ar = o_ar; o_ar = t
-  t = bk; bk = o_bk; o_bk = t
+# The word at line[p] up to an unquoted blank or operator, quotes and backslashes removed: a
+# heredoc delimiter as bash reads it. "" when there is none.
+function heredoc_word(l, p,   m, ch, q, r) {
+  m = length(l); q = ""; r = ""
+  for (; p <= m; p++) {
+    ch = substr(l, p, 1)
+    if (q == "\047") { if (ch == q) q = ""; else r = r ch; continue }
+    if (ch == "\\") { p++; r = r substr(l, p, 1); continue }
+    if (q == "\"") { if (ch == q) q = ""; else r = r ch; continue }
+    if (ch == "\047" || ch == "\"") { q = ch; continue }
+    if (ch ~ /[ \t;&|<>()`]/) break
+    r = r ch
+  }
+  return (q == "") ? r : ""
 }
-BEGIN { in_sq = 0; in_dq = 0; sd = 0; sdbase = 0; par = 0; ar = 0; bk = 0; hq_n = 0; hq_at = 0
-  FAIL = "\001F"; bbudget = 65536; noexpand = 0; bfresh = 1 }
+# Each heredoc level (0 is the code, n the body of a heredoc opened at level n - 1) keeps its own
+# quote state; the globals hold the state of the current level.
+function save_lv(l) {
+  S_sq[l] = in_sq; S_dq[l] = in_dq; S_sd[l] = sd; S_par[l] = par; S_ar[l] = ar; S_bk[l] = bk
+  S_bq[l] = bq; S_base[l] = sdbase
+}
+function load_lv(l) {
+  in_sq = S_sq[l]; in_dq = S_dq[l]; sd = S_sd[l]; par = S_par[l]; ar = S_ar[l]; bk = S_bk[l]
+  bq = S_bq[l]; sdbase = S_base[l]
+}
+# a body starts with fresh quotes; its `$(` stack sits above the one it was opened in
+function enter_body() {
+  save_lv(lv); lv++
+  in_sq = 0; in_dq = 0; par = 0; ar = 0; bk = 0; bq = 0; sdbase = sd; qn[lv] = 0; qa[lv] = 0
+}
+# Whether the line ends an open heredoc: the level whose body it closes, else -1. bash reads a
+# body up to its delimiter whatever the body holds, so an outer delimiter closes every inner level.
+function closing_level(l,   p, t) {
+  for (p = 0; p < lv; p++) {
+    t = l
+    if (hst[p, qa[p]]) sub(/^\t+/, "", t)
+    if (t == hd[p, qa[p]]) return p
+  }
+  return -1
+}
+BEGIN { in_sq = 0; in_dq = 0; sd = 0; sdbase = 0; par = 0; ar = 0; bk = 0; bq = 0; lv = 0
+  qn[0] = 0; qa[0] = 0; MAXLV = 8; FAIL = "\001F"; bbudget = 65536; noexpand = 0 }
 {
   line = $0
-  if (hq_at > 0) {
-    hcmp = line
-    if (hq_strip[hq_at]) sub(/^\t+/, "", hcmp)
-    if (hcmp == hq_id[hq_at]) {
-      hq_at++; bfresh = 1
-      if (hq_at > hq_n) { hq_n = 0; hq_at = 0 }
-      print line
-      next
-    }
-    # the body state stacks above the code state, which it never pops
-    if (bfresh) { o_sq = 0; o_dq = 0; o_sd = sd; o_par = 0; o_ar = 0; o_bk = 0; bfresh = 0 }
-    swap_state()
-    sdbase = o_sd
-    s_sq = in_sq; s_dq = in_dq; s_sd = sd; s_par = par; s_ar = ar; s_bk = bk
-    r = process(line, 1)
-    # expansion must not turn a body line into its delimiter: the lexer would end the body there
-    hcmp = r
-    if (hq_strip[hq_at]) sub(/^\t+/, "", hcmp)
-    if (hcmp == hq_id[hq_at]) {
-      in_sq = s_sq; in_dq = s_dq; sd = s_sd; par = s_par; ar = s_ar; bk = s_bk
-      noexpand = 1; r = process(line, 1); noexpand = 0
-    }
-    swap_state()
-    sdbase = 0
-    print r
+  cl = closing_level(line)
+  if (cl >= 0) {
+    load_lv(cl); lv = cl; qa[cl]++
+    if (qa[cl] > qn[cl]) { qn[cl] = 0; qa[cl] = 0 } else enter_body()
+    print line
     next
   }
-  print process(line, 0)
+  s_sq = in_sq; s_dq = in_dq; s_sd = sd; s_par = par; s_ar = ar; s_bk = bk; s_bq = bq; s_qn = qn[lv]
+  r = process(line, lv > 0)
+  # expansion must not turn a body line into a delimiter: the lexer would end the body there
+  if (lv > 0 && closing_level(r) >= 0) {
+    in_sq = s_sq; in_dq = s_dq; sd = s_sd; par = s_par; ar = s_ar; bk = s_bk; bq = s_bq; qn[lv] = s_qn
+    noexpand = 1; r = process(line, 1); noexpand = 0
+  }
+  print r
   # the bodies start after a line that ends outside any quote
-  if (hq_n > 0 && !in_sq && !in_dq) { hq_at = 1; bfresh = 1 }
+  if (qn[lv] > 0 && qa[lv] == 0 && !in_sq && !in_dq) { qa[lv] = 1; enter_body() }
 }
 '
 if (( _oversize )); then
@@ -566,20 +589,21 @@ _seg_token_awk='
           hj = i + 2; hstrip = 0
           if (substr(line, hj, 1) == "-") { hstrip = 1; hj++ }
           while (substr(line, hj, 1) ~ /[ \t]/) hj++
-          hq = substr(line, hj, 1); hid = ""; hend = 0; hunq = 0
-          if ((hq == "\047" || hq == "\"") && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            hid = substr(line, hj + 1, RLENGTH)
-            hend = hj + 1 + RLENGTH
-            if (substr(line, hend, 1) != hq) hid = ""; else hend++
-          } else if (hq == "\\" && match(substr(line, hj + 1), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            hid = substr(line, hj + 1, RLENGTH)
-            hend = hj + 1 + RLENGTH
-          } else if (hq ~ /[A-Za-z_]/ && match(substr(line, hj), /^[A-Za-z_][A-Za-z0-9_]*/)) {
-            # a bare delimiter leaves the body expanding substitutions: UHERE tells the caller to look for them
-            hid = substr(line, hj, RLENGTH)
-            hend = hj + RLENGTH
-            hunq = 1
+          # the delimiter is the next word with its quotes and backslashes removed, as bash reads
+          # it (`E"O"F` is EOF); a bare one, with nothing quoted, leaves the body expanding
+          # substitutions: UHERE tells the caller to look for them
+          hid = ""; hq = ""; hquoted = 0
+          for (hend = hj; hend <= n; hend++) {
+            hc = substr(line, hend, 1)
+            if (hq == "\047") { if (hc == hq) hq = ""; else hid = hid hc; continue }
+            if (hc == "\\") { hquoted = 1; hend++; hid = hid substr(line, hend, 1); continue }
+            if (hq == "\"") { if (hc == hq) hq = ""; else hid = hid hc; continue }
+            if (hc == "\047" || hc == "\"") { hq = hc; hquoted = 1; continue }
+            if (hc ~ /[ \t\n;&|<>()`]/) break
+            hid = hid hc
           }
+          if (hq != "" || hid ~ /\n/) hid = ""
+          hunq = !hquoted
           if (hid != "") {
             hnl = index(substr(line, hend), "\n")
             if (hnl > 0 && substr(line, hend, hnl - 1) ~ /^[ \t]*([0-9]*>>?[ \t]*[^ \t|&;<>()`$]+)?[ \t]*$/) {
@@ -619,13 +643,14 @@ _seg_token_awk='
             sc = ";"
             # a `cat <<` heredoc body is skipped wherever the command sits, so its quotes cannot desync
             # the lexer; nothing may follow the delimiter (a pipe makes it code) and `cat <<` is real
-            # syntax at command position, not text inside a quoted word. Only when `cat` is the whole
+            # syntax at command position, not text inside a quoted word. The delimiter is the word
+            # after `<<` with its quotes and backslashes removed (`E"O"F` is EOF). Only when `cat` is the whole
             # outermost substitution is the body data of its word; in a compound or nested one the
             # output may run (`$(echo x; $(cat <<'EOT' ...))`), so the body is scanned as code. A bare
             # delimiter leaves the substitutions in the body live: HDSUBS hands the body to the caller,
             # which re-lexes it in hdmode to scan them as code.
-            if (!sub_sq && !sub_dq && subtext ~ /(^|[^<])<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*(Q|[A-Za-z0-9_]*)[ \t]*$/) {
-              match(subtext, /<<-?[ \t]*(\047[A-Za-z_][A-Za-z0-9_]*\047|"[A-Za-z_][A-Za-z0-9_]*"|\\?[A-Za-z_][A-Za-z0-9_]*)[ \t]*$/)
+            if (!sub_sq && !sub_dq && subtext ~ /(^|[^<])<<-?[ \t]*(\047[^\047\n]*\047|"[^"\n]*"|\\.|[^ \t\n;&|<>()`\047"\\])+[ \t]*$/ && unquoted(subtext) ~ /(^|;|&&|\|\||\()[ \t]*cat[ \t]+<<-?[ \t]*[^ \t;&|<>()]*[ \t]*$/) {
+              match(subtext, /<<-?[ \t]*(\047[^\047\n]*\047|"[^"\n]*"|\\.|[^ \t\n;&|<>()`\047"\\])+[ \t]*$/)
               hd = substr(subtext, RSTART, RLENGTH)
               hd_live = (hd !~ /[\047"\\]/)
               delim = hd
@@ -647,7 +672,7 @@ _seg_token_awk='
                   hbody = substr(line, bstart, pos - bstart)
                   gsub(/\n/, "\001", hbody)
                   if (hd_live) print "HDSUBS\t" hbody
-                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*(Q|[A-Za-z0-9_]*)[ \t]*$/) print "NEST\t" hbody
+                  if (sub_depth != 1 || unquoted(subtext) !~ /^[ \t]*cat[ \t]+<<-?[ \t]*[^ \t;&|<>()]*[ \t]*$/) print "NEST\t" hbody
                   else if (redirect_target && here_string) print "HERE\t" hbody
                   else print "SUBHERE\t" (redirect_target ? -1 : wcount) ":" hbody
                   i = pos + length(ltxt) - 1

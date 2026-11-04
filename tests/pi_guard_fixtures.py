@@ -163,6 +163,23 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("cat <<E\"O\"F\nx\nEOF\n{git,} push --force origin main", True),
     ("cat <<\"EOF\"x\nEOF\n{p,}i -p x", True),
     ("echo $[1<<EOF]\nrm -rf {/,}", True),
+    # the delimiter is the word with its quotes removed, as bash reads it, so an odd quote in the
+    # real body cannot hide what follows (#827 review)
+    ("cat <<E\"O\"F\nDon't\nEOF\n{git,} push --force origin main", True),
+    ("cat <<\"EOF\"x\nEOF\nDon't\nEOFx\nrm -rf {/,}", True),
+    ("cat <<E\"O\"F > f\nDon't\nEOF\ngit push origin feature/x", False),
+    ("git commit -m \"$(cat <<E\"O\"F\nDon't\nEOF\n)\" && git push --force origin main", True),
+    ("git commit -m \"$(cat <<E'O'F\nDon't\nEOF\n)\" && git push origin feature/x", False),
+    # an opening backtick starts a fresh command word inside it (#827 review)
+    ("echo `{git,} push --force origin main`", True),
+    ("echo `rm -rf {/,}`", True),
+    ("x=`{p,}i -p x`", True),
+    ("echo `echo {a,b}` && git push origin feature/x", False),
+    # a heredoc nested in a body a shell runs keeps its own quote state (#827 review)
+    ("bash <<'OUT'\ncat <<'IN'\nDon't\nIN\n{git,} push --force origin main\nOUT", True),
+    ("bash <<'OUT'\ncat <<'IN'\nDon't\nIN\nrm -rf {/,}\nOUT", True),
+    ("bash <<'OUT'\ncat <<'IN'\nDon't\nOUT\ngit push --force origin main", True),
+    ("bash <<'OUT'\ncat <<'IN'\nDon't\nIN\ngit push origin feature/x\nOUT", False),
     # A heredoc body a shell runs is brace-expanded like code (#827 review).
     ("sh <<'EOF'\nrm -rf {/,}\nEOF", True),
     ("cat <<'EOF' | sh\n{git,} push --force origin main\nEOF", True),
@@ -172,7 +189,9 @@ BASH_GUARD_FIXTURES: list[tuple[str, bool]] = [
     ("cat <<'EOF' > f\n{EOF,}\ndon't\nEOF\ngit push --force origin main", True),
     ("cat <<'EOF' > f\n{EOF,}\ndon't\nEOF\ngit push origin feature/x", False),
     # the expansion budget bounds the text before it is built
-    ("echo a" + "b" * 60000 + "{" + ",".join("c" * 63) + "} && git push origin feature/x", False),
+    ("echo a" + "b" * 3000 + "{" + ",".join("c" * 64) + "} && git push origin feature/x", False),
+    ("echo a" + "b" * 3000 + "{" + ",".join("c" * 64) + "} && git push --force origin main", True),
+    ("echo a" + "b" * 5000 + "{c,d} && git push origin feature/x", False),
     ("git push origin {main,}", False),
     ("git push --force-with-lease origin {main,}", False),
     ("git push --force origin '{main,}'", False),
