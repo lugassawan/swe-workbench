@@ -48,6 +48,29 @@
         "max"
       ]
     },
+    "claude-fable-5-2": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 10,
+        "input": 8,
+        "output": 40
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
     "claude-haiku-4-5": {
       "contextWindow": 200000,
       "cost": {

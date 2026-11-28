@@ -139,6 +139,26 @@
         "high",
         "max"
       ]
+    },
+    "glm-5.4": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "high",
+        "max"
+      ]
     }
   },
   "schemaVersion": 1
