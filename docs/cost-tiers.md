@@ -164,7 +164,7 @@ nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider prove
 the id-selection rule, and the load-bearing `>=1.5.0 <2` peer floor are recorded once in
 `docs/task-dispatch.md`'s google ruling.
 
-**Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
+**Fallback.** For any provider outside the five above, an unrecognized/missing `model:` tier, an
 unrecognized/missing `effort:` value, or a tier/provider combination whose exact model id isn't in
 the candidate pool, `pi/extensions/subagent.ts`'s `task` tool falls back to the parent session's
 own current model and thinking level, unchanged — never to something else, never to a new

@@ -3510,10 +3510,14 @@ console.log(JSON.stringify(out));
 # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the bare
 # flagship id). resolveDispatch's exact-id matching must pick precisely the bare flagship id
 # despite these lookalikes sharing the pool, never a substring/nearby match.
-# Verbatim, complete, alphabetically ordered chat-id inventory from each pinned provider-data
-# file (node_modules/@earendil-works/pi-ai's bundled catalog) — not a hand-picked subset — so
-# exact-id matching is exercised against the real sibling/lookalike density a catalog bump
-# actually produces, never a convenient fixture that happens to omit an awkward case.
+# Verbatim, alphabetically ordered chat-id inventory from each pinned provider-data file
+# (node_modules/@earendil-works/pi-ai's bundled catalog), not an invented one — so exact-id
+# matching is exercised against the real sibling/lookalike density a catalog bump actually
+# produces, never a convenient fixture that happens to omit an awkward case. Anthropic,
+# openai-codex, and zai below are the COMPLETE catalog for that provider (every chat id, 17/8/7
+# respectively); google (and the antigravity mirror derived from it) is a representative subset
+# of its larger 23-id catalog — just the ids MODEL_POLICY's opus/sonnet/haiku cells reference,
+# not the full lookalike density anthropic's block exercises.
 _ANTHROPIC_CANDIDATES = [
     {"provider": "anthropic", "id": "claude-fable-5"},
     {"provider": "anthropic", "id": "claude-fable-5-1"},

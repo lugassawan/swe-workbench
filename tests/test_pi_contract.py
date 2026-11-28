@@ -2106,7 +2106,7 @@ def model_policy_dump(tmp_path_factory):
 def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_dump):
     """model-policy.ts's own KNOWN_MODEL_TIERS must equal the live MODEL_TIERS ratchet,
     KNOWN_EFFORTS must equal the full 5-value portable-effort vocabulary, and MODEL_POLICY must
-    cover all 4 providers x 3 tiers x 5 efforts with no gap — an uncovered cell would silently
+    cover all 5 providers x 3 tiers x 5 efforts with no gap — an uncovered cell would silently
     resolve to undefined (parent-model fallback) for that cell only, which is easy to miss
     without an exhaustiveness check."""
     assert set(model_policy_dump["knownTiers"]) == MODEL_TIERS, (
