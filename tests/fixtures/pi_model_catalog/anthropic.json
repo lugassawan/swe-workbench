@@ -1,0 +1,403 @@
+{
+  "catalogSource": "anthropic",
+  "logicalProvider": "anthropic",
+  "models": {
+    "claude-fable-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 1,
+        "cacheWrite": 12.5,
+        "input": 10,
+        "output": 50
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-fable-5-1": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.25,
+        "cacheWrite": 12.5,
+        "input": 10,
+        "output": 50
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-haiku-4-5": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 1.25,
+        "input": 1,
+        "output": 5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-haiku-4-5-20251001": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 1.25,
+        "input": 1,
+        "output": 5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-haiku-5-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.01,
+        "cacheWrite": 0.125,
+        "input": 0.1,
+        "output": 0.5,
+        "tiers": [
+          {
+            "cacheRead": 0.05,
+            "cacheWrite": 0.625,
+            "input": 0.5,
+            "inputTokensAbove": 100000,
+            "output": 2.5
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-opus-4-5": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-opus-4-5-20251101": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-opus-4-6": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
+    "claude-opus-4-7": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-opus-4-8": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-opus-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.5,
+        "cacheWrite": 6.25,
+        "input": 5,
+        "output": 25
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-opus-5-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 5,
+        "input": 4,
+        "output": 20
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-sonnet-4-5": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.3,
+        "cacheWrite": 3.75,
+        "input": 3,
+        "output": 15
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-sonnet-4-5-20250929": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.3,
+        "cacheWrite": 3.75,
+        "input": 3,
+        "output": 15
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 64000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "claude-sonnet-4-6": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.3,
+        "cacheWrite": 3.75,
+        "input": 3,
+        "output": 15
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
+    "claude-sonnet-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 10
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "claude-sonnet-5-5": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 10
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

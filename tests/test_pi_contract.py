@@ -16,6 +16,7 @@ what this repo's frontmatter currently uses. A new key/tool/skill only trips a t
 docs/ci-validation.md §1, rather than a closed-form schema.
 """
 
+import difflib
 import json
 import os
 import re
@@ -2285,6 +2286,170 @@ def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
                 f"MODEL_POLICY[{provider!r}][{tier!r}].model {cell['model']!r} not found in the "
                 f"pinned catalog ({data_path.relative_to(ROOT)}) — ids: {sorted(ids_on_catalog)}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Normalized pinned-catalog golden ratchet (issue: advance MODEL_POLICY to current-generation
+# ids). A catalog bump that adds, removes, or changes the policy-relevant metadata of ANY chat
+# model — not only the ones MODEL_POLICY currently selects — must fail loudly with a
+# provider-scoped diff, so acknowledging the change means editing the committed fixture (a
+# reviewed source change), never an automatic rewrite or a runtime "pick the newest" heuristic.
+# ---------------------------------------------------------------------------
+
+PI_MODEL_CATALOG_FIXTURE_DIR = ROOT / "tests" / "fixtures" / "pi_model_catalog"
+
+_PI_CATALOG_GOLDEN_DRIVER = """
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [, , modelsJsPath, dataPath, logicalProvider, catalogSource] = process.argv;
+const mod = await import(pathToFileURL(modelsJsPath).href);
+const data = JSON.parse(readFileSync(dataPath, "utf8"));
+const api = Object.keys(data)[0];
+const entries = data[api];
+const ids = Object.keys(entries)
+  .filter((key) => key.startsWith("chat:"))
+  .map((key) => key.slice("chat:".length))
+  .sort();
+const models = {};
+for (const id of ids) {
+  const model = entries[`chat:${id}`];
+  models[id] = {
+    input: model.input,
+    reasoning: model.reasoning ?? false,
+    thinkingLevels: mod.getSupportedThinkingLevels(model),
+    cost: model.cost,
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+  };
+}
+console.log(JSON.stringify({
+  schemaVersion: 1,
+  logicalProvider,
+  catalogSource,
+  models,
+}));
+"""
+
+
+def _pinned_catalog_snapshot(logical_provider: str) -> dict[str, object]:
+    """Normalizes the pinned catalog file backing `logical_provider` into the golden schema —
+    every chat model in that file, not only the ids MODEL_POLICY currently selects, so a newly
+    added sibling fails this ratchet even when every configured policy id remains valid.
+    `antigravity` is a logical provider only: it has no catalog file of its own and is always
+    backed by `google.json`, recorded here as `catalogSource: "google"` rather than silently
+    duplicated as if it were an independent source."""
+    assert _PI_AI_DATA_DIR is not None  # callers gate on requires_pi_ai_catalog
+    data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES[logical_provider]
+    models_js = _PI_AI_DATA_DIR.parent.parent / "models.js"
+    assert models_js.exists(), f"expected {models_js} alongside the pinned provider data"
+    catalog_source = "google" if logical_provider == "antigravity" else logical_provider
+    node = shutil.which("node")
+    assert node is not None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        driver = Path(tmp) / "pi-catalog-golden-dump.mjs"
+        driver.write_text(_PI_CATALOG_GOLDEN_DRIVER, encoding="utf-8")
+        result = subprocess.run(
+            [
+                node, "--experimental-strip-types", str(driver),
+                str(models_js), str(data_path), logical_provider, catalog_source,
+            ],
+            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
+        )
+    assert result.returncode == 0, f"driver failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+def _format_pi_catalog_diff(logical_provider: str, expected: dict[str, object], actual: dict[str, object]) -> str:
+    """Formats a committed-golden-vs-pinned-catalog mismatch: added/removed/changed model ids
+    first (the single-glance signal a reviewer needs), then a full unified diff of the
+    normalized payload for exact inspection."""
+    expected_models = expected.get("models", {})
+    actual_models = actual.get("models", {})
+    added = sorted(set(actual_models) - set(expected_models))
+    removed = sorted(set(expected_models) - set(actual_models))
+    changed = sorted(
+        model_id
+        for model_id in set(expected_models) & set(actual_models)
+        if expected_models[model_id] != actual_models[model_id]
+    )
+    expected_lines = json.dumps(expected, indent=2, sort_keys=True).splitlines(keepends=True)
+    actual_lines = json.dumps(actual, indent=2, sort_keys=True).splitlines(keepends=True)
+    diff = "".join(
+        difflib.unified_diff(
+            expected_lines, actual_lines,
+            fromfile=f"committed/{logical_provider}.json",
+            tofile=f"pinned/{logical_provider}.json",
+        )
+    )
+    return (
+        f"{logical_provider} catalog differs from committed golden\n"
+        f"added IDs: {added}\n"
+        f"removed IDs: {removed}\n"
+        f"changed IDs: {changed}\n"
+        f"{diff}"
+    )
+
+
+def test_pi_catalog_diff_reports_added_removed_and_changed_ids():
+    """Pure-Python unit test for the golden-mismatch formatter — no Node, no pinned catalog,
+    just the diff shape a reviewer sees when a provider catalog drifts from its committed
+    fixture: which ids were added, which were removed, and which existing id's normalized
+    metadata changed, followed by a full unified diff for exact inspection."""
+    expected = {
+        "schemaVersion": 1,
+        "logicalProvider": "openai-codex",
+        "catalogSource": "openai-codex",
+        "models": {
+            "old-model": {"cost": {"input": 1, "output": 2}},
+            "same-model": {"cost": {"input": 1, "output": 2}},
+        },
+    }
+    actual = {
+        "schemaVersion": 1,
+        "logicalProvider": "openai-codex",
+        "catalogSource": "openai-codex",
+        "models": {
+            "new-model": {"cost": {"input": 1, "output": 2}},
+            "same-model": {"cost": {"input": 1, "output": 3}},
+        },
+    }
+    message = _format_pi_catalog_diff("openai-codex", expected, actual)
+    assert "openai-codex catalog differs from committed golden" in message
+    assert "added IDs: ['new-model']" in message
+    assert "removed IDs: ['old-model']" in message
+    assert "changed IDs: ['same-model']" in message
+    assert "--- committed/openai-codex.json" in message
+    assert "+++ pinned/openai-codex.json" in message
+
+
+@requires_node
+@requires_pi_ai_catalog
+def test_pinned_pi_catalog_matches_committed_goldens():
+    """Golden-snapshot ratchet: every pinned provider catalog (every chat model, not only the
+    ids MODEL_POLICY currently selects) must match its committed fixture under
+    tests/fixtures/pi_model_catalog/ exactly. A catalog add, remove, or policy-relevant
+    metadata change fails here with a provider-scoped diff instead of landing unnoticed —
+    acknowledging the change means editing the fixture, a reviewed source change, never an
+    automatic rewrite. Reports every differing provider in one run, not just the first."""
+    mismatches = []
+    for logical_provider in PROVIDER_DATA_FILES:
+        fixture_path = PI_MODEL_CATALOG_FIXTURE_DIR / f"{logical_provider}.json"
+        expected = json.loads(fixture_path.read_text(encoding="utf-8"))
+        actual = _pinned_catalog_snapshot(logical_provider)
+        if expected != actual:
+            mismatches.append(_format_pi_catalog_diff(logical_provider, expected, actual))
+    assert not mismatches, "\n\n".join(mismatches)
+
+    antigravity_expected = json.loads(
+        (PI_MODEL_CATALOG_FIXTURE_DIR / "antigravity.json").read_text(encoding="utf-8")
+    )
+    antigravity_actual = _pinned_catalog_snapshot("antigravity")
+    assert antigravity_expected["logicalProvider"] == "antigravity"
+    assert antigravity_actual["logicalProvider"] == "antigravity"
+    assert antigravity_expected["catalogSource"] == "google"
+    assert antigravity_actual["catalogSource"] == "google"
 
 
 _ZAI_CLAMP_DRIVER = """
