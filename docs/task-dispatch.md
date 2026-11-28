@@ -84,10 +84,10 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   else.
 - Matching is **exact id equality** against the candidate pool, not a substring or shortest-match
   heuristic. An earlier version of this design matched by substring against `Model.id` (e.g.
-  `"opus"` matches `claude-opus-5`) to survive routine model-id version bumps without an edit here
+  `"opus"` matches `claude-opus-5-5`) to survive routine model-id version bumps without an edit here
   — but substring matching alone is ambiguous: the bundled Anthropic catalog carries dated/versioned
   siblings of a bare flagship id (`claude-opus-4-5`, `claude-opus-4-5-20251101`, `claude-opus-4-6`...
-  alongside `claude-opus-5`, all containing `"opus"`), in catalog order rather than recency order,
+  alongside `claude-opus-5` and `claude-opus-5-5`, all containing `"opus"`), in catalog order rather than recency order,
   so a plain first-match would silently resolve to a stale snapshot. A shortest-match tiebreak
   patched that specific ambiguity, but it was still a heuristic riding on the assumption that the
   intended id is always the shortest match — a catalog reshuffle, a new sibling id, or a provider
@@ -103,28 +103,58 @@ of model-dispatch mapping itself, and the actual implementation avoids it entire
   setting: each (provider, tier) cell also carries an exhaustive portable-effort ->
   effective-thinking-level map. For `anthropic` and `openai-codex` this is the identity (portable
   effort passes straight through); for `zai`, `glm-5.3` serves both the `opus` and `sonnet` tier,
-  so the map shifts effort toward `max` for `opus` and toward `low` for `sonnet`, clamped at each
-  end, to keep the two tiers distinguishable on the one axis left once the model id itself can't
-  disambiguate them. See `docs/cost-tiers.md`'s "On the Pi Coding Agent" section for the full
-  matrix, the Z.AI clamp caveat (as of the `@earendil-works/pi-coding-agent` 0.84.3 bump, the
-  installed SDK's bundled catalog ships a real `thinkingLevelMap` for `glm-5.3`, so the opus/sonnet
-  split is real, dispatch-visible behavior — not merely nominal; verified, not reimplemented, in
-  `tests/test_pi_contract.py`'s pinned-catalog test, which fails loudly if a future catalog bump
-  drops that map again), and the four fallback reasons.
+  so the map is biased toward the deeper of its three real rungs (`low`/`high`/`max`) for `opus`
+  and toward the shallower ones for `sonnet` — including a deliberate `sonnet.max -> high` cap
+  rather than a plain clamp, so `opus` stays strictly deeper than `sonnet` even under the Full
+  dispatch profile's forced portable `max` (`pi/extensions/dispatch-profile.ts`). Z.AI's `haiku`
+  tier is a distinct model (`glm-5.3-highspeed`) free of that depth-separation constraint, so it
+  emits the nearest real rung like every other provider below. See `docs/cost-tiers.md`'s "On the
+  Pi Coding Agent" section for the full matrix and the Z.AI real-rung bias note (verified, not
+  reimplemented, against the bundled SDK's own `getSupportedThinkingLevels`/`clampThinkingLevel`
+  in `tests/test_pi_contract.py`, which fails loudly if a future catalog bump drops Z.AI's real
+  `thinkingLevelMap` again), and the four fallback reasons.
 - The `google` row: provider `google` (`GEMINI_API_KEY`; pi removed built-in Gemini CLI /
   Antigravity logins upstream in 0.71.0 — no `google-antigravity` on supported pins;
   `google-vertex` out of scope until a real Vertex-parent dispatch). Ids: newest numeric id in
-  the repo pin (kept aligned with the runtime host), never `-latest`; the deliberate 0.86.1 pin
-  bump enabled `gemini-3.8-flash` while unreleased, and the `>=0.86.1` floor is load-bearing
-  (0.85.x: silent nominal-only 3.8 dispatch; pre-0.85: `model-unavailable` warned fallback).
+  the repo pin (kept aligned with the runtime host), never `-latest`. The package's current peer
+  floor is `>=1.5.0 <2` (`package.json`'s `peerDependencies`) — the pin this file group's catalog
+  ratchet goldens (below) were captured against; an earlier `>=0.86.1` floor was separately
+  load-bearing for enabling `gemini-3.8-flash` while that id was still unreleased upstream.
   Distinct model per tier → tables emit the nearest *real* rung, ≡ the SDK clamp's resolution;
   tests pin that equivalence per cell.
+- The `antigravity` row is a distinct `SupportedProvider` entry from `google` — it represents a Pi
+  session dispatched from the separate Antigravity product context, not a `google` login variant
+  (that unrelated, already-removed `google-antigravity` login method is the bullet above). It has
+  no provider-data catalog of its own in the pinned `@earendil-works/pi-ai` package: it is backed
+  by the same `google.json` catalog `google` reads, and currently mirrors `google`'s row exactly.
+  The catalog-ratchet goldens (below) record this provenance explicitly as
+  `catalogSource: "google"` on the `antigravity` fixture, rather than silently treating it as an
+  independent source that happens to agree today.
 
 `tests/test_pi_contract.py::test_model_tiers_are_inventoried`, its `EFFORTS` counterpart, and an
-exhaustiveness check over `MODEL_POLICY`'s 4 providers x 3 tiers x 5 efforts ratchet the tier and
+exhaustiveness check over `MODEL_POLICY`'s 5 providers x 3 tiers x 5 efforts ratchet the tier and
 effort vocabulary against the live `agents/*.md` inventory, the same pattern `docs/ci-validation.md` §1 already uses for
 tool tokens and skill ids — plus a pinned-catalog test asserting every cell's exact model id
 actually exists in the bundled Pi SDK's provider data.
+
+**Catalog ratchet: an exact-id pin that goes stale is a silent problem; a catalog change that
+goes unacknowledged shouldn't be.** The pinned-catalog test above only ever asserted that
+`MODEL_POLICY`'s *current* ids still exist — structurally blind to a newer sibling appearing
+alongside them, so a dependency bump could ship a whole new model generation with zero signal.
+`tests/test_pi_contract.py` additionally normalizes every chat model (not only the ones
+`MODEL_POLICY` currently selects) from each of the four pinned provider-data files into one
+committed golden fixture per logical provider under `tests/fixtures/pi_model_catalog/` (five
+fixtures for five logical providers — `google` and `antigravity` both normalize from
+`google.json`, recorded via each fixture's own `catalogSource` field). Any add, remove, or
+policy-relevant metadata change in the pinned catalog fails that test with a provider-scoped
+added/removed/changed-id diff. The test never writes the fixture itself — acknowledging a real
+upstream catalog change means a human edits the committed fixture as a reviewed source change,
+the same review gate as any other `pi/extensions/` edit, never an automatic rewrite and never a
+runtime "pick the newest" heuristic. `MODEL_POLICY` itself is untouched by a catalog addition
+until a human re-points a tier — the ratchet's whole purpose is to make that re-pointing decision
+visible, not to make it automatically. The existence check this ratchet accompanies also requires
+**every** configured fallback alternative (not just one) to exist in the pinned catalog, so a
+stale secondary id can never hide behind a still-valid primary.
 
 **Preloaded skills state their own resolvable directory.** A skill's body sometimes points at its
 own `examples/` subdirectory ("see `examples/` for a worked implementation..." —

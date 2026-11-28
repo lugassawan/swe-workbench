@@ -104,15 +104,36 @@ selection is exact id equality against the candidate pool — never a substring 
 heuristic — so a catalog reshuffle or a new sibling id can never silently re-point a tier at the
 wrong model.
 
-Resolution covers four providers today — `anthropic`, `openai-codex`, `zai`, and `google` — each with
-an exact model id per tier. Feeding each tier's default effort (the table above) through
-`MODEL_POLICY` reproduces this matrix:
+Resolution covers five logical providers today — `anthropic`, `openai-codex`, `zai`, `google`, and
+`antigravity` — each with an exact model id per tier. `antigravity` has no catalog of its own: it is
+backed by the same pinned `google.json` catalog as `google` and currently mirrors `google`'s row
+exactly (see the catalog-ratchet contract in `docs/task-dispatch.md` for how that provenance is
+pinned). Feeding each tier's default effort (the table above) through `MODEL_POLICY` reproduces
+this matrix:
 
-| Tier | anthropic | openai-codex | zai | google |
+| Tier | anthropic | openai-codex | zai | google / antigravity |
 |---|---|---|---|---|
-| opus | `claude-opus-5:high` | `gpt-5.6-sol:high` | `glm-5.3:max` | `gemini-3.1-pro-preview:high` (or `gemini-3.1-pro:high`) |
-| sonnet | `claude-sonnet-5:xhigh` | `gpt-5.6-terra:xhigh` | `glm-5.3:high` | `gemini-3.8-flash:high` (or `gemini-3.7-flash:high`) |
-| haiku | `claude-haiku-4-5:high` | `gpt-5.6-luna:high` | `glm-5.2-highspeed:high` | `gemini-3.5-flash-lite:high` |
+| opus | `claude-opus-5-5:high` | `gpt-6-astra:high` | `glm-5.3:max` | `gemini-4-argon:high` (or `gemini-3.1-pro-preview:high`) |
+| sonnet | `claude-sonnet-5-5:xhigh` | `gpt-6.1-terra:xhigh` | `glm-5.3:high` | `gemini-3.8-flash:high` (or `gemini-3.7-flash:high`) |
+| haiku | `claude-haiku-5-5:high` | `gpt-6-luna:high` | `glm-5.3-highspeed:high` | `gemini-3.5-flash-lite:high` |
+
+Each advance is reviewed per tier, not applied uniformly — a tier with no real successor in the
+pinned catalog stays on its current model rather than being force-advanced:
+
+- **zai opus/sonnet** stay on `glm-5.3` — the pinned catalog carries no newer Z.AI flagship; both
+  tiers already share a model and are differentiated by thinking depth alone (below).
+- **google/antigravity sonnet** stays on `gemini-3.8-flash` (falling back to `gemini-3.7-flash`) —
+  no Gemini 4 flash sibling exists in the pinned catalog yet.
+- **google/antigravity haiku** stays on `gemini-3.5-flash-lite` — no newer numeric flash-lite id
+  exists; the moving `gemini-flash-lite-latest` alias is deliberately not adopted (see the exact-id
+  rationale in `docs/task-dispatch.md`).
+- **openai-codex opus** moves to `gpt-6-astra`, the premium rung in the pinned catalog's GPT-6
+  family. Its pinned price (10/50 per million input/output tokens) is materially higher than the
+  prior `gpt-5.6-sol` (4/20) — this is an unbenchmarked, name/cost/placement-inferred premium-tier
+  assumption, not a measured result; watch for a cost-audit follow-up if spend concentrates here.
+- **openai-codex sonnet** moves to `gpt-6.1-terra` — the real Terra-lineage sibling in the pinned
+  `gpt-6.1` generation (not a worked-around substitute), matching `gpt-5.6-terra`'s prior role at
+  the middle rung.
 
 **Portable vs. effective effort.** The `effort:` value in an agent's frontmatter is *portable* —
 the same value Claude Code reads directly as reasoning effort. On Pi, `MODEL_POLICY` translates it
@@ -120,30 +141,27 @@ into an *effective* thinking level per (provider, tier) cell. For `anthropic` an
 this translation is the identity (portable effort passes straight through). For `zai`, it isn't:
 `glm-5.3` serves both the `opus` and `sonnet` tier, so thinking level is the only axis left to keep
 `opus` dispatch strictly deeper than `sonnet` dispatch for the same nominal effort — `opus`'s table
-shifts effort up toward `max`, `sonnet`'s shifts it down toward `low`, both clamped at their end.
-For `google`, every cell emits the nearest *real* rung to the portable effort — see the Google
+is biased toward the deeper real rungs, `sonnet`'s toward the shallower ones (below). For `google`
+and `antigravity`, every cell emits the nearest *real* rung to the portable effort — see the Google
 note below.
 
-**Z.AI clamp caveat (resolved).** The effective thinking level `MODEL_POLICY` emits used to be
-*nominal only* — the installed Pi SDK clamped it further per what its own bundled catalog
-*declared* the target model supports, which didn't match what the model actually supports. Per
-Z.AI's own spec, `glm-5.3` always reasons and genuinely supports `max` as one of its three real
-effort levels (`low`/`high`/`max`); through `@earendil-works/pi-coding-agent` 0.84.2 the catalog
-pin carried no `thinkingLevelMap` for it at all, so *that dependency's* clamp logic reduced the
-nominal `zai.opus` value of `max` down to `high` at dispatch time — identical, then, to
-`zai.sonnet`'s nominal (and already-recognized) `high`. As of the 0.84.3 bump, the pinned catalog
-now ships a real `thinkingLevelMap` for `glm-5.3` (`low`/`high`/`max`), so `zai.opus`'s nominal
-`max` dispatches as genuine `max` — strictly deeper than `zai.sonnet`'s `high`, no longer clamped
-down to it. The opus/sonnet split on Z.AI is therefore real, dispatch-visible behavior now, not
-purely nominal. `tests/test_pi_contract.py` pins this directly against the bundled catalog data,
-so a future catalog change that drops `glm-5.3`'s `thinkingLevelMap` again fails that test
-loudly — the signal to revisit this caveat once more, not silently drift past.
+**Z.AI real-rung bias.** The pinned catalog's `glm-5.3` (and `glm-5.3-highspeed`) declare only
+three real thinking rungs — `low`/`high`/`max`, no `medium`/`xhigh` — verified directly against
+the bundled SDK's own `getSupportedThinkingLevels`/`clampThinkingLevel` in
+`tests/test_pi_contract.py`, not reimplemented. `opus`'s table is biased toward the deeper real
+rungs (nominal default `high` → real `max`); `sonnet`'s stays at the shallower ones, including a
+deliberate `max → high` cap (never `max`) rather than a plain per-effort clamp — the Full dispatch
+profile (`pi/extensions/dispatch-profile.ts`) forces every declared effort to portable `max`, and
+since opus and sonnet share the same underlying model, letting sonnet's `max` reach real `max` too
+would collapse the one axis that keeps the two tiers distinguishable under Full. `haiku` is a
+distinct model (`glm-5.3-highspeed`) free of that constraint, so it emits the nearest real rung
+like `google`/`antigravity` below — pinned table ≡ clamp, no bias.
 
-**Google note.** The `google` row is the API-key provider (`GEMINI_API_KEY`); distinct model
-per tier → no depth bias: each cell emits the nearest *real* rung, exactly the SDK clamp's own
-resolution — zero nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider
-provenance (no `google-antigravity` on supported pins), `google-vertex` scope, the id-selection
-rule, and the load-bearing `>=0.86.1` peer floor are recorded once in
+**Google note.** The `google` and `antigravity` rows are each a distinct model per tier → no depth
+bias: each cell emits the nearest *real* rung, exactly the SDK clamp's own resolution — zero
+nominal-vs-effective divergence, pinned table ≡ clamp per cell. Provider provenance
+(`antigravity` backed by `google.json`, no independent catalog of its own), `google-vertex` scope,
+the id-selection rule, and the load-bearing `>=1.5.0 <2` peer floor are recorded once in
 `docs/task-dispatch.md`'s google ruling.
 
 **Fallback.** For any provider outside the four above, an unrecognized/missing `model:` tier, an
