@@ -2141,27 +2141,27 @@ def test_model_policy_is_exhaustive_over_known_tiers_and_efforts(model_policy_du
 # this is the one source of truth the matrix is asserted against, not a second hand-copied table.
 _TICKET_DEFAULT_MATRIX = {
     "anthropic": {
-        "opus": ("claude-opus-5", "high"),
-        "sonnet": ("claude-sonnet-5", "xhigh"),
-        "haiku": ("claude-haiku-4-5", "high"),
+        "opus": ("claude-opus-5-5", "high"),
+        "sonnet": ("claude-sonnet-5-5", "xhigh"),
+        "haiku": ("claude-haiku-5-5", "high"),
     },
     "openai-codex": {
-        "opus": ("gpt-5.6-sol", "high"),
-        "sonnet": ("gpt-5.6-terra", "xhigh"),
-        "haiku": ("gpt-5.6-luna", "high"),
+        "opus": ("gpt-6-astra", "high"),
+        "sonnet": ("gpt-6.1-terra", "xhigh"),
+        "haiku": ("gpt-6-luna", "high"),
     },
     "zai": {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
-        "haiku": ("glm-5.2-highspeed", "high"),
+        "haiku": ("glm-5.3-highspeed", "high"),
     },
     "google": {
-        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "opus": (["gemini-4-argon", "gemini-3.1-pro-preview"], "high"),
         "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
     "antigravity": {
-        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "opus": (["gemini-4-argon", "gemini-3.1-pro-preview"], "high"),
         "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
@@ -2185,23 +2185,39 @@ def test_default_tier_effort_reproduces_ticket_matrix(model_policy_dump):
 
 
 @requires_node
-def test_zai_thinking_tables_are_monotone_and_gapless_across_all_efforts(model_policy_dump):
+def test_zai_thinking_tables_use_real_rungs_and_keep_opus_strictly_deeper(model_policy_dump):
     """Full-table pin for all three zai cells, not just the two ticket-pinned default-effort
-    points test_default_tier_effort_reproduces_ticket_matrix already covers. opus shifts every
-    effort up by 2 rungs (clamped at max); sonnet shifts every effort down by 1 rung (clamped at
-    low), on the [low, medium, high, xhigh, max] ladder — haiku is a distinct model
-    (glm-5.2-highspeed) so it stays identity. This is the strongest single guarantee that opus
-    stays strictly deeper than sonnet for every possible nominal effort, not just the defaults
-    agents/*.md happens to declare today."""
-    assert model_policy_dump["policy"]["zai"]["opus"]["thinking"] == {
-        "low": "high", "medium": "xhigh", "high": "max", "xhigh": "max", "max": "max",
+    points test_default_tier_effort_reproduces_ticket_matrix already covers. The pinned catalog's
+    glm-5.3 (and glm-5.3-highspeed) only support real `low`/`high`/`max` thinking rungs — no
+    `medium`/`xhigh` — so every table value must stay within that set (unlike anthropic/codex/
+    google, which emit a clamp-equivalent value for every nominal effort, zai's tables are
+    deliberately biased so one shared model, glm-5.3, can serve both the opus and sonnet tier at
+    different real depths). opus's table is biased toward the deeper real rungs; sonnet's stays
+    at the shallower ones, including a deliberate `max -> high` cap (not `max`) so opus remains
+    strictly deeper than sonnet even under the Full dispatch profile's forced portable `max` —
+    haiku is a distinct model (glm-5.3-highspeed) so it is free to use the full real ladder."""
+    real_rungs = {"low": 0, "high": 1, "max": 2}
+    opus = model_policy_dump["policy"]["zai"]["opus"]["thinking"]
+    sonnet = model_policy_dump["policy"]["zai"]["sonnet"]["thinking"]
+    haiku = model_policy_dump["policy"]["zai"]["haiku"]["thinking"]
+    assert opus == {
+        "low": "high", "medium": "max", "high": "max", "xhigh": "max", "max": "max",
     }
-    assert model_policy_dump["policy"]["zai"]["sonnet"]["thinking"] == {
-        "low": "low", "medium": "low", "high": "medium", "xhigh": "high", "max": "xhigh",
+    assert sonnet == {
+        "low": "low", "medium": "low", "high": "high", "xhigh": "high", "max": "high",
     }
-    assert model_policy_dump["policy"]["zai"]["haiku"]["thinking"] == {
-        "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max",
+    assert haiku == {
+        "low": "low", "medium": "high", "high": "high", "xhigh": "max", "max": "max",
     }
+    for effort in ("low", "medium", "high", "xhigh", "max"):
+        assert opus[effort] in real_rungs, f"zai.opus.thinking[{effort!r}] = {opus[effort]!r} is not a real glm-5.3 rung"
+        assert sonnet[effort] in real_rungs, f"zai.sonnet.thinking[{effort!r}] = {sonnet[effort]!r} is not a real glm-5.3 rung"
+        assert real_rungs[opus[effort]] > real_rungs[sonnet[effort]], (
+            f"zai.opus.thinking[{effort!r}] = {opus[effort]!r} must be strictly deeper than "
+            f"zai.sonnet.thinking[{effort!r}] = {sonnet[effort]!r} — this is the one axis left to "
+            "keep the two tiers distinguishable on a shared model, including at the Full dispatch "
+            "profile's forced portable max"
+        )
 
 
 @requires_node
@@ -2269,10 +2285,13 @@ requires_pi_ai_catalog = pytest.mark.skipif(
 @requires_node
 @requires_pi_ai_catalog
 def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
-    """Every MODEL_POLICY cell names an exact id — this asserts each one actually exists in the
-    bundled Pi SDK's own catalog data, not just that it looks plausible. A typo or a removed
-    model here would otherwise only surface the first time a real dispatch tried to use it."""
+    """Every MODEL_POLICY cell names one or more exact ids — this asserts EVERY configured
+    alternative actually exists in the bundled Pi SDK's own catalog data, not just that at least
+    one does. A stale secondary fallback (one no longer present in the catalog) must fail here
+    even while the primary id remains valid — a present primary must never mask a stale
+    alternative that dispatch could still fall through to if the primary later disappears."""
     assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
+    missing = []
     for provider, tiers in model_policy_dump["policy"].items():
         data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES[provider]
         data = json.loads(data_path.read_text(encoding="utf-8"))
@@ -2282,10 +2301,13 @@ def test_model_policy_ids_exist_in_pinned_catalog(model_policy_dump):
         ids_on_catalog = {key.removeprefix("chat:") for key in data[api]}
         for tier, cell in tiers.items():
             models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
-            assert any(m in ids_on_catalog for m in models), (
-                f"MODEL_POLICY[{provider!r}][{tier!r}].model {cell['model']!r} not found in the "
-                f"pinned catalog ({data_path.relative_to(ROOT)}) — ids: {sorted(ids_on_catalog)}"
-            )
+            for model_id in models:
+                if model_id not in ids_on_catalog:
+                    missing.append(
+                        f"MODEL_POLICY[{provider!r}][{tier!r}].model {model_id!r} not found in "
+                        f"the pinned catalog ({data_path.relative_to(ROOT)})"
+                    )
+    assert not missing, "\n".join(missing)
 
 
 # ---------------------------------------------------------------------------
@@ -2452,153 +2474,99 @@ def test_pinned_pi_catalog_matches_committed_goldens():
     assert antigravity_actual["catalogSource"] == "google"
 
 
-_ZAI_CLAMP_DRIVER = """
+_MODEL_POLICY_THINKING_DRIVER = """
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-const [, , modelsJsPath, zaiDataPath] = process.argv;
+const [, , modelsJsPath, configJson] = process.argv;
+const config = JSON.parse(configJson);
 const mod = await import(pathToFileURL(modelsJsPath).href);
-const zaiData = JSON.parse(readFileSync(zaiDataPath, "utf8"));
-const api = Object.keys(zaiData)[0];
-const model = zaiData[api]["chat:glm-5.3"] ?? zaiData[api]["glm-5.3"];
-console.log(JSON.stringify({
-  supported: mod.getSupportedThinkingLevels(model),
-  clampedMax: mod.clampThinkingLevel(model, "max"),
-  clampedHigh: mod.clampThinkingLevel(model, "high"),
-}));
-"""
-
-
-@requires_node
-@requires_pi_ai_catalog
-def test_zai_glm_5_3_dispatches_real_max_thinking_in_pinned_catalog():
-    """Successor to the signal test this replaces (`..._clamps_nominal_max_to_high_...`), which
-    pinned the Z.AI clamp this repo's MODEL_POLICY deliberately shipped ahead of: through
-    @earendil-works/pi-coding-agent@0.84.2, the pinned Pi SDK's bundled catalog *entry* for
-    `glm-5.3` declared no `thinkingLevelMap` at all (a gap in that dependency's data, not in
-    glm-5.3 itself — per Z.AI's own spec the model always reasons and genuinely supports "max" as
-    one of its three real effort levels: low/high/max), so the installed SDK's own
-    `clampThinkingLevel` (dist/models.js) reduced MODEL_POLICY.zai.opus's nominal "max" down to
-    "high" at dispatch time — identical to zai.sonnet's nominal "high". As of the 0.84.3 bump, the
-    pinned catalog now ships a real `thinkingLevelMap` for `glm-5.3` (low/high/max), so that clamp
-    no longer applies: zai.opus's nominal "max" dispatches as genuine "max", strictly deeper than
-    zai.sonnet's "high" — the opus/sonnet split documented in docs/cost-tiers.md's Z.AI clamp
-    caveat is now real, dispatch-visible behavior, not purely nominal. This drives the REAL SDK
-    clamp function against the REAL pinned catalog data, not a reimplementation of its logic. If a
-    future catalog change drops glm-5.3's thinkingLevelMap again, this test fails loudly — the
-    signal to revisit docs/cost-tiers.md's Z.AI clamp caveat once more, not a silent behavior
-    change to discover later."""
-    node = shutil.which("node")
-    assert node is not None
-    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
-    models_js = _PI_AI_DATA_DIR.parent.parent / "models.js"
-    assert models_js.exists(), f"expected {models_js} alongside the pinned provider data"
-    zai_data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES["zai"]
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        driver = Path(tmp) / "zai-clamp-dump.mjs"
-        driver.write_text(_ZAI_CLAMP_DRIVER, encoding="utf-8")
-        result = subprocess.run(
-            [node, "--experimental-strip-types", str(driver), str(models_js), str(zai_data_path)],
-            capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
-        )
-    assert result.returncode == 0, f"driver failed: {result.stderr}"
-    dumped = json.loads(result.stdout)
-    assert {"low", "high", "max"} <= set(dumped["supported"]), (
-        f"glm-5.3 no longer declares low/high/max support ({dumped['supported']}) in the pinned "
-        "catalog — the zai opus/sonnet thinking-level split in MODEL_POLICY may have reverted to "
-        "purely nominal; revisit docs/cost-tiers.md's Z.AI clamp caveat and this test"
-    )
-    assert dumped["clampedMax"] == "max", "zai.opus's nominal max should dispatch as real max now"
-    assert dumped["clampedHigh"] == "high"
-
-
-_GOOGLE_CLAMP_DRIVER = """
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-const [, , modelsJsPath, googleDataPath] = process.argv;
-const mod = await import(pathToFileURL(modelsJsPath).href);
-const googleData = JSON.parse(readFileSync(googleDataPath, "utf8"));
-const api = Object.keys(googleData)[0];
-const dump = {};
-for (const id of ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-3.7-flash", "gemini-3.5-flash-lite"]) {
-  const model = googleData[api][`chat:${id}`] ?? googleData[api][id];
-  if (!model) continue;
-  dump[id] = {
-    supported: mod.getSupportedThinkingLevels(model),
-    clamped: {
-      low: mod.clampThinkingLevel(model, "low"),
-      medium: mod.clampThinkingLevel(model, "medium"),
-      high: mod.clampThinkingLevel(model, "high"),
-      xhigh: mod.clampThinkingLevel(model, "xhigh"),
-      max: mod.clampThinkingLevel(model, "max"),
-    },
-  };
+const efforts = ["low", "medium", "high", "xhigh", "max"];
+const out = {};
+for (const [dataPath, ids] of Object.entries(config)) {
+  const data = JSON.parse(readFileSync(dataPath, "utf8"));
+  const api = Object.keys(data)[0];
+  for (const id of ids) {
+    const model = data[api][`chat:${id}`] ?? data[api][id];
+    if (!model) continue;
+    const clamped = {};
+    for (const effort of efforts) clamped[effort] = mod.clampThinkingLevel(model, effort);
+    out[id] = { supported: mod.getSupportedThinkingLevels(model), clamped };
+  }
 }
-console.log(JSON.stringify(dump));
+console.log(JSON.stringify(out));
 """
 
 
 @requires_node
 @requires_pi_ai_catalog
-def test_google_cells_dispatch_real_thinking_levels_in_pinned_catalog(model_policy_dump):
-    """Drives the REAL SDK clamp against the REAL pinned catalog (zai-clamp-pin posture) and
-    asserts table ≡ clamp per (tier, effort), plus the stable supported-level intersection
-    across pins. A catalog bump that changes real levels fails loudly — revisit the google
-    tables, not a silent clamp."""
+def test_model_policy_thinking_levels_are_real_in_pinned_catalog(model_policy_dump):
+    """Every MODEL_POLICY thinking value must be a real rung the target model actually
+    supports, not merely a plausible-looking one — drives the REAL SDK's
+    getSupportedThinkingLevels and clampThinkingLevel against the REAL pinned catalog for every
+    configured model alternative in every cell, not just a first match. Anthropic, OpenAI Codex,
+    Google, Antigravity, and Z.AI's haiku table must equal the SDK's own clamp resolution exactly
+    (no bias, pinned table ≡ clamp). Z.AI's opus/sonnet tables are the deliberate exception: they
+    intentionally bias thinking depth so one shared model (glm-5.3) can serve two tiers at
+    different real depths — their strict-depth invariant is pinned separately by
+    test_zai_thinking_tables_use_real_rungs_and_keep_opus_strictly_deeper, so this test only
+    requires their values to be real rungs, not clamp-equivalent."""
+    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gates this
     node = shutil.which("node")
     assert node is not None
-    assert _PI_AI_DATA_DIR is not None  # narrows for the type checker; requires_pi_ai_catalog already gated this
     models_js = _PI_AI_DATA_DIR.parent.parent / "models.js"
     assert models_js.exists(), f"expected {models_js} alongside the pinned provider data"
-    google_data_path = _PI_AI_DATA_DIR / PROVIDER_DATA_FILES["google"]
+
+    config: dict[str, list[str]] = {}
+    for provider, tiers in model_policy_dump["policy"].items():
+        data_path = str(_PI_AI_DATA_DIR / PROVIDER_DATA_FILES[provider])
+        ids = config.setdefault(data_path, [])
+        for cell in tiers.values():
+            models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
+            for model_id in models:
+                if model_id not in ids:
+                    ids.append(model_id)
+
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        driver = Path(tmp) / "google-clamp-dump.mjs"
-        driver.write_text(_GOOGLE_CLAMP_DRIVER, encoding="utf-8")
+        driver = Path(tmp) / "model-policy-thinking-dump.mjs"
+        driver.write_text(_MODEL_POLICY_THINKING_DRIVER, encoding="utf-8")
         result = subprocess.run(
-            [node, "--experimental-strip-types", str(driver), str(models_js), str(google_data_path)],
+            [node, "--experimental-strip-types", str(driver), str(models_js), json.dumps(config)],
             capture_output=True, text=True, env=_CLEAN_ENV, timeout=30,
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
-    dumped = json.loads(result.stdout)
-    pro = dumped.get("gemini-3.1-pro-preview") or dumped.get("gemini-3.1-pro")
-    # Every check below is gated on an id being present, so a catalog key-shape or id change
-    # would pass vacuously instead of failing; require the pro and at least one flash id.
-    assert pro, f"neither google pro id resolved in the pinned catalog (resolved: {sorted(dumped)})"
-    assert any(f in dumped for f in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite")), (
-        f"no google flash id resolved in the pinned catalog (resolved: {sorted(dumped)})"
-    )
-    if pro:
-        assert {"low", "high"} <= set(pro["supported"]), (
-            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} no longer declares low/high support ({pro['supported']}) in the "
-            "pinned catalog — MODEL_POLICY.google.opus's emitted levels may have become nominal-only; "
-            "revisit the google tables and docs/cost-tiers.md's google note"
-        )
-        assert not {"xhigh", "max"} & set(pro["supported"]), (
-            f"{'gemini-3.1-pro-preview' if 'gemini-3.1-pro-preview' in dumped else 'gemini-3.1-pro'} now declares xhigh/max support ({pro['supported']}) — the opus "
-            "table could emit deeper real levels; revisit it"
-        )
-    for flash_id in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"):
-        flash = dumped.get(flash_id)
-        if flash:
-            assert {"low", "medium", "high"} <= set(flash["supported"]), (
-                f"{flash_id} no longer declares low/medium/high support ({flash['supported']}) in the "
-                "pinned catalog — MODEL_POLICY.google's sonnet/haiku tables may have become nominal-only"
-            )
-    for provider in ("google", "antigravity"):
-        for tier, cell in model_policy_dump["policy"][provider].items():
+    probed = json.loads(result.stdout)
+
+    zai_biased_cells = {("zai", "opus"), ("zai", "sonnet")}
+    missing = []
+    mismatches = []
+    for provider, tiers in model_policy_dump["policy"].items():
+        for tier, cell in tiers.items():
             models = cell["model"] if isinstance(cell["model"], list) else [cell["model"]]
-            for model in models:
-                if model in dumped:
-                    for effort, level in cell["thinking"].items():
-                        assert dumped[model]["clamped"][effort] == level, (
-                            f"MODEL_POLICY.{provider}.{tier}.thinking[{effort!r}] = {level!r} diverges from the "
-                            f"SDK clamp's own resolution ({dumped[model]['clamped'][effort]!r}) for "
-                            f"{model} — {provider} tables must emit the nearest real rung, never a bias"
+            for model_id in models:
+                probe = probed.get(model_id)
+                if probe is None:
+                    missing.append(f"{provider}.{tier}: {model_id!r} not resolved in the pinned catalog")
+                    continue
+                for effort, level in cell["thinking"].items():
+                    if level not in probe["supported"]:
+                        mismatches.append(
+                            f"MODEL_POLICY[{provider!r}][{tier!r}].thinking[{effort!r}] = {level!r} is "
+                            f"not a real rung {model_id!r} supports ({probe['supported']})"
                         )
-                    break
+                        continue
+                    if (provider, tier) in zai_biased_cells:
+                        continue
+                    if probe["clamped"][effort] != level:
+                        mismatches.append(
+                            f"MODEL_POLICY[{provider!r}][{tier!r}].thinking[{effort!r}] = {level!r} "
+                            f"diverges from the SDK clamp's own resolution ({probe['clamped'][effort]!r}) "
+                            f"for {model_id!r} — non-Z.AI-biased cells must emit the nearest real rung, "
+                            "never a bias"
+                        )
+    assert not missing, "\n".join(missing)
+    assert not mismatches, "\n".join(mismatches)
 
 
 _TASK_SCHEMA_DRIVER = """

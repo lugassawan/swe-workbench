@@ -2079,15 +2079,15 @@ if (registered) {
   out.execFails = await run("real-agent", "hi");
 
   const anthropicCandidates = [
-    { provider: "anthropic", id: "claude-haiku-4-5" },
+    { provider: "anthropic", id: "claude-haiku-5-5" },
     { provider: "anthropic", id: "claude-sonnet-5" },
     { provider: "anthropic", id: "claude-opus-5" },
   ];
   const mixedProviderCandidates = [
     ...anthropicCandidates,
-    { provider: "openai-codex", id: "gpt-5.6-luna" },
+    { provider: "openai-codex", id: "gpt-6-luna" },
   ];
-  const noHaikuCandidates = anthropicCandidates.filter((c) => c.id !== "claude-haiku-4-5");
+  const noHaikuCandidates = anthropicCandidates.filter((c) => c.id !== "claude-haiku-5-5");
 
   execCalls.length = 0;
   out.tieredAgentResolvesHaiku = await run(
@@ -3123,7 +3123,7 @@ def test_subagent_tiered_agent_resolves_model_via_tier_table(subagent_root, tmp_
     assert run["ok"] is True
     args = result["tieredAgentExecCalls"][0]["args"]
     model_idx = args.index("--model")
-    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+    assert args[model_idx + 1] == "anthropic/claude-haiku-5-5"
     thinking_idx = args.index("--thinking")
     assert args[thinking_idx + 1] == "high"
 
@@ -3151,7 +3151,7 @@ def test_task_emits_resolved_dispatch_details_before_child_process_starts(
                 "agent": "tiered-agent",
                 "tier": "haiku",
                 "portableEffort": "high",
-                "model": "anthropic/claude-haiku-4-5",
+                "model": "anthropic/claude-haiku-5-5",
                 "thinking": "high",
                 "policySource": "model-policy",
                 "poolSource": "available",
@@ -3170,7 +3170,7 @@ def test_subagent_tiered_agent_ignores_other_provider_candidates(subagent_root, 
     assert result["tieredAgentIgnoresOtherProviderCandidates"]["ok"] is True
     args = result["tieredAgentIgnoresOtherProviderExecCalls"][0]["args"]
     model_idx = args.index("--model")
-    assert args[model_idx + 1] == "anthropic/claude-haiku-4-5"
+    assert args[model_idx + 1] == "anthropic/claude-haiku-5-5"
     thinking_idx = args.index("--thinking")
     assert args[thinking_idx + 1] == "high"
 
@@ -3249,7 +3249,7 @@ def test_subagent_provider_unsupported_falls_back_to_parent_model(subagent_root,
 
 @requires_node
 def test_subagent_model_unavailable_falls_back_to_parent_model(subagent_root, tmp_path_factory):
-    """tiered-agent's tier/effort resolve via policy to claude-haiku-4-5, but the candidate pool
+    """tiered-agent's tier/effort resolve via policy to claude-haiku-5-5, but the candidate pool
     doesn't carry that exact id — resolution must fall back to the parent's own model unchanged
     with fallbackReason "model-unavailable", never a substring or nearby-id match."""
     result = _subagent_result(subagent_root, tmp_path_factory)
@@ -3510,50 +3510,60 @@ console.log(JSON.stringify(out));
 # multiple ids share the "opus"/"sonnet"/"haiku" substring (dated/versioned siblings of the bare
 # flagship id). resolveDispatch's exact-id matching must pick precisely the bare flagship id
 # despite these lookalikes sharing the pool, never a substring/nearby match.
+# Verbatim, complete, alphabetically ordered chat-id inventory from each pinned provider-data
+# file (node_modules/@earendil-works/pi-ai's bundled catalog) — not a hand-picked subset — so
+# exact-id matching is exercised against the real sibling/lookalike density a catalog bump
+# actually produces, never a convenient fixture that happens to omit an awkward case.
 _ANTHROPIC_CANDIDATES = [
     {"provider": "anthropic", "id": "claude-fable-5"},
+    {"provider": "anthropic", "id": "claude-fable-5-1"},
     {"provider": "anthropic", "id": "claude-haiku-4-5"},
     {"provider": "anthropic", "id": "claude-haiku-4-5-20251001"},
+    {"provider": "anthropic", "id": "claude-haiku-5-5"},
     {"provider": "anthropic", "id": "claude-opus-4-5"},
     {"provider": "anthropic", "id": "claude-opus-4-5-20251101"},
     {"provider": "anthropic", "id": "claude-opus-4-6"},
     {"provider": "anthropic", "id": "claude-opus-4-7"},
     {"provider": "anthropic", "id": "claude-opus-4-8"},
     {"provider": "anthropic", "id": "claude-opus-5"},
+    {"provider": "anthropic", "id": "claude-opus-5-5"},
     {"provider": "anthropic", "id": "claude-sonnet-4-5"},
     {"provider": "anthropic", "id": "claude-sonnet-4-5-20250929"},
     {"provider": "anthropic", "id": "claude-sonnet-4-6"},
     {"provider": "anthropic", "id": "claude-sonnet-5"},
+    {"provider": "anthropic", "id": "claude-sonnet-5-5"},
 ]
 _CODEX_CANDIDATES = [
     {"provider": "openai-codex", "id": "gpt-5.6-luna"},
     {"provider": "openai-codex", "id": "gpt-5.6-sol"},
     {"provider": "openai-codex", "id": "gpt-5.6-terra"},
-    {"provider": "openai-codex", "id": "gpt-5.4-mini"},
+    {"provider": "openai-codex", "id": "gpt-6-astra"},
+    {"provider": "openai-codex", "id": "gpt-6-luna"},
+    {"provider": "openai-codex", "id": "gpt-6-sol"},
+    {"provider": "openai-codex", "id": "gpt-6.1-sol"},
+    {"provider": "openai-codex", "id": "gpt-6.1-terra"},
 ]
 _ZAI_CANDIDATES = [
-    {"provider": "zai", "id": "glm-5.3"},
+    {"provider": "zai", "id": "glm-4.7"},
+    {"provider": "zai", "id": "glm-5-turbo"},
     {"provider": "zai", "id": "glm-5.2"},
     {"provider": "zai", "id": "glm-5.2-highspeed"},
+    {"provider": "zai", "id": "glm-5.3"},
+    {"provider": "zai", "id": "glm-5.3-flash"},
+    {"provider": "zai", "id": "glm-5.3-highspeed"},
 ]
 _GOOGLE_CANDIDATES = [
     {"provider": "google", "id": "gemini-3.1-pro-preview"},
-    {"provider": "google", "id": "gemini-3.1-pro"},
-    {"provider": "google", "id": "gemini-3.8-flash"},
-    {"provider": "google", "id": "gemini-3.7-flash"},
     {"provider": "google", "id": "gemini-3.5-flash-lite"},
+    {"provider": "google", "id": "gemini-3.7-flash"},
+    {"provider": "google", "id": "gemini-3.8-flash"},
+    {"provider": "google", "id": "gemini-4-argon"},
 ]
-_ANTIGRAVITY_CANDIDATES = [
-    {"provider": "antigravity", "id": "gemini-3.1-pro-preview"},
-    {"provider": "antigravity", "id": "gemini-3.1-pro"},
-    {"provider": "antigravity", "id": "gemini-3.7-flash"},
-    {"provider": "antigravity", "id": "gemini-3.8-flash"},
-    {"provider": "antigravity", "id": "gemini-3.5-flash-lite"},
-]
+_ANTIGRAVITY_CANDIDATES = [{**c, "provider": "antigravity"} for c in _GOOGLE_CANDIDATES]
 _CANDIDATES_BY_PROVIDER = {"anthropic": _ANTHROPIC_CANDIDATES, "openai-codex": _CODEX_CANDIDATES, "zai": _ZAI_CANDIDATES, "google": _GOOGLE_CANDIDATES, "antigravity": _ANTIGRAVITY_CANDIDATES}
 _PARENT_BY_PROVIDER = {
-    "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5", "thinking": "medium"},
-    "openai-codex": {"provider": "openai-codex", "id": "gpt-5.6-terra", "thinking": "medium"},
+    "anthropic": {"provider": "anthropic", "id": "claude-sonnet-5-5", "thinking": "medium"},
+    "openai-codex": {"provider": "openai-codex", "id": "gpt-6.1-terra", "thinking": "medium"},
     "zai": {"provider": "zai", "id": "glm-5.3", "thinking": "medium"},
     "google": {"provider": "google", "id": "gemini-3.7-flash", "thinking": "medium"},
     "antigravity": {"provider": "antigravity", "id": "gemini-3.7-flash", "thinking": "medium"},
@@ -3566,27 +3576,27 @@ _DEFAULT_TIER_EFFORT = {"opus": "high", "sonnet": "xhigh", "haiku": "high"}
 # raw MODEL_POLICY table dump.
 _EXPECTED_DEFAULT_CELL = {
     "anthropic": {
-        "opus": ("claude-opus-5", "high"),
-        "sonnet": ("claude-sonnet-5", "xhigh"),
-        "haiku": ("claude-haiku-4-5", "high"),
+        "opus": ("claude-opus-5-5", "high"),
+        "sonnet": ("claude-sonnet-5-5", "xhigh"),
+        "haiku": ("claude-haiku-5-5", "high"),
     },
     "openai-codex": {
-        "opus": ("gpt-5.6-sol", "high"),
-        "sonnet": ("gpt-5.6-terra", "xhigh"),
-        "haiku": ("gpt-5.6-luna", "high"),
+        "opus": ("gpt-6-astra", "high"),
+        "sonnet": ("gpt-6.1-terra", "xhigh"),
+        "haiku": ("gpt-6-luna", "high"),
     },
     "zai": {
         "opus": ("glm-5.3", "max"),
         "sonnet": ("glm-5.3", "high"),
-        "haiku": ("glm-5.2-highspeed", "high"),
+        "haiku": ("glm-5.3-highspeed", "high"),
     },
     "google": {
-        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "opus": (["gemini-4-argon", "gemini-3.1-pro-preview"], "high"),
         "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
     "antigravity": {
-        "opus": (["gemini-3.1-pro-preview", "gemini-3.1-pro"], "high"),
+        "opus": (["gemini-4-argon", "gemini-3.1-pro-preview"], "high"),
         "sonnet": (["gemini-3.8-flash", "gemini-3.7-flash"], "high"),
         "haiku": ("gemini-3.5-flash-lite", "high"),
     },
@@ -3628,7 +3638,7 @@ def _model_policy_result(tmp_path_factory):
     }
     cases["fallback_model_unavailable"] = {
         "parent": _PARENT_BY_PROVIDER["anthropic"], "tier": "opus", "effort": "high",
-        "candidates": [c for c in _ANTHROPIC_CANDIDATES if c["id"] != "claude-opus-5"],
+        "candidates": [c for c in _ANTHROPIC_CANDIDATES if c["id"] != "claude-opus-5-5"],
     }
 
     return _run_node(
@@ -3672,23 +3682,25 @@ def test_resolve_dispatch_default_cell(tmp_path_factory, provider, tier):
 
 @requires_node
 def test_resolve_dispatch_zai_thinking_table_beyond_the_default_cell(tmp_path_factory):
-    """Z.AI's shifted tables must hold at more than their one ticket-pinned default point —
-    opus shifts every effort up toward max, sonnet shifts every effort down toward low."""
+    """Z.AI's biased tables must hold at more than their one ticket-pinned default point —
+    opus's nominal low still resolves to the real `high` rung, and sonnet's nominal max is
+    deliberately capped at the real `high` rung (never `max`) so opus remains strictly deeper
+    than sonnet even at the Full dispatch profile's forced portable max."""
     result = _model_policy_result(tmp_path_factory)
     assert result["zai_opus_low"]["thinking"] == "high"
-    assert result["zai_sonnet_max"]["thinking"] == "xhigh"
+    assert result["zai_sonnet_max"]["thinking"] == "high"
 
 
 @requires_node
 def test_resolve_dispatch_exact_id_ignores_lookalike_candidates(tmp_path_factory):
     """The anthropic candidate pool carries dated/versioned siblings of the flagship ids
-    (claude-opus-4-5..4-8 alongside claude-opus-5, etc.) — exact-id equality must resolve to
-    precisely the policy's own id, never a lookalike, regardless of how many siblings share the
-    pool or what order they appear in."""
+    (claude-opus-4-5..4-8 and claude-opus-5 alongside claude-opus-5-5, etc.) — exact-id equality
+    must resolve to precisely the policy's own id, never a lookalike, regardless of how many
+    siblings share the pool or what order they appear in."""
     result = _model_policy_result(tmp_path_factory)
-    assert result["default_anthropic_opus"]["model"]["id"] == "claude-opus-5"
-    assert result["default_anthropic_sonnet"]["model"]["id"] == "claude-sonnet-5"
-    assert result["default_anthropic_haiku"]["model"]["id"] == "claude-haiku-4-5"
+    assert result["default_anthropic_opus"]["model"]["id"] == "claude-opus-5-5"
+    assert result["default_anthropic_sonnet"]["model"]["id"] == "claude-sonnet-5-5"
+    assert result["default_anthropic_haiku"]["model"]["id"] == "claude-haiku-5-5"
 
 
 @requires_node
@@ -3710,9 +3722,9 @@ def test_resolve_dispatch_fallback_reasons(tmp_path_factory, label, reason):
     parent = cell["model"]
     case_parent = {
         "fallback_provider_unsupported": {"provider": "google-vertex", "id": "gemini-x"},
-        "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
-        "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5"},
-        "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5"},
+        "fallback_tier_unknown": {"provider": "anthropic", "id": "claude-sonnet-5-5"},
+        "fallback_effort_unknown": {"provider": "anthropic", "id": "claude-sonnet-5-5"},
+        "fallback_model_unavailable": {"provider": "anthropic", "id": "claude-sonnet-5-5"},
     }[label]
     assert parent == case_parent
     assert cell["thinking"] == "medium", "the parent's own ctx.thinkingLevel must survive unchanged"

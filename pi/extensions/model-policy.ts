@@ -73,35 +73,46 @@ const IDENTITY: Readonly<Record<Effort, ThinkingLevel>> = {
 };
 
 /** Z.AI's `glm-5.3` serves both the opus and sonnet tier, so thinking level is the only axis
- *  left to keep opus's dispatch strictly deeper than sonnet's for the same nominal effort: this
- *  table shifts every effort UP by two rungs on the `[low, medium, high, xhigh, max]` ladder,
- *  clamped at `max` — reproducing the ticket-pinned `high -> max` translation (opus's default
- *  effort per DEFAULT_TIER_EFFORT is "high") while staying monotone and gapless over all five
- *  efforts. Per Z.AI's own spec, `glm-5.3` always reasons and genuinely supports `max` as one of
- *  its three real effort levels (`low`/`high`/`max`) — the pinned Pi SDK's bundled catalog entry
- *  for it now ships a real `thinkingLevelMap` for those three levels (see the pinned-catalog test
- *  in tests/test_pi_contract.py), so this nominal `high -> max` shift dispatches as genuine `max`
- *  thinking, no longer clamped down to `high` the way it was before that catalog bump.
- *  `medium`/`xhigh` aren't directly supported and still round up to the nearest real level
- *  (`high`/`max`) — that narrower nominal-vs-effective divergence is expected and doesn't need
- *  runtime handling here (see this file's header). */
+ *  left to keep opus's dispatch strictly deeper than sonnet's for the same nominal effort. The
+ *  pinned catalog's `glm-5.3` (and `glm-5.3-highspeed`) only declare THREE real thinking rungs —
+ *  `low`/`high`/`max`, no `medium`/`xhigh` (see tests/test_pi_contract.py's pinned-catalog test)
+ *  — so this table, unlike IDENTITY/GOOGLE_NEAREST_REAL_RUNG below, is deliberately biased
+ *  rather than a plain per-effort clamp: every emitted value is one of those three real rungs,
+ *  biased toward the deeper end so opus's nominal default ("high", per DEFAULT_TIER_EFFORT)
+ *  dispatches as real `max`. */
 const ZAI_OPUS_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "high",
-  medium: "xhigh",
+  medium: "max",
   high: "max",
   xhigh: "max",
   max: "max",
 };
 
-/** Shifts every effort DOWN by one rung on the same ladder, clamped at `low` — reproducing the
- *  ticket-pinned `xhigh -> high` translation (sonnet's default effort is "xhigh") so zai's sonnet
- *  dispatch stays strictly shallower than its opus dispatch for the same nominal effort. */
+/** Sonnet's half of the same real-rung bias: every value is `low` or `high`, biased toward the
+ *  shallower end so sonnet's nominal default ("xhigh") dispatches as real `high` — strictly
+ *  shallower than opus's `max` at every matching nominal effort. Nominal `max` is deliberately
+ *  capped at real `high` here rather than let through as `max`: the Full dispatch profile forces
+ *  every declared effort to portable `max` (pi/extensions/dispatch-profile.ts), and zai opus and
+ *  zai sonnet share the same underlying model, so letting sonnet's `max` reach real `max` too
+ *  would collapse the one axis that keeps the two tiers distinguishable under Full. */
 const ZAI_SONNET_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
   low: "low",
   medium: "low",
-  high: "medium",
+  high: "high",
   xhigh: "high",
-  max: "xhigh",
+  max: "high",
+};
+
+/** Z.AI's haiku tier is a distinct model (`glm-5.3-highspeed`) with the same three real rungs as
+ *  glm-5.3 — free of the opus/sonnet depth-separation constraint, so it uses the full real
+ *  ladder (nearest-real-rung passthrough), reproducing the ticket-pinned default `high -> high`
+ *  translation (haiku's default effort is "high") while covering all five portable efforts. */
+const ZAI_HAIKU_THINKING: Readonly<Record<Effort, ThinkingLevel>> = {
+  low: "low",
+  medium: "high",
+  high: "high",
+  xhigh: "max",
+  max: "max",
 };
 
 /** Nearest *real* rung to the portable effort — what the SDK's own clampThinkingLevel resolves
@@ -127,27 +138,27 @@ interface TierPolicy {
  *  matrix. */
 export const MODEL_POLICY: Readonly<Record<SupportedProvider, Readonly<Record<ModelTier, TierPolicy>>>> = {
   anthropic: {
-    opus: { model: "claude-opus-5", thinking: IDENTITY },
-    sonnet: { model: "claude-sonnet-5", thinking: IDENTITY },
-    haiku: { model: "claude-haiku-4-5", thinking: IDENTITY },
+    opus: { model: "claude-opus-5-5", thinking: IDENTITY },
+    sonnet: { model: "claude-sonnet-5-5", thinking: IDENTITY },
+    haiku: { model: "claude-haiku-5-5", thinking: IDENTITY },
   },
   "openai-codex": {
-    opus: { model: "gpt-5.6-sol", thinking: IDENTITY },
-    sonnet: { model: "gpt-5.6-terra", thinking: IDENTITY },
-    haiku: { model: "gpt-5.6-luna", thinking: IDENTITY },
+    opus: { model: "gpt-6-astra", thinking: IDENTITY },
+    sonnet: { model: "gpt-6.1-terra", thinking: IDENTITY },
+    haiku: { model: "gpt-6-luna", thinking: IDENTITY },
   },
   zai: {
     opus: { model: "glm-5.3", thinking: ZAI_OPUS_THINKING },
     sonnet: { model: "glm-5.3", thinking: ZAI_SONNET_THINKING },
-    haiku: { model: "glm-5.2-highspeed", thinking: IDENTITY },
+    haiku: { model: "glm-5.3-highspeed", thinking: ZAI_HAIKU_THINKING },
   },
   google: {
-    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    opus: { model: ["gemini-4-argon", "gemini-3.1-pro-preview"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
   antigravity: {
-    opus: { model: ["gemini-3.1-pro-preview", "gemini-3.1-pro"], thinking: GOOGLE_NEAREST_REAL_RUNG },
+    opus: { model: ["gemini-4-argon", "gemini-3.1-pro-preview"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     sonnet: { model: ["gemini-3.8-flash", "gemini-3.7-flash"], thinking: GOOGLE_NEAREST_REAL_RUNG },
     haiku: { model: "gemini-3.5-flash-lite", thinking: GOOGLE_NEAREST_REAL_RUNG },
   },
