@@ -1533,7 +1533,7 @@ mod.registerPhase(stubPi, process.argv[3]);
 // deliberately misses each row's preferred id so the adapter must walk to the fallback.
 const registry = {
   find(provider, id) {
-    if (id === "gemini-3.1-pro-preview" || id === "gemini-3.8-flash") return undefined;
+    if (id === "gemini-4-argon" || id === "gemini-3.8-flash") return undefined;
     return { provider, id };
   },
 };
@@ -1591,7 +1591,7 @@ def test_phase_flip_and_model_select_runtime():
         )
     assert result.returncode == 0, f"driver failed: {result.stderr}"
     dumped = json.loads(result.stdout)
-    assert dumped["armFlipsToPlanFallback"] == "google/gemini-3.1-pro", (
+    assert dumped["armFlipsToPlanFallback"] == "google/gemini-3.1-pro-preview", (
         "arming must walk the opus row's candidate order to the fallback id, not stop "
         "at the preferred id find() missed"
     )
@@ -1607,8 +1607,8 @@ def test_phase_flip_and_model_select_runtime():
     )
     assert dumped["executeReleasesGate"] is True
     assert dumped["flips"] == [
-        "google/gemini-3.1-pro",
-        "google/gemini-3.1-pro",
+        "google/gemini-3.1-pro-preview",
+        "google/gemini-3.1-pro-preview",
         "google/gemini-3.7-flash",
     ], "exactly one flip per arming/approval turn, none for model_select events"
 
