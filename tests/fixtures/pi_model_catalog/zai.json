@@ -1,0 +1,165 @@
+{
+  "catalogSource": "zai",
+  "logicalProvider": "zai",
+  "models": {
+    "glm-4.7": {
+      "contextWindow": 204800,
+      "cost": {
+        "cacheRead": 0.11,
+        "cacheWrite": 0,
+        "input": 0.6,
+        "output": 2.2
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "glm-5-turbo": {
+      "contextWindow": 200000,
+      "cost": {
+        "cacheRead": 0.24,
+        "cacheWrite": 0,
+        "input": 1.2,
+        "output": 4
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "glm-5.2": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.26,
+        "cacheWrite": 0,
+        "input": 1.4,
+        "output": 4.4
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "high",
+        "max"
+      ]
+    },
+    "glm-5.2-highspeed": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "high",
+        "max"
+      ]
+    },
+    "glm-5.3": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.26,
+        "cacheWrite": 0,
+        "input": 1.4,
+        "output": 4.4
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "glm-5.3-flash": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0.03,
+        "cacheWrite": 0,
+        "input": 0.15,
+        "output": 0.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "glm-5.3-highspeed": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "high",
+        "max"
+      ]
+    },
+    "glm-5.4": {
+      "contextWindow": 1000000,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "high",
+        "max"
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

@@ -1,0 +1,333 @@
+{
+  "catalogSource": "openai-codex",
+  "logicalProvider": "openai-codex",
+  "models": {
+    "gpt-5.6-luna": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.02,
+        "cacheWrite": 0.25,
+        "input": 0.2,
+        "output": 1.2,
+        "tiers": [
+          {
+            "cacheRead": 0.04,
+            "cacheWrite": 0.5,
+            "input": 0.4,
+            "inputTokensAbove": 272000,
+            "output": 1.8
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-5.6-sol": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.4,
+        "cacheWrite": 5,
+        "input": 4,
+        "output": 20,
+        "tiers": [
+          {
+            "cacheRead": 0.8,
+            "cacheWrite": 10,
+            "input": 8,
+            "inputTokensAbove": 272000,
+            "output": 30
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-5.6-terra": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 5,
+            "input": 4,
+            "inputTokensAbove": 272000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6-astra": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 1,
+        "cacheWrite": 12.5,
+        "input": 10,
+        "output": 50,
+        "tiers": [
+          {
+            "cacheRead": 2,
+            "cacheWrite": 25,
+            "input": 20,
+            "inputTokensAbove": 272000,
+            "output": 75
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6-luna": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.01,
+        "cacheWrite": 0.125,
+        "input": 0.1,
+        "output": 0.5,
+        "tiers": [
+          {
+            "cacheRead": 0.02,
+            "cacheWrite": 0.25,
+            "input": 0.2,
+            "inputTokensAbove": 272000,
+            "output": 0.75
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6-sol": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 10,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 5,
+            "input": 4,
+            "inputTokensAbove": 272000,
+            "output": 15
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6.1-sol": {
+      "contextWindow": 500000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 10,
+        "tiers": [
+          {
+            "cacheRead": 0.2,
+            "cacheWrite": 5,
+            "input": 4,
+            "inputTokensAbove": 272000,
+            "output": 15
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6.1-terra": {
+      "contextWindow": 500000,
+      "cost": {
+        "cacheRead": 0.05,
+        "cacheWrite": 1.25,
+        "input": 1,
+        "output": 5,
+        "tiers": [
+          {
+            "cacheRead": 0.1,
+            "cacheWrite": 2.5,
+            "input": 2,
+            "inputTokensAbove": 272000,
+            "output": 7.5
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6.2-astra": {
+      "contextWindow": 272000,
+      "cost": {
+        "cacheRead": 0.4,
+        "cacheWrite": 10,
+        "input": 8,
+        "output": 40,
+        "tiers": [
+          {
+            "cacheRead": 0.8,
+            "cacheWrite": 20,
+            "input": 16,
+            "inputTokensAbove": 272000,
+            "output": 60
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "gpt-6.2-sol": {
+      "contextWindow": 500000,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "input": 2,
+        "output": 10,
+        "tiers": [
+          {
+            "cacheRead": 0.2,
+            "cacheWrite": 5,
+            "input": 4,
+            "inputTokensAbove": 272000,
+            "output": 15
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 128000,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

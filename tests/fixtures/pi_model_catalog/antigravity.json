@@ -1,0 +1,559 @@
+{
+  "catalogSource": "google",
+  "logicalProvider": "antigravity",
+  "models": {
+    "deep-research-max-preview-04-2026": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 0,
+            "input": 4,
+            "inputTokensAbove": 200000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "deep-research-preview-04-2026": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 0,
+            "input": 4,
+            "inputTokensAbove": 200000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-2.5-flash": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.03,
+        "cacheWrite": 0,
+        "input": 0.3,
+        "output": 2.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-2.5-flash-lite": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.01,
+        "cacheWrite": 0,
+        "input": 0.1,
+        "output": 0.4
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-2.5-pro": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.125,
+        "cacheWrite": 0,
+        "input": 1.25,
+        "output": 10,
+        "tiers": [
+          {
+            "cacheRead": 0.25,
+            "cacheWrite": 0,
+            "input": 2.5,
+            "inputTokensAbove": 200000,
+            "output": 15
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3-flash-preview": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.05,
+        "cacheWrite": 0,
+        "input": 0.5,
+        "output": 3
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.1-flash-lite": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.025,
+        "cacheWrite": 0,
+        "input": 0.25,
+        "output": 1.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.1-pro-preview": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 0,
+            "input": 4,
+            "inputTokensAbove": 200000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.1-pro-preview-customtools": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 0,
+            "input": 4,
+            "inputTokensAbove": 200000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.5-flash": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.15,
+        "cacheWrite": 0,
+        "input": 1.5,
+        "output": 9
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.5-flash-lite": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.03,
+        "cacheWrite": 0,
+        "input": 0.3,
+        "output": 2.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.6-flash": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 0.75,
+        "output": 3.75
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.7-flash": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 0.75,
+        "output": 3.75
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-3.8-flash": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 0.75,
+        "output": 3.75
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-4-argon": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 10
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 32768,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-4-carbon": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 10
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 32768,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-4-hydrogen": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.075,
+        "cacheWrite": 0,
+        "input": 1.5,
+        "output": 7.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    "gemini-4-neon": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.15,
+        "cacheWrite": 0,
+        "input": 3,
+        "output": 15
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    "gemini-flash-latest": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.15,
+        "cacheWrite": 0,
+        "input": 1.5,
+        "output": 9
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-flash-lite-latest": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.025,
+        "cacheWrite": 0,
+        "input": 0.25,
+        "output": 1.5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-pro-latest": {
+      "contextWindow": 1048576,
+      "cost": {
+        "cacheRead": 0.2,
+        "cacheWrite": 0,
+        "input": 2,
+        "output": 12,
+        "tiers": [
+          {
+            "cacheRead": 0.4,
+            "cacheWrite": 0,
+            "input": 4,
+            "inputTokensAbove": 200000,
+            "output": 18
+          }
+        ]
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemini-robotics-er-2-preview": {
+      "contextWindow": 131072,
+      "cost": {
+        "cacheRead": 0.1,
+        "cacheWrite": 0,
+        "input": 1,
+        "output": 5
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 65536,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "gemma-4-26b-a4b-it": {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 32768,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "high"
+      ]
+    },
+    "gemma-4-31b-it": {
+      "contextWindow": 262144,
+      "cost": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "maxTokens": 32768,
+      "reasoning": true,
+      "thinkingLevels": [
+        "minimal",
+        "high"
+      ]
+    }
+  },
+  "schemaVersion": 1
+}
